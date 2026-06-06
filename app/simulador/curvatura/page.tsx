@@ -1,11 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from 'react';
-import Image from 'next/image';
-import Link from 'next/link';
-import logoColorido from '../../../app/imgs/logo.png';
-import logoPB from '../../../app/imgs/logo_pb.png';
-import { Analytics } from "@vercel/analytics/next"
+import { useState, useEffect, useRef } from 'react';
+import { Analytics } from "@vercel/analytics/next";
 
 const MOD_W = 0.5; // Largura do módulo em metros
 
@@ -17,7 +13,7 @@ export default function SimuladorCurvatura() {
   // Estados de Configuração
   const [modeloPainel, setModeloPainel] = useState<number>(5); // 5°, 15°, 45°
   const [tipoCurva, setTipoCurva] = useState<'concavo' | 'convexo'>('concavo');
-  const [modoAngulo, setModoAngulo] = useState<'unico' | 'diametro' | 'multiplo'>('unico');
+  const [modoAngulo, setModoAngulo] = useState<'unico' | 'diametro' | 'raio' | 'multiplo'>('unico');
   const [angleInput, setAngleInput] = useState<string>('5');
   
   // Estados de Dimensionamento
@@ -66,27 +62,41 @@ export default function SimuladorCurvatura() {
     let angles: number[] = [];
     let n = 0;
     
-    // Processamento de Ângulo
-    if (modoAngulo === 'unico' || modoAngulo === 'diametro') {
+    // Processamento de Ângulo (Agora com opção de Raio)
+    if (modoAngulo === 'unico' || modoAngulo === 'diametro' || modoAngulo === 'raio') {
       let anguloUnico = 0;
-      const diametroMinimo = 2 * (MOD_W / ((maxPermitido * Math.PI) / 180));
+      const raioMinimo = MOD_W / ((maxPermitido * Math.PI) / 180);
+      const diametroMinimo = 2 * raioMinimo;
 
-      if (modoAngulo === 'diametro') {
-        let diametroAlvo = parseFloat(angleInput);
-        if (isNaN(diametroAlvo) || diametroAlvo <= 0) diametroAlvo = Math.ceil(diametroMinimo);
-        
-        if (diametroAlvo < diametroMinimo) {
-          diametroAlvo = diametroMinimo;
-          aviso = `Ajustado para diâmetro mínimo (${diametroMinimo.toFixed(2)}m) suportado pelo modelo.`;
+      if (modoAngulo === 'diametro' || modoAngulo === 'raio') {
+        let raioAlvo = 0;
+
+        if (modoAngulo === 'diametro') {
+          let diametroAlvo = parseFloat(angleInput);
+          if (isNaN(diametroAlvo) || diametroAlvo <= 0) diametroAlvo = Math.ceil(diametroMinimo);
+          
+          if (diametroAlvo < diametroMinimo) {
+            diametroAlvo = diametroMinimo;
+            aviso = `Ajustado p/ diâmetro mín. (${diametroMinimo.toFixed(2)}m)`;
+          }
+          raioAlvo = diametroAlvo / 2;
+        } else if (modoAngulo === 'raio') {
+          raioAlvo = parseFloat(angleInput);
+          if (isNaN(raioAlvo) || raioAlvo <= 0) raioAlvo = Math.ceil(raioMinimo);
+          
+          if (raioAlvo < raioMinimo) {
+            raioAlvo = raioMinimo;
+            aviso = `Ajustado p/ raio mín. (${raioMinimo.toFixed(2)}m)`;
+          }
         }
-        const raioAlvo = diametroAlvo / 2;
+        
         anguloUnico = (MOD_W / raioAlvo) * (180 / Math.PI);
       } else {
         anguloUnico = parseFloat(angleInput);
         if (isNaN(anguloUnico)) anguloUnico = 0;
         if (anguloUnico > maxPermitido) {
           anguloUnico = maxPermitido;
-          aviso = `Ajustado para o limite máximo (${maxPermitido}°) suportado.`;
+          aviso = `Ajustado p/ o limite (${maxPermitido}°)`;
         }
       }
 
@@ -98,7 +108,7 @@ export default function SimuladorCurvatura() {
       } else {
         const raioCalc = MOD_W / (Math.max(anguloUnico, 0.1) * Math.PI / 180);
         if (inputCorda >= raioCalc * 2 && anguloUnico > 0) {
-          aviso = "A corda solicitada é maior que o diâmetro do círculo.";
+          aviso = "Corda solicitada maior que o diâmetro.";
           n = 1;
         } else if (anguloUnico <= 0) {
           n = Math.max(1, Math.ceil(inputCorda / MOD_W));
@@ -115,8 +125,8 @@ export default function SimuladorCurvatura() {
       for (const part of parts) {
         let val = parseFloat(part.trim());
         if (!isNaN(val)) {
-          if (val > maxPermitido) { val = maxPermitido; aviso = "Valores excedentes foram limitados."; }
-          else if (val < -maxPermitido) { val = -maxPermitido; aviso = "Valores excedentes foram limitados."; }
+          if (val > maxPermitido) { val = maxPermitido; aviso = "Valores excedentes limitados."; }
+          else if (val < -maxPermitido) { val = -maxPermitido; aviso = "Valores excedentes limitados."; }
           angles.push(val);
         }
       }
@@ -125,10 +135,10 @@ export default function SimuladorCurvatura() {
     }
 
     // Cálculos Finais da Telemetria
-    let raioDisplay = "Variável / Ondulado";
-    let diamDisplay = "Variável / Ondulado";
+    let raioDisplay = "Variável";
+    let diamDisplay = "Variável";
 
-    if (modoAngulo === 'unico' || modoAngulo === 'diametro') {
+    if (modoAngulo === 'unico' || modoAngulo === 'diametro' || modoAngulo === 'raio') {
       const angBase = angles[0];
       if (Math.abs(angBase) < 0.0001) {
         raioDisplay = "Plano (Reto)";
@@ -173,17 +183,17 @@ export default function SimuladorCurvatura() {
     });
 
     // Chamada para Função de Desenho
-    desenharCanvas(pts, linear, cordaFinal, n, angles, nomeModelo, projeto || "PROJETO RENTECH", cliente || "Não informado");
+    desenharCanvas(pts, linear, cordaFinal, n, nomeModelo, projeto || "PROJETO RENTECH", cliente || "Não informado");
   };
 
-  const desenharCanvas = (pts: {x:number, y:number}[], linear: number, corda: number, n: number, angles: number[], nomeModelo: string, pName: string, cName: string) => {
+  const desenharCanvas = (pts: {x:number, y:number}[], linear: number, corda: number, n: number, nomeModelo: string, pName: string, cName: string) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Ajusta visual conforme o tema (Print ou Tela Escura Rentech)
-    ctx.fillStyle = isPrintMode ? '#ffffff' : '#050B14';
+    // Ajuste de cores para o Light Mode
+    ctx.fillStyle = isPrintMode ? '#ffffff' : '#F8FAFC';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     const minX = Math.min(...pts.map(p => p.x));
@@ -202,7 +212,7 @@ export default function SimuladorCurvatura() {
     const offsetX = (canvas.width / 2) - (cx * escala);
     const offsetY = (canvas.height / 2) - (cy * escala) + 50;
 
-    // Traçado principal do painel (A linha de LED)
+    // Traçado principal do painel
     ctx.save();
     ctx.beginPath();
     ctx.moveTo(pts[0].x * escala + offsetX, pts[0].y * escala + offsetY);
@@ -211,8 +221,8 @@ export default function SimuladorCurvatura() {
     }
 
     if (!isPrintMode) {
-      ctx.shadowBlur = 25;
-      ctx.shadowColor = '#336699';
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = 'rgba(51, 102, 153, 0.3)';
       ctx.strokeStyle = '#336699';
     } else {
       ctx.strokeStyle = '#0C1D4D';
@@ -225,7 +235,7 @@ export default function SimuladorCurvatura() {
     ctx.restore();
 
     // Junções/Módulos (Bolinhas separadoras)
-    ctx.fillStyle = isPrintMode ? '#ffffff' : 'rgba(0, 0, 0, 0.7)';
+    ctx.fillStyle = isPrintMode ? '#ffffff' : '#0C1D4D';
     for (let i = 1; i < pts.length - 1; i++) {
       ctx.beginPath();
       ctx.arc(pts[i].x * escala + offsetX, pts[i].y * escala + offsetY, 8, 0, Math.PI * 2);
@@ -237,11 +247,11 @@ export default function SimuladorCurvatura() {
       }
     }
 
-    // Tipografia da Simulação
+    // Tipografia
     ctx.textAlign = "center";
-    const baseColor = isPrintMode ? '#000000' : '#ffffff';
-    const subColor = isPrintMode ? '#666666' : '#999999';
-    const highlightColor = isPrintMode ? '#284B8C' : '#336699';
+    const baseColor = isPrintMode ? '#000000' : '#0C1D4D';
+    const subColor = isPrintMode ? '#666666' : '#64748B';
+    const highlightColor = isPrintMode ? '#284B8C' : '#16A34A';
 
     ctx.fillStyle = baseColor;
     ctx.font = "900 42px sans-serif";
@@ -265,40 +275,38 @@ export default function SimuladorCurvatura() {
   };
 
   return (
-    <div className="flex flex-col lg:flex-row gap-4 p-4 bg-[#000000] text-[#B3B3B3] min-h-screen font-sans print:bg-white print:text-black print:block print:p-0">
+    <div className="flex flex-col lg:flex-row gap-3 px-4 md:px-6 pb-4 md:pb-6 pt-6 
+      bg-[#F0F4F8] text-[#0F172A] h-screen max-h-[800px] overflow-hidden font-sans print:bg-white 
+      print:text-black print:block print:p-0">
       <Analytics/>
       
       {/* SIDEBAR TÉCNICA (Oculta na Impressão) */}
-      <aside className="bg-[#0C1D4D]/20 p-5 rounded-2xl shadow-xl w-full lg:w-[400px] flex-shrink-0 flex flex-col border border-[#284B8C]/30 overflow-y-auto backdrop-blur-sm print:hidden">
-        <div className="text-center mb-6 pb-6 border-b border-[#284B8C]/30">
-          <Link href="/simulador">
-            <Image src={logoPB} alt="Rentech Locadora" width={160} height={50} className="mx-auto hover:scale-105 transition-transform" priority />
-          </Link>
-          <h1 className="mt-4 text-[11px] font-black uppercase tracking-widest text-[#336699]">Engenharia LED: <span className="text-white">Curvo & Flexível</span></h1>
+      <aside className="bg-white p-3 md:p-4 rounded-2xl shadow-sm w-full lg:w-80 flex-shrink-0 flex flex-col border border-[#E2E8F0] overflow-y-auto print:hidden">
+        
+        <div className="bg-[#F0F4F8] p-2.5 rounded-xl mb-3 border-l-4 border-l-[#336699]">
+          <h1 className="text-[10px] font-black uppercase tracking-widest text-[#0C1D4D] leading-tight">Engenharia LED <br/><span className="text-[#336699]">Curvo & Flexível</span></h1>
         </div>
 
-        <div className="space-y-5 flex-grow">
+        <div className="space-y-3 flex-grow">
           {/* Dados do Cliente */}
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-[10px] font-bold text-[#999999] uppercase tracking-wider mb-1 block">Projeto / Evento</label>
-                <input type="text" className="w-full p-2.5 bg-black border border-[#284B8C]/40 rounded-lg text-sm text-white focus:border-[#336699] outline-none" value={projeto} onChange={(e) => setProjeto(e.target.value)} />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-[#999999] uppercase tracking-wider mb-1 block">Cliente</label>
-                <input type="text" className="w-full p-2.5 bg-black border border-[#284B8C]/40 rounded-lg text-sm text-white focus:border-[#336699] outline-none" value={cliente} onChange={(e) => setCliente(e.target.value)} />
-              </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider mb-1 block">Projeto/Evento</label>
+              <input type="text" className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] focus:border-[#336699] outline-none" value={projeto} onChange={(e) => setProjeto(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider mb-1 block">Cliente</label>
+              <input type="text" className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] focus:border-[#336699] outline-none" value={cliente} onChange={(e) => setCliente(e.target.value)} />
             </div>
           </div>
 
-          <div className="h-px bg-[#284B8C]/30 w-full my-4"></div>
+          <div className="border-t border-dashed border-[#CBD5E1]"></div>
 
           {/* Configurações Estruturais */}
-          <div className="space-y-4">
+          <div className="space-y-2.5">
             <div>
-              <label className="text-[10px] font-bold text-[#999999] uppercase tracking-wider mb-1 block">Modelo do Painel</label>
-              <select className="w-full p-2.5 bg-black border border-[#284B8C]/40 rounded-lg text-sm text-white focus:border-[#336699] outline-none font-bold" value={modeloPainel} onChange={(e) => setModeloPainel(parseInt(e.target.value))}>
+              <label className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider mb-1 block">Modelo do Painel</label>
+              <select className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] focus:border-[#336699] outline-none font-bold cursor-pointer" value={modeloPainel} onChange={(e) => setModeloPainel(parseInt(e.target.value))}>
                 <option value={15}>P3 Curvo (Máx 15°)</option>
                 <option value={5}>P2 Curvo (Máx 5°)</option>
                 <option value={45}>P2 Flexível (Máx 45°)</option>
@@ -306,91 +314,92 @@ export default function SimuladorCurvatura() {
             </div>
 
             <div>
-              <label className="text-[10px] font-bold text-[#999999] uppercase tracking-wider mb-1 block">Direção Principal da Curva</label>
-              <select className="w-full p-2.5 bg-black border border-[#284B8C]/40 rounded-lg text-sm text-white focus:border-[#336699] outline-none" value={tipoCurva} onChange={(e) => setTipoCurva(e.target.value as any)}>
+              <label className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider mb-1 block">Direção Principal</label>
+              <select className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] focus:border-[#336699] outline-none cursor-pointer" value={tipoCurva} onChange={(e) => setTipoCurva(e.target.value as any)}>
                 <option value="concavo">Côncavo (Para DENTRO)</option>
                 <option value="convexo">Convexo (Para FORA)</option>
               </select>
             </div>
 
             <div>
-              <label className="text-[10px] font-bold text-[#999999] uppercase tracking-wider mb-1 block">Lógica do Ângulo</label>
-              <select className="w-full p-2.5 bg-black border border-[#284B8C]/40 rounded-lg text-sm text-white focus:border-[#336699] outline-none" value={modoAngulo} onChange={(e) => setModoAngulo(e.target.value as any)}>
+              <label className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider mb-1 block">Lógica do Ângulo</label>
+              <select className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] focus:border-[#336699] outline-none cursor-pointer" value={modoAngulo} onChange={(e) => setModoAngulo(e.target.value as any)}>
                 <option value="unico">Por Ângulo Constante</option>
                 <option value="diametro">Por Diâmetro da Curva (m)</option>
+                <option value="raio">Por Raio da Curva (m)</option>
                 <option value="multiplo">Por Placa Livre (S-Curve)</option>
               </select>
             </div>
 
             <div>
-              <label className="text-[10px] font-bold text-[#999999] uppercase tracking-wider mb-1 block">
-                {modoAngulo === 'unico' ? 'Ângulo por Placa (°)' : modoAngulo === 'diametro' ? 'Diâmetro Alvo (m)' : 'Ângulos (Separados por vírgula)'}
+              <label className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider mb-1 block">
+                {modoAngulo === 'unico' ? 'Ângulo por Placa (°)' : modoAngulo === 'diametro' ? 'Diâmetro Alvo (m)' : modoAngulo === 'raio' ? 'Raio Alvo (m)' : 'Ângulos (Por vírgula)'}
               </label>
-              <input type="text" className="w-full p-2.5 bg-[#0C1D4D] border border-[#336699] rounded-lg text-sm text-white font-black outline-none" value={angleInput} onChange={(e) => setAngleInput(e.target.value)} />
-              {resultados.avisoSeguranca && <p className="text-[10px] text-yellow-500 font-bold mt-1 leading-tight">{resultados.avisoSeguranca}</p>}
+              <input type="text" className="w-full p-1.5 bg-white border border-[#CBD5E1] rounded-lg text-sm text-[#0C1D4D] font-black outline-none focus:border-[#336699]" value={angleInput} onChange={(e) => setAngleInput(e.target.value)} />
+              {resultados.avisoSeguranca && <p className="text-[9px] text-[#D97706] font-bold mt-1 leading-tight">{resultados.avisoSeguranca}</p>}
             </div>
           </div>
 
-          <div className="h-px bg-[#284B8C]/30 w-full my-4"></div>
+          <div className="border-t border-dashed border-[#CBD5E1]"></div>
 
           {/* Dimensionamento */}
-          <div className="space-y-3">
-            <label className="text-[10px] font-bold text-[#999999] uppercase tracking-wider block">Definir Tamanho (Largura) Por:</label>
-            <div className="flex gap-2 bg-black/40 p-1 rounded-lg border border-[#284B8C]/30">
-              <button onClick={() => setSizeMode('qty')} className={`flex-1 py-2 rounded-md text-[10px] font-bold uppercase transition-all ${sizeMode === 'qty' ? 'bg-[#336699] text-white' : 'text-[#666666]'}`}>Módulos</button>
-              <button onClick={() => setSizeMode('corda')} className={`flex-1 py-2 rounded-md text-[10px] font-bold uppercase transition-all ${sizeMode === 'corda' ? 'bg-[#336699] text-white' : 'text-[#666666]'}`}>Corda (m)</button>
-              <button onClick={() => setSizeMode('linear')} className={`flex-1 py-2 rounded-md text-[10px] font-bold uppercase transition-all ${sizeMode === 'linear' ? 'bg-[#336699] text-white' : 'text-[#666666]'}`}>Linear (m)</button>
+          <div className="space-y-1.5 pb-1">
+            <label className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider block">Definir Tamanho Por:</label>
+            <div className="flex gap-1 bg-[#F8FAFC] p-1 rounded-lg border border-[#CBD5E1]">
+              <button onClick={() => setSizeMode('qty')} className={`flex-1 py-1 rounded-md text-[9px] font-bold uppercase transition-all ${sizeMode === 'qty' ? 'bg-[#336699] text-white shadow-sm' : 'text-[#64748B] hover:bg-[#E2E8F0]'}`}>Módulos</button>
+              <button onClick={() => setSizeMode('corda')} className={`flex-1 py-1 rounded-md text-[9px] font-bold uppercase transition-all ${sizeMode === 'corda' ? 'bg-[#336699] text-white shadow-sm' : 'text-[#64748B] hover:bg-[#E2E8F0]'}`}>Corda</button>
+              <button onClick={() => setSizeMode('linear')} className={`flex-1 py-1 rounded-md text-[9px] font-bold uppercase transition-all ${sizeMode === 'linear' ? 'bg-[#336699] text-white shadow-sm' : 'text-[#64748B] hover:bg-[#E2E8F0]'}`}>Linear</button>
             </div>
 
             {sizeMode === 'qty' && (
-              <div><input type="number" min="1" className="w-full p-2.5 bg-black border border-[#284B8C]/40 rounded-lg text-sm text-white font-bold" value={qty} onChange={(e) => setQty(parseInt(e.target.value) || 1)} /></div>
+              <div><input type="number" min="1" className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] font-bold outline-none focus:border-[#336699]" value={qty} onChange={(e) => setQty(parseInt(e.target.value) || 1)} /></div>
             )}
             {sizeMode === 'corda' && (
-              <div><input type="number" step="0.5" className="w-full p-2.5 bg-black border border-[#284B8C]/40 rounded-lg text-sm text-white font-bold" value={inputCorda} onChange={(e) => setInputCorda(parseFloat(e.target.value) || 1)} /></div>
+              <div><input type="number" step="0.5" className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] font-bold outline-none focus:border-[#336699]" value={inputCorda} onChange={(e) => setInputCorda(parseFloat(e.target.value) || 1)} /></div>
             )}
             {sizeMode === 'linear' && (
-              <div><input type="number" step="0.5" className="w-full p-2.5 bg-black border border-[#284B8C]/40 rounded-lg text-sm text-white font-bold" value={inputLinear} onChange={(e) => setInputLinear(parseFloat(e.target.value) || 1)} /></div>
+              <div><input type="number" step="0.5" className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] font-bold outline-none focus:border-[#336699]" value={inputLinear} onChange={(e) => setInputLinear(parseFloat(e.target.value) || 1)} /></div>
             )}
           </div>
         </div>
 
-        <div className="mt-8 space-y-3">
-          <button onClick={() => window.print()} className="w-full bg-[#336699] text-white p-3.5 rounded-xl font-black uppercase text-xs tracking-wider hover:bg-[#284B8C] transition-colors shadow-[0_0_15px_rgba(51,102,153,0.3)]">
-            🖨️ Imprimir Projeto Técnico
+        <div className="mt-2 pt-2 border-t border-dashed border-[#CBD5E1]">
+          <button onClick={() => window.print()} className="w-full border-2 border-[#E2E8F0] text-[#64748B] p-2 rounded-xl font-black uppercase text-[10px] tracking-wider hover:bg-[#F8FAFC] hover:border-[#CBD5E1] transition-colors">
+            🖨️ Imprimir Projeto
           </button>
         </div>
       </aside>
 
-      {/* ÁREA PRINCIPAL / CANVAS */}
-      <main className="flex-grow flex flex-col gap-6 relative print:p-8">
+      {/* ÁREA PRINCIPAL / CANVAS - Rola independentemente e com tamanho muito reduzido */}
+      <main className="flex-grow flex flex-col gap-2 relative print:p-8 overflow-y-auto pr-1">
         
-        {/* Cards de Resultados */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 flex-shrink-0 print:gap-2">
-          <div className="bg-[#0C1D4D]/50 border border-[#284B8C]/30 border-t-4 border-t-[#336699] p-4 rounded-xl shadow-lg print:bg-white print:border-gray-400 print:text-black">
-            <span className="block text-[10px] text-[#999999] uppercase font-bold tracking-wider mb-1 print:text-gray-600">Qtd de Gabinetes</span>
-            <strong className="block text-2xl text-white font-black print:text-black">{resultados.n} un.</strong>
+        {/* Cards de Resultados - Mais compactos */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 flex-shrink-0 print:gap-2">
+          <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#336699] p-2.5 rounded-xl shadow-sm print:bg-white print:border-gray-400 print:text-black">
+            <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-0.5 print:text-gray-600">Gabinetes</span>
+            <strong className="block text-lg text-[#0C1D4D] font-black print:text-black">{resultados.n} un.</strong>
           </div>
-          <div className="bg-[#0C1D4D]/50 border border-[#284B8C]/30 border-t-4 border-t-[#336699] p-4 rounded-xl shadow-lg print:bg-white print:border-gray-400 print:text-black">
-            <span className="block text-[10px] text-[#999999] uppercase font-bold tracking-wider mb-1 print:text-gray-600">Metragem Linear Total</span>
-            <strong className="block text-2xl text-white font-black print:text-black">{resultados.linear.toFixed(2)} m</strong>
+          <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#336699] p-2.5 rounded-xl shadow-sm print:bg-white print:border-gray-400 print:text-black">
+            <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-0.5 print:text-gray-600">Metragem Linear</span>
+            <strong className="block text-lg text-[#0C1D4D] font-black print:text-black">{resultados.linear.toFixed(2)} m</strong>
           </div>
-          <div className="bg-[#0C1D4D]/50 border border-[#284B8C]/30 border-t-4 border-t-green-500 p-4 rounded-xl shadow-lg print:bg-white print:border-gray-400 print:text-black">
-            <span className="block text-[10px] text-[#999999] uppercase font-bold tracking-wider mb-1 print:text-gray-600">Ocupação / Corda Real</span>
-            <strong className="block text-2xl text-green-400 font-black print:text-green-700">{resultados.corda.toFixed(2)} m</strong>
+          <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#16A34A] p-2.5 rounded-xl shadow-sm print:bg-white print:border-gray-400 print:text-black">
+            <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-0.5 print:text-gray-600">Corda Real</span>
+            <strong className="block text-lg text-[#16A34A] font-black print:text-green-700">{resultados.corda.toFixed(2)} m</strong>
           </div>
-          <div className="bg-[#0C1D4D]/50 border border-[#284B8C]/30 border-t-4 border-t-[#336699] p-4 rounded-xl shadow-lg print:bg-white print:border-gray-400 print:text-black">
-            <span className="block text-[10px] text-[#999999] uppercase font-bold tracking-wider mb-1 print:text-gray-600">Ângulo Total Gerado</span>
-            <strong className="block text-2xl text-white font-black print:text-black">{resultados.totalAngle.toFixed(1)}°</strong>
+          <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#336699] p-2.5 rounded-xl shadow-sm print:bg-white print:border-gray-400 print:text-black">
+            <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-0.5 print:text-gray-600">Ângulo Gerado</span>
+            <strong className="block text-lg text-[#0C1D4D] font-black print:text-black">{resultados.totalAngle.toFixed(1)}°</strong>
           </div>
         </div>
 
-        {/* Workspace Canvas (Onde a mágica acontece) */}
-        <div className="flex-grow bg-[#050B14] border border-[#284B8C]/30 rounded-2xl relative overflow-hidden shadow-inner print:bg-transparent print:border-none print:shadow-none flex items-center justify-center">
+        {/* Workspace Canvas - Altura agressivamente reduzida para evitar rolagem de tela */}
+        <div className="flex-grow bg-[#F8FAFC] border border-[#E2E8F0] rounded-2xl relative overflow-hidden shadow-inner min-h-[150px] bg-[radial-gradient(#CBD5E1_1px,transparent_1px)] bg-[size:24px_24px] print:bg-transparent print:border-none print:shadow-none flex items-center justify-center">
           <canvas 
             ref={canvasRef} 
-            width={1600} 
-            height={1000} 
-            className="w-full h-auto max-h-[75vh] object-contain print:max-h-[85vh]"
+            width={1800} 
+            height={850} 
+            className="w-full h-auto max-h-[70vh] object-contain print:max-h-[85vh]"
           />
         </div>
 

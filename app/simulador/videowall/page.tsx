@@ -65,6 +65,11 @@ export default function SimuladorVideoWall() {
     pitchId: '' 
   });
 
+  // Cálculos em tempo real das colunas/linhas para renderização gráfica
+  const ledCols = Math.max(1, Math.ceil(ledConfig.width / 0.5));
+  const ledRows = Math.max(1, Math.ceil(ledConfig.height / 0.5));
+  const totalModulosVisual = ledCols * ledRows;
+
   // Estados do Modal de Acessórios Inteligentes
   const [modalOpen, setModalOpen] = useState(false);
   const [recommendedAccs, setRecommendedAccs] = useState<Equipamento[]>([]);
@@ -138,18 +143,12 @@ export default function SimuladorVideoWall() {
       const selectedLed = dbSetores.led.find(e => e.id === ledConfig.pitchId);
       if (!selectedLed) return null;
 
-      const cols = Math.ceil(ledConfig.width / 0.5);
-      const rows = Math.ceil(ledConfig.height / 0.5);
-      const actualW = cols * 0.5;
-      const actualH = rows * 0.5;
-      const totalCabinets = cols * rows;
-
-      const pesoTotal = totalCabinets * (selectedLed.peso || 0);
-      const consumoTotal = totalCabinets * (selectedLed.consumo_watts || 0);
+      const pesoTotal = totalModulosVisual * (selectedLed.peso || 0);
+      const consumoTotal = totalModulosVisual * (selectedLed.consumo_watts || 0);
 
       const panelRes = parseInt(selectedLed.resolucao || '128');
-      const resX = cols * panelRes;
-      const resY = rows * panelRes;
+      const resX = ledCols * panelRes;
+      const resY = ledRows * panelRes;
       const totalPixels = resX * resY;
       const portasNecessarias = Math.ceil(totalPixels / 650000) || 1;
 
@@ -157,7 +156,7 @@ export default function SimuladorVideoWall() {
         id: selectedLed.id,
         qty: 1,
         name: `Painel de LED ${selectedLed.nome}`,
-        details: `${actualW}m x ${actualH}m (${totalCabinets} Módulos) | Res: ${resX}x${resY}px | ${portasNecessarias} Porta(s) Novastar`,
+        details: `${ledCols * 0.5}m x ${ledRows * 0.5}m (${totalModulosVisual} Módulos) | Res: ${resX}x${resY}px | ${portasNecessarias} Porta(s) Novastar`,
         weight: pesoTotal,
         watts: consumoTotal,
         image: selectedLed.imagem_url || '/logo.png'
@@ -182,7 +181,7 @@ export default function SimuladorVideoWall() {
         image: selectedDev.imagem_url || '/logo.png'
       };
     }
-  }, [equipType, ledConfig, selectedModelId, quantity, dbSetores, loading]);
+  }, [equipType, ledConfig, selectedModelId, quantity, dbSetores, loading, ledCols, ledRows, totalModulosVisual]);
 
   // 4. Lógica de acionamento do Modal de Acessórios Relacionais
   const iniciarAdicaoProjeto = () => {
@@ -251,7 +250,7 @@ export default function SimuladorVideoWall() {
   }, [projectList]);
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6 px-4 md:px-6 pb-4 md:pb-6 pt-2 bg-[#F0F4F8] text-[#0F172A] h-screen overflow-hidden font-sans print:bg-white print:text-black print:block">
+    <div className="flex flex-col lg:flex-row gap-6 px-4 md:px-6 pb-4 md:pb-10 pt-4 bg-[#F0F4F8] text-[#0F172A] h-screen max-h-[800px] overflow-hidden font-sans print:bg-white print:text-black print:block">
       <Analytics/>
       
       {/* MODAL DE SUGESTÃO DE ACESSÓRIOS */}
@@ -416,12 +415,12 @@ export default function SimuladorVideoWall() {
           </button>
         </div>
 
-        {/* AQUI COMEÇA O BLOCO VERTICALMENTE REDUZIDO */}
+        {/* BLOCO CENTRAL / VISUAL */}
         {!isProjectView ? (
           <div className="flex flex-col gap-3 flex-grow min-h-0">
             <h3 className="text-lg font-black text-[#0C1D4D] tracking-tight uppercase print:hidden flex-shrink-0">Monitoramento do Equipamento</h3>
             
-            <div className="flex-grow bg-[#F8FAFC] border border-[#E2E8F0] rounded-2xl flex items-center justify-center p-4 relative overflow-hidden min-h-[200px] bg-[radial-gradient(#CBD5E1_1px,transparent_1px)] bg-[size:24px_24px] print:border-none print:h-[250px] shadow-inner">
+            <div className="flex-grow bg-[#F8FAFC] border border-[#E2E8F0] rounded-2xl flex flex-col items-center justify-center p-4 relative overflow-hidden min-h-[300px] bg-[radial-gradient(#CBD5E1_1px,transparent_1px)] bg-[size:24px_24px] print:border-none print:h-[350px] shadow-inner">
               {loading && (
                 <div className="absolute inset-0 bg-white/80 z-50 flex flex-col items-center justify-center rounded-2xl backdrop-blur-sm">
                   <div className="w-8 h-8 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin mb-2 shadow-sm"></div>
@@ -429,20 +428,54 @@ export default function SimuladorVideoWall() {
                 </div>
               )}
 
-              {!loading && currentItemDraft && (
-                <div className={`w-56 h-36 bg-[#0C1D4D] border-2 border-[#336699] shadow-[0_10px_30px_rgba(12,29,77,0.25)] flex flex-col items-center justify-center p-3 transition-all rounded-xl text-center ${ledConfig.shape === 'curvo' ? 'scale-x-95 rotate-y-12' : ''}`}>
+              {/* LÓGICA GRÁFICA DO PAINEL DE LED COM QUADRADINHOS GRANDES, LOGO E SEM BORDA EXTERNA */}
+              {!loading && currentItemDraft && equipType === 'led' && (
+                <div className={`flex flex-col items-center justify-center w-full h-full transition-all ${ledConfig.shape === 'curvo' ? 'scale-x-95 rotate-y-[15deg]' : ''}`}>
+                  <div 
+                    className="grid shadow-[0_15px_40px_rgba(12,29,77,0.25)]"
+                    style={{ 
+                      gridTemplateColumns: `repeat(${ledCols}, minmax(0, 1fr))`,
+                      gap: '0px', // Sem borda externa nem gap, apenas a borda de cada módulo
+                      // O segredo do Auto-Fit: Força a largura para bater com a altura máxima e não quebrar
+                      width: `min(100%, calc(380px * ${ledCols / ledRows}))`,
+                    }}
+                  >
+                    {/* Renderiza a quantidade exata de módulos visualmente */}
+                    {Array.from({ length: Math.min(totalModulosVisual, 2000) }).map((_, i) => (
+                      <div key={i} className="relative bg-[#0C1D4D] border border-[#336699]/40 flex items-center justify-center overflow-hidden aspect-square">
+                        {/* Se tiver menos que 400 placas, mostra a logo em cada uma para não travar PCs lentos */}
+                        {totalModulosVisual <= 400 && (
+                          <div className="relative w-[70%] h-[70%]">
+                             <Image 
+                               src={logoColorido} 
+                               alt="Logo Rentech" 
+                               fill 
+                               className="object-contain opacity-90"
+                             />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* LÓGICA DE CARD PARA OS DEMAIS EQUIPAMENTOS */}
+              {!loading && currentItemDraft && equipType !== 'led' && (
+                <div className="w-56 h-36 bg-[#0C1D4D] border-2 border-[#336699] shadow-[0_10px_30px_rgba(12,29,77,0.25)] flex flex-col items-center justify-center p-3 transition-all rounded-xl text-center">
                   <span className="text-[8px] font-black text-[#60A5FA] tracking-widest uppercase mb-1.5">Simulação Rentech</span>
                   <strong className="text-white text-sm font-black leading-tight mb-1.5">{currentItemDraft.name}</strong>
                   <span className="text-[9px] text-[#94A3B8] block px-2 leading-relaxed">{currentItemDraft.details}</span>
                 </div>
               )}
+
             </div>
 
-            {/* Cards Rápidos de Telemetria Técnica - Mais finos e limpos */}
+            {/* Cards Rápidos de Telemetria Técnica */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 flex-shrink-0">
               <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow">
                 <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Métrica de Corte</span>
-                <strong className="block text-base text-[#0C1D4D] font-black">{equipType === 'led' ? `${Math.ceil(ledConfig.width/0.5)*0.5}m x ${Math.ceil(ledConfig.height/0.5)*0.5}m` : 'Unidade Física'}</strong>
+                <strong className="block text-base text-[#0C1D4D] font-black">{equipType === 'led' ? `${ledCols * 0.5}m x ${ledRows * 0.5}m` : 'Unidade Física'}</strong>
               </div>
               <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow">
                 <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Carga de Peso</span>

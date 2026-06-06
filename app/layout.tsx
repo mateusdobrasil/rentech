@@ -3,10 +3,7 @@ import Navbar from '../components/Navbar'; // Importando o componente
 
 export const metadata = {
   title: 'Rentech - Ecossistema Digital',
-  description: 'Engenharia Audiovisual para Grandes Eventos',
-  icons: {
-    icon: '/favicon.ico',
-  },
+  description: 'Engenharia Audiovisual para Grandes Eventos'
 };
 
 export default function RootLayout({
@@ -16,6 +13,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="pt-BR" className="scroll-smooth">
+      
       {/* O fundo preto padrão do ecossistema já pode ficar no body */}
       <body className="bg-[#000000] text-slate-50 font-sans antialiased">
         

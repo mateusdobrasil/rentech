@@ -5,6 +5,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import logoColorido from '../../../app/imgs/logo.png';
 import { supabase } from '../../lib/supabase';
+import { Analytics } from "@vercel/analytics/next"
 
 // Interfaces para tipagem estrita do TypeScript
 interface Equipamento {
@@ -251,6 +252,7 @@ export default function SimuladorVideoWall() {
 
   return (
     <div className="flex flex-col lg:flex-row gap-6 px-4 md:px-6 pb-4 md:pb-6 pt-2 bg-[#F0F4F8] text-[#0F172A] h-screen overflow-hidden font-sans print:bg-white print:text-black print:block">
+      <Analytics/>
       
       {/* MODAL DE SUGESTÃO DE ACESSÓRIOS */}
       {modalOpen && (

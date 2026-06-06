@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import logoColorido from '../../../../app/imgs/logo.png';
 import { listarOPs, atualizarOP } from '../actions';
+import { Analytics } from "@vercel/analytics/next"
 
 interface ItemOP {
   descricao: string;
@@ -158,6 +159,7 @@ export default function PainelResponsavel() {
 
   return (
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col">
+      <Analytics/>
       
       {/* HEADER TÉCNICO */}
       <header className="bg-[#336699] text-white p-4 md:px-8 flex justify-between items-center shadow-md flex-shrink-0">

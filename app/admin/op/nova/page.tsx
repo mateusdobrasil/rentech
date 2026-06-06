@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import logoColorido from '../../../../app/imgs/logo.png';
 // Importação da Action de Criação que fizemos no backend
 import { criarOP, NovaOPData } from '../actions'; 
+import { Analytics } from "@vercel/analytics/next"
 
 interface ItemOP {
   id: number;
@@ -126,6 +127,7 @@ export default function NovaOrdemPagamento() {
 
   return (
     <div className="min-h-screen bg-[#F0F4F8] p-4 lg:p-10 font-sans text-[#0A2A4A] print:bg-white print:p-0">
+      <Analytics/>
       
       {/* Modal de Feedback */}
       {modal.open && (

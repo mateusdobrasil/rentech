@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { supabase } from '../../lib/supabase';
+import { Analytics } from "@vercel/analytics/next"
 
 // Definição estrita das permissões do ecossistema Rentech
 type NivelPermissao = 'ADMINISTRADOR' | 'ADMINISTRATIVO' | 'FINANCEIRO' | 'ESTOQUE' | 'OPERACIONAL';
@@ -113,6 +114,7 @@ export default function GestaoPermissoes() {
 
   return (
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-24">
+      <Analytics/>
       
       {/* CABEÇALHO DA PÁGINA (Alinhado com a Navbar global) */}
       <div className="px-4 md:px-8 py-4 flex flex-col md:flex-row justify-between items-center gap-4 flex-shrink-0">

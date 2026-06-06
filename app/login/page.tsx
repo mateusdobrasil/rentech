@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabase'; // Importando a conexão real do banco
 import logoPB from '../imgs/logo_pb.png'; // Usando a logo monocromática para o fundo escuro
+import { Analytics } from "@vercel/analytics/next"
 
 export default function Login() {
   const router = useRouter();
@@ -54,6 +55,7 @@ export default function Login() {
     <div className="min-h-screen bg-[#000000] bg-[radial-gradient(circle_at_center,_rgba(12,29,77,0.4)_0%,_transparent_100%)] flex flex-col items-center justify-center p-4 font-sans">
       
       <div className="w-full max-w-md bg-[#0C1D4D]/20 p-8 md:p-10 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-[#284B8C]/30 backdrop-blur-md transform transition-all">
+        <Analytics/>
         
         {/* Cabeçalho */}
         <div className="flex flex-col items-center mb-8">

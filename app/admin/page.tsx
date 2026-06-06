@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabase';
+import { Analytics } from "@vercel/analytics/next"
 
 // Tipagem do Perfil
 interface PerfilUsuario {
@@ -111,6 +112,7 @@ export default function HubAdministrativo() {
       </div>
     );
   }
+  <Analytics/>
 
   if (!perfil) {
     return (

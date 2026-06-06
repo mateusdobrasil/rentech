@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import logoColorido from '../../../../app/imgs/logo.png';
 import { listarOPs, atualizarStatus } from '../actions';
+import { Analytics } from "@vercel/analytics/next"
 
 // Interface baseada no banco Supabase que criamos
 interface ItemOP {
@@ -136,6 +137,7 @@ export default function PainelFinanceiro() {
 
   return (
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col">
+      <Analytics/>
       
       {/* HEADER ADM */}
       <header className="bg-[#0C1D4D] text-white p-4 md:px-8 flex justify-between items-center shadow-md z-10 flex-shrink-0">

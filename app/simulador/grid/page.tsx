@@ -5,6 +5,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import logoColorido from '../../../app/imgs/logo.png';
 import logoPB from '../../../app/imgs/logo_pb.png';
+import { Analytics } from "@vercel/analytics/next"
 
 const TAMANHO_FISICO_MOD = 0.5; // Módulo padrão de 50x50cm
 
@@ -77,6 +78,7 @@ export default function SimuladorGrid() {
 
   return (
     <div className="flex flex-col lg:flex-row gap-4 p-4 bg-[#000000] text-[#B3B3B3] min-h-screen font-sans print:bg-white print:text-black print:block print:p-0">
+      <Analytics/>
       
       {/* SIDEBAR DE CONTROLES (Oculta na impressão) */}
       <aside className="bg-[#0C1D4D]/20 p-5 rounded-2xl shadow-xl w-full lg:w-[380px] flex-shrink-0 flex flex-col border border-[#284B8C]/30 overflow-y-auto backdrop-blur-sm print:hidden">

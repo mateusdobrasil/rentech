@@ -5,6 +5,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import logoColorido from '../../../app/imgs/logo.png';
+import { Analytics } from "@vercel/analytics/next"
 
 export default function PortalPagamentos() {
   const router = useRouter();
@@ -37,6 +38,7 @@ export default function PortalPagamentos() {
 
   return (
     <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4 font-sans">
+      <Analytics/>
       
       <div className="bg-white p-8 md:p-10 rounded-2xl shadow-xl w-full max-w-md text-center border border-[#E2E8F0] transform transition-all">
         

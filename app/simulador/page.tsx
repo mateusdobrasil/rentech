@@ -44,7 +44,7 @@ export default function Simuladores() {
           </Link>
 
           {/* Card 2 */}
-          <Link href="/simulador/calculotela" className="group flex flex-col bg-[#0C1D4D]/20 border border-[#284B8C]/30 rounded-2xl p-8 backdrop-blur-md hover:-translate-y-2 hover:border-[#336699] hover:shadow-[0_15px_35px_rgba(0,0,0,0.5),_0_0_15px_rgba(51,102,153,0.2)] transition-all duration-300 relative overflow-hidden">
+          <Link href="/simulador/tela" className="group flex flex-col bg-[#0C1D4D]/20 border border-[#284B8C]/30 rounded-2xl p-8 backdrop-blur-md hover:-translate-y-2 hover:border-[#336699] hover:shadow-[0_15px_35px_rgba(0,0,0,0.5),_0_0_15px_rgba(51,102,153,0.2)] transition-all duration-300 relative overflow-hidden">
             <div className="text-[10px] md:text-xs font-black uppercase text-[#336699] mb-3 tracking-widest">
               Projetos • LED
             </div>
@@ -58,7 +58,7 @@ export default function Simuladores() {
           </Link>
 
           {/* Card 3 */}
-          <Link href="/simulador/calculogrid" className="group flex flex-col bg-[#0C1D4D]/20 border border-[#284B8C]/30 rounded-2xl p-8 backdrop-blur-md hover:-translate-y-2 hover:border-[#336699] hover:shadow-[0_15px_35px_rgba(0,0,0,0.5),_0_0_15px_rgba(51,102,153,0.2)] transition-all duration-300 relative overflow-hidden">
+          <Link href="/simulador/grid" className="group flex flex-col bg-[#0C1D4D]/20 border border-[#284B8C]/30 rounded-2xl p-8 backdrop-blur-md hover:-translate-y-2 hover:border-[#336699] hover:shadow-[0_15px_35px_rgba(0,0,0,0.5),_0_0_15px_rgba(51,102,153,0.2)] transition-all duration-300 relative overflow-hidden">
             <div className="text-[10px] md:text-xs font-black uppercase text-[#336699] mb-3 tracking-widest">
               Projetos • Estrutural
             </div>
@@ -72,7 +72,7 @@ export default function Simuladores() {
           </Link>
 
           {/* Card 4 */}
-          <Link href="/simulador/calculocirculo" className="group flex flex-col bg-[#0C1D4D]/20 border border-[#284B8C]/30 rounded-2xl p-8 backdrop-blur-md hover:-translate-y-2 hover:border-[#336699] hover:shadow-[0_15px_35px_rgba(0,0,0,0.5),_0_0_15px_rgba(51,102,153,0.2)] transition-all duration-300 relative overflow-hidden">
+          <Link href="/simulador/curvatura" className="group flex flex-col bg-[#0C1D4D]/20 border border-[#284B8C]/30 rounded-2xl p-8 backdrop-blur-md hover:-translate-y-2 hover:border-[#336699] hover:shadow-[0_15px_35px_rgba(0,0,0,0.5),_0_0_15px_rgba(51,102,153,0.2)] transition-all duration-300 relative overflow-hidden">
             <div className="text-[10px] md:text-xs font-black uppercase text-[#336699] mb-3 tracking-widest">
               Engenharia • Especial
             </div>

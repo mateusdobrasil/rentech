@@ -1,5 +1,6 @@
 import Image from 'next/image';
 import Link from 'next/link';
+import { Analytics } from "@vercel/analytics/next"
 
 // Importando as imagens diretamente da pasta local
 import logoColorido from './imgs/logo.png';
@@ -9,6 +10,8 @@ export default function Home() {
   return (
     // Utilizando o preto oficial da Rentech como fundo principal
     <main className="min-h-screen bg-[#000000] text-slate-50 font-sans scroll-smooth">
+
+      <Analytics/>
 
       {/* Hero Section */}
       <section className="relative min-h-screen flex items-center pt-20 overflow-hidden">

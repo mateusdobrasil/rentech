@@ -5,7 +5,7 @@ export const metadata = {
   title: 'Rentech - Ecossistema Digital',
   description: 'Engenharia Audiovisual para Grandes Eventos',
   icons: {
-    icon: '../public/favicon.ico',
+    icon: '/favicon.ico',
   },
 };
 

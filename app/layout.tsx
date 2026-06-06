@@ -4,6 +4,9 @@ import Navbar from '../components/Navbar'; // Importando o componente
 export const metadata = {
   title: 'Rentech - Ecossistema Digital',
   description: 'Engenharia Audiovisual para Grandes Eventos',
+  icons: {
+    icon: '../public/favicon.ico',
+  },
 };
 
 export default function RootLayout({

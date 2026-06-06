@@ -1,11 +1,9 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabase';
-import logoColorido from '../../app/imgs/logo.png';
 
 // Tipagem do Perfil
 interface PerfilUsuario {
@@ -22,7 +20,8 @@ const MODULOS_SISTEMA = [
     icone: '💰',
     link: '/admin/op/financeiro',
     permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
-    cor: 'border-green-500/50 hover:border-green-500'
+    cor: 'border-green-500/50 hover:border-green-500',
+    bgIcon: 'bg-green-50 text-green-600'
   },
   {
     titulo: 'Minhas OPs',
@@ -30,7 +29,8 @@ const MODULOS_SISTEMA = [
     icone: '📋',
     link: '/admin/op/responsavel',
     permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO', 'ADMINISTRATIVO', 'OPERACIONAL', 'ESTOQUE'],
-    cor: 'border-[#336699]/50 hover:border-[#336699]'
+    cor: 'border-[#336699]/50 hover:border-[#336699]',
+    bgIcon: 'bg-blue-50 text-[#336699]'
   },
   {
     titulo: 'Solicitar Nova OP',
@@ -38,7 +38,8 @@ const MODULOS_SISTEMA = [
     icone: '➕',
     link: '/admin/op/nova',
     permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO', 'ADMINISTRATIVO', 'OPERACIONAL', 'ESTOQUE'],
-    cor: 'border-[#336699]/50 hover:border-[#336699]'
+    cor: 'border-[#336699]/50 hover:border-[#336699]',
+    bgIcon: 'bg-blue-50 text-[#336699]'
   },
   {
     titulo: 'Gestão de Acessos',
@@ -46,7 +47,8 @@ const MODULOS_SISTEMA = [
     icone: '🔐',
     link: '/admin/permissoes',
     permissoes_permitidas: ['ADMINISTRADOR'],
-    cor: 'border-purple-500/50 hover:border-purple-500'
+    cor: 'border-purple-500/50 hover:border-purple-500',
+    bgIcon: 'bg-purple-50 text-purple-600'
   },
   {
     titulo: 'Controle de Estoque',
@@ -54,7 +56,8 @@ const MODULOS_SISTEMA = [
     icone: '📦',
     link: '#',
     permissoes_permitidas: ['ADMINISTRADOR', 'ESTOQUE'],
-    cor: 'border-amber-500/50 hover:border-amber-500'
+    cor: 'border-amber-500/50 hover:border-amber-500',
+    bgIcon: 'bg-amber-50 text-amber-600'
   }
 ];
 
@@ -91,7 +94,7 @@ export default function HubAdministrativo() {
     carregarAcesso();
   }, [router]);
 
-  // Função para deslogar
+  // Função para deslogar (Usada apenas como fallback na tela de erro)
   const handleSair = async () => {
     await supabase.auth.signOut();
     document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;';
@@ -100,10 +103,10 @@ export default function HubAdministrativo() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center">
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center pt-24">
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-[#0C1D4D] border-t-[#336699] rounded-full animate-spin mx-auto mb-4"></div>
-          <h2 className="text-[#0C1D4D] font-black uppercase tracking-widest text-sm">Carregando permissões...</h2>
+          <h2 className="text-[#0C1D4D] font-black uppercase tracking-widest text-sm">Carregando módulos...</h2>
         </div>
       </div>
     );
@@ -111,7 +114,7 @@ export default function HubAdministrativo() {
 
   if (!perfil) {
     return (
-      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4 pt-24">
         <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200">
           <div className="text-5xl mb-4">⚠️</div>
           <h2 className="text-xl font-black text-[#0C1D4D] uppercase tracking-wider mb-2">Perfil não localizado</h2>
@@ -130,35 +133,25 @@ export default function HubAdministrativo() {
   );
 
   return (
-    <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pb-10">
+    <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-24 pb-12">
       
-      {/* HEADER DA PLATAFORMA */}
-      <header className="bg-[#0C1D4D] text-white p-4 md:px-8 flex justify-between items-center shadow-lg">
-        <div className="flex items-center gap-4">
-          <Image src={logoColorido} alt="Rentech" width={140} height={40} className="brightness-0 invert hover:scale-105 transition-transform" />
-          <h2 className="text-xs font-black tracking-widest uppercase hidden md:block border-l-2 border-[#284B8C] pl-4">Hub Operacional</h2>
-        </div>
-        
-        <div className="flex items-center gap-4">
-          <div className="hidden sm:block text-right">
-            <strong className="block text-[11px] font-black uppercase tracking-wider leading-tight">{perfil.nome}</strong>
-            <span className="text-[9px] text-[#94A3B8] font-bold tracking-widest uppercase">{perfil.permissao}</span>
+      {/* BOAS VINDAS E INFORMAÇÕES DO PERFIL */}
+      <div className="container mx-auto px-4 mt-6 mb-10 max-w-6xl">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-[#E2E8F0] pb-8">
+          <div>
+            <h1 className="text-3xl md:text-4xl font-black text-[#0C1D4D] tracking-tight mb-2">
+              Bem-vindo ao Ecossistema, <span className="text-[#336699]">{perfil.nome.split(' ')[0]}</span>.
+            </h1>
+            <p className="text-[#64748B] font-medium text-sm md:text-base">
+              Selecione abaixo o módulo que deseja acessar. Suas ferramentas foram liberadas conforme o seu nível de acesso.
+            </p>
           </div>
-          <div className="w-px h-8 bg-[#284B8C] hidden sm:block"></div>
-          <button onClick={handleSair} className="text-[10px] font-black uppercase tracking-wider text-red-400 hover:text-white bg-white/5 hover:bg-red-500/20 border border-white/10 px-4 py-2 rounded-lg transition-colors">
-            SAIR
-          </button>
+          
+          <div className="bg-white px-5 py-3 rounded-xl shadow-sm border border-[#E2E8F0] text-left md:text-right min-w-[200px]">
+            <span className="block text-[10px] text-[#94A3B8] font-bold tracking-widest uppercase mb-1">Seu Nível de Acesso</span>
+            <strong className="block text-sm text-[#336699] font-black uppercase tracking-wider">{perfil.permissao}</strong>
+          </div>
         </div>
-      </header>
-
-      {/* BOAS VINDAS */}
-      <div className="container mx-auto px-4 mt-10 mb-8 max-w-6xl">
-        <h1 className="text-3xl md:text-4xl font-black text-[#0C1D4D] tracking-tight mb-2">
-          Bem-vindo ao Ecossistema, <span className="text-[#336699]">{perfil.nome.split(' ')[0]}</span>.
-        </h1>
-        <p className="text-[#64748B] font-medium text-sm md:text-base">
-          Selecione abaixo o módulo que deseja acessar. Suas ferramentas foram liberadas conforme o seu nível de acesso.
-        </p>
       </div>
 
       {/* GRID DE MÓDULOS (CARDS) */}
@@ -169,21 +162,25 @@ export default function HubAdministrativo() {
             <Link 
               href={modulo.link} 
               key={index}
-              className={`bg-white p-6 rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 border-2 border-transparent ${modulo.cor} group relative overflow-hidden`}
+              className={`bg-white p-8 rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 border-2 border-transparent ${modulo.cor} group relative overflow-hidden`}
             >
               {/* Efeito de brilho de fundo no hover */}
-              <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-gradient-to-bl from-current to-transparent opacity-5 rounded-full group-hover:scale-150 transition-transform duration-500 pointer-events-none"></div>
+              <div className="absolute top-0 right-0 -mt-6 -mr-6 w-32 h-32 bg-gradient-to-bl from-current to-transparent opacity-[0.03] rounded-full group-hover:scale-150 transition-transform duration-500 pointer-events-none"></div>
 
-              <div className="text-4xl mb-4">{modulo.icone}</div>
-              <h3 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider mb-2">
+              <div className={`w-14 h-14 ${modulo.bgIcon} rounded-xl flex items-center justify-center text-3xl mb-6 shadow-sm`}>
+                {modulo.icone}
+              </div>
+              
+              <h3 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider mb-3">
                 {modulo.titulo}
               </h3>
-              <p className="text-[#64748B] text-sm font-medium leading-relaxed mb-6">
+              
+              <p className="text-[#64748B] text-sm font-medium leading-relaxed mb-8 h-10">
                 {modulo.descricao}
               </p>
               
-              <div className="flex items-center text-[10px] font-black uppercase tracking-widest text-[#336699] group-hover:text-[#0C1D4D] transition-colors">
-                Acessar Módulo <span className="ml-2 group-hover:translate-x-1 transition-transform">➔</span>
+              <div className="flex items-center text-[11px] font-black uppercase tracking-widest text-[#336699] group-hover:text-[#0C1D4D] transition-colors pt-4 border-t border-[#F1F5F9]">
+                Acessar Módulo <span className="ml-2 group-hover:translate-x-2 transition-transform">➔</span>
               </div>
             </Link>
           ))}

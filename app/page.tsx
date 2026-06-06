@@ -93,18 +93,29 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Footer com Logo Colorido */}
-      <footer className="bg-[#000000] py-12 border-t border-[#0C1D4D] flex flex-col items-center">
-        <Image 
-          src={logoColorido} 
-          alt="Rentech Locadora" 
-          width={120} 
-          height={45} 
-          className="h-12 w-auto mb-6 opacity-80 grayscale hover:grayscale-0 transition-all duration-500"
-        />
-        <p className="text-[#666666] text-sm font-medium">
-          &copy; {new Date().getFullYear()} Rentech Locações Audiovisuais. Todos os direitos reservados.
-        </p>
+      {/* Footer com gradiente sutil usando o preto oficial */}
+      <footer className="w-full px-6 py-10 mt-auto bg-gradient-to-t from-[#000000] to-transparent border-t border-[#0C1D4D]/50">
+        <div className="flex flex-col items-center gap-6 max-w-4xl mx-auto">
+          
+          <div className="flex gap-4">
+            <a href="https://www.instagram.com/rentechlocadora/" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center w-12 h-12 rounded-full bg-[#0C1D4D]/30 border border-[#284B8C]/30 text-[#999999] hover:text-[#336699] hover:border-[#336699] hover:bg-[#336699]/10 hover:-translate-y-1 hover:shadow-[0_10px_20px_rgba(51,102,153,0.2)] transition-all duration-300">
+              <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.07zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
+            </a>
+            <a href="https://www.facebook.com/LocadoraRentech" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center w-12 h-12 rounded-full bg-[#0C1D4D]/30 border border-[#284B8C]/30 text-[#999999] hover:text-[#336699] hover:border-[#336699] hover:bg-[#336699]/10 hover:-translate-y-1 hover:shadow-[0_10px_20px_rgba(51,102,153,0.2)] transition-all duration-300">
+              <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M9 8h-3v4h3v12h5v-12h3.642l.358-4h-4v-1.667c0-.955.192-1.333 1.115-1.333h2.885v-5h-3.808c-3.596 0-5.192 1.583-5.192 4.615v3.385z"/></svg>
+            </a>
+            <a href="https://www.youtube.com/@locadorarentech50" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center w-12 h-12 rounded-full bg-[#0C1D4D]/30 border border-[#284B8C]/30 text-[#999999] hover:text-[#336699] hover:border-[#336699] hover:bg-[#336699]/10 hover:-translate-y-1 hover:shadow-[0_10px_20px_rgba(51,102,153,0.2)] transition-all duration-300">
+              <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+            </a>
+            <a href="https://x.com/LocadoraRentech" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center w-12 h-12 rounded-full bg-[#0C1D4D]/30 border border-[#284B8C]/30 text-[#999999] hover:text-[#336699] hover:border-[#336699] hover:bg-[#336699]/10 hover:-translate-y-1 hover:shadow-[0_10px_20px_rgba(51,102,153,0.2)] transition-all duration-300">
+              <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"/></svg>
+            </a>
+          </div>
+          
+          <p className="text-xs text-[#666666] tracking-widest uppercase font-bold text-center">
+            LOCADORA RENTECH &copy; {new Date().getFullYear()} | Todos os direitos reservados
+          </p>
+        </div>
       </footer>
 
     </main>

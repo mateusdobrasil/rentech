@@ -52,7 +52,7 @@ export default function Navbar() {
             alt="Rentech Locadora" 
             width={160} 
             height={60} 
-            className="h-10 w-auto object-contain"
+            className="h-12 w-auto object-contain"
             priority
           />
         </Link>

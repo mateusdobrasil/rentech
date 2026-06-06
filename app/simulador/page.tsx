@@ -11,16 +11,6 @@ export default function Simuladores() {
         
         {/* Cabeçalho */}
         <header className="text-center mb-16 flex flex-col items-center">
-          <Link href="/">
-            <Image 
-              src={logoColorido} 
-              alt="Locadora Rentech" 
-              width={320} 
-              height={120} 
-              className="w-full max-w-[280px] md:max-w-[320px] h-auto drop-shadow-[0_0_15px_rgba(51,102,153,0.3)] mb-8 hover:scale-105 transition-transform duration-500"
-              priority
-            />
-          </Link>
           <h1 className="uppercase tracking-widest font-light text-sm md:text-base text-white border-t border-white/10 inline-block pt-6 leading-relaxed max-w-[90%]">
             Sistemas de Simuladores para <span className="text-[#336699] font-black">Apoio a Projetos e Comercial</span>
           </h1>

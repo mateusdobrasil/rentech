@@ -2,7 +2,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   // Pega o token de sessão do Supabase (o nome padrão começa com 'sb-')
   const session = request.cookies.get('sb-access-token');
 

@@ -15,7 +15,7 @@ export default function Home() {
       <Analytics/>
 
       {/* Hero Section */}
-      <section className="relative min-h-screen flex items-center pt-20 overflow-hidden">
+      <section className="relative min-h-screen flex items-center pt-6 overflow-hidden">
         {/* Fundo escuro com gradiente puxando para o azul institucional */}
         <div className="absolute inset-0 bg-gradient-to-b from-[#0C1D4D]/40 via-[#000000] to-[#000000] z-0"></div>
         

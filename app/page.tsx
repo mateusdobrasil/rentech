@@ -140,7 +140,7 @@ export default function Home() {
                 alt: 'Evento corporativo de gala com painel de LED curvo ao fundo',
               },
               {
-                img: '/cases/case-festival.png',
+                img: '/cases/festival.mp4',
                 tag: 'Show / Festival',
                 title: 'Festival de Música ao Vivo',
                 desc: 'Estrutura de grid completa, PA de grande porte e rig de iluminação para palco principal ao ar livre.',
@@ -200,7 +200,7 @@ export default function Home() {
 
               <div className="flex flex-col gap-4">
                 <a
-                  href="https://wa.me/5500000000000"
+                  href="https://wa.me/5511998527420"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-4 p-4 rounded-xl border border-[#284B8C]/30 bg-[#0C1D4D]/20 hover:border-[#336699] hover:bg-[#336699]/10 transition-all group"
@@ -215,7 +215,7 @@ export default function Home() {
                 </a>
 
                 <a
-                  href="mailto:contato@rentech.com.br"
+                  href="mailto:contato@locadorarentech.com.br"
                   className="flex items-center gap-4 p-4 rounded-xl border border-[#284B8C]/30 bg-[#0C1D4D]/20 hover:border-[#336699] hover:bg-[#336699]/10 transition-all group"
                 >
                   <span className="flex items-center justify-center w-12 h-12 rounded-full bg-[#284B8C]/20 text-[#336699] group-hover:bg-[#284B8C] group-hover:text-white transition-colors shrink-0">
@@ -223,7 +223,7 @@ export default function Home() {
                   </span>
                   <div>
                     <p className="text-[10px] font-black uppercase tracking-widest text-[#666666]">E-mail</p>
-                    <p className="text-white font-bold">contato@rentech.com.br</p>
+                    <p className="text-white font-bold">contato@locadorarentech.com.br</p>
                   </div>
                 </a>
               </div>

@@ -6,6 +6,7 @@ import { revalidatePath } from 'next/cache';
 // Tipagem de segurança para garantir que a OP não falte dados
 export interface NovaOPData {
   responsavel_nome: string;
+  responsavel_email: string;
   natureza_pagamento: string;
   os_numero: string;
   os_cliente: string;

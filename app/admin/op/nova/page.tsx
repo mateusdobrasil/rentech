@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import logoColorido from '../../../../app/imgs/logo.png';
 // Importação da Action de Criação que fizemos no backend
 import { criarOP, NovaOPData } from '../actions'; 
+import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next"
 
 interface ItemOP {
@@ -22,7 +23,9 @@ export default function NovaOrdemPagamento() {
   const [modal, setModal] = useState<{ open: boolean; success: boolean; msg: string; title: string }>({ open: false, success: false, msg: '', title: '' });
 
   // Estado dos Dados Pessoais / Projeto
-  const [responsavelNome, setResponsavelNome] = useState(''); // O ideal é puxar isso do Auth futuramente
+  const [responsavelNome, setResponsavelNome] = useState(''); // Preenchido automaticamente com o usuário logado
+  const [responsavelEmail, setResponsavelEmail] = useState(''); // E-mail do login (Supabase Auth)
+  const [carregandoUsuario, setCarregandoUsuario] = useState(true);
   const [natureza, setNatureza] = useState('SUBLOCAÇÃO');
   const [osNum, setOsNum] = useState('');
   const [osCliente, setOsCliente] = useState('');
@@ -46,6 +49,42 @@ export default function NovaOrdemPagamento() {
   const [itens, setItens] = useState<ItemOP[]>(
     Array.from({ length: 3 }, (_, i) => ({ id: i, descricao: '', qtd: 0, valorUnitario: 0 }))
   );
+
+  // Carrega automaticamente o nome e e-mail do usuário logado (dados de login do Supabase Auth)
+  useEffect(() => {
+    const carregarResponsavel = async () => {
+      // Se o Supabase não estiver configurado, libera o campo para preenchimento manual.
+      if (!isSupabaseConfigured) {
+        setCarregandoUsuario(false);
+        return;
+      }
+
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+
+        if (user) {
+          // O e-mail vem direto do login
+          setResponsavelEmail(user.email ?? '');
+
+          // O nome pode estar nos metadados do usuário; senão, usa o trecho antes do @
+          const metadados = user.user_metadata ?? {};
+          const nome =
+            metadados.full_name ||
+            metadados.nome ||
+            metadados.name ||
+            (user.email ? user.email.split('@')[0].replace(/[._-]/g, ' ') : '');
+
+          setResponsavelNome((nome as string).toUpperCase());
+        }
+      } catch (e) {
+        console.error('[v0] Falha ao carregar usuário logado:', e);
+      } finally {
+        setCarregandoUsuario(false);
+      }
+    };
+
+    carregarResponsavel();
+  }, []);
 
   const formatarMoeda = (valor: number) => {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor || 0);
@@ -96,6 +135,7 @@ export default function NovaOrdemPagamento() {
 
     const payload: NovaOPData = {
       responsavel_nome: responsavelNome.toUpperCase() || 'USUÁRIO DO SISTEMA',
+      responsavel_email: responsavelEmail,
       natureza_pagamento: natureza,
       os_numero: osNum.toUpperCase(),
       os_cliente: osCliente.toUpperCase(),
@@ -166,9 +206,27 @@ export default function NovaOrdemPagamento() {
           
           {/* Sessão 1: Responsável e Natureza */}
           <section className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <div>
-              <label className="block text-xs font-bold text-[#64748B] uppercase tracking-wider mb-2">Responsável</label>
-              <input type="text" placeholder="Seu Nome Completo" className="w-full p-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg text-sm text-[#0A2A4A] focus:border-[#00A8E8] outline-none font-semibold uppercase" value={responsavelNome} onChange={(e) => setResponsavelNome(e.target.value)} />
+            <div className="bg-[#F0F9FF] border border-[#BAE6FD] rounded-xl p-4">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-xs font-bold text-[#0369A1] uppercase tracking-wider">Responsável (Logado)</label>
+                <span className="text-[9px] font-black uppercase tracking-wider bg-[#0369A1] text-white px-2 py-0.5 rounded-full">Automático</span>
+              </div>
+              {carregandoUsuario ? (
+                <p className="text-sm text-[#64748B] font-semibold animate-pulse py-1">Identificando usuário...</p>
+              ) : (
+                <>
+                  <input
+                    type="text"
+                    readOnly
+                    placeholder="Nome não identificado"
+                    className="w-full p-3 bg-white border border-[#BAE6FD] rounded-lg text-sm text-[#0A2A4A] outline-none font-bold uppercase cursor-default"
+                    value={responsavelNome}
+                  />
+                  <p className="text-xs text-[#0369A1] font-semibold mt-2 truncate">
+                    ✉️ {responsavelEmail || 'E-mail não disponível'}
+                  </p>
+                </>
+              )}
             </div>
             <div>
               <label className="block text-xs font-bold text-[#64748B] uppercase tracking-wider mb-2">Natureza do Pagamento</label>

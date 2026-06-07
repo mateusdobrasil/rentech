@@ -56,8 +56,15 @@ export default function Home() {
           <div className="grid md:grid-cols-3 gap-8">
             {/* Card 1 */}
             <div className="bg-[#0C1D4D]/20 border border-[#284B8C]/30 rounded-xl overflow-hidden hover:border-[#336699] transition-all hover:-translate-y-2 group">
-              <div className="h-56 bg-[#0C1D4D]/50 flex items-center justify-center text-[#666666] relative overflow-hidden">
-                <span className="font-bold tracking-widest uppercase text-sm">[Imagem: Estande]</span>
+              <div className="relative h-56 overflow-hidden">
+                <Image
+                  src="/cases/feiras.png"
+                  alt="Estande de feira com painéis de LED e iluminação arquitetural"
+                  fill
+                  sizes="(max-width: 768px) 100vw, 33vw"
+                  className="object-cover transition-transform duration-500 group-hover:scale-110"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#0C1D4D] via-[#0C1D4D]/20 to-transparent"></div>
               </div>
               <div className="p-8">
                 <h3 className="text-2xl font-black mb-3 text-white">Feiras e Exibições</h3>
@@ -69,8 +76,15 @@ export default function Home() {
 
             {/* Card 2 */}
             <div className="bg-[#0C1D4D]/20 border border-[#284B8C]/30 rounded-xl overflow-hidden hover:border-[#336699] transition-all hover:-translate-y-2 group">
-              <div className="h-56 bg-[#0C1D4D]/50 flex items-center justify-center text-[#666666] relative overflow-hidden">
-                <span className="font-bold tracking-widest uppercase text-sm">[Imagem: Auditório]</span>
+              <div className="relative h-56 overflow-hidden">
+                <Image
+                  src="/cases/congressos.png"
+                  alt="Auditório de congresso com tela de projeção e sistema de som profissional"
+                  fill
+                  sizes="(max-width: 768px) 100vw, 33vw"
+                  className="object-cover transition-transform duration-500 group-hover:scale-110"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#0C1D4D] via-[#0C1D4D]/20 to-transparent"></div>
               </div>
               <div className="p-8">
                 <h3 className="text-2xl font-black mb-3 text-white">Congressos</h3>
@@ -82,8 +96,15 @@ export default function Home() {
 
             {/* Card 3 */}
             <div className="bg-[#0C1D4D]/20 border border-[#284B8C]/30 rounded-xl overflow-hidden hover:border-[#336699] transition-all hover:-translate-y-2 group">
-              <div className="h-56 bg-[#0C1D4D]/50 flex items-center justify-center text-[#666666] relative overflow-hidden">
-                <span className="font-bold tracking-widest uppercase text-sm">[Imagem: Palco]</span>
+              <div className="relative h-56 overflow-hidden">
+                <Image
+                  src="/cases/shows.png"
+                  alt="Palco de show com grid de treliça, moving lights e PA de grande porte"
+                  fill
+                  sizes="(max-width: 768px) 100vw, 33vw"
+                  className="object-cover transition-transform duration-500 group-hover:scale-110"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#0C1D4D] via-[#0C1D4D]/20 to-transparent"></div>
               </div>
               <div className="p-8">
                 <h3 className="text-2xl font-black mb-3 text-white">Shows e Festivais</h3>
@@ -92,6 +113,202 @@ export default function Home() {
                 </p>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Cases / Portfólio */}
+      <section id="portfolio" className="py-24 bg-[#000000] border-t border-[#0C1D4D] relative">
+        <div className="container mx-auto px-6 relative z-10">
+          <div className="text-center mb-16">
+            <div className="inline-block px-4 py-1 mb-6 border border-[#284B8C]/50 rounded-full bg-[#284B8C]/10 text-[#336699] text-xs font-black tracking-widest uppercase">
+              Portfólio
+            </div>
+            <h2 className="text-3xl md:text-4xl font-black mb-4 text-balance">Cases de Sucesso</h2>
+            <p className="text-[#999999] max-w-2xl mx-auto font-medium text-pretty">
+              Projetos que entregamos com excelência técnica e operacional, do planejamento à execução final.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-8">
+            {[
+              {
+                img: '/cases/case-corporativo.png',
+                tag: 'Corporativo',
+                title: 'Convenção Anual de Vendas',
+                desc: 'Painel de LED curvo, palco com cenografia integrada e iluminação cênica para 800 convidados.',
+                alt: 'Evento corporativo de gala com painel de LED curvo ao fundo',
+              },
+              {
+                img: '/cases/case-festival.png',
+                tag: 'Show / Festival',
+                title: 'Festival de Música ao Vivo',
+                desc: 'Estrutura de grid completa, PA de grande porte e rig de iluminação para palco principal ao ar livre.',
+                alt: 'Palco principal de festival de música com grande painel de LED e luzes',
+              },
+              {
+                img: '/cases/case-congresso.png',
+                tag: 'Congresso',
+                title: 'Congresso Internacional',
+                desc: 'Projeção mapeada de grande formato, sonorização precisa e tradução simultânea para múltiplos idiomas.',
+                alt: 'Congresso internacional com grande tela de projeção e plateia',
+              },
+            ].map((c) => (
+              <article
+                key={c.title}
+                className="bg-[#0C1D4D]/20 border border-[#284B8C]/30 rounded-xl overflow-hidden hover:border-[#336699] transition-all hover:-translate-y-2 group"
+              >
+                <div className="relative h-64 overflow-hidden">
+                  <Image
+                    src={c.img}
+                    alt={c.alt}
+                    fill
+                    sizes="(max-width: 768px) 100vw, 33vw"
+                    className="object-cover transition-transform duration-500 group-hover:scale-110"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#0C1D4D] via-[#0C1D4D]/10 to-transparent"></div>
+                  <span className="absolute top-4 left-4 px-3 py-1 rounded-full bg-[#284B8C] text-white text-[10px] font-black tracking-widest uppercase">
+                    {c.tag}
+                  </span>
+                </div>
+                <div className="p-8">
+                  <h3 className="text-xl font-black mb-3 text-white">{c.title}</h3>
+                  <p className="text-[#B3B3B3] text-sm leading-relaxed">{c.desc}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Contato / Orçamento */}
+      <section id="contato" className="py-24 border-t border-[#0C1D4D] relative overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-b from-[#0C1D4D]/40 via-[#000000] to-[#000000] z-0"></div>
+        <div className="container mx-auto px-6 relative z-10">
+          <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-start max-w-6xl mx-auto">
+            {/* Texto + canais diretos */}
+            <div>
+              <div className="inline-block px-4 py-1 mb-6 border border-[#284B8C]/50 rounded-full bg-[#284B8C]/10 text-[#336699] text-xs font-black tracking-widest uppercase">
+                Fale com a gente
+              </div>
+              <h2 className="text-3xl md:text-5xl font-black mb-6 leading-tight tracking-tighter text-balance">
+                Vamos planejar o seu <span className="text-[#336699]">próximo evento</span>
+              </h2>
+              <p className="text-lg text-[#B3B3B3] mb-10 leading-relaxed font-medium text-pretty">
+                Conte o que você precisa e nossa equipe técnica retorna com uma proposta sob medida. Sem enrolação, sem margem para falhas.
+              </p>
+
+              <div className="flex flex-col gap-4">
+                <a
+                  href="https://wa.me/5500000000000"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-4 p-4 rounded-xl border border-[#284B8C]/30 bg-[#0C1D4D]/20 hover:border-[#336699] hover:bg-[#336699]/10 transition-all group"
+                >
+                  <span className="flex items-center justify-center w-12 h-12 rounded-full bg-[#284B8C]/20 text-[#336699] group-hover:bg-[#284B8C] group-hover:text-white transition-colors shrink-0">
+                    <svg className="w-6 h-6 fill-current" viewBox="0 0 24 24"><path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/></svg>
+                  </span>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-[#666666]">WhatsApp</p>
+                    <p className="text-white font-bold">Atendimento rápido</p>
+                  </div>
+                </a>
+
+                <a
+                  href="mailto:contato@rentech.com.br"
+                  className="flex items-center gap-4 p-4 rounded-xl border border-[#284B8C]/30 bg-[#0C1D4D]/20 hover:border-[#336699] hover:bg-[#336699]/10 transition-all group"
+                >
+                  <span className="flex items-center justify-center w-12 h-12 rounded-full bg-[#284B8C]/20 text-[#336699] group-hover:bg-[#284B8C] group-hover:text-white transition-colors shrink-0">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                  </span>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-[#666666]">E-mail</p>
+                    <p className="text-white font-bold">contato@rentech.com.br</p>
+                  </div>
+                </a>
+              </div>
+            </div>
+
+            {/* Formulário de orçamento */}
+            <form
+              action="https://formsubmit.co/contato@rentech.com.br"
+              method="POST"
+              className="bg-[#0C1D4D]/30 border border-[#284B8C]/40 rounded-2xl p-6 sm:p-8 backdrop-blur"
+            >
+              <h3 className="text-2xl font-black mb-6 text-white">Solicitar Orçamento</h3>
+
+              <div className="flex flex-col gap-5">
+                <div className="flex flex-col gap-2">
+                  <label htmlFor="nome" className="text-xs font-black uppercase tracking-widest text-[#999999]">Nome</label>
+                  <input
+                    id="nome"
+                    name="nome"
+                    type="text"
+                    required
+                    placeholder="Seu nome completo"
+                    className="w-full rounded-md bg-black/30 border border-[#284B8C]/40 px-4 py-3 text-white placeholder:text-[#666666] focus:outline-none focus:border-[#336699] transition-colors"
+                  />
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-5">
+                  <div className="flex flex-col gap-2">
+                    <label htmlFor="email" className="text-xs font-black uppercase tracking-widest text-[#999999]">E-mail</label>
+                    <input
+                      id="email"
+                      name="email"
+                      type="email"
+                      required
+                      placeholder="voce@email.com"
+                      className="w-full rounded-md bg-black/30 border border-[#284B8C]/40 px-4 py-3 text-white placeholder:text-[#666666] focus:outline-none focus:border-[#336699] transition-colors"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <label htmlFor="telefone" className="text-xs font-black uppercase tracking-widest text-[#999999]">Telefone</label>
+                    <input
+                      id="telefone"
+                      name="telefone"
+                      type="tel"
+                      placeholder="(00) 00000-0000"
+                      className="w-full rounded-md bg-black/30 border border-[#284B8C]/40 px-4 py-3 text-white placeholder:text-[#666666] focus:outline-none focus:border-[#336699] transition-colors"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <label htmlFor="tipo" className="text-xs font-black uppercase tracking-widest text-[#999999]">Tipo de Evento</label>
+                  <select
+                    id="tipo"
+                    name="tipo"
+                    className="w-full rounded-md bg-black/30 border border-[#284B8C]/40 px-4 py-3 text-white focus:outline-none focus:border-[#336699] transition-colors"
+                  >
+                    <option className="bg-[#0C1D4D]">Feira / Exibição</option>
+                    <option className="bg-[#0C1D4D]">Congresso</option>
+                    <option className="bg-[#0C1D4D]">Show / Festival</option>
+                    <option className="bg-[#0C1D4D]">Evento Corporativo</option>
+                    <option className="bg-[#0C1D4D]">Outro</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <label htmlFor="mensagem" className="text-xs font-black uppercase tracking-widest text-[#999999]">Detalhes do Projeto</label>
+                  <textarea
+                    id="mensagem"
+                    name="mensagem"
+                    rows={4}
+                    required
+                    placeholder="Conte data, local, público estimado e o que você precisa..."
+                    className="w-full rounded-md bg-black/30 border border-[#284B8C]/40 px-4 py-3 text-white placeholder:text-[#666666] focus:outline-none focus:border-[#336699] transition-colors resize-none"
+                  ></textarea>
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full bg-[#284B8C] text-white px-8 py-4 rounded-md text-base font-black hover:bg-[#336699] hover:shadow-lg hover:shadow-[#284B8C]/40 transition-all uppercase tracking-wide"
+                >
+                  Enviar Solicitação
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       </section>

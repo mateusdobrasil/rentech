@@ -1,6 +1,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { Analytics } from "@vercel/analytics/next"
+import VideoCarousel from '@/components/VideoCarousel';
 
 // Importando as imagens diretamente da pasta local
 import logoColorido from './imgs/logo.png';
@@ -58,7 +59,7 @@ export default function Home() {
             <div className="bg-[#0C1D4D]/20 border border-[#284B8C]/30 rounded-xl overflow-hidden hover:border-[#336699] transition-all hover:-translate-y-2 group">
               <div className="relative h-56 overflow-hidden">
                 <Image
-                  src="/cases/feiras.png"
+                  src="/cases/feiras2.jpg"
                   alt="Estande de feira com painéis de LED e iluminação arquitetural"
                   fill
                   sizes="(max-width: 768px) 100vw, 33vw"
@@ -117,6 +118,8 @@ export default function Home() {
         </div>
       </section>
 
+      <VideoCarousel />
+
       {/* Cases / Portfólio */}
       <section id="portfolio" className="py-24 bg-[#000000] border-t border-[#0C1D4D] relative">
         <div className="container mx-auto px-6 relative z-10">
@@ -133,23 +136,23 @@ export default function Home() {
           <div className="grid md:grid-cols-3 gap-8">
             {[
               {
-                img: '/cases/case-corporativo.png',
+                img: '/cases/case-corporativo.jpg',
                 tag: 'Corporativo',
                 title: 'Convenção Anual de Vendas',
                 desc: 'Painel de LED curvo, palco com cenografia integrada e iluminação cênica para 800 convidados.',
                 alt: 'Evento corporativo de gala com painel de LED curvo ao fundo',
               },
               {
-                img: '/cases/festival.mp4',
+                img: '/cases/case-festival.png',
                 tag: 'Show / Festival',
                 title: 'Festival de Música ao Vivo',
                 desc: 'Estrutura de grid completa, PA de grande porte e rig de iluminação para palco principal ao ar livre.',
                 alt: 'Palco principal de festival de música com grande painel de LED e luzes',
               },
               {
-                img: '/cases/case-congresso.png',
+                img: '/cases/case-congresso.jpg',
                 tag: 'Congresso',
-                title: 'Congresso Internacional',
+                title: 'Congresso SOCESP',
                 desc: 'Projeção mapeada de grande formato, sonorização precisa e tradução simultânea para múltiplos idiomas.',
                 alt: 'Congresso internacional com grande tela de projeção e plateia',
               },

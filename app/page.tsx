@@ -46,6 +46,8 @@ export default function Home() {
         </div>
       </section>
 
+      <VideoCarousel />
+
       {/* Especialidades */}
       <section id="especialidades" className="py-24 bg-[#000000] border-t border-[#0C1D4D] relative">
         <div className="container mx-auto px-6 relative z-10">
@@ -117,8 +119,6 @@ export default function Home() {
           </div>
         </div>
       </section>
-
-      <VideoCarousel />
 
       {/* Cases / Portfólio */}
       <section id="portfolio" className="py-24 bg-[#000000] border-t border-[#0C1D4D] relative">

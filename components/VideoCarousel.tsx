@@ -2,35 +2,43 @@
 
 import { useState, useRef, useEffect } from 'react';
 
-const videos = [
-  { src: '/videos/video1.mp4', title: 'Feiras', tag: 'Feiras' },
-  { src: '/videos/video2.mp4', title: 'Congressos', tag: 'Congressos' },
-  { src: '/videos/video3.mp4', title: 'Shows e Apresentações', tag: 'Shows' },
-  // Adicione mais conforme necessário
-];
+type Video = { src: string; title: string };
 
 export default function VideoCarousel() {
+  const [videos, setVideos] = useState<Video[]>([]);
   const [current, setCurrent] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  const prev = () => setCurrent((c) => (c - 1 + videos.length) % videos.length);
-  const next = () => setCurrent((c) => (c + 1) % videos.length);
+  useEffect(() => {
+    fetch('/api/videos')
+      .then((r) => r.json())
+      .then(setVideos);
+  }, []);
 
-  // Reinicia e toca o vídeo ao trocar de slide
   useEffect(() => {
     const vid = videoRef.current;
-    if (!vid) return;
+    if (!vid || videos.length === 0) return;
     vid.load();
     vid.play().catch(() => {});
     setIsPlaying(true);
-  }, [current]);
+  }, [current, videos]);
+
+  if (videos.length === 0) return null;
+
+  const prev = () => setCurrent((c) => (c - 1 + videos.length) % videos.length);
+  const next = () => setCurrent((c) => (c + 1) % videos.length);
 
   const togglePlay = () => {
     const vid = videoRef.current;
     if (!vid) return;
-    if (vid.paused) { vid.play(); setIsPlaying(true); }
-    else            { vid.pause(); setIsPlaying(false); }
+    if (vid.paused) {
+      vid.play();
+      setIsPlaying(true);
+    } else {
+      vid.pause();
+      setIsPlaying(false);
+    }
   };
 
   return (
@@ -48,7 +56,7 @@ export default function VideoCarousel() {
           </p>
         </div>
 
-        {/* Player */}
+        {/* Player principal */}
         <div className="relative max-w-4xl mx-auto rounded-2xl overflow-hidden border border-[#284B8C]/40 bg-black shadow-2xl shadow-[#284B8C]/20">
 
           <video
@@ -61,69 +69,70 @@ export default function VideoCarousel() {
             autoPlay
           />
 
-          {/* Overlay com tag e título */}
+          {/* Título sobre o vídeo */}
           <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-8 py-6 pointer-events-none">
-            <span className="px-3 py-1 rounded-full bg-[#284B8C] text-white text-[10px] font-black tracking-widest uppercase">
-              {videos[current].tag}
-            </span>
-            <p className="text-white text-xl font-black mt-2">{videos[current].title}</p>
+            <p className="text-white text-xl font-black mt-2 capitalize">
+              {videos[current].title}
+            </p>
           </div>
 
           {/* Botão play/pause */}
           <button
             onClick={togglePlay}
-            className="absolute top-4 right-4 flex items-center justify-center w-10 h-10 rounded-full bg-black/50 border border-white/20 text-white hover:bg-[#284B8C] transition-colors"
             aria-label={isPlaying ? 'Pausar' : 'Reproduzir'}
+            className="absolute top-4 right-4 flex items-center justify-center w-10 h-10 rounded-full bg-black/50 border border-white/20 text-white hover:bg-[#284B8C] transition-colors"
           >
             {isPlaying ? (
-              /* Pause icon */
               <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
               </svg>
             ) : (
-              /* Play icon */
               <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M8 5v14l11-7z"/>
+                <path d="M8 5v14l11-7z" />
               </svg>
             )}
           </button>
 
-          {/* Setas */}
+          {/* Seta esquerda */}
           <button
             onClick={prev}
-            className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center justify-center w-10 h-10 rounded-full bg-black/50 border border-white/20 text-white hover:bg-[#284B8C] transition-colors"
             aria-label="Anterior"
+            className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center justify-center w-10 h-10 rounded-full bg-black/50 border border-white/20 text-white hover:bg-[#284B8C] transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7"/>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
           </button>
+
+          {/* Seta direita */}
           <button
             onClick={next}
-            className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center justify-center w-10 h-10 rounded-full bg-black/50 border border-white/20 text-white hover:bg-[#284B8C] transition-colors"
             aria-label="Próximo"
+            className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center justify-center w-10 h-10 rounded-full bg-black/50 border border-white/20 text-white hover:bg-[#284B8C] transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7"/>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
             </svg>
           </button>
         </div>
 
-        {/* Indicadores (dots) */}
+        {/* Dots indicadores */}
         <div className="flex justify-center gap-2 mt-6">
           {videos.map((_, i) => (
             <button
               key={i}
               onClick={() => setCurrent(i)}
-              className={`h-1.5 rounded-full transition-all duration-300 ${
-                i === current ? 'w-8 bg-[#336699]' : 'w-2 bg-[#284B8C]/40 hover:bg-[#284B8C]'
-              }`}
               aria-label={`Ir para vídeo ${i + 1}`}
+              className={`h-1.5 rounded-full transition-all duration-300 ${
+                i === current
+                  ? 'w-8 bg-[#336699]'
+                  : 'w-2 bg-[#284B8C]/40 hover:bg-[#284B8C]'
+              }`}
             />
           ))}
         </div>
 
-        {/* Miniaturas clicáveis */}
+        {/* Miniaturas */}
         <div className="flex gap-4 justify-center mt-6 overflow-x-auto pb-2">
           {videos.map((v, i) => (
             <button
@@ -143,7 +152,7 @@ export default function VideoCarousel() {
                 preload="metadata"
               />
               <div className="absolute inset-0 bg-black/30" />
-              <p className="absolute bottom-1 left-0 right-0 text-center text-[9px] font-black text-white uppercase tracking-wide truncate px-1">
+              <p className="absolute bottom-1 left-0 right-0 text-center text-[9px] font-black text-white uppercase tracking-wide truncate px-1 capitalize">
                 {v.title}
               </p>
             </button>

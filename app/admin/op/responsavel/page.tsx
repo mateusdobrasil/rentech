@@ -11,8 +11,8 @@ interface ItemOP {
   qtd: number;
   valor_unitario: number;
   total: number;
-  description?: string; 
-  quantity?: string | number; 
+  description?: string;
+  quantity?: string | number;
 }
 
 interface OP {
@@ -37,32 +37,33 @@ interface OP {
 
 export default function PainelResponsavel() {
   const router = useRouter();
-  
-  // Estados Dinâmicos de Autenticação
+
+  // Estados de Autenticação
   const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [nivelAcesso, setNivelAcesso] = useState<'DIR' | 'USU'>('USU'); 
+  const [nivelAcesso, setNivelAcesso] = useState<'DIR' | 'USU'>('USU');
   const [authLoading, setAuthLoading] = useState(true);
-  
+
   // Estados Principais
   const [ops, setOps] = useState<OP[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // ── NOVOS: Estados de Filtro ──────────────────────────────────────────────
+  const [busca, setBusca] = useState('');
+  const [filtroResponsavel, setFiltroResponsavel] = useState('');
+  const [filtroCliente, setFiltroCliente] = useState('');
+  // ──────────────────────────────────────────────────────────────────────────
 
   // Estados de Modais
   const [modalDetalhes, setModalDetalhes] = useState<{ open: boolean; op: OP | null }>({ open: false, op: null });
   const [modalEdit, setModalEdit] = useState<{ open: boolean; op: Partial<OP> | null }>({ open: false, op: null });
   const [dialog, setDialog] = useState<{ open: boolean; type: 'loading' | 'confirm' | 'success' | 'error'; title: string; msg: string; onConfirm?: () => void }>({ open: false, type: 'loading', title: '', msg: '' });
 
-  // 1. Validar a Sessão e Puxar Dados do Usuário Logado
+  // 1. Autenticação
   useEffect(() => {
     async function checkAuth() {
       const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) {
-        router.push('/login');
-        return;
-      }
+      if (!session) { router.push('/login'); return; }
 
-      // Vai na tabela de perfis para pegar o Nome real e Permissão
       const { data: perfil } = await supabase
         .from('perfis_usuarios')
         .select('*')
@@ -71,163 +72,145 @@ export default function PainelResponsavel() {
 
       if (perfil) {
         setUsuarioAtual(perfil.nome || 'Usuário');
-        
-        // Pega a permissão do banco e normaliza para maiúsculo
         const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
-        
-        // CORREÇÃO: Libera visão global para qualquer cargo de diretoria, admin ou financeiro
         const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
-        
-        if (cargosAltaGestao.includes(permissaoBanco)) {
-          setNivelAcesso('DIR');
-        } else {
-          setNivelAcesso('USU');
-        }
+        setNivelAcesso(cargosAltaGestao.includes(permissaoBanco) ? 'DIR' : 'USU');
       } else {
-        // Fallback caso não ache o perfil
         setUsuarioAtual(session.user.email?.split('@')[0] || 'Usuário');
       }
-      
       setAuthLoading(false);
     }
-    
     checkAuth();
   }, [router]);
 
-  // 2. Busca Inicial (Só dispara depois que soubermos quem é o usuário)
+  // 2. Busca de dados
   const carregarDados = async () => {
-    if (!usuarioAtual) return; // Evita buscar com nome vazio
-
+    if (!usuarioAtual) return;
     setLoading(true);
     const res = await listarOPs(nivelAcesso, usuarioAtual);
-    
     if (res.success && res.data) {
-      // Normalização de chaves para compatibilidade com o banco antigo
       const opsNormalizadas = res.data.map((op: any) => {
         const itensCorrigidos = Array.isArray(op.itens) ? op.itens.map((it: any) => {
           const quantidade = Number(it.qtd || it.quantity || 1);
           const total = Number(it.total || 0);
           const unitario = Number(it.valor_unitario || (total / quantidade) || 0);
-          
-          return {
-            descricao: it.descricao || it.description || '',
-            qtd: quantidade,
-            valor_unitario: unitario,
-            total: total
-          };
+          return { descricao: it.descricao || it.description || '', qtd: quantidade, valor_unitario: unitario, total };
         }) : [];
-
         return { ...op, itens: itensCorrigidos };
       });
-
       setOps(opsNormalizadas);
     }
     setLoading(false);
   };
 
-  // Dispara a busca das OPs assim que terminar a checagem de login
   useEffect(() => {
-    if (!authLoading && usuarioAtual) {
-      carregarDados();
-    }
+    if (!authLoading && usuarioAtual) carregarDados();
   }, [authLoading, usuarioAtual, nivelAcesso]);
 
-  // Utilitários de Formatação
+  // ── Listas únicas para os dropdowns (geradas a partir dos dados reais) ────
+  const responsaveisUnicos = useMemo(() =>
+    [...new Set(ops.map((op) => op.responsavel_nome).filter(Boolean))].sort()
+  , [ops]);
+
+  const clientesUnicos = useMemo(() =>
+    [...new Set(ops.map((op) => op.os_cliente).filter(Boolean))].sort()
+  , [ops]);
+  // ──────────────────────────────────────────────────────────────────────────
+
+  // ── OPs filtradas (computadas, sem estado extra) ──────────────────────────
+  const opsFiltradas = useMemo(() => {
+    const termo = busca.toLowerCase().trim();
+    return ops.filter((op) => {
+      const matchBusca = !termo || [
+        op.os_numero, op.os_cliente, op.responsavel_nome,
+        op.natureza_pagamento, op.empresa_recebedora, op.status,
+      ].some((campo) => (campo || '').toLowerCase().includes(termo));
+
+      const matchResponsavel = !filtroResponsavel || op.responsavel_nome === filtroResponsavel;
+      const matchCliente = !filtroCliente || op.os_cliente === filtroCliente;
+
+      return matchBusca && matchResponsavel && matchCliente;
+    });
+  }, [ops, busca, filtroResponsavel, filtroCliente]);
+
+  const limparFiltros = () => {
+    setBusca('');
+    setFiltroResponsavel('');
+    setFiltroCliente('');
+  };
+
+  const filtrosAtivos = busca || filtroResponsavel || filtroCliente;
+  // ──────────────────────────────────────────────────────────────────────────
+
+  // Utilitários
   const formatarMoeda = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
   const formatarData = (d: string) => d ? new Date(d).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '---';
 
-  // ============================================================================
-  // LÓGICA DO MODAL DE EDIÇÃO
-  // ============================================================================
-
+  // Lógica de edição (inalterada)
   const abrirEdicao = (op: OP) => {
     const copiaOp = JSON.parse(JSON.stringify(op));
-    if (!copiaOp.itens || copiaOp.itens.length === 0) {
+    if (!copiaOp.itens || copiaOp.itens.length === 0)
       copiaOp.itens = [{ descricao: '', qtd: 0, valor_unitario: 0, total: 0 }];
-    }
     setModalEdit({ open: true, op: copiaOp });
   };
 
   const updateEditField = (field: keyof OP, value: any) => {
-    if (modalEdit.op) {
-      setModalEdit({ ...modalEdit, op: { ...modalEdit.op, [field]: value } });
-    }
+    if (modalEdit.op) setModalEdit({ ...modalEdit, op: { ...modalEdit.op, [field]: value } });
   };
 
   const updateEditItem = (index: number, field: keyof ItemOP, value: any) => {
     if (!modalEdit.op || !modalEdit.op.itens) return;
     const novosItens = [...modalEdit.op.itens];
     novosItens[index] = { ...novosItens[index], [field]: value };
-    if (field === 'qtd' || field === 'valor_unitario') {
+    if (field === 'qtd' || field === 'valor_unitario')
       novosItens[index].total = (novosItens[index].qtd || 0) * (novosItens[index].valor_unitario || 0);
-    }
     setModalEdit({ ...modalEdit, op: { ...modalEdit.op, itens: novosItens } });
   };
 
   const addEditItem = () => {
-    if (modalEdit.op && modalEdit.op.itens) {
+    if (modalEdit.op?.itens)
       setModalEdit({ ...modalEdit, op: { ...modalEdit.op, itens: [...modalEdit.op.itens, { descricao: '', qtd: 0, valor_unitario: 0, total: 0 }] } });
-    }
   };
 
   const removeEditItem = (index: number) => {
-    if (modalEdit.op && modalEdit.op.itens && modalEdit.op.itens.length > 1) {
+    if (modalEdit.op?.itens && modalEdit.op.itens.length > 1) {
       const novosItens = modalEdit.op.itens.filter((_, i) => i !== index);
       setModalEdit({ ...modalEdit, op: { ...modalEdit.op, itens: novosItens } });
     }
   };
 
-  const totalEdit = useMemo(() => {
-    return modalEdit.op?.itens?.reduce((acc, curr) => acc + (curr.total || 0), 0) || 0;
-  }, [modalEdit.op?.itens]);
+  const totalEdit = useMemo(() =>
+    modalEdit.op?.itens?.reduce((acc, curr) => acc + (curr.total || 0), 0) || 0
+  , [modalEdit.op?.itens]);
 
   const salvarEdicao = async () => {
-    if (!modalEdit.op || !modalEdit.op.id) return;
-    
+    if (!modalEdit.op?.id) return;
     const itensValidos = modalEdit.op.itens?.filter(i => i.descricao.trim() !== '' && i.qtd > 0).map(i => ({
-      descricao: i.descricao,
-      description: i.descricao, 
-      qtd: i.qtd,
-      quantity: String(i.qtd),
-      valor_unitario: i.valor_unitario,
-      total: i.total
+      descricao: i.descricao, description: i.descricao,
+      qtd: i.qtd, quantity: String(i.qtd),
+      valor_unitario: i.valor_unitario, total: i.total,
     }));
-
     if (!itensValidos || itensValidos.length === 0) {
       setDialog({ open: true, type: 'error', title: 'Atenção', msg: 'A OP precisa ter pelo menos um item válido com quantidade e valor.' });
       return;
     }
-
     setDialog({ open: true, type: 'loading', title: 'Salvando...', msg: 'Atualizando as informações no banco de dados.' });
-
     const payloadAtualizacao = {
-      os_cliente: modalEdit.op.os_cliente,
-      os_evento: modalEdit.op.os_evento,
-      os_periodo: modalEdit.op.os_periodo,
-      natureza_pagamento: modalEdit.op.natureza_pagamento,
-      empresa_recebedora: modalEdit.op.empresa_recebedora,
-      tipo_pagamento: modalEdit.op.tipo_pagamento,
-      dados_pagamento: modalEdit.op.dados_pagamento,
-      data_vencimento: modalEdit.op.data_vencimento,
-      observacao: modalEdit.op.observacao,
-      itens: itensValidos,
-      total_geral: totalEdit
+      os_cliente: modalEdit.op.os_cliente, os_evento: modalEdit.op.os_evento,
+      os_periodo: modalEdit.op.os_periodo, natureza_pagamento: modalEdit.op.natureza_pagamento,
+      empresa_recebedora: modalEdit.op.empresa_recebedora, tipo_pagamento: modalEdit.op.tipo_pagamento,
+      dados_pagamento: modalEdit.op.dados_pagamento, data_vencimento: modalEdit.op.data_vencimento,
+      observacao: modalEdit.op.observacao, itens: itensValidos, total_geral: totalEdit,
     };
-
     const res = await atualizarOP(modalEdit.op.id, payloadAtualizacao, usuarioAtual);
-    
     if (res.success) {
       setModalEdit({ open: false, op: null });
       setDialog({ open: true, type: 'success', title: 'Concluído!', msg: 'Ordem de Pagamento atualizada com sucesso.' });
-      carregarDados(); 
+      carregarDados();
     } else {
       setDialog({ open: true, type: 'error', title: 'Erro', msg: res.message });
     }
   };
-
-  // ============================================================================
-  // RENDERIZAÇÃO
-  // ============================================================================
 
   if (authLoading) {
     return (
@@ -239,23 +222,90 @@ export default function PainelResponsavel() {
 
   return (
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">
-      <Analytics/>
+      <Analytics />
 
-      {/* IDENTIFICAÇÃO E NAVEGAÇÃO ALINHADOS À NAVBAR GLOBAL */}
+      {/* HEADER */}
       <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex-shrink-0 flex justify-between items-center shadow-sm">
         <p className="text-[#0369A1] font-medium text-sm">
-          👤 <strong>Olá, {usuarioAtual}</strong>. {nivelAcesso === 'DIR' ? 'Você tem visão administrativa sobre todas as OPs do sistema.' : 'Estas são as solicitações sob sua responsabilidade.'}
+          👤 <strong>Olá, {usuarioAtual}</strong>.{' '}
+          {nivelAcesso === 'DIR'
+            ? 'Você tem visão administrativa sobre todas as OPs do sistema.'
+            : 'Estas são as solicitações sob sua responsabilidade.'}
         </p>
-        <button 
-          onClick={() => router.push('/admin')} 
+        <button
+          onClick={() => router.push('/admin')}
           className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase"
         >
           ⬅ VOLTAR AO HUB
         </button>
       </div>
 
-      {/* TABELA DE DADOS (Scrollável) */}
-      <div className="px-4 md:px-8 py-6 flex-grow overflow-hidden flex flex-col">
+      {/* ── BARRA DE FILTROS ─────────────────────────────────────────────────── */}
+      <div className="px-4 md:px-8 pt-5 pb-3 flex-shrink-0">
+        <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm px-4 py-4 flex flex-col md:flex-row gap-3 items-stretch md:items-center">
+
+          {/* Busca geral */}
+          <div className="relative flex-1 min-w-0">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
+              </svg>
+            </span>
+            <input
+              type="text"
+              placeholder="Buscar por OS, cliente, natureza, favorecido..."
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              className="w-full pl-9 pr-4 py-2.5 border border-[#CBD5E1] rounded-lg text-sm outline-none focus:border-[#336699] focus:ring-1 focus:ring-[#336699]/30 transition-all placeholder:text-[#94A3B8]"
+            />
+          </div>
+
+          {/* Dropdown Responsável */}
+          <select
+            value={filtroResponsavel}
+            onChange={(e) => setFiltroResponsavel(e.target.value)}
+            className="py-2.5 px-3 border border-[#CBD5E1] rounded-lg text-sm outline-none focus:border-[#336699] focus:ring-1 focus:ring-[#336699]/30 transition-all text-[#0A2A4A] bg-white md:w-52 shrink-0"
+          >
+            <option value="">👤 Todos os responsáveis</option>
+            {responsaveisUnicos.map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))}
+          </select>
+
+          {/* Dropdown Cliente */}
+          <select
+            value={filtroCliente}
+            onChange={(e) => setFiltroCliente(e.target.value)}
+            className="py-2.5 px-3 border border-[#CBD5E1] rounded-lg text-sm outline-none focus:border-[#336699] focus:ring-1 focus:ring-[#336699]/30 transition-all text-[#0A2A4A] bg-white md:w-52 shrink-0"
+          >
+            <option value="">🏢 Todos os clientes</option>
+            {clientesUnicos.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+
+          {/* Botão limpar (só aparece se algum filtro estiver ativo) */}
+          {filtrosAtivos && (
+            <button
+              onClick={limparFiltros}
+              className="shrink-0 py-2.5 px-4 bg-red-50 border border-red-200 text-red-500 font-bold text-xs uppercase tracking-wider rounded-lg hover:bg-red-100 transition-colors"
+            >
+              ✕ Limpar
+            </button>
+          )}
+        </div>
+
+        {/* Contador de resultados */}
+        <p className="text-[11px] text-[#94A3B8] font-medium mt-2 ml-1">
+          {filtrosAtivos
+            ? `${opsFiltradas.length} de ${ops.length} OPs encontradas`
+            : `${ops.length} OPs no total`}
+        </p>
+      </div>
+      {/* ──────────────────────────────────────────────────────────────────────── */}
+
+      {/* TABELA */}
+      <div className="px-4 md:px-8 pb-6 flex-grow overflow-hidden flex flex-col">
         <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto">
           <table className="w-full text-left border-collapse min-w-[900px]">
             <thead className="bg-[#F8FAFC] sticky top-0 shadow-sm z-10">
@@ -274,10 +324,19 @@ export default function PainelResponsavel() {
             <tbody className="divide-y divide-[#E2E8F0] text-xs">
               {loading ? (
                 <tr><td colSpan={9} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Buscando as solicitações...</td></tr>
-              ) : ops.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Nenhuma OP encontrada.</td></tr>
+              ) : opsFiltradas.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="text-center py-12">
+                    <p className="text-[#94A3B8] font-bold text-sm">Nenhuma OP encontrada.</p>
+                    {filtrosAtivos && (
+                      <button onClick={limparFiltros} className="mt-3 text-[#336699] font-bold text-xs underline">
+                        Limpar filtros
+                      </button>
+                    )}
+                  </td>
+                </tr>
               ) : (
-                ops.map((op) => {
+                opsFiltradas.map((op) => {
                   const isPago = op.status === 'PAGO';
                   return (
                     <tr key={op.id} className="hover:bg-[#F8FAFC] transition-colors">
@@ -297,15 +356,15 @@ export default function PainelResponsavel() {
                         </span>
                       </td>
                       <td className="p-4 text-center space-y-2">
-                        <button 
-                          onClick={() => abrirEdicao(op)} 
+                        <button
+                          onClick={() => abrirEdicao(op)}
                           disabled={isPago}
                           className="w-full bg-amber-100 border border-amber-300 text-amber-700 font-bold text-[9px] uppercase tracking-wider py-1.5 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:bg-amber-200"
                         >
                           ✏️ Editar
                         </button>
-                        <button 
-                          onClick={() => setDialog({ open: true, type: 'success', title: 'Cópia Enviada', msg: 'A cópia foi enviada para o seu e-mail.' })} 
+                        <button
+                          onClick={() => setDialog({ open: true, type: 'success', title: 'Cópia Enviada', msg: 'A cópia foi enviada para o seu e-mail.' })}
                           className="w-full bg-[#F0F4F8] border border-[#CBD5E1] text-[#64748B] font-bold text-[9px] uppercase tracking-wider py-1 rounded transition-colors hover:bg-[#E2E8F0]"
                         >
                           📩 Receber Cópia
@@ -320,9 +379,7 @@ export default function PainelResponsavel() {
         </div>
       </div>
 
-      {/* ============================================================================ */}
       {/* MODAL: VER DETALHES */}
-      {/* ============================================================================ */}
       {modalDetalhes.open && modalDetalhes.op && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
@@ -350,20 +407,15 @@ export default function PainelResponsavel() {
         </div>
       )}
 
-      {/* ============================================================================ */}
-      {/* MODAL: EDIÇÃO COMPLETA DA OP */}
-      {/* ============================================================================ */}
+      {/* MODAL: EDIÇÃO */}
       {modalEdit.open && modalEdit.op && (
         <div className="fixed inset-0 z-[200] flex items-start justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto py-10">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden mb-10 relative">
-            
             <div className="bg-amber-500 p-5 flex justify-between items-center text-white sticky top-0 z-10">
               <h3 className="font-black uppercase tracking-wider text-sm">✏️ Editando OP: {modalEdit.op.os_numero}</h3>
               <button onClick={() => setModalEdit({ open: false, op: null })} className="text-white hover:text-red-900 text-2xl leading-none">&times;</button>
             </div>
-            
             <div className="p-6 space-y-6">
-              {/* Evento e Cliente */}
               <div>
                 <h4 className="text-[10px] font-black uppercase text-white bg-[#0A2A4A] inline-block px-3 py-1 rounded mb-3">Dados do Evento e Cliente</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -378,8 +430,6 @@ export default function PainelResponsavel() {
                   </div>
                 </div>
               </div>
-
-              {/* Financeiro e Pagamento */}
               <div>
                 <h4 className="text-[10px] font-black uppercase text-white bg-[#0A2A4A] inline-block px-3 py-1 rounded mb-3">Financeiro e Pagamento</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -394,8 +444,6 @@ export default function PainelResponsavel() {
                   <div><label className="block text-[10px] font-bold text-red-500 mb-1">VENCIMENTO</label><input type="date" className="w-full p-2.5 border border-red-300 rounded text-sm outline-none focus:border-red-500 font-bold" value={modalEdit.op.data_vencimento || ''} onChange={e => updateEditField('data_vencimento', e.target.value)} /></div>
                 </div>
               </div>
-
-              {/* Itens */}
               <div>
                 <h4 className="text-[10px] font-black uppercase text-white bg-[#0A2A4A] inline-block px-3 py-1 rounded mb-3">Detalhamento de Itens</h4>
                 <div className="border border-[#E2E8F0] rounded-lg overflow-hidden">
@@ -422,26 +470,20 @@ export default function PainelResponsavel() {
                 </div>
                 <button onClick={addEditItem} className="mt-2 w-full py-2 bg-[#F0F4F8] border border-dashed border-[#94A3B8] text-[#64748B] font-bold text-[10px] uppercase rounded-lg hover:bg-[#E2E8F0] transition-colors">➕ Adicionar Item</button>
               </div>
-
               <div className="flex justify-between items-center bg-[#F8FAFC] p-4 rounded-lg border border-[#E2E8F0]">
                 <span className="text-sm font-black uppercase text-[#64748B]">Total Calculado</span>
                 <span className="text-2xl font-black text-[#336699]">{formatarMoeda(totalEdit)}</span>
               </div>
-
               <div><label className="block text-[10px] font-bold text-[#64748B] mb-1">OBSERVAÇÕES ADICIONAIS</label><input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded uppercase text-sm outline-none focus:border-[#336699]" value={modalEdit.op.observacao || ''} onChange={e => updateEditField('observacao', e.target.value)} /></div>
-              
               <button onClick={salvarEdicao} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-black text-sm uppercase py-4 rounded-xl shadow-lg transition-colors">
                 💾 SALVAR ALTERAÇÕES DA OP
               </button>
-
             </div>
           </div>
         </div>
       )}
 
-      {/* ============================================================================ */}
-      {/* DIALOG DE CONFIRMAÇÃO / AVISO */}
-      {/* ============================================================================ */}
+      {/* DIALOG */}
       {dialog.open && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white p-8 rounded-2xl shadow-2xl text-center max-w-sm w-full mx-4">

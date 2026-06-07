@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { supabase } from '../app/lib/supabase';
+import { supabase, isSupabaseConfigured } from '../app/lib/supabase';
 import logoPB from '../app/imgs/logo_pb.png';
 
 export default function Navbar() {
@@ -14,10 +14,17 @@ export default function Navbar() {
   const [simOpen, setSimOpen] = useState(false);
 
   useEffect(() => {
+    // Se o Supabase não estiver configurado, mantém o estado deslogado e evita chamadas que falhariam.
+    if (!isSupabaseConfigured) return;
+
     // 1. Verifica se já existe uma sessão ativa ao carregar a página
     const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setIsLoggedIn(!!session);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        setIsLoggedIn(!!session);
+      } catch {
+        setIsLoggedIn(false);
+      }
     };
     checkSession();
 

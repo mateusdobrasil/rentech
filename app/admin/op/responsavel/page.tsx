@@ -1,10 +1,9 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
-import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import logoColorido from '../../../../app/imgs/logo.png';
 import { listarOPs, atualizarOP } from '../actions';
+import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next"
 
 interface ItemOP {
@@ -12,6 +11,8 @@ interface ItemOP {
   qtd: number;
   valor_unitario: number;
   total: number;
+  description?: string; 
+  quantity?: string | number; 
 }
 
 interface OP {
@@ -37,8 +38,10 @@ interface OP {
 export default function PainelResponsavel() {
   const router = useRouter();
   
-  // Simulação do Usuário Logado (Futuramente virá do Auth / Contexto)
-  const [usuarioAtual, setUsuarioAtual] = useState('EQUIPE TÉCNICA');
+  // Estados Dinâmicos de Autenticação
+  const [usuarioAtual, setUsuarioAtual] = useState('');
+  const [nivelAcesso, setNivelAcesso] = useState<'DIR' | 'USU'>('USU'); 
+  const [authLoading, setAuthLoading] = useState(true);
   
   // Estados Principais
   const [ops, setOps] = useState<OP[]>([]);
@@ -49,20 +52,85 @@ export default function PainelResponsavel() {
   const [modalEdit, setModalEdit] = useState<{ open: boolean; op: Partial<OP> | null }>({ open: false, op: null });
   const [dialog, setDialog] = useState<{ open: boolean; type: 'loading' | 'confirm' | 'success' | 'error'; title: string; msg: string; onConfirm?: () => void }>({ open: false, type: 'loading', title: '', msg: '' });
 
-  // Busca inicial
+  // 1. Validar a Sessão e Puxar Dados do Usuário Logado
+  useEffect(() => {
+    async function checkAuth() {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        router.push('/login');
+        return;
+      }
+
+      // Vai na tabela de perfis para pegar o Nome real e Permissão
+      const { data: perfil } = await supabase
+        .from('perfis_usuarios')
+        .select('*')
+        .eq('id', session.user.id)
+        .single();
+
+      if (perfil) {
+        setUsuarioAtual(perfil.nome || 'Usuário');
+        
+        // Pega a permissão do banco e normaliza para maiúsculo
+        const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
+        
+        // CORREÇÃO: Libera visão global para qualquer cargo de diretoria, admin ou financeiro
+        const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
+        
+        if (cargosAltaGestao.includes(permissaoBanco)) {
+          setNivelAcesso('DIR');
+        } else {
+          setNivelAcesso('USU');
+        }
+      } else {
+        // Fallback caso não ache o perfil
+        setUsuarioAtual(session.user.email?.split('@')[0] || 'Usuário');
+      }
+      
+      setAuthLoading(false);
+    }
+    
+    checkAuth();
+  }, [router]);
+
+  // 2. Busca Inicial (Só dispara depois que soubermos quem é o usuário)
   const carregarDados = async () => {
+    if (!usuarioAtual) return; // Evita buscar com nome vazio
+
     setLoading(true);
-    // Busca apenas as OPs do usuário atual (Nível 'USU')
-    const res = await listarOPs('USU', usuarioAtual);
+    const res = await listarOPs(nivelAcesso, usuarioAtual);
+    
     if (res.success && res.data) {
-      setOps(res.data);
+      // Normalização de chaves para compatibilidade com o banco antigo
+      const opsNormalizadas = res.data.map((op: any) => {
+        const itensCorrigidos = Array.isArray(op.itens) ? op.itens.map((it: any) => {
+          const quantidade = Number(it.qtd || it.quantity || 1);
+          const total = Number(it.total || 0);
+          const unitario = Number(it.valor_unitario || (total / quantidade) || 0);
+          
+          return {
+            descricao: it.descricao || it.description || '',
+            qtd: quantidade,
+            valor_unitario: unitario,
+            total: total
+          };
+        }) : [];
+
+        return { ...op, itens: itensCorrigidos };
+      });
+
+      setOps(opsNormalizadas);
     }
     setLoading(false);
   };
 
+  // Dispara a busca das OPs assim que terminar a checagem de login
   useEffect(() => {
-    carregarDados();
-  }, [usuarioAtual]);
+    if (!authLoading && usuarioAtual) {
+      carregarDados();
+    }
+  }, [authLoading, usuarioAtual, nivelAcesso]);
 
   // Utilitários de Formatação
   const formatarMoeda = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
@@ -73,7 +141,6 @@ export default function PainelResponsavel() {
   // ============================================================================
 
   const abrirEdicao = (op: OP) => {
-    // Faz uma cópia profunda da OP para não alterar a tabela atrás acidentalmente
     const copiaOp = JSON.parse(JSON.stringify(op));
     if (!copiaOp.itens || copiaOp.itens.length === 0) {
       copiaOp.itens = [{ descricao: '', qtd: 0, valor_unitario: 0, total: 0 }];
@@ -91,7 +158,6 @@ export default function PainelResponsavel() {
     if (!modalEdit.op || !modalEdit.op.itens) return;
     const novosItens = [...modalEdit.op.itens];
     novosItens[index] = { ...novosItens[index], [field]: value };
-    // Recalcula o total da linha
     if (field === 'qtd' || field === 'valor_unitario') {
       novosItens[index].total = (novosItens[index].qtd || 0) * (novosItens[index].valor_unitario || 0);
     }
@@ -111,7 +177,6 @@ export default function PainelResponsavel() {
     }
   };
 
-  // Cálculo do Total da OP em Edição
   const totalEdit = useMemo(() => {
     return modalEdit.op?.itens?.reduce((acc, curr) => acc + (curr.total || 0), 0) || 0;
   }, [modalEdit.op?.itens]);
@@ -119,8 +184,15 @@ export default function PainelResponsavel() {
   const salvarEdicao = async () => {
     if (!modalEdit.op || !modalEdit.op.id) return;
     
-    // Filtra itens vazios
-    const itensValidos = modalEdit.op.itens?.filter(i => i.descricao.trim() !== '' && i.qtd > 0);
+    const itensValidos = modalEdit.op.itens?.filter(i => i.descricao.trim() !== '' && i.qtd > 0).map(i => ({
+      descricao: i.descricao,
+      description: i.descricao, 
+      qtd: i.qtd,
+      quantity: String(i.qtd),
+      valor_unitario: i.valor_unitario,
+      total: i.total
+    }));
+
     if (!itensValidos || itensValidos.length === 0) {
       setDialog({ open: true, type: 'error', title: 'Atenção', msg: 'A OP precisa ter pelo menos um item válido com quantidade e valor.' });
       return;
@@ -147,7 +219,7 @@ export default function PainelResponsavel() {
     if (res.success) {
       setModalEdit({ open: false, op: null });
       setDialog({ open: true, type: 'success', title: 'Concluído!', msg: 'Ordem de Pagamento atualizada com sucesso.' });
-      carregarDados(); // Recarrega a tabela
+      carregarDados(); 
     } else {
       setDialog({ open: true, type: 'error', title: 'Erro', msg: res.message });
     }
@@ -157,26 +229,29 @@ export default function PainelResponsavel() {
   // RENDERIZAÇÃO
   // ============================================================================
 
-  return (
-    <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col">
-      <Analytics/>
-      
-      {/* HEADER TÉCNICO */}
-      <header className="bg-[#336699] text-white p-4 md:px-8 flex justify-between items-center shadow-md flex-shrink-0">
-        <div className="flex items-center gap-4">
-          <Image src={logoColorido} alt="Rentech" width={140} height={40} className="brightness-0 invert" />
-          <h2 className="text-lg font-black tracking-widest uppercase hidden md:block border-l-2 border-[#284B8C] pl-4">Minhas Ordens de Pagamento</h2>
-        </div>
-        <button onClick={() => router.push('/admin/op')} className="text-xs font-bold bg-white/10 hover:bg-white/20 border border-white/20 px-4 py-2 rounded-lg transition-colors">
-          ⬅ SAIR DO SISTEMA
-        </button>
-      </header>
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center pt-16">
+        <div className="w-10 h-10 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin shadow-sm"></div>
+      </div>
+    );
+  }
 
-      {/* IDENTIFICAÇÃO */}
-      <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex-shrink-0">
+  return (
+    <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">
+      <Analytics/>
+
+      {/* IDENTIFICAÇÃO E NAVEGAÇÃO ALINHADOS À NAVBAR GLOBAL */}
+      <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex-shrink-0 flex justify-between items-center shadow-sm">
         <p className="text-[#0369A1] font-medium text-sm">
-          👤 <strong>Olá, {usuarioAtual}</strong>. Estas são as solicitações sob sua responsabilidade.
+          👤 <strong>Olá, {usuarioAtual}</strong>. {nivelAcesso === 'DIR' ? 'Você tem visão administrativa sobre todas as OPs do sistema.' : 'Estas são as solicitações sob sua responsabilidade.'}
         </p>
+        <button 
+          onClick={() => router.push('/admin')} 
+          className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase"
+        >
+          ⬅ VOLTAR AO HUB
+        </button>
       </div>
 
       {/* TABELA DE DADOS (Scrollável) */}
@@ -187,6 +262,7 @@ export default function PainelResponsavel() {
               <tr className="text-[#64748B] text-[10px] uppercase tracking-wider font-bold">
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-24">Data OP</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-24">OS</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] w-32">Responsável</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-40">Cliente</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0]">Natureza / Descrição</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-40">Favorecido</th>
@@ -197,9 +273,9 @@ export default function PainelResponsavel() {
             </thead>
             <tbody className="divide-y divide-[#E2E8F0] text-xs">
               {loading ? (
-                <tr><td colSpan={8} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Buscando suas solicitações...</td></tr>
+                <tr><td colSpan={9} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Buscando as solicitações...</td></tr>
               ) : ops.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Nenhuma OP encontrada em seu nome.</td></tr>
+                <tr><td colSpan={9} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Nenhuma OP encontrada.</td></tr>
               ) : (
                 ops.map((op) => {
                   const isPago = op.status === 'PAGO';
@@ -207,6 +283,7 @@ export default function PainelResponsavel() {
                     <tr key={op.id} className="hover:bg-[#F8FAFC] transition-colors">
                       <td className="p-4 font-semibold text-[#94A3B8]">{formatarData(op.data_criacao)}</td>
                       <td className="p-4"><span className="bg-[#E0F2FE] text-[#0369A1] font-bold px-2 py-1 rounded-md text-[10px]">{op.os_numero || 'S/N'}</span></td>
+                      <td className="p-4 font-bold text-[#336699] truncate max-w-[120px]">{op.responsavel_nome}</td>
                       <td className="p-4 font-bold truncate max-w-[150px]">{op.os_cliente}</td>
                       <td className="p-4">
                         <div className="font-semibold text-[#0A2A4A] truncate max-w-[200px]">{op.natureza_pagamento}</div>

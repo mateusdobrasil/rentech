@@ -53,25 +53,29 @@ export async function criarOP(data: NovaOPData) {
   }
 }
 
-// 2. Buscar todas as OPs (Substitui o getAllOPs e getMinhasOPs)
-export async function listarOPs(nivel: string, nomeUsuario: string) {
+export async function listarOPs(nivelAcesso: string, usuarioAtual: string) {
   try {
+    // 1. Inicia a busca na tabela (ajuste 'ordens_pagamento' para o nome exato da sua tabela no Supabase se for diferente)
     let query = supabase
       .from('ordens_pagamento')
       .select('*')
-      .order('data_criacao', { ascending: false });
+      .order('data_criacao', { ascending: false }); // Traz as mais recentes primeiro
 
-    // Regra de Negócio: Se for 'USU' (Responsável), vê apenas as próprias OPs
-    if (nivel !== 'ADM') {
-      query = query.eq('responsavel_nome', nomeUsuario);
+    // 2. A MÁGICA ACONTECE AQUI: 
+    // Se o nível NÃO for 'DIR' (Diretor/Admin), ele trava a busca para trazer apenas as OPs do usuário.
+    // Se for 'DIR', ele ignora esse filtro e traz o banco de dados inteiro!
+    if (nivelAcesso !== 'DIR') {
+      query = query.eq('responsavel_nome', usuarioAtual);
     }
 
-    const { data: ops, error } = await query;
+    const { data, error } = await query;
+
     if (error) throw error;
 
-    return { success: true, data: ops };
+    return { success: true, data: data || [] };
   } catch (error: any) {
-    return { success: false, message: error.message };
+    console.error("Erro ao listar OPs:", error);
+    return { success: false, message: error.message, data: [] };
   }
 }
 

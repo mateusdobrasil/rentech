@@ -113,7 +113,7 @@ export default function GestaoPermissoes() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-24">
+    <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">
       <Analytics/>
       
       {/* CABEÇALHO DA PÁGINA (Alinhado com a Navbar global) */}

@@ -2,18 +2,17 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { listarOPs, atualizarStatus } from '../actions';
-import { supabase } from '../../../lib/supabase'; // Importação para capturar o usuário logado
+import { listarOPs, atualizarStatus, dispararEmailOP } from '../actions'; // Importe a função de e-mail aqui
+import { supabase } from '../../../lib/supabase'; 
 import { Analytics } from "@vercel/analytics/next"
 
-// Interface baseada no banco Supabase que criamos
 interface ItemOP {
   descricao: string;
   qtd: number;
   valor_unitario: number;
   total: number;
-  description?: string; // Para compatibilidade com banco antigo
-  quantity?: string | number; // Para compatibilidade com banco antigo
+  description?: string; 
+  quantity?: string | number; 
 }
 
 interface OP {
@@ -39,6 +38,7 @@ export default function PainelFinanceiro() {
   
   // Estados Dinâmicos de Autenticação
   const [usuarioAtual, setUsuarioAtual] = useState('');
+  const [emailUsuario, setEmailUsuario] = useState(''); // Guarda o email de quem está operando
   const [authLoading, setAuthLoading] = useState(true);
 
   // Estados de Dados
@@ -62,7 +62,6 @@ export default function PainelFinanceiro() {
         return;
       }
 
-      // Vai na tabela de perfis para pegar o Nome real
       const { data: perfil } = await supabase
         .from('perfis_usuarios')
         .select('*')
@@ -71,13 +70,12 @@ export default function PainelFinanceiro() {
 
       if (perfil) {
         setUsuarioAtual(perfil.nome || 'Equipe Financeira');
+        setEmailUsuario(perfil.email || session.user.email || ''); // Guarda o email
         
-        // Verifica se a pessoa realmente tem cargo financeiro ou admin
         const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
         const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
         
         if (!cargosAltaGestao.includes(permissaoBanco)) {
-          // Se for um usuário comum tentando acessar a URL do financeiro, chuta de volta pro hub
           router.push('/admin');
           return;
         }
@@ -94,10 +92,8 @@ export default function PainelFinanceiro() {
   // 2. Busca os dados iniciais do Supabase após validação
   const carregarDados = async () => {
     setLoading(true);
-    // Para o Financeiro, passamos 'DIR' para puxar todas as OPs da empresa ignorando o nome do autor
     const res = await listarOPs('DIR', usuarioAtual);
     if (res.success && res.data) {
-      // Normalização de chaves para compatibilidade com o banco antigo (Inglês -> Português)
       const opsNormalizadas = res.data.map((op: any) => {
         const itensCorrigidos = Array.isArray(op.itens) ? op.itens.map((it: any) => {
           const quantidade = Number(it.qtd || it.quantity || 1);
@@ -183,18 +179,28 @@ export default function PainelFinanceiro() {
     });
   };
 
-  const dispararReenvio = (id: string, osNum: string) => {
+  // AQUI: Função alterada para enviar a requisição real
+  const dispararReenvio = (op: OP) => {
     setDialog({
       open: true,
       type: 'confirm',
       title: 'Reenviar E-mail',
-      msg: `Deseja enviar um novo e-mail com todos os dados da OS ${osNum} para os responsáveis?`,
-      onConfirm: () => {
+      msg: `Deseja enviar a OP ${op.os_numero || 'S/N'} para o seu e-mail (${emailUsuario}) e para o Financeiro?`,
+      onConfirm: async () => {
         setDialog({ open: true, type: 'loading', title: 'Enviando E-mail...', msg: 'Isso pode levar alguns segundos.' });
-        // Simulação do disparo de e-mail
-        setTimeout(() => {
-          setDialog({ open: true, type: 'success', title: 'E-mail Enviado!', msg: 'A cópia da OP foi enviada com sucesso.' });
-        }, 1500);
+        
+        try {
+          // Chama a Server Action passando a OP inteira e o e-mail do usuário atual
+          const res = await dispararEmailOP(op, emailUsuario);
+          
+          if (res.success) {
+            setDialog({ open: true, type: 'success', title: 'E-mail Enviado!', msg: 'A cópia da OP foi enviada com sucesso para os departamentos.' });
+          } else {
+            throw new Error(res.message);
+          }
+        } catch (error: any) {
+          setDialog({ open: true, type: 'error', title: 'Erro no Envio', msg: error.message || 'Não foi possível enviar o e-mail.' });
+        }
       }
     });
   };
@@ -332,7 +338,7 @@ export default function PainelFinanceiro() {
                             Baixar OP
                           </button>
                         )}
-                        <button onClick={() => dispararReenvio(op.id, op.os_numero)} className="w-full bg-orange-50 hover:bg-orange-100 border border-orange-200 text-orange-600 font-bold text-[9px] uppercase tracking-wider py-1 rounded transition-colors">
+                        <button onClick={() => dispararReenvio(op)} className="w-full bg-orange-50 hover:bg-orange-100 border border-orange-200 text-orange-600 font-bold text-[9px] uppercase tracking-wider py-1 rounded transition-colors">
                           🔄 Reenviar
                         </button>
                       </td>

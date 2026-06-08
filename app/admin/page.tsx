@@ -16,13 +16,13 @@ interface PerfilUsuario {
 // Estrutura inteligente dos módulos do sistema
 const MODULOS_SISTEMA = [
   {
-    titulo: 'Aprovação Financeira (OP)',
-    descricao: 'Painel geral para aprovação, baixa e conferência de todas as Ordens de Pagamento.',
-    icone: '💰',
-    link: '/admin/op/financeiro',
-    permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
-    cor: 'border-green-500/50 hover:border-green-500',
-    bgIcon: 'bg-green-50 text-green-600'
+    titulo: 'Solicitar Nova OP',
+    descricao: 'Preencha o formulário para enviar um pagamento para análise da diretoria.',
+    icone: '➕',
+    link: '/admin/op/nova',
+    permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO', 'ADMINISTRATIVO', 'OPERACIONAL', 'ESTOQUE'],
+    cor: 'border-[#336699]/50 hover:border-[#336699]',
+    bgIcon: 'bg-blue-50 text-[#336699]'
   },
   {
     titulo: 'Minhas OPs',
@@ -34,13 +34,13 @@ const MODULOS_SISTEMA = [
     bgIcon: 'bg-blue-50 text-[#336699]'
   },
   {
-    titulo: 'Solicitar Nova OP',
-    descricao: 'Preencha o formulário para enviar um pagamento para análise da diretoria.',
-    icone: '➕',
-    link: '/admin/op/nova',
-    permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO', 'ADMINISTRATIVO', 'OPERACIONAL', 'ESTOQUE'],
-    cor: 'border-[#336699]/50 hover:border-[#336699]',
-    bgIcon: 'bg-blue-50 text-[#336699]'
+    titulo: 'Financeiro (OP)',
+    descricao: 'Painel geral para aprovação, baixa e conferência de todas as Ordens de Pagamento.',
+    icone: '💰',
+    link: '/admin/op/financeiro',
+    permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
+    cor: 'border-green-500/50 hover:border-green-500',
+    bgIcon: 'bg-green-50 text-green-600'
   },
   {
     titulo: 'Gestão de Acessos',
@@ -55,7 +55,7 @@ const MODULOS_SISTEMA = [
     titulo: 'Controle de Estoque',
     descricao: 'Gestão de entrada, saída e manutenção de equipamentos (Módulo em Breve).',
     icone: '📦',
-    link: '#',
+    link: '/admin/estoque',
     permissoes_permitidas: ['ADMINISTRADOR', 'ESTOQUE'],
     cor: 'border-amber-500/50 hover:border-amber-500',
     bgIcon: 'bg-amber-50 text-amber-600'

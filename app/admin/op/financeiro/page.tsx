@@ -1,10 +1,9 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
-import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import logoColorido from '../../../../app/imgs/logo.png';
 import { listarOPs, atualizarStatus } from '../actions';
+import { supabase } from '../../../lib/supabase'; // Importação para capturar o usuário logado
 import { Analytics } from "@vercel/analytics/next"
 
 // Interface baseada no banco Supabase que criamos
@@ -13,6 +12,8 @@ interface ItemOP {
   qtd: number;
   valor_unitario: number;
   total: number;
+  description?: string; // Para compatibilidade com banco antigo
+  quantity?: string | number; // Para compatibilidade com banco antigo
 }
 
 interface OP {
@@ -36,6 +37,10 @@ interface OP {
 export default function PainelFinanceiro() {
   const router = useRouter();
   
+  // Estados Dinâmicos de Autenticação
+  const [usuarioAtual, setUsuarioAtual] = useState('');
+  const [authLoading, setAuthLoading] = useState(true);
+
   // Estados de Dados
   const [ops, setOps] = useState<OP[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,20 +52,79 @@ export default function PainelFinanceiro() {
     open: false, type: 'loading', title: '', msg: '' 
   });
 
-  // Busca os dados iniciais do Supabase
+  // 1. Validar a Sessão e Puxar Dados do Usuário Logado
+  useEffect(() => {
+    async function checkAuth() {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        router.push('/login');
+        return;
+      }
+
+      // Vai na tabela de perfis para pegar o Nome real
+      const { data: perfil } = await supabase
+        .from('perfis_usuarios')
+        .select('*')
+        .eq('id', session.user.id)
+        .single();
+
+      if (perfil) {
+        setUsuarioAtual(perfil.nome || 'Equipe Financeira');
+        
+        // Verifica se a pessoa realmente tem cargo financeiro ou admin
+        const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
+        const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
+        
+        if (!cargosAltaGestao.includes(permissaoBanco)) {
+          // Se for um usuário comum tentando acessar a URL do financeiro, chuta de volta pro hub
+          router.push('/admin');
+          return;
+        }
+      } else {
+        setUsuarioAtual('Equipe Financeira');
+      }
+      
+      setAuthLoading(false);
+    }
+    
+    checkAuth();
+  }, [router]);
+
+  // 2. Busca os dados iniciais do Supabase após validação
   const carregarDados = async () => {
     setLoading(true);
-    // Para o Financeiro, passamos 'ADM' para puxar todas as OPs da empresa
-    const res = await listarOPs('ADM', 'Diretoria');
+    // Para o Financeiro, passamos 'DIR' para puxar todas as OPs da empresa ignorando o nome do autor
+    const res = await listarOPs('DIR', usuarioAtual);
     if (res.success && res.data) {
-      setOps(res.data);
+      // Normalização de chaves para compatibilidade com o banco antigo (Inglês -> Português)
+      const opsNormalizadas = res.data.map((op: any) => {
+        const itensCorrigidos = Array.isArray(op.itens) ? op.itens.map((it: any) => {
+          const quantidade = Number(it.qtd || it.quantity || 1);
+          const total = Number(it.total || 0);
+          const unitario = Number(it.valor_unitario || (total / quantidade) || 0);
+          
+          return {
+            descricao: it.descricao || it.description || '',
+            qtd: quantidade,
+            valor_unitario: unitario,
+            total: total
+          };
+        }) : [];
+
+        return { ...op, itens: itensCorrigidos };
+      });
+
+      setOps(opsNormalizadas);
     }
     setLoading(false);
   };
 
   useEffect(() => {
-    carregarDados();
-  }, []);
+    if (!authLoading) {
+      carregarDados();
+    }
+  }, [authLoading]);
 
   // Formatadores
   const formatarMoeda = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
@@ -108,7 +172,7 @@ export default function PainelFinanceiro() {
       msg: `Confirma o pagamento e a baixa da OS ${osNum} no sistema?`,
       onConfirm: async () => {
         setDialog({ open: true, type: 'loading', title: 'Aguarde...', msg: 'Atualizando o banco de dados...' });
-        const res = await atualizarStatus(id, 'PAGO', 'Equipe Financeira');
+        const res = await atualizarStatus(id, 'PAGO', usuarioAtual);
         if (res.success) {
           await carregarDados();
           setDialog({ ...dialog, open: false });
@@ -127,7 +191,7 @@ export default function PainelFinanceiro() {
       msg: `Deseja enviar um novo e-mail com todos os dados da OS ${osNum} para os responsáveis?`,
       onConfirm: () => {
         setDialog({ open: true, type: 'loading', title: 'Enviando E-mail...', msg: 'Isso pode levar alguns segundos.' });
-        // Simulação do disparo de e-mail (Aqui entraria a integração futura com Resend/SendGrid via Server Action)
+        // Simulação do disparo de e-mail
         setTimeout(() => {
           setDialog({ open: true, type: 'success', title: 'E-mail Enviado!', msg: 'A cópia da OP foi enviada com sucesso.' });
         }, 1500);
@@ -135,20 +199,31 @@ export default function PainelFinanceiro() {
     });
   };
 
+  // Render Loading de Autenticação
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center pt-16">
+        <div className="w-10 h-10 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin shadow-sm"></div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col">
+    <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-16">
       <Analytics/>
       
-      {/* HEADER ADM */}
-      <header className="bg-[#0C1D4D] text-white p-4 md:px-8 flex justify-between items-center shadow-md z-10 flex-shrink-0">
-        <div className="flex items-center gap-4">
-          <Image src={logoColorido} alt="Rentech" width={140} height={40} className="brightness-0 invert" />
-          <h2 className="text-lg font-black tracking-widest uppercase hidden md:block border-l-2 border-[#284B8C] pl-4">Painel Financeiro</h2>
-        </div>
-        <button onClick={() => router.push('/admin/op')} className="text-xs font-bold bg-white/10 hover:bg-white/20 border border-white/20 px-4 py-2 rounded-lg transition-colors">
-          ⬅ SAIR DO SISTEMA
+      {/* IDENTIFICAÇÃO E NAVEGAÇÃO ALINHADOS À NAVBAR GLOBAL */}
+      <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex-shrink-0 flex justify-between items-center shadow-sm">
+        <p className="text-[#0369A1] font-medium text-sm">
+          💳 <strong>Olá, {usuarioAtual}</strong>. Bem-vindo ao painel financeiro de aprovação de OPs.
+        </p>
+        <button 
+          onClick={() => router.push('/admin')} 
+          className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase"
+        >
+          ⬅ VOLTAR AO HUB
         </button>
-      </header>
+      </div>
 
       {/* DASHBOARD CARDS */}
       <div className="p-4 md:px-8 pt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 flex-shrink-0">
@@ -206,6 +281,7 @@ export default function PainelFinanceiro() {
               <tr className="text-[#64748B] text-[10px] uppercase tracking-wider font-bold">
                 <th className="p-4 border-b-2 border-[#E2E8F0]">Data OP</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0]">OS / Anexo</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] w-32">Solicitante</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0]">Cliente</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0]">Descrição Resumida</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0]">Favorecido</th>
@@ -217,9 +293,9 @@ export default function PainelFinanceiro() {
             </thead>
             <tbody className="divide-y divide-[#E2E8F0] text-xs">
               {loading ? (
-                <tr><td colSpan={9} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Carregando registros do banco de dados...</td></tr>
+                <tr><td colSpan={10} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Carregando registros do banco de dados...</td></tr>
               ) : opsFiltradas.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Nenhuma Ordem de Pagamento encontrada.</td></tr>
+                <tr><td colSpan={10} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Nenhuma Ordem de Pagamento encontrada.</td></tr>
               ) : (
                 opsFiltradas.map((op) => {
                   const isPago = op.status === 'PAGO';
@@ -230,6 +306,7 @@ export default function PainelFinanceiro() {
                         <span className="bg-[#E0F2FE] text-[#0369A1] font-bold px-2 py-1 rounded-md text-[10px] mr-2">{op.os_numero || 'S/N'}</span>
                         {op.file_url && <a href={op.file_url} target="_blank" rel="noreferrer" className="text-lg hover:scale-110 transition-transform inline-block" title="Ver Comprovante">📎</a>}
                       </td>
+                      <td className="p-4 font-bold text-[#336699] truncate max-w-[120px]">{op.responsavel_nome}</td>
                       <td className="p-4 font-bold truncate max-w-[120px]" title={op.os_cliente}>{op.os_cliente}</td>
                       <td className="p-4">
                         <div className="truncate max-w-[180px] font-semibold text-[#64748B] mb-1">

@@ -199,7 +199,16 @@ export default function NovaOrdemPagamento() {
           <div className="text-center sm:text-right">
             <h2 className="text-2xl font-black text-white uppercase tracking-wider print:text-black">Ordem de Pagamento</h2>
             <p className="text-[#999999] text-sm font-bold print:text-gray-500">Solicitação Financeira Administrativa</p>
+            <br/>
+            <button
+              onClick={() => router.push('/admin')}
+              className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase"
+            >
+              ⬅ VOLTAR AO HUB
+            </button>
+
           </div>
+          
         </div>
 
         <div className="p-6 lg:p-8 space-y-8">

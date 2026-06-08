@@ -2,10 +2,8 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import Image from 'next/image';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import logoColorido from '../../../../app/imgs/logo.png';
-// Importação da Action de Criação que fizemos no backend
 import { criarOP, NovaOPData } from '../actions'; 
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next"
@@ -23,8 +21,8 @@ export default function NovaOrdemPagamento() {
   const [modal, setModal] = useState<{ open: boolean; success: boolean; msg: string; title: string }>({ open: false, success: false, msg: '', title: '' });
 
   // Estado dos Dados Pessoais / Projeto
-  const [responsavelNome, setResponsavelNome] = useState(''); // Preenchido automaticamente com o usuário logado
-  const [responsavelEmail, setResponsavelEmail] = useState(''); // E-mail do login (Supabase Auth)
+  const [responsavelNome, setResponsavelNome] = useState(''); 
+  const [responsavelEmail, setResponsavelEmail] = useState(''); 
   const [carregandoUsuario, setCarregandoUsuario] = useState(true);
   const [natureza, setNatureza] = useState('SUBLOCAÇÃO');
   const [osNum, setOsNum] = useState('');
@@ -43,46 +41,36 @@ export default function NovaOrdemPagamento() {
   const [dadosPagamento, setDadosPagamento] = useState('');
   const [dataVencimento, setDataVencimento] = useState('');
   const [obs, setObs] = useState('');
-  const [fileUrl, setFileUrl] = useState(''); // Placeholder para futuro upload de S3/Supabase Storage
+  
+  // NOVO: Estado para armazenar o arquivo selecionado
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [uploadStatus, setUploadStatus] = useState('');
 
-  // Gestão Dinâmica de Itens usando React State
+  // Gestão Dinâmica de Itens
   const [itens, setItens] = useState<ItemOP[]>(
     Array.from({ length: 3 }, (_, i) => ({ id: i, descricao: '', qtd: 0, valorUnitario: 0 }))
   );
 
-  // Carrega automaticamente o nome e e-mail do usuário logado (dados de login do Supabase Auth)
   useEffect(() => {
     const carregarResponsavel = async () => {
-      // Se o Supabase não estiver configurado, libera o campo para preenchimento manual.
       if (!isSupabaseConfigured) {
         setCarregandoUsuario(false);
         return;
       }
-
       try {
         const { data: { user } } = await supabase.auth.getUser();
-
         if (user) {
-          // O e-mail vem direto do login
           setResponsavelEmail(user.email ?? '');
-
-          // O nome pode estar nos metadados do usuário; senão, usa o trecho antes do @
           const metadados = user.user_metadata ?? {};
-          const nome =
-            metadados.full_name ||
-            metadados.nome ||
-            metadados.name ||
-            (user.email ? user.email.split('@')[0].replace(/[._-]/g, ' ') : '');
-
+          const nome = metadados.full_name || metadados.nome || metadados.name || (user.email ? user.email.split('@')[0].replace(/[._-]/g, ' ') : '');
           setResponsavelNome((nome as string).toUpperCase());
         }
       } catch (e) {
-        console.error('[v0] Falha ao carregar usuário logado:', e);
+        console.error('Falha ao carregar usuário logado:', e);
       } finally {
         setCarregandoUsuario(false);
       }
     };
-
     carregarResponsavel();
   }, []);
 
@@ -114,15 +102,29 @@ export default function NovaOrdemPagamento() {
     setItens(itens.map(item => item.id === id ? { ...item, [campo]: valor } : item));
   };
 
-  // Cálculo Automático e Reativo do Total da OP
   const totalGeral = useMemo(() => {
     return itens.reduce((acc, item) => acc + (item.qtd * item.valorUnitario), 0);
   }, [itens]);
 
+  // NOVO: Captura do arquivo selecionado
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const file = e.target.files[0];
+      // Verifica tamanho (Max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        alert("O arquivo é muito grande. O limite máximo é 5MB.");
+        e.target.value = '';
+        return;
+      }
+      setArquivo(file);
+    }
+  };
+
   const handleSubmeterFormulario = async () => {
     setLoading(true);
+    setUploadStatus('');
     
-    // Filtra itens em branco antes de salvar
+    // Validações Base
     const itensValidos = itens
       .filter(i => i.descricao.trim() !== '' && i.qtd > 0)
       .map(i => ({ descricao: i.descricao.toUpperCase(), qtd: i.qtd, valor_unitario: i.valorUnitario, total: i.qtd * i.valorUnitario }));
@@ -132,6 +134,35 @@ export default function NovaOrdemPagamento() {
       setLoading(false);
       return;
     }
+
+    let urlFinalAnexo = '';
+
+    // ============================================================================
+    // NOVO: LÓGICA DE UPLOAD PARA O SUPABASE STORAGE
+    // ============================================================================
+    if (arquivo) {
+      setUploadStatus('Fazendo upload do comprovante...');
+      // Gera um nome único para o arquivo para evitar substituição acidental
+      const fileExt = arquivo.name.split('.').pop();
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+      const filePath = `anexos_ops/${fileName}`;
+
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('comprovantes')
+        .upload(filePath, arquivo);
+
+      if (uploadError) {
+        setModal({ open: true, success: false, title: 'Erro no Anexo', msg: `Falha ao fazer upload: ${uploadError.message}` });
+        setLoading(false);
+        return;
+      }
+
+      // Pega a URL pública para salvar no banco
+      const { data: publicUrlData } = supabase.storage.from('comprovantes').getPublicUrl(filePath);
+      urlFinalAnexo = publicUrlData.publicUrl;
+    }
+
+    setUploadStatus('Registrando ordem de pagamento...');
 
     const payload: NovaOPData = {
       responsavel_nome: responsavelNome.toUpperCase() || 'USUÁRIO DO SISTEMA',
@@ -144,7 +175,7 @@ export default function NovaOrdemPagamento() {
       empresa_recebedora: empresaRecebedora.toUpperCase(),
       cnpj_cpf_recebedora: cnpjCpf,
       endereco_recebedora: endereco.toUpperCase(),
-      telefone_recebedora: '', // Omitido no front antigo, mas presente no banco
+      telefone_recebedora: '', 
       tipo_pagamento: tipoPagamento,
       chave_pix: tipoPagamento === 'PIX' ? chavePix : '',
       dados_pagamento: dadosPagamento.toUpperCase(),
@@ -152,7 +183,7 @@ export default function NovaOrdemPagamento() {
       observacao: obs.toUpperCase(),
       itens: itensValidos,
       total_geral: totalGeral,
-      file_url: fileUrl // Será preenchido via Storage depois
+      file_url: urlFinalAnexo // AGORA SIM, RECEBE A URL DE NUVEM!
     };
 
     const resposta = await criarOP(payload);
@@ -163,6 +194,7 @@ export default function NovaOrdemPagamento() {
       setModal({ open: true, success: false, title: 'Erro de Conexão', msg: resposta.message || 'Falha ao salvar no banco de dados.' });
     }
     setLoading(false);
+    setUploadStatus('');
   };
 
   return (
@@ -181,7 +213,7 @@ export default function NovaOrdemPagamento() {
             <button 
               onClick={() => {
                 setModal({ ...modal, open: false });
-                if (modal.success) router.push('/admin/op'); // Volta para o Dashboard
+                if (modal.success) router.push('/admin/op'); 
               }}
               className="w-full py-3 bg-[#0C1D4D] text-white font-bold rounded-lg hover:bg-[#284B8C] transition-colors"
             >
@@ -206,9 +238,7 @@ export default function NovaOrdemPagamento() {
             >
               ⬅ VOLTAR AO HUB
             </button>
-
           </div>
-          
         </div>
 
         <div className="p-6 lg:p-8 space-y-8">
@@ -361,7 +391,12 @@ export default function NovaOrdemPagamento() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-xs font-bold text-[#0A2A4A] uppercase tracking-wider mb-2">📎 Anexar Comprovante / NF / Recibo</label>
-                <input type="file" className="w-full text-sm text-[#64748B] file:mr-4 file:py-2.5 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-[#E0F2FE] file:text-[#0369A1] hover:file:bg-[#BAE6FD] cursor-pointer" accept=".pdf, image/*" />
+                <input 
+                  type="file" 
+                  onChange={handleFileChange}
+                  className="w-full text-sm text-[#64748B] file:mr-4 file:py-2.5 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-[#E0F2FE] file:text-[#0369A1] hover:file:bg-[#BAE6FD] cursor-pointer" 
+                  accept=".pdf, image/*" 
+                />
                 <p className="text-[10px] text-[#94A3B8] mt-1">Formatos aceitos: PDF, JPG, PNG (Max 5MB)</p>
               </div>
               <div>
@@ -378,7 +413,7 @@ export default function NovaOrdemPagamento() {
               disabled={loading}
               className="w-full py-4 bg-green-600 text-white font-black text-lg rounded-xl hover:bg-green-500 hover:shadow-[0_0_20px_rgba(22,163,74,0.3)] transition-all uppercase tracking-wide disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? 'PROCESSANDO ORDEM DE PAGAMENTO...' : 'SALVAR E ENVIAR AO FINANCEIRO ➔'}
+              {loading ? (uploadStatus || 'PROCESSANDO ORDEM DE PAGAMENTO...') : 'SALVAR E ENVIAR AO FINANCEIRO ➔'}
             </button>
             <p className="text-center text-[10px] text-[#94A3B8] mt-3 font-semibold uppercase tracking-widest">
               AO ENVIAR, ESTA OP ENTRARÁ NO FLUXO DE APROVAÇÃO GERENCIAL

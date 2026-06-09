@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabase';
-import { Analytics } from "@vercel/analytics/next"
+import { Analytics } from "@vercel/analytics/next";
 
 // Tipagem do Perfil
 interface PerfilUsuario {
@@ -43,8 +43,17 @@ const MODULOS_SISTEMA = [
     bgIcon: 'bg-green-50 text-green-600'
   },
   {
+    titulo: 'Conteúdo Site',
+    descricao: 'Gerencie os textos principais, vídeos e canais de contato da página inicial em tempo real.',
+    icone: '🌐',
+    link: '/admin/conteudo',
+    permissoes_permitidas: ['ADMINISTRADOR', 'EDITOR'],
+    cor: 'border-[#336699]/50 hover:border-[#336699]',
+    bgIcon: 'bg-blue-50 text-[#336699]'
+  },
+  {
     titulo: 'Gestão de Acessos',
-    descricao: 'Controle de usuários, bloqueios e alteração de níveis de permissão da equipe.',
+    descricao: 'Controle de usuários, blocks e alteração de níveis de permissão da equipe.',
     icone: '🔐',
     link: '/admin/permissoes',
     permissoes_permitidas: ['ADMINISTRADOR'],
@@ -53,7 +62,7 @@ const MODULOS_SISTEMA = [
   },
   {
     titulo: 'Controle de Estoque',
-    descricao: 'Gestão de entrada, saída e manutenção de equipamentos (Módulo em Breve).',
+    descricao: 'Gestão de entrada, saída e manutenção de equipamentos cadastrados.',
     icone: '📦',
     link: '/admin/estoque',
     permissoes_permitidas: ['ADMINISTRADOR', 'ESTOQUE'],
@@ -69,7 +78,7 @@ export default function HubAdministrativo() {
 
   useEffect(() => {
     const carregarAcesso = async () => {
-      // 1. Pega a sessão atual do cofre do Supabase
+      // 1. Pega a sessão atual do Supabase
       const { data: { session } } = await supabase.auth.getSession();
       
       if (!session) {
@@ -95,7 +104,6 @@ export default function HubAdministrativo() {
     carregarAcesso();
   }, [router]);
 
-  // Função para deslogar (Usada apenas como fallback na tela de erro)
   const handleSair = async () => {
     await supabase.auth.signOut();
     document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;';
@@ -112,12 +120,11 @@ export default function HubAdministrativo() {
       </div>
     );
   }
-  <Analytics/>
 
   if (!perfil) {
     return (
       <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4 pt-24">
-        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-[#BAE6FD]">
           <div className="text-5xl mb-4">⚠️</div>
           <h2 className="text-xl font-black text-[#0C1D4D] uppercase tracking-wider mb-2">Perfil não localizado</h2>
           <p className="text-[#64748B] text-sm mb-6">Sua conta de autenticação existe, mas seu perfil de permissões não foi encontrado no banco de dados. Contate o Administrador.</p>
@@ -131,11 +138,12 @@ export default function HubAdministrativo() {
 
   // Filtra os módulos que este usuário tem permissão para ver
   const modulosAutorizados = MODULOS_SISTEMA.filter(modulo => 
-    modulo.permissoes_permitidas.includes(perfil.permissao)
+    modulo.permissoes_permitidas.includes(perfil.permissao.toUpperCase())
   );
 
   return (
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-24 pb-12">
+      <Analytics />
       
       {/* BOAS VINDAS E INFORMAÇÕES DO PERFIL */}
       <div className="container mx-auto px-4 mt-6 mb-10 max-w-6xl">

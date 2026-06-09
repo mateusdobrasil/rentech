@@ -107,27 +107,36 @@ export default function PainelResponsavel() {
     if (!authLoading && usuarioAtual) carregarDados();
   }, [authLoading, usuarioAtual, nivelAcesso]);
 
-  // ── Listas únicas para os dropdowns (geradas a partir dos dados reais) ────
-  const responsaveisUnicos = useMemo(() =>
-    [...new Set(ops.map((op) => op.responsavel_nome).filter(Boolean))].sort()
-  , [ops]);
+  // ── Listas únicas para os dropdowns (geradas a partir dos dados reais e normalizadas) ────
+  const responsaveisUnicos = useMemo(() => {
+    // Normaliza para maiúsculo e remove espaços em branco extras
+    const nomes = ops.map(op => (op.responsavel_nome || '').toUpperCase().trim()).filter(Boolean);
+    return [...new Set(nomes)].sort();
+  }, [ops]);
 
-  const clientesUnicos = useMemo(() =>
-    [...new Set(ops.map((op) => op.os_cliente).filter(Boolean))].sort()
-  , [ops]);
+  const clientesUnicos = useMemo(() => {
+    // Normaliza para maiúsculo e remove espaços em branco extras
+    const clientes = ops.map(op => (op.os_cliente || '').toUpperCase().trim()).filter(Boolean);
+    return [...new Set(clientes)].sort();
+  }, [ops]);
   // ──────────────────────────────────────────────────────────────────────────
 
-  // ── OPs filtradas (computadas, sem estado extra) ──────────────────────────
+  // ── OPs filtradas (computadas, sem estado extra, com normalização de case) ──────────────────────────
   const opsFiltradas = useMemo(() => {
     const termo = busca.toLowerCase().trim();
     return ops.filter((op) => {
+      // Filtro de Busca Geral (mantém minúsculo para busca parcial)
       const matchBusca = !termo || [
         op.os_numero, op.os_cliente, op.responsavel_nome,
         op.natureza_pagamento, op.empresa_recebedora, op.status,
       ].some((campo) => (campo || '').toLowerCase().includes(termo));
 
-      const matchResponsavel = !filtroResponsavel || op.responsavel_nome === filtroResponsavel;
-      const matchCliente = !filtroCliente || op.os_cliente === filtroCliente;
+      // Filtro Específico (normaliza ambos os lados para MAIÚSCULO para comparação exata)
+      const nomeResponsavelLimpo = (op.responsavel_nome || '').toUpperCase().trim();
+      const matchResponsavel = !filtroResponsavel || nomeResponsavelLimpo === filtroResponsavel;
+      
+      const nomeClienteLimpo = (op.os_cliente || '').toUpperCase().trim();
+      const matchCliente = !filtroCliente || nomeClienteLimpo === filtroCliente;
 
       return matchBusca && matchResponsavel && matchCliente;
     });
@@ -213,7 +222,7 @@ export default function PainelResponsavel() {
   };
 
   if (authLoading) {
-    return (
+    return ( 
       <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center pt-16">
         <div className="w-10 h-10 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin shadow-sm"></div>
       </div>

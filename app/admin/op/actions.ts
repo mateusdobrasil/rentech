@@ -77,7 +77,7 @@ export async function listarOPs(nivelAcesso: string, usuarioAtual: string) {
     // Se o nível NÃO for 'DIR' (Diretor/Admin), ele trava a busca para trazer apenas as OPs do usuário.
     // Se for 'DIR', ele ignora esse filtro e traz o banco de dados inteiro!
     if (nivelAcesso !== 'DIR') {
-      query = query.eq('responsavel_nome', usuarioAtual);
+      query = query.ilike('responsavel_nome', usuarioAtual);
     }
 
     const { data, error } = await query;

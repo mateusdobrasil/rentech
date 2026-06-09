@@ -155,11 +155,11 @@ export async function atualizarOP(opId: string, dadosAtualizados: Partial<NovaOP
 }
 
 // ============================================================================
-// NOVO: DISPARO DE E-MAIL VIA SMTP (NODEMAILER) COM TEMPLATE COMPLETO
+// DISPARO DE E-MAIL VIA SMTP COM MAGIC LINK PARA O FINANCEIRO
 // ============================================================================
 export async function dispararEmailOP(op: any, emailSolicitante: string) {
   try {
-    // 1. Configura o "Carteiro" com os dados do seu .env.local
+    const nodemailer = require('nodemailer');
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT) || 465,
@@ -170,36 +170,27 @@ export async function dispararEmailOP(op: any, emailSolicitante: string) {
       },
     });
 
-    // 2. Formata os dados financeiros e as linhas da tabela
     const totalGeral = Number(op.total_geral || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
     
     const itensHtml = op.itens.map((it: any) => {
-      const descricao = it.descricao || it.description || '';
-      const qtd = it.qtd || it.quantity || 1;
       const unitario = Number(it.valor_unitario || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
       const total = Number(it.total || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-
       return `
         <tr>
-          <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; color: #0C1D4D; font-weight: bold; font-size: 12px;">${descricao}</td>
-          <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; text-align: center; color: #64748B; font-size: 12px;">${qtd}</td>
+          <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; color: #0C1D4D; font-weight: bold; font-size: 12px;">${it.descricao || it.description}</td>
+          <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; text-align: center; color: #64748B; font-size: 12px;">${it.qtd || it.quantity || 1}</td>
           <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; text-align: right; color: #64748B; font-size: 12px;">${unitario}</td>
           <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; text-align: right; color: #336699; font-weight: bold; font-size: 12px;">${total}</td>
         </tr>
       `;
     }).join('');
 
-    // Tratamento do Anexo
     const anexoHtml = op.file_url 
       ? `<a href="${op.file_url}" style="display: inline-block; padding: 12px 24px; background-color: #336699; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 12px;">📎 Visualizar Comprovante / Anexo</a>`
       : `<span style="color: #94A3B8; font-style: italic; font-size: 12px;">Nenhum anexo enviado.</span>`;
 
-    // 3. Monta o Corpo do E-mail
-    const mailOptions = {
-      from: `"Sistema Rentech" <${process.env.SMTP_USER}>`,
-      to: `${emailSolicitante}, financeiro@locadorarentech.com.br`, 
-      subject: `[Nova OP] OS: ${op.os_numero || 'S/N'} - ${op.empresa_recebedora}`,
-      html: `
+    // Base do E-mail (igual para ambos)
+    const htmlBase = `
         <div style="font-family: Arial, sans-serif; max-width: 650px; margin: 0 auto; border: 1px solid #E2E8F0; border-radius: 12px; overflow: hidden; background-color: #ffffff;">
           
           <div style="background-color: #0C1D4D; padding: 20px; text-align: center; color: white;">
@@ -208,7 +199,6 @@ export async function dispararEmailOP(op: any, emailSolicitante: string) {
           </div>
 
           <div style="padding: 20px; border-bottom: 1px solid #E2E8F0;">
-            <h3 style="color: #336699; font-size: 14px; text-transform: uppercase; margin-top: 0; margin-bottom: 15px; letter-spacing: 0.5px;">📋 Dados do Projeto</h3>
             <table style="width: 100%; font-size: 13px; line-height: 1.5;">
               <tr>
                 <td style="padding-bottom: 10px; width: 50%;">
@@ -220,79 +210,33 @@ export async function dispararEmailOP(op: any, emailSolicitante: string) {
                   <span style="color:#0C1D4D; font-weight: bold;">${op.natureza_pagamento || 'Não informada'}</span>
                 </td>
               </tr>
-              <tr>
-                <td style="padding-bottom: 10px;">
-                  <strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Cliente</strong><br/>
-                  <span style="color:#0C1D4D; font-weight: bold;">${op.os_cliente || 'Não informado'}</span>
-                </td>
-                <td style="padding-bottom: 10px;">
-                  <strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Evento</strong><br/>
-                  <span style="color:#0C1D4D; font-weight: bold;">${op.os_evento || 'Não informado'}</span>
-                </td>
-              </tr>
-              <tr>
-                <td colspan="2">
-                  <strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Período</strong><br/>
-                  <span style="color:#0C1D4D; font-weight: bold;">${op.os_periodo || 'Não informado'}</span>
-                </td>
-              </tr>
             </table>
           </div>
 
           <div style="padding: 20px; border-bottom: 1px solid #E2E8F0; background-color: #F8FAFC;">
-            <h3 style="color: #336699; font-size: 14px; text-transform: uppercase; margin-top: 0; margin-bottom: 15px; letter-spacing: 0.5px;">🏢 Dados do Favorecido</h3>
+            <h3 style="color: #336699; font-size: 14px; text-transform: uppercase; margin-top: 0; margin-bottom: 15px;">🏢 Dados do Favorecido</h3>
             <table style="width: 100%; font-size: 13px; line-height: 1.5;">
               <tr>
-                <td style="padding-bottom: 10px; width: 50%;">
-                  <strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Empresa / Nome</strong><br/>
-                  <span style="color:#0C1D4D; font-weight: bold;">${op.empresa_recebedora}</span>
-                </td>
-                <td style="padding-bottom: 10px; width: 50%;">
-                  <strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">CNPJ / CPF</strong><br/>
-                  <span style="color:#0C1D4D; font-weight: bold;">${op.cnpj_cpf_recebedora || 'Não informado'}</span>
-                </td>
-              </tr>
-              <tr>
-                <td style="padding-bottom: 10px;">
-                  <strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Telefone / Contato</strong><br/>
-                  <span style="color:#0C1D4D; font-weight: bold;">${op.telefone_recebedora || 'Não informado'}</span>
-                </td>
-                <td style="padding-bottom: 10px;">
-                  <strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Endereço</strong><br/>
-                  <span style="color:#0C1D4D; font-weight: bold;">${op.endereco_recebedora || 'Não informado'}</span>
-                </td>
+                <td style="padding-bottom: 10px; width: 50%;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Empresa / Nome</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${op.empresa_recebedora}</span></td>
+                <td style="padding-bottom: 10px; width: 50%;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">CNPJ / CPF</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${op.cnpj_cpf_recebedora || 'Não informado'}</span></td>
               </tr>
             </table>
           </div>
 
           <div style="padding: 20px; border-bottom: 1px solid #E2E8F0;">
-            <h3 style="color: #336699; font-size: 14px; text-transform: uppercase; margin-top: 0; margin-bottom: 15px; letter-spacing: 0.5px;">💳 Informações de Pagamento</h3>
+            <h3 style="color: #336699; font-size: 14px; text-transform: uppercase; margin-top: 0; margin-bottom: 15px;">💳 Informações de Pagamento</h3>
             <table style="width: 100%; font-size: 13px; line-height: 1.5;">
               <tr>
-                <td style="padding-bottom: 10px; width: 50%;">
-                  <strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Forma de Pagamento</strong><br/>
-                  <span style="color:#0C1D4D; font-weight: bold;">${op.tipo_pagamento}</span>
-                </td>
-                <td style="padding-bottom: 10px; width: 50%;">
-                  <strong style="color:red; font-size: 10px; text-transform: uppercase;">Data de Vencimento</strong><br/>
-                  <span style="color:red; font-weight: bold;">${op.data_vencimento || 'Não informada'}</span>
-                </td>
+                <td style="padding-bottom: 10px; width: 50%;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Forma / Banco</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${op.tipo_pagamento} - ${op.dados_pagamento}</span></td>
+                <td style="padding-bottom: 10px; width: 50%;"><strong style="color:red; font-size: 10px; text-transform: uppercase;">Data de Vencimento</strong><br/><span style="color:red; font-weight: bold;">${op.data_vencimento || 'Não informada'}</span></td>
               </tr>
               <tr>
-                <td style="padding-bottom: 10px;">
-                  <strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Chave PIX</strong><br/>
-                  <span style="color:#0C1D4D; font-weight: bold;">${op.chave_pix || 'Não informada'}</span>
-                </td>
-                <td style="padding-bottom: 10px;">
-                  <strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Dados Bancários (Ag/Conta)</strong><br/>
-                  <span style="color:#0C1D4D; font-weight: bold;">${op.dados_pagamento || 'Não informados'}</span>
-                </td>
+                <td colspan="2" style="padding-bottom: 10px;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Chave PIX</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${op.chave_pix || 'Não informada'}</span></td>
               </tr>
             </table>
           </div>
 
           <div style="padding: 20px;">
-            <h3 style="color: #336699; font-size: 14px; text-transform: uppercase; margin-top: 0; margin-bottom: 15px; letter-spacing: 0.5px;">🛒 Detalhamento de Itens</h3>
             <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 20px;">
               <thead>
                 <tr style="background-color: #F8FAFC; color: #64748B; text-transform: uppercase;">
@@ -302,37 +246,57 @@ export async function dispararEmailOP(op: any, emailSolicitante: string) {
                   <th style="padding: 10px; text-align: right; font-size: 10px;">Total</th>
                 </tr>
               </thead>
-              <tbody>
-                ${itensHtml}
-              </tbody>
+              <tbody>${itensHtml}</tbody>
             </table>
             
             <div style="background-color: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #E2E8F0;">
-              <strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Observações Adicionais</strong><br/>
-              <span style="color:#0C1D4D; font-size: 12px; font-weight: 500;">${op.observacao || 'Nenhuma observação registrada para esta OP.'}</span>
-              <div style="margin-top: 15px;">
-                ${anexoHtml}
-              </div>
+              ${anexoHtml}
             </div>
           </div>
 
           <div style="background-color: #E0F2FE; padding: 25px 20px; text-align: right; border-top: 2px solid #BAE6FD;">
-            <span style="color: #0369A1; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">Valor Total a Pagar</span>
-            <br/>
+            <span style="color: #0369A1; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">Valor Total a Pagar</span><br/>
             <strong style="color: #0C1D4D; font-size: 28px;">${totalGeral}</strong>
           </div>
 
+          {{BOTAO_MÁGICO}}
+
           <div style="padding: 15px; text-align: center; background-color: #F1F5F9; color: #94A3B8; font-size: 10px;">
             <p style="margin:0;">Este é um e-mail automático gerado pelo Sistema Rentech.</p>
-            <p style="margin:0;">Por favor, não responda diretamente a este endereço.</p>
           </div>
-
         </div>
-      `
-    };
+    `;
 
-    // 4. Dispara o e-mail
-    await transporter.sendMail(mailOptions);
+    // Link Seguro configurado com a URL do seu sistema
+    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+    const linkBaixa = `${baseUrl}/api/baixar-op?id=${op.id || op.numero_op}`;
+
+    // Construção do Botão que só o Financeiro vai ver
+    const blocoBotao = `
+      <div style="background-color: #ffffff; padding: 30px 20px; text-align: center; border-top: 1px solid #E2E8F0;">
+        <a href="${linkBaixa}" style="background-color: #16A34A; color: white; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 15px; display: inline-block; text-transform: uppercase; letter-spacing: 1px;">
+          ✅ Confirmar Pagamento (Baixar OP)
+        </a>
+        <p style="color: #94A3B8; font-size: 11px; margin-top: 12px; margin-bottom: 0;">Clique apenas após efetuar o pagamento. A ação refletirá instantaneamente no sistema.</p>
+      </div>
+    `;
+
+    // 1. Envio para o Solicitante (Sem o Botão)
+    await transporter.sendMail({
+      from: `"Sistema Rentech" <${process.env.SMTP_USER}>`,
+      to: emailSolicitante,
+      subject: `[Cópia] Sua OP foi enviada - OS: ${op.os_numero || 'S/N'}`,
+      html: htmlBase.replace('{{BOTAO_MÁGICO}}', '')
+    });
+
+    // 2. Envio para o Financeiro (COM o Botão)
+    await transporter.sendMail({
+      from: `"Sistema Rentech" <${process.env.SMTP_USER}>`,
+      to: 'financeiro@locadorarentech.com.br',
+      subject: `[APROVAÇÃO] Nova OP Recebida - OS: ${op.os_numero || 'S/N'}`,
+      html: htmlBase.replace('{{BOTAO_MÁGICO}}', blocoBotao)
+    });
+
     return { success: true };
     
   } catch (error: any) {

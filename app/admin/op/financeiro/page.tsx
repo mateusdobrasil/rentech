@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { listarOPs, atualizarStatus, dispararEmailOP } from '../actions'; // Importe a função de e-mail aqui
+import { listarOPs, atualizarStatus, dispararEmailOP } from '../actions'; 
 import { supabase } from '../../../lib/supabase'; 
 import { Analytics } from "@vercel/analytics/next"
 
@@ -38,13 +38,20 @@ export default function PainelFinanceiro() {
   
   // Estados Dinâmicos de Autenticação
   const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [emailUsuario, setEmailUsuario] = useState(''); // Guarda o email de quem está operando
+  const [emailUsuario, setEmailUsuario] = useState(''); 
   const [authLoading, setAuthLoading] = useState(true);
 
   // Estados de Dados
   const [ops, setOps] = useState<OP[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // ── ESTADOS DE FILTRO ──────────────────────────
   const [busca, setBusca] = useState('');
+  const [tipoFiltroData, setTipoFiltroData] = useState<'DIA' | 'MES' | 'ANO'>('MES'); // Começa focado em Mês (padrão financeiro)
+  const [filtroData, setFiltroData] = useState('');
+  const [filtroResponsavel, setFiltroResponsavel] = useState('');
+  const [filtroFavorecido, setFiltroFavorecido] = useState('');
+  // ─────────────────────────────────────────────────────
 
   // Estados de UI (Modais)
   const [modalDetalhes, setModalDetalhes] = useState<{ open: boolean; op: OP | null }>({ open: false, op: null });
@@ -70,7 +77,7 @@ export default function PainelFinanceiro() {
 
       if (perfil) {
         setUsuarioAtual(perfil.nome || 'Equipe Financeira');
-        setEmailUsuario(perfil.email || session.user.email || ''); // Guarda o email
+        setEmailUsuario(perfil.email || session.user.email || ''); 
         
         const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
         const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
@@ -122,6 +129,18 @@ export default function PainelFinanceiro() {
     }
   }, [authLoading]);
 
+  // ── GERAÇÃO DE LISTAS ÚNICAS PARA OS DROPDOWNS ───────
+  const responsaveisUnicos = useMemo(() => {
+    const nomes = ops.map(op => (op.responsavel_nome || '').toUpperCase().trim()).filter(Boolean);
+    return [...new Set(nomes)].sort();
+  }, [ops]);
+
+  const favorecidosUnicos = useMemo(() => {
+    const nomes = ops.map(op => (op.empresa_recebedora || '').toUpperCase().trim()).filter(Boolean);
+    return [...new Set(nomes)].sort();
+  }, [ops]);
+  // ─────────────────────────────────────────────────────
+
   // Formatadores
   const formatarMoeda = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
   const formatarData = (d: string) => {
@@ -130,16 +149,51 @@ export default function PainelFinanceiro() {
     return date.toLocaleDateString('pt-BR', { timeZone: 'UTC' });
   };
 
-  // Filtro Dinâmico
+  // ── FILTRO DINÂMICO MULTI-CRITÉRIOS ──────────────────
   const opsFiltradas = useMemo(() => {
-    const termo = busca.toLowerCase();
-    return ops.filter(o => 
-      (o.os_numero || '').toLowerCase().includes(termo) || 
-      (o.os_cliente || '').toLowerCase().includes(termo) || 
-      (o.empresa_recebedora || '').toLowerCase().includes(termo) || 
-      (o.natureza_pagamento || '').toLowerCase().includes(termo)
-    );
-  }, [ops, busca]);
+    const termoBusca = busca.toLowerCase().trim();
+    
+    return ops.filter(op => {
+      // 1. Filtro de Texto Livre
+      const matchBusca = !termoBusca || 
+        (op.os_numero || '').toLowerCase().includes(termoBusca) || 
+        (op.os_cliente || '').toLowerCase().includes(termoBusca) || 
+        (op.empresa_recebedora || '').toLowerCase().includes(termoBusca) || 
+        (op.natureza_pagamento || '').toLowerCase().includes(termoBusca);
+
+      // 2. Filtros Exatos (Normalizados)
+      const nomeResponsavelLimpo = (op.responsavel_nome || '').toUpperCase().trim();
+      const matchResponsavel = !filtroResponsavel || nomeResponsavelLimpo === filtroResponsavel;
+
+      const nomeFavorecidoLimpo = (op.empresa_recebedora || '').toUpperCase().trim();
+      const matchFavorecido = !filtroFavorecido || nomeFavorecidoLimpo === filtroFavorecido;
+
+      // 3. Filtro por Data Inteligente (Dia, Mês ou Ano)
+      let matchData = true;
+      if (filtroData) {
+        // Separa a String "2026-06-09T..." deixando apenas o formato "YYYY-MM-DD"
+        const opDate = op.data_criacao ? op.data_criacao.split('T')[0] : '';
+        
+        // Se a data da OP "começar" com o filtro, dá match.
+        // Ex: "2026-06-09".startsWith("2026") é true (Filtro de Ano)
+        // Ex: "2026-06-09".startsWith("2026-06") é true (Filtro de Mês)
+        // Ex: "2026-06-09".startsWith("2026-06-09") é true (Filtro de Dia)
+        matchData = opDate.startsWith(filtroData);
+      }
+
+      return matchBusca && matchResponsavel && matchFavorecido && matchData;
+    });
+  }, [ops, busca, filtroResponsavel, filtroFavorecido, filtroData]);
+
+  const limparFiltros = () => {
+    setBusca('');
+    setFiltroData('');
+    setFiltroResponsavel('');
+    setFiltroFavorecido('');
+  };
+
+  const temFiltroAtivo = busca || filtroData || filtroResponsavel || filtroFavorecido;
+  // ─────────────────────────────────────────────────────
 
   // Cálculos do Dashboard Inteligente
   const metricas = useMemo(() => {
@@ -179,7 +233,6 @@ export default function PainelFinanceiro() {
     });
   };
 
-  // AQUI: Função alterada para enviar a requisição real
   const dispararReenvio = (op: OP) => {
     setDialog({
       open: true,
@@ -190,7 +243,6 @@ export default function PainelFinanceiro() {
         setDialog({ open: true, type: 'loading', title: 'Enviando E-mail...', msg: 'Isso pode levar alguns segundos.' });
         
         try {
-          // Chama a Server Action passando a OP inteira e o e-mail do usuário atual
           const res = await dispararEmailOP(op, emailUsuario);
           
           if (res.success) {
@@ -213,6 +265,10 @@ export default function PainelFinanceiro() {
       </div>
     );
   }
+
+  // Gera os anos para o dropdown de ano (Ano atual e próximos/anteriores)
+  const anoAtual = new Date().getFullYear();
+  const anosDisponiveis = [anoAtual - 1, anoAtual, anoAtual + 1, anoAtual + 2];
 
   return (
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-16">
@@ -251,11 +307,13 @@ export default function PainelFinanceiro() {
         </div>
       </div>
 
-      {/* GASTOS POR NATUREZA E BUSCA */}
+      {/* GASTOS POR NATUREZA E FILTROS */}
       <div className="px-4 md:px-8 py-2 flex-shrink-0">
+        
+        {/* Bloco de Naturezas */}
         <div className="bg-white p-5 rounded-xl shadow-sm border border-[#E2E8F0] mb-4">
           <h4 className="text-xs font-black text-[#0C1D4D] uppercase tracking-widest mb-3 flex items-center gap-2">
-            📊 Gastos por Natureza <span className="text-[10px] font-normal text-[#94A3B8]">(Reflete a busca atual)</span>
+            📊 Gastos por Natureza <span className="text-[10px] font-normal text-[#94A3B8]">(Reflete os filtros atuais)</span>
           </h4>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
             {Object.entries(metricas.naturezas).sort((a,b) => b[1] - a[1]).map(([nat, val]) => (
@@ -268,19 +326,106 @@ export default function PainelFinanceiro() {
           </div>
         </div>
 
-        <div className="relative">
-          <input 
-            type="text" 
-            placeholder="🔍 Filtrar por OS, Cliente, Favorecido ou Natureza..." 
-            className="w-full p-4 pl-10 border-2 border-[#E2E8F0] rounded-xl text-sm font-semibold text-[#0C1D4D] focus:border-[#336699] outline-none shadow-sm"
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-          />
+        {/* ── BARRA DE FILTROS AVANÇADOS ────────────────────────── */}
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col lg:flex-row gap-4 items-center">
+          
+          {/* Busca Geral */}
+          <div className="flex-1 w-full relative">
+            <input 
+              type="text" 
+              placeholder="🔍 Busca livre (OS, Cliente, etc)..." 
+              className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0A2A4A] focus:border-[#336699] outline-none transition-all"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+            />
+          </div>
+
+          {/* Filtro: Agrupamento de Data Inteligente */}
+          <div className="w-full lg:w-auto flex relative shadow-sm rounded-lg">
+            <select 
+              className="p-2.5 border-y border-l border-[#CBD5E1] rounded-l-lg text-xs font-bold text-[#0C1D4D] outline-none focus:border-[#336699] bg-[#F8FAFC] cursor-pointer"
+              value={tipoFiltroData}
+              onChange={(e) => {
+                setTipoFiltroData(e.target.value as 'DIA' | 'MES' | 'ANO');
+                setFiltroData(''); // Limpa o valor ao trocar a precisão
+              }}
+            >
+              <option value="DIA">Por Dia</option>
+              <option value="MES">Por Mês</option>
+              <option value="ANO">Por Ano</option>
+            </select>
+
+            {tipoFiltroData === 'DIA' && (
+              <input 
+                type="date" 
+                className={`w-full lg:w-36 p-2.5 border border-[#CBD5E1] rounded-r-lg text-sm font-semibold outline-none transition-all ${filtroData ? 'border-[#336699] text-[#0A2A4A] bg-blue-50' : 'text-[#64748B]'}`}
+                value={filtroData}
+                onChange={(e) => setFiltroData(e.target.value)}
+              />
+            )}
+            
+            {tipoFiltroData === 'MES' && (
+              <input 
+                type="month" 
+                className={`w-full lg:w-36 p-2.5 border border-[#CBD5E1] rounded-r-lg text-sm font-semibold outline-none transition-all ${filtroData ? 'border-[#336699] text-[#0A2A4A] bg-blue-50' : 'text-[#64748B]'}`}
+                value={filtroData}
+                onChange={(e) => setFiltroData(e.target.value)}
+              />
+            )}
+
+            {tipoFiltroData === 'ANO' && (
+              <select 
+                className={`w-full lg:w-36 p-2.5 border border-[#CBD5E1] rounded-r-lg text-sm font-semibold outline-none transition-all cursor-pointer ${filtroData ? 'border-[#336699] text-[#0A2A4A] bg-blue-50' : 'text-[#64748B]'}`}
+                value={filtroData}
+                onChange={(e) => setFiltroData(e.target.value)}
+              >
+                <option value="">Selecione o Ano...</option>
+                {anosDisponiveis.map(ano => <option key={ano} value={ano}>{ano}</option>)}
+              </select>
+            )}
+          </div>
+
+          {/* Filtro: Responsável */}
+          <div className="w-full lg:w-56 relative shadow-sm">
+            <select 
+              className={`w-full p-2.5 border rounded-lg text-sm font-semibold outline-none transition-all cursor-pointer ${filtroResponsavel ? 'border-[#336699] text-[#0A2A4A] bg-blue-50' : 'border-[#CBD5E1] text-[#64748B]'}`}
+              value={filtroResponsavel}
+              onChange={(e) => setFiltroResponsavel(e.target.value)}
+            >
+              <option value="">👤 Todos os Solicitantes</option>
+              {responsaveisUnicos.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+
+          {/* Filtro: Favorecido */}
+          <div className="w-full lg:w-56 relative shadow-sm">
+            <select 
+              className={`w-full p-2.5 border rounded-lg text-sm font-semibold outline-none transition-all cursor-pointer ${filtroFavorecido ? 'border-[#336699] text-[#0A2A4A] bg-blue-50' : 'border-[#CBD5E1] text-[#64748B]'}`}
+              value={filtroFavorecido}
+              onChange={(e) => setFiltroFavorecido(e.target.value)}
+            >
+              <option value="">🏢 Todos os Favorecidos</option>
+              {favorecidosUnicos.map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </div>
+
+          {/* Botão Limpar */}
+          {temFiltroAtivo && (
+            <button 
+              onClick={limparFiltros}
+              className="w-full lg:w-auto px-4 py-2.5 bg-red-50 text-red-500 border border-red-200 hover:bg-red-100 font-bold text-xs uppercase tracking-wider rounded-lg transition-colors flex-shrink-0 shadow-sm"
+            >
+              ✕ Limpar
+            </button>
+          )}
+
         </div>
+        {/* ────────────────────────────────────────────────────────── */}
+
       </div>
 
       {/* TABELA DE DADOS (Scrollável) */}
-      <div className="px-4 md:px-8 pb-8 flex-grow overflow-hidden flex flex-col">
+      <div className="px-4 md:px-8 pb-8 flex-grow overflow-hidden flex flex-col mt-2">
         <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto">
           <table className="w-full text-left border-collapse min-w-[1100px]">
             <thead className="bg-[#F8FAFC] sticky top-0 z-10 shadow-sm">
@@ -301,7 +446,7 @@ export default function PainelFinanceiro() {
               {loading ? (
                 <tr><td colSpan={10} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Carregando registros do banco de dados...</td></tr>
               ) : opsFiltradas.length === 0 ? (
-                <tr><td colSpan={10} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Nenhuma Ordem de Pagamento encontrada.</td></tr>
+                <tr><td colSpan={10} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Nenhuma Ordem de Pagamento encontrada para estes filtros.</td></tr>
               ) : (
                 opsFiltradas.map((op) => {
                   const isPago = op.status === 'PAGO';

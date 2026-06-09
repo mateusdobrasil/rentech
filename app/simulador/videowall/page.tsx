@@ -135,53 +135,68 @@ export default function SimuladorVideoWall() {
     }
   }, [equipType, dbSetores]);
 
-  // 3. Lógica matemática de simulação em tempo real
+  // 3. Cálculos de Engenharia Extraídos para a UI (Cards)
+  const selectedLedMemo = useMemo(() => dbSetores.led.find(e => e.id === ledConfig.pitchId), [dbSetores, ledConfig.pitchId]);
+  
+  // Pega os dados puros do equipamento selecionado (útil para os cards das outras categorias)
+  const selectedDeviceRaw = useMemo(() => {
+    if (equipType === 'led') return null;
+    const setorItens = dbSetores[equipType as keyof typeof dbSetores] || [];
+    return setorItens.find(e => e.id === selectedModelId) || null;
+  }, [equipType, dbSetores, selectedModelId]);
+
+  const panelRes = parseInt(selectedLedMemo?.resolucao || '128');
+  const resX = ledCols * panelRes;
+  const resY = ledRows * panelRes;
+  const totalPixels = resX * resY;
+  const portasNecessarias = Math.ceil(totalPixels / 640000) || 1;
+
+  // Lógica matemática de simulação (Draft)
   const currentItemDraft = useMemo((): ItemProjeto | null => {
     if (loading) return null;
 
     if (equipType === 'led') {
-      const selectedLed = dbSetores.led.find(e => e.id === ledConfig.pitchId);
-      if (!selectedLed) return null;
+      if (!selectedLedMemo) return null;
 
-      const pesoTotal = totalModulosVisual * (selectedLed.peso || 0);
-      const consumoTotal = totalModulosVisual * (selectedLed.consumo_watts || 0);
-
-      const panelRes = parseInt(selectedLed.resolucao || '128');
-      const resX = ledCols * panelRes;
-      const resY = ledRows * panelRes;
-      const totalPixels = resX * resY;
-      const portasNecessarias = Math.ceil(totalPixels / 650000) || 1;
+      const pesoTotal = totalModulosVisual * (selectedLedMemo.peso || 0);
+      const consumoTotal = totalModulosVisual * (selectedLedMemo.consumo_watts || 0);
 
       return {
-        id: selectedLed.id,
+        id: selectedLedMemo.id,
         qty: 1,
-        name: `Painel de LED ${selectedLed.nome}`,
+        name: `Painel de LED ${selectedLedMemo.nome}`,
         details: `${ledCols * 0.5}m x ${ledRows * 0.5}m (${totalModulosVisual} Módulos) | Res: ${resX}x${resY}px | ${portasNecessarias} Porta(s) Novastar`,
         weight: pesoTotal,
         watts: consumoTotal,
-        image: selectedLed.imagem_url || '/logo.png'
+        image: selectedLedMemo.imagem_url || '/logo.png'
       };
     } else {
-      const setorItens = dbSetores[equipType as keyof typeof dbSetores] || [];
-      const selectedDev = setorItens.find(e => e.id === selectedModelId);
-      if (!selectedDev) return null;
+      if (!selectedDeviceRaw) return null;
 
       const qty = Math.max(1, quantity);
-      const pesoTotal = (selectedDev.peso || 0) * qty;
-      const consumoTotal = (selectedDev.consumo_watts || 0) * qty;
-      const extra = selectedDev.resolucao || selectedDev.dmx || selectedDev.detalhes || 'Equipamento Audiovisual';
+      const pesoTotal = (selectedDeviceRaw.peso || 0) * qty;
+      const consumoTotal = (selectedDeviceRaw.consumo_watts || 0) * qty;
+      const extra = selectedDeviceRaw.resolucao || selectedDeviceRaw.dmx || selectedDeviceRaw.detalhes || 'Equipamento Audiovisual';
 
       return {
-        id: selectedDev.id,
+        id: selectedDeviceRaw.id,
         qty,
-        name: selectedDev.nome,
+        name: selectedDeviceRaw.nome,
         details: extra,
         weight: pesoTotal,
         watts: consumoTotal,
-        image: selectedDev.imagem_url || '/logo.png'
+        image: selectedDeviceRaw.imagem_url || '/logo.png'
       };
     }
-  }, [equipType, ledConfig, selectedModelId, quantity, dbSetores, loading, ledCols, ledRows, totalModulosVisual]);
+  }, [equipType, selectedLedMemo, selectedDeviceRaw, quantity, loading, ledCols, ledRows, totalModulosVisual, resX, resY, portasNecessarias]);
+
+  // Varáveis renderizadas nos Cards Genéricos (Não-LED)
+  const dimUn = selectedDeviceRaw ? `${selectedDeviceRaw.largura || 0}m x ${selectedDeviceRaw.altura || 0}m x ${selectedDeviceRaw.profundidade || 0}m` : '0m x 0m x 0m';
+  const equipName = currentItemDraft?.name || '';
+  const equipQtd = `Qtd: ${quantity}`;
+  const pesoBruto = `${currentItemDraft?.weight.toFixed(1) || '0.0'} kg`;
+  const wattsStr = `${currentItemDraft?.watts || '0'} W`;
+  const kvaStr = currentItemDraft ? ((currentItemDraft.watts / 1000) / 0.8).toFixed(2) + ' kVA' : '0.00 kVA';
 
   // 4. Lógica de acionamento do Modal de Acessórios Relacionais
   const iniciarAdicaoProjeto = () => {
@@ -435,15 +450,12 @@ export default function SimuladorVideoWall() {
                     className="grid shadow-[0_15px_40px_rgba(12,29,77,0.25)]"
                     style={{ 
                       gridTemplateColumns: `repeat(${ledCols}, minmax(0, 1fr))`,
-                      gap: '0px', // Sem borda externa nem gap, apenas a borda de cada módulo
-                      // O segredo do Auto-Fit: Força a largura para bater com a altura máxima e não quebrar
+                      gap: '0px',
                       width: `min(100%, calc(380px * ${ledCols / ledRows}))`,
                     }}
                   >
-                    {/* Renderiza a quantidade exata de módulos visualmente */}
                     {Array.from({ length: Math.min(totalModulosVisual, 2000) }).map((_, i) => (
                       <div key={i} className="relative bg-[#0C1D4D] border border-[#336699]/40 flex items-center justify-center overflow-hidden aspect-square">
-                        {/* Se tiver menos que 400 placas, mostra a logo em cada uma para não travar PCs lentos */}
                         {totalModulosVisual <= 400 && (
                           <div className="relative w-[70%] h-[70%]">
                              <Image 
@@ -468,28 +480,121 @@ export default function SimuladorVideoWall() {
                   <span className="text-[9px] text-[#94A3B8] block px-2 leading-relaxed">{currentItemDraft.details}</span>
                 </div>
               )}
-
             </div>
 
-            {/* Cards Rápidos de Telemetria Técnica */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 flex-shrink-0">
-              <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow">
-                <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Métrica de Corte</span>
-                <strong className="block text-base text-[#0C1D4D] font-black">{equipType === 'led' ? `${ledCols * 0.5}m x ${ledRows * 0.5}m` : 'Unidade Física'}</strong>
+            {/* CARDS RÁPIDOS DE TELEMETRIA TÉCNICA */}
+            {equipType === 'led' ? (
+              <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 flex-shrink-0">
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                  <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Dimensão da Tela</span>
+                  <strong className="block text-base text-[#0C1D4D] font-black leading-none">{ledCols * 0.5}m x {ledRows * 0.5}m</strong>
+                </div>
+                
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                  <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Módulos de 50cm</span>
+                  <strong className="block text-base text-[#0C1D4D] font-black leading-none">{totalModulosVisual} un.</strong>
+                  <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">{totalPixels.toLocaleString('pt-BR')} pixels</span>
+                </div>
+                
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                  <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Resolução Total</span>
+                  <strong className="block text-base text-[#0C1D4D] font-black leading-none">{resX} x {resY} px</strong>
+                  <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">Formato: MP4 / Codec: H.264</span>
+                </div>
+                
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                  <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Sinal de Vídeo</span>
+                  <strong className="block text-base text-[#0C1D4D] font-black leading-none">{portasNecessarias} Porta(s)</strong>
+                  <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">Capac: 650k px/porta</span>
+                </div>
+                
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                  <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Peso Estimado</span>
+                  <strong className="block text-base text-[#0C1D4D] font-black leading-none">{currentItemDraft?.weight.toFixed(1) || '0.0'} kg</strong>
+                </div>
+                
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#16A34A] hover:shadow-md transition-shadow flex flex-col justify-center">
+                  <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Consumo Máximo</span>
+                  <strong className="block text-base text-[#16A34A] font-black leading-none">{currentItemDraft?.watts || '0'} W</strong>
+                  <span className="block text-[10px] text-[#16A34A] font-semibold opacity-80 mt-1">{currentItemDraft ? ((currentItemDraft.watts / 1000) / 0.8).toFixed(2) : '0.00'} kVA</span>
+                </div>
               </div>
-              <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow">
-                <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Carga de Peso</span>
-                <strong className="block text-base text-[#0C1D4D] font-black">{currentItemDraft?.weight.toFixed(1) || '0.0'} kg</strong>
+            ) : (
+              /* CATEGORIAS NÃO-LED (5 CARDS) */
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 flex-shrink-0">
+                
+                {/* 1. DIMENSÃO UN. */}
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                  <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Dimensão Un.</span>
+                  <strong className="block text-base text-[#0C1D4D] font-black leading-none truncate" title={dimUn}>{dimUn}</strong>
+                </div>
+
+                {/* 2. EQUIPAMENTO E QTD */}
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                  <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Equipamento</span>
+                  <strong className="block text-sm text-[#0C1D4D] font-black leading-tight truncate" title={equipName}>{equipName}</strong>
+                  <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">{equipQtd}</span>
+                </div>
+
+                {/* 3. CARD DINÂMICO BASEADO NO TIPO */}
+                {['tv', 'mon', 'touch'].includes(equipType) && (
+                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                    <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Resolução / Vídeo</span>
+                    <strong className="block text-base text-[#0C1D4D] font-black leading-none">{selectedDeviceRaw?.resolucao || '1920 x 1080'} px</strong>
+                    <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">Sinal: HDMI/DP</span>
+                  </div>
+                )}
+                {equipType === 'sound' && (
+                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                    <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Sinal de Áudio</span>
+                    <strong className="block text-base text-[#0C1D4D] font-black leading-none">XLR / P10</strong>
+                    <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">Analógico/Digital</span>
+                  </div>
+                )}
+                {equipType === 'light' && (
+                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                    <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Controle DMX</span>
+                    <strong className="block text-base text-[#0C1D4D] font-black leading-none truncate" title={selectedDeviceRaw?.dmx || 'DMX512'}>{selectedDeviceRaw?.dmx || 'DMX512'}</strong>
+                    <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">Sinal DMX512</span>
+                  </div>
+                )}
+                {equipType === 'truss' && (
+                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                    <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Detalhes Técnicos</span>
+                    <strong className="block text-sm text-[#0C1D4D] font-black leading-tight truncate" title={selectedDeviceRaw?.detalhes || 'Alumínio'}>{selectedDeviceRaw?.detalhes || 'Alumínio'}</strong>
+                    <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">Ferragem / Alumínio</span>
+                  </div>
+                )}
+                {equipType === 'acc' && (
+                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                    <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Detalhes Técnicos</span>
+                    <strong className="block text-sm text-[#0C1D4D] font-black leading-tight truncate" title={selectedDeviceRaw?.detalhes || 'Acessório'}>{selectedDeviceRaw?.detalhes || 'Acessório'}</strong>
+                    <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">Periférico / Cabeamento</span>
+                  </div>
+                )}
+
+                {/* 4. PESO BRUTO */}
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                  <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Peso Bruto</span>
+                  <strong className="block text-base text-[#0C1D4D] font-black leading-none">{pesoBruto}</strong>
+                </div>
+
+                {/* 5. CONSUMO (Se for estrutura, exibe Zero e fica cinza) */}
+                {equipType === 'truss' ? (
+                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#64748B] hover:shadow-md transition-shadow flex flex-col justify-center">
+                    <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Consumo</span>
+                    <strong className="block text-base text-[#64748B] font-black leading-none">Zero</strong>
+                  </div>
+                ) : (
+                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#16A34A] hover:shadow-md transition-shadow flex flex-col justify-center">
+                    <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Consumo</span>
+                    <strong className="block text-base text-[#16A34A] font-black leading-none">{wattsStr}</strong>
+                    <span className="block text-[10px] text-[#16A34A] font-semibold opacity-80 mt-1">{kvaStr}</span>
+                  </div>
+                )}
+                
               </div>
-              <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow">
-                <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Potência Nominal</span>
-                <strong className="block text-base text-[#0C1D4D] font-black">{currentItemDraft?.watts || '0'} W</strong>
-              </div>
-              <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#16A34A] hover:shadow-md transition-shadow">
-                <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Demanda Gerador</span>
-                <strong className="block text-base text-[#16A34A] font-black">{currentItemDraft ? ((currentItemDraft.watts / 1000) / 0.8).toFixed(2) : '0.00'} kVA</strong>
-              </div>
-            </div>
+            )}
           </div>
         ) : (
           /* View da Tabela Estruturada do Projeto */
@@ -501,7 +606,7 @@ export default function SimuladorVideoWall() {
 
             <div className="overflow-y-auto flex-grow pr-2">
               <table className="w-full text-left border-collapse">
-                <thead className="sticky top-0 bg-white">
+                <thead className="sticky top-0 bg-white z-10">
                   <tr className="text-[#64748B] text-[10px] uppercase font-bold tracking-wider border-b-2 border-[#E2E8F0] bg-[#F8FAFC]">
                     <th className="p-3 rounded-tl-lg">Qtd</th>
                     <th className="p-3">Equipamento Especificado</th>

@@ -13,7 +13,8 @@ export default function SimuladorCurvatura() {
   // Estados de Configuração
   const [modeloPainel, setModeloPainel] = useState<number>(5); // 5°, 15°, 45°
   const [tipoCurva, setTipoCurva] = useState<'concavo' | 'convexo'>('concavo');
-  const [modoAngulo, setModoAngulo] = useState<'unico' | 'diametro' | 'raio' | 'multiplo'>('unico');
+  // ADICIONADO: 'circunferencia' às opções
+  const [modoAngulo, setModoAngulo] = useState<'unico' | 'diametro' | 'raio' | 'circunferencia' | 'multiplo'>('unico');
   const [angleInput, setAngleInput] = useState<string>('5');
   
   // Estados de Dimensionamento
@@ -62,13 +63,14 @@ export default function SimuladorCurvatura() {
     let angles: number[] = [];
     let n = 0;
     
-    // Processamento de Ângulo (Agora com opção de Raio)
-    if (modoAngulo === 'unico' || modoAngulo === 'diametro' || modoAngulo === 'raio') {
+    // ADICIONADO: 'circunferencia' nas opções tratadas automaticamente
+    if (modoAngulo === 'unico' || modoAngulo === 'diametro' || modoAngulo === 'raio' || modoAngulo === 'circunferencia') {
       let anguloUnico = 0;
       const raioMinimo = MOD_W / ((maxPermitido * Math.PI) / 180);
       const diametroMinimo = 2 * raioMinimo;
+      const circMinima = diametroMinimo * Math.PI;
 
-      if (modoAngulo === 'diametro' || modoAngulo === 'raio') {
+      if (modoAngulo === 'diametro' || modoAngulo === 'raio' || modoAngulo === 'circunferencia') {
         let raioAlvo = 0;
 
         if (modoAngulo === 'diametro') {
@@ -88,6 +90,15 @@ export default function SimuladorCurvatura() {
             raioAlvo = raioMinimo;
             aviso = `Ajustado p/ raio mín. (${raioMinimo.toFixed(2)}m)`;
           }
+        } else if (modoAngulo === 'circunferencia') {
+          let circAlvo = parseFloat(angleInput);
+          if (isNaN(circAlvo) || circAlvo <= 0) circAlvo = Math.ceil(circMinima);
+          
+          if (circAlvo < circMinima) {
+            circAlvo = circMinima;
+            aviso = `Circunferência exigiria curva > ${maxPermitido}°. Ajustado p/ ${circMinima.toFixed(2)}m.`;
+          }
+          raioAlvo = circAlvo / (2 * Math.PI);
         }
         
         anguloUnico = (MOD_W / raioAlvo) * (180 / Math.PI);
@@ -101,7 +112,12 @@ export default function SimuladorCurvatura() {
       }
 
       // Processamento de Quantidade/Tamanho
-      if (sizeMode === 'qty') {
+      if (modoAngulo === 'circunferencia') {
+        // Quando é circunferência plena, a quantidade de placas é fixa pelo comprimento total da curva dividida pela placa.
+        // O Círculo completo tem 360°.
+        n = Math.round(360 / anguloUnico);
+        aviso = aviso || "Círculo Fechado Otimizado";
+      } else if (sizeMode === 'qty') {
         n = Math.max(1, qty);
       } else if (sizeMode === 'linear') {
         n = Math.max(1, Math.ceil(inputLinear / MOD_W));
@@ -138,7 +154,7 @@ export default function SimuladorCurvatura() {
     let raioDisplay = "Variável";
     let diamDisplay = "Variável";
 
-    if (modoAngulo === 'unico' || modoAngulo === 'diametro' || modoAngulo === 'raio') {
+    if (modoAngulo === 'unico' || modoAngulo === 'diametro' || modoAngulo === 'raio' || modoAngulo === 'circunferencia') {
       const angBase = angles[0];
       if (Math.abs(angBase) < 0.0001) {
         raioDisplay = "Plano (Reto)";
@@ -327,40 +343,46 @@ export default function SimuladorCurvatura() {
                 <option value="unico">Por Ângulo Constante</option>
                 <option value="diametro">Por Diâmetro da Curva (m)</option>
                 <option value="raio">Por Raio da Curva (m)</option>
+                <option value="circunferencia">Por Circunferência (m)</option>
                 <option value="multiplo">Por Placa Livre (S-Curve)</option>
               </select>
             </div>
 
             <div>
               <label className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider mb-1 block">
-                {modoAngulo === 'unico' ? 'Ângulo por Placa (°)' : modoAngulo === 'diametro' ? 'Diâmetro Alvo (m)' : modoAngulo === 'raio' ? 'Raio Alvo (m)' : 'Ângulos (Por vírgula)'}
+                {modoAngulo === 'unico' ? 'Ângulo por Placa (°)' : modoAngulo === 'diametro' ? 'Diâmetro Alvo (m)' : modoAngulo === 'raio' ? 'Raio Alvo (m)' : modoAngulo === 'circunferencia' ? 'Circunferência (m)' : 'Ângulos (Por vírgula)'}
               </label>
               <input type="text" className="w-full p-1.5 bg-white border border-[#CBD5E1] rounded-lg text-sm text-[#0C1D4D] font-black outline-none focus:border-[#336699]" value={angleInput} onChange={(e) => setAngleInput(e.target.value)} />
               {resultados.avisoSeguranca && <p className="text-[9px] text-[#D97706] font-bold mt-1 leading-tight">{resultados.avisoSeguranca}</p>}
             </div>
           </div>
 
-          <div className="border-t border-dashed border-[#CBD5E1]"></div>
+          {/* Ao selecionar Circunferência, as opções de dimensionamento de Qtd/Linear/Corda não fazem sentido,
+              pois a circunferência define sozinha quantas placas são necessárias. Escondemos os botões. */}
+          {modoAngulo !== 'circunferencia' && (
+            <>
+              <div className="border-t border-dashed border-[#CBD5E1]"></div>
+              {/* Dimensionamento */}
+              <div className="space-y-1.5 pb-1">
+                <label className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider block">Definir Tamanho Por:</label>
+                <div className="flex gap-1 bg-[#F8FAFC] p-1 rounded-lg border border-[#CBD5E1]">
+                  <button onClick={() => setSizeMode('qty')} className={`flex-1 py-1 rounded-md text-[9px] font-bold uppercase transition-all ${sizeMode === 'qty' ? 'bg-[#336699] text-white shadow-sm' : 'text-[#64748B] hover:bg-[#E2E8F0]'}`}>Módulos</button>
+                  <button onClick={() => setSizeMode('corda')} className={`flex-1 py-1 rounded-md text-[9px] font-bold uppercase transition-all ${sizeMode === 'corda' ? 'bg-[#336699] text-white shadow-sm' : 'text-[#64748B] hover:bg-[#E2E8F0]'}`}>Corda</button>
+                  <button onClick={() => setSizeMode('linear')} className={`flex-1 py-1 rounded-md text-[9px] font-bold uppercase transition-all ${sizeMode === 'linear' ? 'bg-[#336699] text-white shadow-sm' : 'text-[#64748B] hover:bg-[#E2E8F0]'}`}>Linear</button>
+                </div>
 
-          {/* Dimensionamento */}
-          <div className="space-y-1.5 pb-1">
-            <label className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider block">Definir Tamanho Por:</label>
-            <div className="flex gap-1 bg-[#F8FAFC] p-1 rounded-lg border border-[#CBD5E1]">
-              <button onClick={() => setSizeMode('qty')} className={`flex-1 py-1 rounded-md text-[9px] font-bold uppercase transition-all ${sizeMode === 'qty' ? 'bg-[#336699] text-white shadow-sm' : 'text-[#64748B] hover:bg-[#E2E8F0]'}`}>Módulos</button>
-              <button onClick={() => setSizeMode('corda')} className={`flex-1 py-1 rounded-md text-[9px] font-bold uppercase transition-all ${sizeMode === 'corda' ? 'bg-[#336699] text-white shadow-sm' : 'text-[#64748B] hover:bg-[#E2E8F0]'}`}>Corda</button>
-              <button onClick={() => setSizeMode('linear')} className={`flex-1 py-1 rounded-md text-[9px] font-bold uppercase transition-all ${sizeMode === 'linear' ? 'bg-[#336699] text-white shadow-sm' : 'text-[#64748B] hover:bg-[#E2E8F0]'}`}>Linear</button>
-            </div>
-
-            {sizeMode === 'qty' && (
-              <div><input type="number" min="1" className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] font-bold outline-none focus:border-[#336699]" value={qty} onChange={(e) => setQty(parseInt(e.target.value) || 1)} /></div>
-            )}
-            {sizeMode === 'corda' && (
-              <div><input type="number" step="0.5" className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] font-bold outline-none focus:border-[#336699]" value={inputCorda} onChange={(e) => setInputCorda(parseFloat(e.target.value) || 1)} /></div>
-            )}
-            {sizeMode === 'linear' && (
-              <div><input type="number" step="0.5" className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] font-bold outline-none focus:border-[#336699]" value={inputLinear} onChange={(e) => setInputLinear(parseFloat(e.target.value) || 1)} /></div>
-            )}
-          </div>
+                {sizeMode === 'qty' && (
+                  <div><input type="number" min="1" className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] font-bold outline-none focus:border-[#336699]" value={qty} onChange={(e) => setQty(parseInt(e.target.value) || 1)} /></div>
+                )}
+                {sizeMode === 'corda' && (
+                  <div><input type="number" step="0.5" className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] font-bold outline-none focus:border-[#336699]" value={inputCorda} onChange={(e) => setInputCorda(parseFloat(e.target.value) || 1)} /></div>
+                )}
+                {sizeMode === 'linear' && (
+                  <div><input type="number" step="0.5" className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] font-bold outline-none focus:border-[#336699]" value={inputLinear} onChange={(e) => setInputLinear(parseFloat(e.target.value) || 1)} /></div>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         <div className="mt-2 pt-2 border-t border-dashed border-[#CBD5E1]">

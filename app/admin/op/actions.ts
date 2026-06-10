@@ -155,7 +155,7 @@ export async function atualizarOP(opId: string, dadosAtualizados: Partial<NovaOP
 }
 
 // ============================================================================
-// DISPARO DE E-MAIL VIA SMTP COM MAGIC LINK PARA O FINANCEIRO
+// DISPARO DE E-MAIL VIA SMTP COM MAGIC LINK E DATA TRATADA (PT-BR)
 // ============================================================================
 export async function dispararEmailOP(op: any, emailSolicitante: string) {
   try {
@@ -169,6 +169,18 @@ export async function dispararEmailOP(op: any, emailSolicitante: string) {
         pass: process.env.SMTP_PASS,
       },
     });
+
+    // TRATAMENTO DA DATA: Converte YYYY-MM-DD para DD/MM/YYYY de forma segura
+    let dataVencimentoFormatada = 'Não informada';
+    if (op.data_vencimento) {
+      const partesData = op.data_vencimento.split('-');
+      if (partesData.length === 3) {
+        const [ano, mes, dia] = partesData;
+        dataVencimentoFormatada = `${dia}/${mes}/${ano}`;
+      } else {
+        dataVencimentoFormatada = op.data_vencimento;
+      }
+    }
 
     const totalGeral = Number(op.total_geral || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
     
@@ -189,7 +201,7 @@ export async function dispararEmailOP(op: any, emailSolicitante: string) {
       ? `<a href="${op.file_url}" style="display: inline-block; padding: 12px 24px; background-color: #336699; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 12px;">📎 Visualizar Comprovante / Anexo</a>`
       : `<span style="color: #94A3B8; font-style: italic; font-size: 12px;">Nenhum anexo enviado.</span>`;
 
-    // Base do E-mail (igual para ambos)
+    // Base do E-mail (com a variável da data corrigida)
     const htmlBase = `
         <div style="font-family: Arial, sans-serif; max-width: 650px; margin: 0 auto; border: 1px solid #E2E8F0; border-radius: 12px; overflow: hidden; background-color: #ffffff;">
           
@@ -228,7 +240,7 @@ export async function dispararEmailOP(op: any, emailSolicitante: string) {
             <table style="width: 100%; font-size: 13px; line-height: 1.5;">
               <tr>
                 <td style="padding-bottom: 10px; width: 50%;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Forma / Banco</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${op.tipo_pagamento} - ${op.dados_pagamento}</span></td>
-                <td style="padding-bottom: 10px; width: 50%;"><strong style="color:red; font-size: 10px; text-transform: uppercase;">Data de Vencimento</strong><br/><span style="color:red; font-weight: bold;">${op.data_vencimento || 'Não informada'}</span></td>
+                <td style="padding-bottom: 10px; width: 50%;"><strong style="color:red; font-size: 10px; text-transform: uppercase;">Data de Vencimento</strong><br/><span style="color:red; font-weight: bold;">${dataVencimentoFormatada}</span></td>
               </tr>
               <tr>
                 <td colspan="2" style="padding-bottom: 10px;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Chave PIX</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${op.chave_pix || 'Não informada'}</span></td>
@@ -267,11 +279,9 @@ export async function dispararEmailOP(op: any, emailSolicitante: string) {
         </div>
     `;
 
-    // Link Seguro configurado com a URL do seu sistema
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
     const linkBaixa = `${baseUrl}/api/baixar-op?id=${op.id || op.numero_op}`;
 
-    // Construção do Botão que só o Financeiro vai ver
     const blocoBotao = `
       <div style="background-color: #ffffff; padding: 30px 20px; text-align: center; border-top: 1px solid #E2E8F0;">
         <a href="${linkBaixa}" style="background-color: #16A34A; color: white; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 15px; display: inline-block; text-transform: uppercase; letter-spacing: 1px;">

@@ -157,7 +157,7 @@ export async function atualizarOP(opId: string, dadosAtualizados: Partial<NovaOP
 // ============================================================================
 // DISPARO DE E-MAIL VIA SMTP COM MAGIC LINK E DATA TRATADA (PT-BR)
 // ============================================================================
-export async function dispararEmailOP(op: any, emailSolicitante: string) {
+export async function dispararEmailOP(op: any, emailSolicitante: string, apenasCopia: boolean = false) {
   try {
     const nodemailer = require('nodemailer');
     const transporter = nodemailer.createTransport({
@@ -295,17 +295,19 @@ export async function dispararEmailOP(op: any, emailSolicitante: string) {
     await transporter.sendMail({
       from: `"Sistema Rentech" <${process.env.SMTP_USER}>`,
       to: emailSolicitante,
-      subject: `[Cópia] Sua OP foi enviada - OS: ${op.os_numero || 'S/N'}`,
+      subject: apenasCopia ? `[Segunda Via] Cópia da OP - OS: ${op.os_numero || 'S/N'}` : `[Cópia] Sua OP foi enviada - OS: ${op.os_numero || 'S/N'}`,
       html: htmlBase.replace('{{BOTAO_MÁGICO}}', '')
     });
 
     // 2. Envio para o Financeiro (COM o Botão)
-    await transporter.sendMail({
-      from: `"Sistema Rentech" <${process.env.SMTP_USER}>`,
-      to: 'financeiro@locadorarentech.com.br',
-      subject: `[APROVAÇÃO] Nova OP Recebida - OS: ${op.os_numero || 'S/N'}`,
-      html: htmlBase.replace('{{BOTAO_MÁGICO}}', blocoBotao)
-    });
+    if (!apenasCopia) {
+      await transporter.sendMail({
+        from: `"Sistema Rentech" <${process.env.SMTP_USER}>`,
+        to: 'financeiro@locadorarentech.com.br',
+        subject: `[APROVAÇÃO] Nova OP Recebida - OS: ${op.os_numero || 'S/N'}`,
+        html: htmlBase.replace('{{BOTAO_MÁGICO}}', blocoBotao)
+      });
+    }
 
     return { success: true };
     

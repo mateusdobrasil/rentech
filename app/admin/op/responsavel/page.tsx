@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { listarOPs, atualizarOP } from '../actions';
+import { listarOPs, atualizarOP, dispararEmailOP } from '../actions';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next"
 
@@ -40,6 +40,7 @@ export default function PainelResponsavel() {
 
   // Estados de Autenticação
   const [usuarioAtual, setUsuarioAtual] = useState('');
+  const [usuarioEmail, setUsuarioEmail] = useState('');
   const [nivelAcesso, setNivelAcesso] = useState<'DIR' | 'USU'>('USU');
   const [authLoading, setAuthLoading] = useState(true);
 
@@ -72,11 +73,13 @@ export default function PainelResponsavel() {
 
       if (perfil) {
         setUsuarioAtual(perfil.nome || 'Usuário');
+        setUsuarioEmail(session.user.email || '');
         const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
         const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
         setNivelAcesso(cargosAltaGestao.includes(permissaoBanco) ? 'DIR' : 'USU');
       } else {
         setUsuarioAtual(session.user.email?.split('@')[0] || 'Usuário');
+        setUsuarioEmail(session.user.email || '');
       }
       setAuthLoading(false);
     }
@@ -218,6 +221,23 @@ export default function PainelResponsavel() {
       carregarDados();
     } else {
       setDialog({ open: true, type: 'error', title: 'Erro', msg: res.message });
+    }
+  };
+
+  const solicitarCopia = async (op: OP) => {
+    setDialog({ open: true, type: 'loading', title: 'Enviando...', msg: 'Enviando cópia para o seu e-mail.' });
+    const emailDestino = (op as any).responsavel_email || usuarioEmail;
+    
+    if (!emailDestino) {
+      setDialog({ open: true, type: 'error', title: 'Erro', msg: 'Não foi possível identificar o e-mail de destino.' });
+      return;
+    }
+
+    const res = await dispararEmailOP(op, emailDestino, true);
+    if (res.success) {
+      setDialog({ open: true, type: 'success', title: 'Cópia Enviada', msg: `A cópia foi enviada para ${emailDestino}.` });
+    } else {
+      setDialog({ open: true, type: 'error', title: 'Erro', msg: res.message || 'Falha ao enviar e-mail.' });
     }
   };
 
@@ -373,7 +393,7 @@ export default function PainelResponsavel() {
                           ✏️ Editar
                         </button>
                         <button
-                          onClick={() => setDialog({ open: true, type: 'success', title: 'Cópia Enviada', msg: 'A cópia foi enviada para o seu e-mail.' })}
+                          onClick={() => solicitarCopia(op)}
                           className="w-full bg-[#F0F4F8] border border-[#CBD5E1] text-[#64748B] font-bold text-[9px] uppercase tracking-wider py-1 rounded transition-colors hover:bg-[#E2E8F0]"
                         >
                           📩 Receber Cópia

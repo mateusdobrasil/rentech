@@ -12,11 +12,11 @@ type Video = {
 };
 
 interface VideoCarouselProps {
-  videos?: string[];
+  videos?: any[];
 }
 
 const getVideoInfo = (url: string) => {
-  if (!url) return { type: 'html5', embedUrl: '', thumbUrl: '', isVertical: false };
+  if (!url) return { type: 'html5', embedUrl: '', thumbUrl: '' };
   
   const ytRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i;
   const ytShortRegex = /youtube\.com\/shorts\/([^"&?\/\s]{11})/i;
@@ -34,8 +34,7 @@ const getVideoInfo = (url: string) => {
     return {
       type: 'youtube',
       embedUrl: `https://www.youtube.com/embed/videoseries?list=${listMatch[1]}`,
-      thumbUrl: vId ? `https://img.youtube.com/vi/${vId}/hqdefault.jpg` : '',
-      isVertical: false
+      thumbUrl: vId ? `https://img.youtube.com/vi/${vId}/hqdefault.jpg` : ''
     };
   }
 
@@ -44,8 +43,7 @@ const getVideoInfo = (url: string) => {
     return {
       type: 'youtube',
       embedUrl: `https://www.youtube.com/embed/${ytShortMatch[1]}`,
-      thumbUrl: `https://img.youtube.com/vi/${ytShortMatch[1]}/hqdefault.jpg`,
-      isVertical: true
+      thumbUrl: `https://img.youtube.com/vi/${ytShortMatch[1]}/hqdefault.jpg`
     };
   }
 
@@ -54,8 +52,7 @@ const getVideoInfo = (url: string) => {
     return {
       type: 'youtube',
       embedUrl: `https://www.youtube.com/embed/${videoMatch[1]}`,
-      thumbUrl: `https://img.youtube.com/vi/${videoMatch[1]}/hqdefault.jpg`,
-      isVertical: false
+      thumbUrl: `https://img.youtube.com/vi/${videoMatch[1]}/hqdefault.jpg`
     };
   }
 
@@ -64,26 +61,44 @@ const getVideoInfo = (url: string) => {
     return {
       type: 'instagram',
       embedUrl: `https://www.instagram.com/p/${igMatch[1]}/embed/`,
-      thumbUrl: '', // O Instagram não fornece thumbnail pública fácil
-      isVertical: true
+      thumbUrl: '' // O Instagram não fornece thumbnail pública fácil
     };
   }
 
   // Caso contrário, assume que é um MP4 direto (Supabase)
-  return { type: 'html5', embedUrl: url, thumbUrl: '', isVertical: false };
+  return { type: 'html5', embedUrl: url, thumbUrl: '' };
 };
 
 export default function VideoCarousel({ videos: propVideos = [] }: VideoCarouselProps) {
   const videos = useMemo<Video[]>(() => {
-    return propVideos.filter(Boolean).map((src, index) => {
-      const info = getVideoInfo(src as string);
+    return propVideos.filter(Boolean).map((item, index) => {
+      let src = '';
+      let isVertical = false;
+
+      // Suporta strings diretas com prefixos ou objetos JSON reais vindos do banco
+      if (typeof item === 'string') {
+        if (item.startsWith('vertical|')) {
+          src = item.replace('vertical|', '');
+          isVertical = true;
+        } else if (item.startsWith('horizontal|')) {
+          src = item.replace('horizontal|', '');
+          isVertical = false;
+        } else {
+          src = item;
+        }
+      } else if (typeof item === 'object' && item !== null) {
+        src = item.url || '';
+        isVertical = !!item.isVertical;
+      }
+
+      const info = getVideoInfo(src);
       return {
         src,
-        title: `Vídeo ${index + 1}`,
+        title: `Cases de Sucesso ${index + 1}`,
         type: info.type as 'html5' | 'youtube' | 'instagram',
         embedUrl: info.embedUrl,
         thumbUrl: info.thumbUrl,
-        isVertical: info.isVertical
+        isVertical
       };
     });
   }, [propVideos]);
@@ -163,8 +178,8 @@ export default function VideoCarousel({ videos: propVideos = [] }: VideoCarousel
               className="w-full h-full object-cover"
               playsInline
               muted
-              loop
               autoPlay
+              onEnded={next}
             />
           )}
 

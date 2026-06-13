@@ -15,7 +15,7 @@ interface SiteConfig {
   email_contato: string;
   hero_titulo: string;
   hero_subtitulo: string;
-  videos_carrossel?: string[];
+  videos_carrossel?: any[];
   img_feiras: string;
   img_feiras_titulo?: string;
   img_feiras_desc?: string;

@@ -15,12 +15,25 @@ interface SiteConfig {
   email_contato: string;
   hero_titulo: string;
   hero_subtitulo: string;
+  videos_carrossel?: string[];
   img_feiras: string;
+  img_feiras_titulo?: string;
+  img_feiras_desc?: string;
   img_congressos: string;
+  img_congressos_titulo?: string;
+  img_congressos_desc?: string;
   img_shows: string;
+  img_shows_titulo?: string;
+  img_shows_desc?: string;
   img_case_corporativo: string;
+  img_case_corporativo_titulo?: string;
+  img_case_corporativo_desc?: string;
   img_case_festival: string;
+  img_case_festival_titulo?: string;
+  img_case_festival_desc?: string;
   img_case_congresso: string;
+  img_case_congresso_titulo?: string;
+  img_case_congresso_desc?: string;
 }
 
 export default function Home() {
@@ -32,12 +45,25 @@ export default function Home() {
     email_contato: 'contato@locadorarentech.com.br',
     hero_titulo: 'Engenharia Audiovisual para Grandes Eventos',
     hero_subtitulo: 'Elevamos o padrão do seu evento corporativo, show ou congresso com infraestrutura técnica de ponta e um atendimento que não deixa margem para falhas.',
+    videos_carrossel: [],
     img_feiras: '/cases/feiras2.jpg',
+    img_feiras_titulo: 'Feiras e Exibições',
+    img_feiras_desc: 'Painéis de LED de alta resolução, totens interativos e projetos de iluminação arquitetural.',
     img_congressos: '/cases/congressos.png',
+    img_congressos_titulo: 'Congressos',
+    img_congressos_desc: 'Sistemas de sonorização precisos, projeção mapeada e tradução simultânea.',
     img_shows: '/cases/shows.png',
+    img_shows_titulo: 'Shows e Festivais',
+    img_shows_desc: 'Estruturas de grid, moving lights, lasers e PA potente para entregar a melhor experiência.',
     img_case_corporativo: '/cases/case-corporativo.jpg',
+    img_case_corporativo_titulo: 'Convenção Anual de Vendas',
+    img_case_corporativo_desc: 'Painel de LED curvo, palco com cenografia integrada e iluminação cênica para 800 convidados.',
     img_case_festival: '/cases/case-festival.png',
-    img_case_congresso: '/cases/case-congresso.jpg'
+    img_case_festival_titulo: 'Festival de Música ao Vivo',
+    img_case_festival_desc: 'Estrutura de grid completa, PA de grande porte e rig de iluminação para palco principal ao ar livre.',
+    img_case_congresso: '/cases/case-congresso.jpg',
+    img_case_congresso_titulo: 'Congresso SOCESP',
+    img_case_congresso_desc: 'Projeção mapeada de grande formato, sonorização precisa e tradução simultânea para múltiplos idiomas.'
   });
 
   // Busca as configurações em tempo real do banco de dados
@@ -113,7 +139,7 @@ export default function Home() {
         </div>
       </section>
 
-      <VideoCarousel />
+      <VideoCarousel videos={config.videos_carrossel} />
 
       {/* Especialidades */}
       <section id="especialidades" className="py-24 bg-[#000000] border-t border-[#0C1D4D] relative">
@@ -135,9 +161,9 @@ export default function Home() {
                 <div className="absolute inset-0 bg-gradient-to-t from-[#0C1D4D] via-[#0C1D4D]/20 to-transparent"></div>
               </div>
               <div className="p-8">
-                <h3 className="text-2xl font-black mb-3 text-white">Feiras e Exibições</h3>
+                <h3 className="text-2xl font-black mb-3 text-white">{config.img_feiras_titulo}</h3>
                 <p className="text-[#B3B3B3] text-sm leading-relaxed">
-                  Painéis de LED de alta resolução, totens interativos e projetos de iluminação arquitetural.
+                  {config.img_feiras_desc}
                 </p>
               </div>
             </div>
@@ -153,9 +179,9 @@ export default function Home() {
                 <div className="absolute inset-0 bg-gradient-to-t from-[#0C1D4D] via-[#0C1D4D]/20 to-transparent"></div>
               </div>
               <div className="p-8">
-                <h3 className="text-2xl font-black mb-3 text-white">Congressos</h3>
+                <h3 className="text-2xl font-black mb-3 text-white">{config.img_congressos_titulo}</h3>
                 <p className="text-[#B3B3B3] text-sm leading-relaxed">
-                  Sistemas de sonorização precisos, projeção mapeada e tradução simultânea.
+                  {config.img_congressos_desc}
                 </p>
               </div>
             </div>
@@ -171,9 +197,9 @@ export default function Home() {
                 <div className="absolute inset-0 bg-gradient-to-t from-[#0C1D4D] via-[#0C1D4D]/20 to-transparent"></div>
               </div>
               <div className="p-8">
-                <h3 className="text-2xl font-black mb-3 text-white">Shows e Festivais</h3>
+                <h3 className="text-2xl font-black mb-3 text-white">{config.img_shows_titulo}</h3>
                 <p className="text-[#B3B3B3] text-sm leading-relaxed">
-                  Estruturas de grid, moving lights, lasers e PA potente para entregar a melhor experiência.
+                  {config.img_shows_desc}
                 </p>
               </div>
             </div>
@@ -199,24 +225,24 @@ export default function Home() {
               {
                 img: config.img_case_corporativo,
                 tag: 'Corporativo',
-                title: 'Convenção Anual de Vendas',
-                desc: 'Painel de LED curvo, palco com cenografia integrada e iluminação cênica para 800 convidados.',
+                title: config.img_case_corporativo_titulo,
+                desc: config.img_case_corporativo_desc,
               },
               {
                 img: config.img_case_festival,
                 tag: 'Show / Festival',
-                title: 'Festival de Música ao Vivo',
-                desc: 'Estrutura de grid completa, PA de grande porte e rig de iluminação para palco principal ao ar livre.',
+                title: config.img_case_festival_titulo,
+                desc: config.img_case_festival_desc,
               },
               {
                 img: config.img_case_congresso,
                 tag: 'Congresso',
-                title: 'Congresso SOCESP',
-                desc: 'Projeção mapeada de grande formato, sonorização precisa e tradução simultânea para múltiplos idiomas.',
+                title: config.img_case_congresso_titulo,
+                desc: config.img_case_congresso_desc,
               },
-            ].map((c) => (
+            ].map((c, index) => (
               <article
-                key={c.title}
+                key={c.tag || index}
                 className="bg-[#0C1D4D]/20 border border-[#284B8C]/30 rounded-xl overflow-hidden hover:border-[#336699] transition-all hover:-translate-y-2 group"
               >
                 <div className="relative h-64 overflow-hidden bg-[#0C1D4D]/50">

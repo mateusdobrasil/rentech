@@ -13,12 +13,25 @@ interface SiteConfig {
   hero_titulo: string;
   hero_subtitulo: string;
   video_url: string;
+  videos_carrossel?: string[]; // Array de links para o carrossel
   img_feiras: string;
+  img_feiras_titulo?: string;
+  img_feiras_desc?: string;
   img_congressos: string;
+  img_congressos_titulo?: string;
+  img_congressos_desc?: string;
   img_shows: string;
+  img_shows_titulo?: string;
+  img_shows_desc?: string;
   img_case_corporativo: string;
+  img_case_corporativo_titulo?: string;
+  img_case_corporativo_desc?: string;
   img_case_festival: string;
+  img_case_festival_titulo?: string;
+  img_case_festival_desc?: string;
   img_case_congresso: string;
+  img_case_congresso_titulo?: string;
+  img_case_congresso_desc?: string;
 }
 
 export default function GestaoConteudo() {
@@ -36,12 +49,25 @@ export default function GestaoConteudo() {
     hero_titulo: 'Engenharia Audiovisual para Grandes Eventos',
     hero_subtitulo: 'Elevamos o padrão do seu evento corporativo, show ou congresso com infraestrutura técnica de ponta.',
     video_url: '',
+    videos_carrossel: [],
     img_feiras: '/cases/feiras2.jpg',
+    img_feiras_titulo: 'Feiras e Exibições',
+    img_feiras_desc: 'Estrutura completa para stands e painéis.',
     img_congressos: '/cases/congressos.png',
+    img_congressos_titulo: 'Congressos',
+    img_congressos_desc: 'Sonorização e projeção de alta qualidade.',
     img_shows: '/cases/shows.png',
+    img_shows_titulo: 'Shows e Festivais',
+    img_shows_desc: 'Grandes palcos e iluminação cênica.',
     img_case_corporativo: '/cases/case-corporativo.jpg',
+    img_case_corporativo_titulo: 'Case Corporativo',
+    img_case_corporativo_desc: 'Evento de final de ano com transmissão.',
     img_case_festival: '/cases/case-festival.png',
-    img_case_congresso: '/cases/case-congresso.jpg'
+    img_case_festival_titulo: 'Case Festival',
+    img_case_festival_desc: 'Festival de música com painéis de LED.',
+    img_case_congresso: '/cases/case-congresso.jpg',
+    img_case_congresso_titulo: 'Case Congresso',
+    img_case_congresso_desc: 'Congresso internacional médico.'
   });
 
   const [dialog, setDialog] = useState({ open: false, msg: '', title: '', isError: false });
@@ -222,12 +248,12 @@ export default function GestaoConteudo() {
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {[
-              { label: 'Feiras e Exibições', campo: 'img_feiras' as const },
-              { label: 'Congressos', campo: 'img_congressos' as const },
-              { label: 'Shows e Festivais', campo: 'img_shows' as const }
+              { label: 'Feiras e Exibições', campo: 'img_feiras' as const, campoTitulo: 'img_feiras_titulo' as const, campoDesc: 'img_feiras_desc' as const },
+              { label: 'Congressos', campo: 'img_congressos' as const, campoTitulo: 'img_congressos_titulo' as const, campoDesc: 'img_congressos_desc' as const },
+              { label: 'Shows e Festivais', campo: 'img_shows' as const, campoTitulo: 'img_shows_titulo' as const, campoDesc: 'img_shows_desc' as const }
             ].map(item => (
-              <div key={item.campo} className="border border-[#E2E8F0] p-4 rounded-xl flex flex-col justify-between bg-[#F8FAFC]">
-                <div>
+              <div key={item.campo} className="border border-[#E2E8F0] p-4 rounded-xl flex flex-col bg-[#F8FAFC] gap-3">
+                <div className="flex-shrink-0">
                   <span className="block text-xs font-black uppercase tracking-wider text-[#0C1D4D] mb-2">{item.label}</span>
                   <div className="relative h-32 w-full bg-gray-200 rounded-lg overflow-hidden mb-3 border border-[#CBD5E1]">
                     <img src={config[item.campo]} alt={item.label} className="w-full h-full object-cover" />
@@ -235,9 +261,29 @@ export default function GestaoConteudo() {
                 </div>
                 <label className="w-full text-center bg-white border border-[#BAE6FD] hover:bg-blue-50 text-[#0369A1] font-bold text-[10px] uppercase tracking-wider py-2 rounded-lg cursor-pointer block transition-colors">
                   {uploadingField === item.campo ? 'Carregando...' : '🔄 Alterar Imagem'}
-                  {/* Mudado de type="open" para type="file" abaixo */}
                   <input type="file" className="hidden" accept="image/*" onChange={(e) => handleImageUpload(e, item.campo)} disabled={uploadingField !== null} />
                 </label>
+
+                <div className="space-y-3 mt-2 border-t border-[#E2E8F0] pt-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Título</label>
+                    <input 
+                      type="text" 
+                      className="w-full p-2 border border-[#CBD5E1] rounded-lg text-xs font-bold text-[#0A2A4A] outline-none focus:border-[#336699]"
+                      value={config[item.campoTitulo] || ''}
+                      onChange={(e) => setConfig({...config, [item.campoTitulo]: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Descrição Curta</label>
+                    <textarea 
+                      rows={2}
+                      className="w-full p-2 border border-[#CBD5E1] rounded-lg text-xs font-medium text-[#0A2A4A] outline-none focus:border-[#336699] resize-none"
+                      value={config[item.campoDesc] || ''}
+                      onChange={(e) => setConfig({...config, [item.campoDesc]: e.target.value})}
+                    />
+                  </div>
+                </div>
               </div>
             ))}
           </div>
@@ -250,12 +296,12 @@ export default function GestaoConteudo() {
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {[
-              { label: 'Case Corporativo', campo: 'img_case_corporativo' as const },
-              { label: 'Case Festival', campo: 'img_case_festival' as const },
-              { label: 'Case Congresso', campo: 'img_case_congresso' as const }
+              { label: 'Case Corporativo', campo: 'img_case_corporativo' as const, campoTitulo: 'img_case_corporativo_titulo' as const, campoDesc: 'img_case_corporativo_desc' as const },
+              { label: 'Case Festival', campo: 'img_case_festival' as const, campoTitulo: 'img_case_festival_titulo' as const, campoDesc: 'img_case_festival_desc' as const },
+              { label: 'Case Congresso', campo: 'img_case_congresso' as const, campoTitulo: 'img_case_congresso_titulo' as const, campoDesc: 'img_case_congresso_desc' as const }
             ].map(item => (
-              <div key={item.campo} className="border border-[#E2E8F0] p-4 rounded-xl flex flex-col justify-between bg-[#F8FAFC]">
-                <div>
+              <div key={item.campo} className="border border-[#E2E8F0] p-4 rounded-xl flex flex-col bg-[#F8FAFC] gap-3">
+                <div className="flex-shrink-0">
                   <span className="block text-xs font-black uppercase tracking-wider text-[#0C1D4D] mb-2">{item.label}</span>
                   <div className="relative h-32 w-full bg-gray-200 rounded-lg overflow-hidden mb-3 border border-[#CBD5E1]">
                     <img src={config[item.campo]} alt={item.label} className="w-full h-full object-cover" />
@@ -265,8 +311,72 @@ export default function GestaoConteudo() {
                   {uploadingField === item.campo ? 'Carregando...' : '🔄 Alterar Imagem'}
                   <input type="file" className="hidden" accept="image/*" onChange={(e) => handleImageUpload(e, item.campo)} disabled={uploadingField !== null} />
                 </label>
+
+                <div className="space-y-3 mt-2 border-t border-[#E2E8F0] pt-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Título do Case</label>
+                    <input 
+                      type="text" 
+                      className="w-full p-2 border border-[#CBD5E1] rounded-lg text-xs font-bold text-[#0A2A4A] outline-none focus:border-[#336699]"
+                      value={config[item.campoTitulo] || ''}
+                      onChange={(e) => setConfig({...config, [item.campoTitulo]: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Descrição Resumida</label>
+                    <textarea 
+                      rows={2}
+                      className="w-full p-2 border border-[#CBD5E1] rounded-lg text-xs font-medium text-[#0A2A4A] outline-none focus:border-[#336699] resize-none"
+                      value={config[item.campoDesc] || ''}
+                      onChange={(e) => setConfig({...config, [item.campoDesc]: e.target.value})}
+                    />
+                  </div>
+                </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* SEÇÃO 4: CARROSSEL DE VÍDEOS */}
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
+          <h2 className="text-[#0C1D4D] font-black uppercase tracking-widest text-sm mb-4 border-b border-[#E2E8F0] pb-2">
+            🎬 Carrossel de Vídeos (Página Inicial)
+          </h2>
+          <div className="space-y-4">
+            {(config.videos_carrossel || []).map((video, index) => (
+              <div key={index} className="flex gap-2 items-center">
+                <input 
+                  type="text" 
+                  className="flex-1 p-3 border-2 border-[#E2E8F0] rounded-xl text-sm font-medium text-[#0A2A4A] outline-none focus:border-[#336699]"
+                  placeholder="Ex: https://www.youtube.com/embed/..."
+                  value={video}
+                  onChange={(e) => {
+                    const newVideos = [...(config.videos_carrossel || [])];
+                    newVideos[index] = e.target.value;
+                    setConfig({...config, videos_carrossel: newVideos});
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    const newVideos = [...(config.videos_carrossel || [])];
+                    newVideos.splice(index, 1);
+                    setConfig({...config, videos_carrossel: newVideos});
+                  }}
+                  className="bg-red-50 text-red-500 font-bold px-4 py-3 rounded-xl hover:bg-red-100 transition-colors border border-red-100"
+                  title="Remover Vídeo"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => {
+                setConfig({...config, videos_carrossel: [...(config.videos_carrossel || []), '']});
+              }}
+              className="w-full md:w-auto px-6 py-3 bg-[#F0F4F8] border border-[#CBD5E1] text-[#336699] font-black text-[10px] uppercase tracking-wider rounded-xl hover:bg-[#E2E8F0] transition-colors"
+            >
+              ➕ Adicionar Novo Vídeo
+            </button>
           </div>
         </div>
 

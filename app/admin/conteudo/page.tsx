@@ -343,35 +343,53 @@ export default function GestaoConteudo() {
             🎬 Carrossel de Vídeos (Página Inicial)
           </h2>
           <div className="space-y-4">
-            {(config.videos_carrossel || []).map((video, index) => (
-              <div key={index} className="flex gap-2 items-center">
-                <input 
-                  type="text" 
-                  className="flex-1 p-3 border-2 border-[#E2E8F0] rounded-xl text-sm font-medium text-[#0A2A4A] outline-none focus:border-[#336699]"
-                  placeholder="Ex: https://www.youtube.com/embed/..."
-                  value={video}
-                  onChange={(e) => {
-                    const newVideos = [...(config.videos_carrossel || [])];
-                    newVideos[index] = e.target.value;
-                    setConfig({...config, videos_carrossel: newVideos});
-                  }}
-                />
-                <button
-                  onClick={() => {
-                    const newVideos = [...(config.videos_carrossel || [])];
-                    newVideos.splice(index, 1);
-                    setConfig({...config, videos_carrossel: newVideos});
-                  }}
-                  className="bg-red-50 text-red-500 font-bold px-4 py-3 rounded-xl hover:bg-red-100 transition-colors border border-red-100"
-                  title="Remover Vídeo"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
+            {(config.videos_carrossel || []).map((video, index) => {
+              const isVertical = video.startsWith('vertical|');
+              const url = video.replace('vertical|', '').replace('horizontal|', '');
+
+              return (
+                <div key={index} className="flex flex-col md:flex-row gap-2 items-center bg-[#F8FAFC] border border-[#E2E8F0] p-2 rounded-xl">
+                  <input 
+                    type="text" 
+                    className="flex-1 w-full p-3 border-2 border-[#E2E8F0] rounded-xl text-sm font-medium text-[#0A2A4A] outline-none focus:border-[#336699]"
+                    placeholder="Ex: https://www.youtube.com/embed/..."
+                    value={url}
+                    onChange={(e) => {
+                      const newVideos = [...(config.videos_carrossel || [])];
+                      newVideos[index] = `${isVertical ? 'vertical|' : 'horizontal|'}${e.target.value}`;
+                      setConfig({...config, videos_carrossel: newVideos});
+                    }}
+                  />
+                  <label className="flex items-center gap-2 px-3 py-3 text-sm font-bold text-[#64748B] cursor-pointer whitespace-nowrap">
+                    <input 
+                      type="checkbox"
+                      className="w-5 h-5 accent-[#336699] rounded cursor-pointer"
+                      checked={isVertical}
+                      onChange={(e) => {
+                        const newVideos = [...(config.videos_carrossel || [])];
+                        newVideos[index] = `${e.target.checked ? 'vertical|' : 'horizontal|'}${url}`;
+                        setConfig({...config, videos_carrossel: newVideos});
+                      }}
+                    />
+                    Vertical (9:16)
+                  </label>
+                  <button
+                    onClick={() => {
+                      const newVideos = [...(config.videos_carrossel || [])];
+                      newVideos.splice(index, 1);
+                      setConfig({...config, videos_carrossel: newVideos});
+                    }}
+                    className="w-full md:w-auto bg-red-50 text-red-500 font-bold px-4 py-3 rounded-xl hover:bg-red-100 transition-colors border border-red-100"
+                    title="Remover Vídeo"
+                  >
+                    ✕
+                  </button>
+                </div>
+              );
+            })}
             <button
               onClick={() => {
-                setConfig({...config, videos_carrossel: [...(config.videos_carrossel || []), '']});
+                setConfig({...config, videos_carrossel: [...(config.videos_carrossel || []), 'horizontal|']});
               }}
               className="w-full md:w-auto px-6 py-3 bg-[#F0F4F8] border border-[#CBD5E1] text-[#336699] font-black text-[10px] uppercase tracking-wider rounded-xl hover:bg-[#E2E8F0] transition-colors"
             >

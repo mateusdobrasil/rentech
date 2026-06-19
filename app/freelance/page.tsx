@@ -1,19 +1,19 @@
 "use client";
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation'; // Adicionado para fazer o redirecionamento
+import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 
 export default function CadastroFreelance() {
-  const router = useRouter(); // Instância do router
+  const router = useRouter(); 
   
   const [loading, setLoading] = useState(false);
   const [sucesso, setSucesso] = useState(false);
   const [erroMsg, setErroMsg] = useState('');
   
   const [lgpdAceita, setLgpdAceita] = useState(false);
-  const [mostrarRecusa, setMostrarRecusa] = useState(false); // NOVO: Estado para a janela de recusa
+  const [mostrarRecusa, setMostrarRecusa] = useState(false); 
   
   const [formData, setFormData] = useState({
     nome: '', cpf: '', data_nascimento: '', email: '', telefone: '', endereco: '',
@@ -35,7 +35,6 @@ export default function CadastroFreelance() {
     setLoading(true);
     setErroMsg(''); 
 
-    // Injeta explicitamente o aceite da LGPD no payload enviado ao banco
     const payloadFinal = {
       ...formData,
       lgpd_aceite: true, 
@@ -78,7 +77,7 @@ export default function CadastroFreelance() {
       <Analytics />
 
       {/* ========================================================================= */}
-      {/* MODAL DE RECUSA (Aparece se o utilizador clicar em "Não Concordo") */}
+      {/* MODAL DE RECUSA */}
       {/* ========================================================================= */}
       {mostrarRecusa && (
         <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
@@ -91,13 +90,13 @@ export default function CadastroFreelance() {
               Sem o aceite da política de privacidade, não podemos recolher e armazenar os seus dados técnicos e de pagamento. Por razões de segurança jurídica, o seu cadastro não poderá prosseguir.
             </p>
             <button 
-              onClick={() => router.push('/')} // Redireciona para a página principal
+              onClick={() => router.push('/')} 
               className="w-full py-4 bg-red-500 text-white font-black text-sm uppercase tracking-widest rounded-xl hover:bg-red-600 transition-all shadow-md hover:shadow-lg"
             >
               OK, Voltar ao Site
             </button>
             <button 
-              onClick={() => setMostrarRecusa(false)} // Esconde a recusa e volta ao modal da LGPD
+              onClick={() => setMostrarRecusa(false)} 
               className="w-full py-3 mt-3 bg-transparent text-[#64748B] font-bold text-xs uppercase tracking-wider rounded-xl hover:bg-[#E2E8F0] transition-colors"
             >
               Mudei de Ideia
@@ -107,7 +106,7 @@ export default function CadastroFreelance() {
       )}
       
       {/* ========================================================================= */}
-      {/* MODAL DE BLOQUEIO LGPD - Só sai da frente se o utilizador aceitar */}
+      {/* MODAL DE BLOQUEIO LGPD */}
       {/* ========================================================================= */}
       {!lgpdAceita && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
@@ -131,7 +130,7 @@ export default function CadastroFreelance() {
                 Li e Aceito os Termos
               </button>
               <button 
-                onClick={() => setMostrarRecusa(true)} // Aciona a nova janela
+                onClick={() => setMostrarRecusa(true)} 
                 className="w-full py-3 bg-[#F0F4F8] text-[#64748B] font-bold text-xs uppercase tracking-wider rounded-xl hover:bg-[#E2E8F0] transition-colors"
               >
                 Não Concordo
@@ -142,11 +141,10 @@ export default function CadastroFreelance() {
       )}
 
       {/* ========================================================================= */}
-      {/* CONTEÚDO DA PÁGINA (Fica desfocado/bloqueado atrás do Modal até ao aceite) */}
+      {/* CONTEÚDO DA PÁGINA */}
       {/* ========================================================================= */}
       <div className={!lgpdAceita ? 'pointer-events-none opacity-40 blur-sm h-screen overflow-hidden' : ''}>
         
-        {/* Header - Simples e Sem Logótipo redundante */}
         <div className="bg-[#0C1D4D] text-center py-10 px-4 rounded-b-[40px] shadow-lg mb-8">
           <h1 className="text-2xl md:text-3xl font-black text-white uppercase tracking-wider mb-2">
             Banco de Talentos
@@ -252,6 +250,33 @@ export default function CadastroFreelance() {
               <h2 className="text-[#0C1D4D] font-black uppercase tracking-widest text-sm mb-4 border-b border-[#E2E8F0] pb-2">📝 Resumo Profissional</h2>
               <label className="block text-[10px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Fale um pouco sobre si (Opcional)</label>
               <textarea name="comentarios" rows={4} value={formData.comentarios} onChange={handleChange} placeholder="Descreva a sua experiência, empresas que já atendeu, softwares que domina (ex: NovaStar, vMix, MA, etc)..." className="w-full p-3 bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl text-sm font-semibold focus:border-[#336699] outline-none resize-none"></textarea>
+            </div>
+
+            {/* ========================================================================= */}
+            {/* NOVO BLOCO: REGRAS OPERACIONAIS E CHECKBOX DE ACEITE */}
+            {/* ========================================================================= */}
+            <div>
+              <h2 className="text-[#0C1D4D] font-black uppercase tracking-widest text-sm mb-4 border-b border-[#E2E8F0] pb-2">📋 Regras e Normas de Trabalho</h2>
+              <div className="bg-[#E0F2FE]/50 border border-[#BAE6FD] p-5 rounded-xl mb-4">
+                <ul className="list-disc pl-5 space-y-3 text-sm text-[#0C1D4D] font-medium">
+                  <li>O Freelancer deverá chegar com <strong>15 minutos de antecedência</strong> no local combinado.</li>
+                  <li>Atrasos superiores a 1 hora poderão gerar desconto proporcional na diária ou substituição do profissional.</li>
+                  <li>Caso precise sair antes do horário previsto, o profissional deverá solicitar autorização prévia.</li>
+                  <li><strong> A Rentech não paga dobra de diária</strong>. Horas excedentes serão tratadas como adicional de horas conforme política interna.</li>
+                  <li>Os pagamentos ocorrerão em até <strong>5 dias úteis</strong> após o encerramento do evento.</li>
+                  <li><strong>Não é permitido</strong> orientar, corrigir, prometer entregas, negociar ou emitir opiniões técnicas, comerciais ou operacionais diretamente com o cliente. Toda a comunicação deve ser direcionada ao líder ou responsável da <strong>Rentech</strong> no local.</li>
+                  <li>Ao finalizar o seu horário, é obrigatório solicitar ao responsável no evento se vai continuar a trabalhar ou se será liberado.</li>
+                  <li>É <strong>proibido o uso de uniforme de outra empresa</strong>. Caso a <strong>Rentech</strong> não disponibilize uniforme, o profissional deve apresentar-se com uma t-shirt preta lisa.</li>
+                  <li><strong>Uso Obrigatório:</strong> Bota de segurança e Capacete (EPIs).</li>
+                  <li>Zelar pelos equipamentos da empresa (danos por uso inadequado ou negligência serão descontados).</li>
+                </ul>
+              </div>
+              <label className="flex items-start gap-3 cursor-pointer p-4 border border-[#E2E8F0] rounded-xl hover:bg-[#F8FAFC] transition-colors">
+                <input type="checkbox" required className="mt-1 w-5 h-5 accent-[#336699] cursor-pointer shrink-0" />
+                <span className="text-sm font-bold text-[#0C1D4D] leading-tight">
+                  Declaro que li, compreendi e concordo integralmente com todas as regras operacionais e de prestação de serviços estabelecidas pela Rentech.
+                </span>
+              </label>
             </div>
 
             {/* CAIXA DE ERRO SE HOUVER DUPLICIDADE */}

@@ -15,7 +15,7 @@ interface ItemOP {
   valorUnitario: number;
 }
 
-// Interface simplificada do Freelancer para o Modal (AGORA COM ENDEREÇO)
+// Interface simplificada do Freelancer para o Modal (AGORA COM VALOR DIARIA)
 interface FreelancerBusca {
   id: string;
   nome: string;
@@ -24,6 +24,7 @@ interface FreelancerBusca {
   pix_chave: string;
   pix_tipo: string;
   endereco: string;
+  valor_diaria: number | null;
 }
 
 export default function NovaOrdemPagamento() {
@@ -105,6 +106,36 @@ export default function NovaOrdemPagamento() {
     setCnpjCpf(v);
   };
 
+  // ============================================================================
+  // BUSCA AUTOMÁTICA DA DIÁRIA AO DIGITAR O CPF
+  // ============================================================================
+  const handleCpfBlur = async () => {
+    if (natureza !== 'FREELANCE' || !cnpjCpf) return;
+    
+    // Tira os pontos e traços para procurar no banco (caso esteja salvo limpo)
+    const cpfLimpo = cnpjCpf.replace(/\D/g, "");
+    
+    // Busca na tabela freelancers se o CPF existe
+    const { data } = await supabase
+      .from('freelancers')
+      .select('valor_diaria')
+      // Procura tanto pelo valor com máscara quanto sem máscara
+      .or(`cpf.eq.${cnpjCpf},cpf.eq.${cpfLimpo}`)
+      .limit(1)
+      .single();
+
+    if (data && data.valor_diaria) {
+      setItens(prev => {
+        const arr = [...prev];
+        // Preenche a linha 1 apenas se ela ainda estiver vazia (para não apagar algo que você já tenha digitado)
+        if (!arr[0].descricao || arr[0].valorUnitario === 0) {
+          arr[0] = { ...arr[0], descricao: 'DIÁRIA DE TRABALHO', qtd: 1, valorUnitario: data.valor_diaria };
+        }
+        return arr;
+      });
+    }
+  };
+
   const adicionarLinhaItem = () => {
     setItens([...itens, { id: Date.now(), descricao: '', qtd: 0, valorUnitario: 0 }]);
   };
@@ -136,13 +167,12 @@ export default function NovaOrdemPagamento() {
   };
 
   // ============================================================================
-  // FUNÇÕES DE BUSCA DE FREELANCER 
+  // FUNÇÕES DE BUSCA DE FREELANCER (MODAL)
   // ============================================================================
   const abrirModalFreelance = async () => {
     setModalFreelanceAberto(true);
     setLoadingFree(true);
-    // Busca os dados do Supabase, agora INCLUINDO O ENDEREÇO
-    const { data, error } = await supabase.from('freelancers').select('id, nome, cpf, telefone, pix_chave, pix_tipo, endereco').order('created_at', { ascending: false }).limit(100);
+    const { data, error } = await supabase.from('freelancers').select('id, nome, cpf, telefone, pix_chave, pix_tipo, endereco, valor_diaria').order('created_at', { ascending: false }).limit(100);
     if (!error && data) {
       setListaFreelancers(data);
     }
@@ -153,10 +183,9 @@ export default function NovaOrdemPagamento() {
     setEmpresaRecebedora(free.nome);
     setCnpjCpf(free.cpf || '');
     aplicarMascaraCpfCnpj(free.cpf || '');
-    setEndereco(free.endereco || ''); // PREENCHE O ENDEREÇO
+    setEndereco(free.endereco || '');
     setTipoPagamento('PIX');
     
-    // Normaliza o tipo de Pix do banco com o tipo aceito no select da OP
     let tipoMapeado = 'CELULAR';
     const tipoFree = (free.pix_tipo || '').toUpperCase();
     if (tipoFree.includes('CPF') || tipoFree.includes('CNPJ')) tipoMapeado = 'CPF/CNPJ';
@@ -166,6 +195,15 @@ export default function NovaOrdemPagamento() {
     setChavePix(tipoMapeado);
     setDadosPagamento(free.pix_chave);
     setModalFreelanceAberto(false);
+
+    // Preenche a tabela de itens automaticamente com a diária!
+    if (free.valor_diaria) {
+      setItens(prev => {
+        const arr = [...prev];
+        arr[0] = { ...arr[0], descricao: 'DIÁRIA DE TRABALHO', qtd: 1, valorUnitario: free.valor_diaria! };
+        return arr;
+      });
+    }
   };
 
   const freelancersFiltrados = useMemo(() => {
@@ -271,7 +309,7 @@ export default function NovaOrdemPagamento() {
         </div>
       )}
 
-      {/* NOVO: Modal do Banco de Talentos (Freelancers) */}
+      {/* Modal do Banco de Talentos (Freelancers) */}
       {modalFreelanceAberto && (
         <div className="fixed inset-0 z-[8000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
@@ -385,12 +423,11 @@ export default function NovaOrdemPagamento() {
             </div>
           </section>
 
-          {/* Sessão 3: Favorecido (COM LÓGICA DE FREELANCER) */}
+          {/* Sessão 3: Favorecido */}
           <section className="space-y-4">
             <div className="flex justify-between items-center border-b border-[#E2E8F0] pb-2 mb-2">
               <h3 className="text-sm font-black text-[#0A2A4A] uppercase tracking-widest">Dados do Favorecido (Recebedor)</h3>
               
-              {/* Botão Mágico que só aparece quando a natureza é FREELANCE */}
               {natureza === 'FREELANCE' && (
                 <button 
                   onClick={abrirModalFreelance} 
@@ -403,7 +440,16 @@ export default function NovaOrdemPagamento() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <input type="text" placeholder="NOME DA EMPRESA OU PROFISSIONAL" className="w-full p-3 bg-white border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] uppercase font-bold focus:border-[#336699] outline-none" value={empresaRecebedora} onChange={(e) => setEmpresaRecebedora(e.target.value)} />
-              <input type="text" placeholder="CNPJ OU CPF" className="w-full p-3 bg-white border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] font-bold focus:border-[#336699] outline-none" value={cnpjCpf} onChange={(e) => aplicarMascaraCpfCnpj(e.target.value)} />
+              
+              {/* CAMPO DE CPF COM O EVENTO onBlur ADICIONADO */}
+              <input 
+                type="text" 
+                placeholder="CNPJ OU CPF" 
+                className="w-full p-3 bg-white border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] font-bold focus:border-[#336699] outline-none" 
+                value={cnpjCpf} 
+                onChange={(e) => aplicarMascaraCpfCnpj(e.target.value)} 
+                onBlur={handleCpfBlur} 
+              />
             </div>
             <input type="text" placeholder="ENDEREÇO COMPLETO (OPCIONAL)" className="w-full p-3 bg-white border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] uppercase focus:border-[#336699] outline-none" value={endereco} onChange={(e) => setEndereco(e.target.value)} />
           </section>

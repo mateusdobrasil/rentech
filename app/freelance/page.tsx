@@ -17,7 +17,7 @@ export default function CadastroFreelance() {
   
   const [formData, setFormData] = useState({
     nome: '', cpf: '', data_nascimento: '', email: '', telefone: '', endereco: '',
-    pix_chave: '', pix_tipo: 'CPF',
+    pix_chave: '', pix_tipo: 'CPF', valor_diaria: '', // NOVO CAMPO AQUI
     nivel_led: 'Não trabalho com o Item',
     nivel_videowall: 'Não trabalho com o Item',
     nivel_tv: 'Não trabalho com o Item',
@@ -37,6 +37,8 @@ export default function CadastroFreelance() {
 
     const payloadFinal = {
       ...formData,
+      // Garante que o valor da diária seja salvo como número no banco, mesmo se o usuário digitar vírgula
+      valor_diaria: formData.valor_diaria ? parseFloat(formData.valor_diaria.replace(',', '.')) : null,
       lgpd_aceite: true, 
     };
 
@@ -195,10 +197,10 @@ export default function CadastroFreelance() {
               </div>
             </div>
 
-            {/* Dados Bancários */}
+            {/* Dados Bancários e Diária */}
             <div>
               <h2 className="text-[#0C1D4D] font-black uppercase tracking-widest text-sm mb-4 border-b border-[#E2E8F0] pb-2">💳 Dados para Pagamento (PIX)</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-[10px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Tipo de Chave</label>
                   <select name="pix_tipo" value={formData.pix_tipo} onChange={handleChange} className="w-full p-3 bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl text-sm font-bold text-[#0C1D4D] focus:border-[#336699] outline-none cursor-pointer">
@@ -209,9 +211,29 @@ export default function CadastroFreelance() {
                     <option value="CNPJ">CNPJ</option>
                   </select>
                 </div>
-                <div>
+                <div className="md:col-span-2">
                   <label className="block text-[10px] font-bold text-[#64748B] uppercase tracking-wider mb-1">A sua Chave PIX</label>
                   <input required type="text" name="pix_chave" value={formData.pix_chave} onChange={handleChange} className="w-full p-3 bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl text-sm font-semibold focus:border-[#336699] outline-none" />
+                </div>
+                
+                {/* NOVO CAMPO: Valor da Diária */}
+                <div className="md:col-span-3 bg-[#F0F9FF] p-4 rounded-xl border border-[#BAE6FD]">
+                  <label className="block text-[10px] font-bold text-[#0369A1] uppercase tracking-wider mb-1">Pretensão Média de Diária (R$)</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-3 text-[#64748B] font-bold text-sm">R$</span>
+                    <input 
+                      required 
+                      type="number" 
+                      step="0.01" 
+                      min="0"
+                      name="valor_diaria" 
+                      value={formData.valor_diaria} 
+                      onChange={handleChange} 
+                      placeholder="Ex: 350.00" 
+                      className="w-full p-3 pl-10 bg-white border border-[#BAE6FD] rounded-xl text-sm font-bold text-[#0C1D4D] focus:border-[#0369A1] outline-none" 
+                    />
+                  </div>
+                  <p className="text-[10px] text-[#64748B] font-semibold mt-1">* Valor base orientativo para cotação das Ordens de Pagamento.</p>
                 </div>
               </div>
               <p className="text-[10px] text-red-500 font-bold mt-2">* Não nos responsabilizamos por dados de PIX informados incorretamente.</p>
@@ -252,9 +274,7 @@ export default function CadastroFreelance() {
               <textarea name="comentarios" rows={4} value={formData.comentarios} onChange={handleChange} placeholder="Descreva a sua experiência, empresas que já atendeu, softwares que domina (ex: NovaStar, vMix, MA, etc)..." className="w-full p-3 bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl text-sm font-semibold focus:border-[#336699] outline-none resize-none"></textarea>
             </div>
 
-            {/* ========================================================================= */}
-            {/* NOVO BLOCO: REGRAS OPERACIONAIS E CHECKBOX DE ACEITE */}
-            {/* ========================================================================= */}
+            {/* REGRAS OPERACIONAIS E CHECKBOX DE ACEITE */}
             <div>
               <h2 className="text-[#0C1D4D] font-black uppercase tracking-widest text-sm mb-4 border-b border-[#E2E8F0] pb-2">📋 Regras e Normas de Trabalho</h2>
               <div className="bg-[#E0F2FE]/50 border border-[#BAE6FD] p-5 rounded-xl mb-4">
@@ -262,11 +282,11 @@ export default function CadastroFreelance() {
                   <li>O Freelancer deverá chegar com <strong>15 minutos de antecedência</strong> no local combinado.</li>
                   <li>Atrasos superiores a 1 hora poderão gerar desconto proporcional na diária ou substituição do profissional.</li>
                   <li>Caso precise sair antes do horário previsto, o profissional deverá solicitar autorização prévia.</li>
-                  <li><strong> A Rentech não paga dobra de diária</strong>. Horas excedentes serão tratadas como adicional de horas conforme política interna.</li>
+                  <li>A Rentech <strong>não paga dobra de diária</strong>. Horas excedentes serão tratadas como adicional de horas conforme política interna.</li>
                   <li>Os pagamentos ocorrerão em até <strong>5 dias úteis</strong> após o encerramento do evento.</li>
-                  <li><strong>Não é permitido</strong> orientar, corrigir, prometer entregas, negociar ou emitir opiniões técnicas, comerciais ou operacionais diretamente com o cliente. Toda a comunicação deve ser direcionada ao líder ou responsável da <strong>Rentech</strong> no local.</li>
+                  <li><strong>Não é permitido</strong> orientar, corrigir, prometer entregas, negociar ou emitir opiniões técnicas, comerciais ou operacionais diretamente com o cliente. Toda a comunicação deve ser direcionada ao líder ou responsável da Rentech no local.</li>
                   <li>Ao finalizar o seu horário, é obrigatório solicitar ao responsável no evento se vai continuar a trabalhar ou se será liberado.</li>
-                  <li>É <strong>proibido o uso de uniforme de outra empresa</strong>. Caso a <strong>Rentech</strong> não disponibilize uniforme, o profissional deve apresentar-se com uma t-shirt preta lisa.</li>
+                  <li>É <strong>proibido o uso de uniforme de outra empresa</strong>. Caso a Rentech não disponibilize uniforme, o profissional deve apresentar-se com uma t-shirt preta lisa.</li>
                   <li><strong>Uso Obrigatório:</strong> Bota de segurança e Capacete (EPIs).</li>
                   <li>Zelar pelos equipamentos da empresa (danos por uso inadequado ou negligência serão descontados).</li>
                 </ul>

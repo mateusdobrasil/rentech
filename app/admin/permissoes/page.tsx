@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { supabase } from '../../lib/supabase';
+import { registrarLogAuditoria } from '../../actions';
 import { Analytics } from "@vercel/analytics/next"
 
 // Definição estrita das permissões do ecossistema Rentech
@@ -26,6 +27,7 @@ interface UsuarioAuth {
 }
 
 export default function GestaoPermissoes() {
+  const [usuarioAtual, setUsuarioAtual] = useState('');
   const [usuarios, setUsuarios] = useState<UsuarioAuth[]>([]);
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
@@ -56,7 +58,15 @@ export default function GestaoPermissoes() {
   };
 
   useEffect(() => {
-    carregarUsuarios();
+    async function init() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        const { data: perfil } = await supabase.from('perfis_usuarios').select('nome').eq('id', session.user.id).single();
+        if (perfil?.nome) setUsuarioAtual(perfil.nome);
+      }
+      carregarUsuarios();
+    }
+    init();
   }, []);
 
   // 2. Filtro de Busca Dinâmico
@@ -83,10 +93,25 @@ export default function GestaoPermissoes() {
         .eq('id', modalEdicao.user.id);
         
       if (error) throw error;
-      
+
+      const original = usuarios.find(u => u.id === modalEdicao.user!.id);
+      const acoes: string[] = [];
+      if (original?.permissao !== modalEdicao.user.permissao)
+        acoes.push(`PERMISSÃO: ${original?.permissao} → ${modalEdicao.user.permissao}`);
+      if (original?.ativo !== modalEdicao.user.ativo)
+        acoes.push(modalEdicao.user.ativo ? 'CONTA REATIVADA' : 'CONTA BLOQUEADA');
+
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: 'ALTEROU ACESSO DE USUÁRIO',
+        setor: 'PERMISSÕES',
+        equipamento_id: modalEdicao.user.id,
+        equipamento_nome: `${modalEdicao.user.nome} — ${acoes.join(' | ')}`,
+      });
+
       // Atualiza o estado local para refletir a mudança instantaneamente na tabela
       setUsuarios(usuarios.map(u => u.id === modalEdicao.user?.id ? modalEdicao.user : u));
-      
+
       setFeedback({ show: true, msg: 'Permissões atualizadas com sucesso!', type: 'success' });
       setModalEdicao({ open: false, user: null });
       

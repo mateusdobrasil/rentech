@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, use } from 'react'; // <-- Adicionado o ho
 import Image from 'next/image';
 import { supabase } from '../../lib/supabase';
 import { salvarAssinaturaRecibo } from '../../admin/op/actions';
+import { registrarLogAuditoria } from '../../actions';
 import logoColorido from '../../imgs/logo.png'; 
 
 // ATUALIZAÇÃO NEXT.JS 15: params agora é uma Promise
@@ -109,8 +110,16 @@ export default function AssinaturaReciboPage({ params }: { params: Promise<{ id:
     
     // Chama a ação do servidor
     const res = await salvarAssinaturaRecibo(op.id, base64Image);
-    
+
     if (res.success) {
+      const valorFormatadoLog = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(op.total_geral || 0);
+      registrarLogAuditoria({
+        usuario_nome: op.empresa_recebedora || 'DESCONHECIDO',
+        acao: 'RECIBO ASSINADO DIGITALMENTE',
+        setor: 'OP',
+        equipamento_id: op.id,
+        equipamento_nome: `OS ${op.os_numero || 'S/N'} — ${op.os_cliente || ''} | Valor: ${valorFormatadoLog}`,
+      });
       setSucesso(true);
     } else {
       alert("Erro ao guardar: " + res.message);

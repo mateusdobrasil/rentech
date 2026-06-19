@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
+import { registrarLogAuditoria } from '../../actions';
 import { Analytics } from "@vercel/analytics/next";
 
 interface Freelancer {
@@ -56,6 +57,7 @@ const normalizarNivel = (val: string | null | undefined) => {
 
 export default function GestaoFreelancers() {
   const router = useRouter();
+  const [usuarioAtual, setUsuarioAtual] = useState('');
   const [freelancers, setFreelancers] = useState<Freelancer[]>([]);
   const [loading, setLoading] = useState(true);
   
@@ -74,6 +76,9 @@ export default function GestaoFreelancers() {
     async function loadFreelancers() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { router.push('/login'); return; }
+
+      const { data: perfil } = await supabase.from('perfis_usuarios').select('nome').eq('id', session.user.id).single();
+      if (perfil?.nome) setUsuarioAtual(perfil.nome);
 
       const { data, error } = await supabase.from('freelancers').select('*').order('created_at', { ascending: false });
       if (!error && data) {
@@ -183,8 +188,16 @@ export default function GestaoFreelancers() {
 
       if (error) throw error;
 
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: 'EDITOU FREELANCER',
+        setor: 'FREELANCE',
+        equipamento_id: editForm.id,
+        equipamento_nome: editForm.nome ?? null,
+      });
+
       const updatedFreelancer = { ...modalOpen.free, ...payloadFinal } as Freelancer;
-      
+
       setFreelancers(prev => prev.map(f => f.id === updatedFreelancer.id ? updatedFreelancer : f));
       setModalOpen({ open: true, free: updatedFreelancer });
       setIsEditing(false);

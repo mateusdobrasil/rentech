@@ -3,7 +3,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { listarOPs, atualizarStatus, dispararEmailOP } from '../actions'; 
+import { listarOPs, atualizarStatus, dispararEmailOP } from '../actions';
+import { registrarLogAuditoria } from '../../../actions';
 import { supabase } from '../../../lib/supabase'; 
 import { Analytics } from "@vercel/analytics/next";
 import logoColorido from '../../../../app/imgs/logo.png';
@@ -239,6 +240,13 @@ export default function PainelFinanceiro() {
         try {
           const res = await dispararEmailOP(op, emailUsuario);
           if (res.success) {
+            registrarLogAuditoria({
+              usuario_nome: usuarioAtual,
+              acao: 'REENVIO DE E-MAIL DA OP',
+              setor: 'OP',
+              equipamento_id: op.id,
+              equipamento_nome: `OP #${op.numero_op} — OS ${op.os_numero || 'S/N'}`,
+            });
             setDialog({ open: true, type: 'success', title: 'E-mail Enviado!', msg: 'A cópia da OP foi enviada com sucesso para os departamentos.' });
           } else {
             throw new Error(res.message);

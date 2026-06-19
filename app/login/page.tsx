@@ -3,8 +3,9 @@
 import { useState } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { supabase } from '../lib/supabase'; // Importando a conexão real do banco
-import logoPB from '../imgs/logo_pb.png'; // Usando a logo monocromática para o fundo escuro
+import { supabase } from '../lib/supabase';
+import { registrarLogAuditoria } from '../actions';
+import logoPB from '../imgs/logo_pb.png';
 import { Analytics } from "@vercel/analytics/next"
 
 export default function Login() {
@@ -30,16 +31,35 @@ export default function Login() {
         throw error;
       }
 
-      // NOVIDADE: Cria o Cookie manualmente para o Middleware conseguir ler!
       if (data.session) {
         document.cookie = `sb-access-token=${data.session.access_token}; path=/; max-age=86400; SameSite=Lax`;
+
+        const { data: perfil } = await supabase
+          .from('perfis_usuarios')
+          .select('nome')
+          .eq('id', data.user.id)
+          .single();
+
+        registrarLogAuditoria({
+          usuario_nome: perfil?.nome || email,
+          acao: 'LOGIN NO SISTEMA',
+          setor: 'ACESSO',
+          equipamento_nome: email,
+        });
       }
 
-      // REDIRECIONAMENTO CORRIGIDO: Agora aponta para o Hub Administrativo
       router.push('/admin');
-      
+
     } catch (error: any) {
       console.error("Erro no login:", error);
+
+      registrarLogAuditoria({
+        usuario_nome: email,
+        acao: 'TENTATIVA DE LOGIN FALHA',
+        setor: 'ACESSO',
+        equipamento_nome: error.message,
+      });
+
       if (error.message.includes('Invalid login credentials')) {
         setErro('E-mail ou senha incorretos.');
       } else {

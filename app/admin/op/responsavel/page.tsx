@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { listarOPs, atualizarOP, dispararEmailOP } from '../actions';
+import { registrarLogAuditoria } from '../../../actions';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next"
 
@@ -231,6 +232,13 @@ export default function PainelResponsavel() {
 
     const res = await dispararEmailOP(op, emailDestino, true);
     if (res.success) {
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: 'SOLICITOU CÓPIA DA OP POR E-MAIL',
+        setor: 'OP',
+        equipamento_id: op.id,
+        equipamento_nome: `OP #${op.numero_op} — OS ${op.os_numero || 'S/N'}`,
+      });
       setDialog({ open: true, type: 'success', title: 'Cópia Enviada', msg: `A cópia foi enviada para ${emailDestino}.` });
     } else {
       setDialog({ open: true, type: 'error', title: 'Erro', msg: res.message || 'Falha ao enviar e-mail.' });

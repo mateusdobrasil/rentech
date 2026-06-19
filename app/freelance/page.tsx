@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabase';
+import { registrarLogAuditoria } from '../actions';
 import { Analytics } from "@vercel/analytics/next";
 
 export default function CadastroFreelance() {
@@ -45,6 +46,12 @@ export default function CadastroFreelance() {
     const { error } = await supabase.from('freelancers').insert([payloadFinal]);
 
     if (!error) {
+      registrarLogAuditoria({
+        usuario_nome: formData.nome,
+        acao: 'AUTO-CADASTRO FREELANCER',
+        setor: 'FREELANCE',
+        equipamento_nome: `Tel: ${formData.telefone} | PIX: ${formData.pix_tipo} — ${formData.pix_chave}`,
+      });
       setSucesso(true);
       window.scrollTo(0, 0);
     } else {

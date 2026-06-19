@@ -2,7 +2,17 @@
 "use server";
 
 import nodemailer from 'nodemailer';
+import { createClient } from '@supabase/supabase-js';
+import { supabase } from './lib/supabase';
 
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
+
+// ============================================================================
+// 1. FUNÇÃO DE E-MAIL (ORÇAMENTOS DO SITE)
+// ============================================================================
 export async function enviarOrcamento(formData: FormData) {
   try {
     const nome = formData.get('nome') as string;
@@ -27,8 +37,8 @@ export async function enviarOrcamento(formData: FormData) {
 
     const mailOptions = {
       from: `"Site Rentech" <${process.env.SMTP_USER}>`,
-      to: 'contato@locadorarentech.com.br', // <-- E-mail que recebe os orçamentos
-      replyTo: email, // Permite que a equipe responda direto para o cliente
+      to: 'contato@locadorarentech.com.br',
+      replyTo: email,
       subject: `[Novo Orçamento Site] ${tipo} - ${nome}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #E2E8F0; padding: 20px;">
@@ -51,5 +61,41 @@ export async function enviarOrcamento(formData: FormData) {
   } catch (error: any) {
     console.error("Erro no envio do orçamento:", error);
     return { success: false, error: 'Falha ao enviar e-mail. Tente novamente mais tarde.' };
+  }
+}
+
+// ============================================================================
+// 2. FUNÇÃO GLOBAL DE AUDITORIA DO SISTEMA
+// ============================================================================
+interface LogPayload {
+  usuario_nome: string;
+  acao: string;
+  setor: string;
+  equipamento_id?: string | null;
+  equipamento_nome?: string | null;
+}
+
+export async function registrarLogAuditoria(payload: LogPayload) {
+  try {
+    const { error } = await supabaseAdmin
+      .from('logs_auditoria')
+      .insert([{
+        usuario_nome: payload.usuario_nome.toUpperCase().trim(),
+        acao: payload.acao.toUpperCase().trim(),
+        setor: payload.setor.toUpperCase().trim(),
+        equipamento_id: payload.equipamento_id || null,
+        equipamento_nome: payload.equipamento_nome || null,
+        data_hora: new Date().toISOString() 
+      }]);
+
+    if (error) {
+      console.error("Erro no Supabase ao gravar a auditoria:", error.message);
+      throw error;
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("Falha crítica ao tentar gravar o log de auditoria:", error.message);
+    return { success: false, message: error.message };
   }
 }

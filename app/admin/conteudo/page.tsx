@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
+import { registrarLogAuditoria } from '../../actions';
 import { Analytics } from "@vercel/analytics/next";
 
 // Interface para os dados do site incluindo as URLs das imagens
@@ -131,6 +132,12 @@ export default function GestaoConteudo() {
       const { data: publicUrlData } = supabase.storage.from('comprovantes').getPublicUrl(filePath);
       
       setConfig(prev => ({ ...prev, [campo]: publicUrlData.publicUrl }));
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: 'FEZ UPLOAD DE IMAGEM NO SITE',
+        setor: 'CONTEÚDO',
+        equipamento_nome: `Campo: ${campo} — Arquivo: ${fileName}`,
+      });
       setDialog({ open: true, title: 'Upload Concluído', msg: 'Imagem carregada com sucesso. Lembre-se de salvar as alterações.', isError: false });
     } catch (error: any) {
       setDialog({ open: true, title: 'Erro no Upload', msg: error.message || 'Falha ao processar imagem.', isError: true });
@@ -147,6 +154,11 @@ export default function GestaoConteudo() {
     if (error) {
       setDialog({ open: true, title: 'Erro de Conexão', msg: error.message, isError: true });
     } else {
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: 'PUBLICOU CONTEÚDO DO SITE',
+        setor: 'CONTEÚDO',
+      });
       setDialog({ open: true, title: 'Sucesso!', msg: 'O conteúdo e as imagens do site foram publicados.', isError: false });
     }
     

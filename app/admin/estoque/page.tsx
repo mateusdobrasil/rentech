@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
+import { registrarLogAuditoria } from '../../actions';
 import { Analytics } from "@vercel/analytics/next";
 
 // Interfaces do Banco de Dados
@@ -124,8 +125,15 @@ export default function PainelEstoque() {
 
   const toggleAtivo = async (eq: Equipamento) => {
     const novoStatus = !eq.ativo;
-    setEquipamentos(prev => prev.map(item => item.id === eq.id ? { ...item, ativo: novoStatus } : item)); 
+    setEquipamentos(prev => prev.map(item => item.id === eq.id ? { ...item, ativo: novoStatus } : item));
     await supabase.from('equipamentos').update({ ativo: novoStatus }).eq('id', eq.id);
+    registrarLogAuditoria({
+      usuario_nome: usuarioAtual,
+      acao: novoStatus ? 'ATIVOU EQUIPAMENTO' : 'DESATIVOU EQUIPAMENTO',
+      setor: 'ESTOQUE',
+      equipamento_id: eq.id,
+      equipamento_nome: eq.nome,
+    });
   };
 
   const abrirModalNovo = () => {
@@ -158,6 +166,13 @@ export default function PainelEstoque() {
     if (res.error) {
       setDialog({ open: true, type: 'error', title: 'Erro', msg: res.error.message });
     } else {
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: modalEdit.isNew ? 'CADASTROU EQUIPAMENTO' : 'EDITOU EQUIPAMENTO',
+        setor: 'ESTOQUE',
+        equipamento_id: modalEdit.isNew ? null : (modalEdit.eq?.id ?? null),
+        equipamento_nome: modalEdit.eq?.nome ?? null,
+      });
       setDialog({ open: true, type: 'success', title: 'Concluído', msg: 'Equipamento salvo com sucesso.' });
       setModalEdit({ open: false, isNew: false, eq: null });
       carregarDados();
@@ -179,8 +194,14 @@ export default function PainelEstoque() {
     if (error) {
       alert(`Erro: ${error.message}`);
     } else {
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: 'CRIOU CATEGORIA',
+        setor: 'ESTOQUE',
+        equipamento_nome: novaCategoria.nome,
+      });
       setNovaCategoria({ id: '', nome: '' });
-      carregarDados(); // Recarrega a lista
+      carregarDados();
     }
   };
 
@@ -194,6 +215,12 @@ export default function PainelEstoque() {
 
     const { error } = await supabase.from('categorias').update({ nome: editandoCategoriaNome }).eq('id', editandoCategoriaId);
     if (!error) {
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: 'EDITOU CATEGORIA',
+        setor: 'ESTOQUE',
+        equipamento_nome: editandoCategoriaNome,
+      });
       setEditandoCategoriaId(null);
       carregarDados();
     } else {
@@ -242,14 +269,29 @@ export default function PainelEstoque() {
     if (!error && data) {
       const accInfo = equipamentos.find(e => e.id === data.acessorio_id);
       const novoGatilho = { ...data, acessorio_nome: accInfo?.nome };
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: 'VINCULOU ACESSÓRIO',
+        setor: 'ESTOQUE',
+        equipamento_id: modalAcessorios.eq.id,
+        equipamento_nome: `${modalAcessorios.eq.nome} ← ${accInfo?.nome ?? novoAcessorioId}`,
+      });
       setModalAcessorios(prev => ({ ...prev, gatilhos: [...prev.gatilhos, novoGatilho] }));
       setNovoAcessorioId('');
     }
   };
 
   const desvincularAcessorio = async (gatilhoId: string) => {
+    const gatilho = modalAcessorios.gatilhos.find(g => g.id === gatilhoId);
     const { error } = await supabase.from('gatilhos_acessorios').delete().eq('id', gatilhoId);
     if (!error) {
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: 'DESVINCULOU ACESSÓRIO',
+        setor: 'ESTOQUE',
+        equipamento_id: modalAcessorios.eq?.id ?? null,
+        equipamento_nome: `${modalAcessorios.eq?.nome} ← ${gatilho?.acessorio_nome ?? gatilhoId}`,
+      });
       setModalAcessorios(prev => ({ ...prev, gatilhos: prev.gatilhos.filter(g => g.id !== gatilhoId) }));
     }
   };

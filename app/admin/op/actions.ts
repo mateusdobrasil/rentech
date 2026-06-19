@@ -2,6 +2,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
+import { registrarLogAuditoria } from '../../actions';
 import { revalidatePath } from 'next/cache';
 import nodemailer from 'nodemailer';
 
@@ -54,6 +55,14 @@ export async function criarOP(data: NovaOPData) {
       usuario_nome: data.responsavel_nome,
       acao: 'CRIOU OP'
     }]);
+
+    registrarLogAuditoria({
+      usuario_nome: data.responsavel_nome,
+      acao: 'CRIOU OP',
+      setor: 'OP',
+      equipamento_id: novaOp.id,
+      equipamento_nome: `OS ${data.os_numero || 'S/N'} — ${data.empresa_recebedora}`,
+    });
 
     // =========================================================
     // DISPARO AUTOMÁTICO DE E-MAIL NA CRIAÇÃO
@@ -112,6 +121,13 @@ export async function atualizarStatus(opId: string, novoStatus: string, usuarioA
       acao: `MUDOU STATUS PARA ${novoStatus}`
     }]);
 
+    registrarLogAuditoria({
+      usuario_nome: usuarioAlteracao,
+      acao: `BAIXOU OP — STATUS: ${novoStatus}`,
+      setor: 'OP',
+      equipamento_id: opId,
+    });
+
     revalidatePath('/admin');
     return { success: true };
   } catch (error: any) {
@@ -150,6 +166,13 @@ export async function atualizarOP(opId: string, dadosAtualizados: Partial<NovaOP
       usuario_nome: usuarioAlteracao,
       acao: 'EDITOU DADOS DA OP'
     }]);
+
+    registrarLogAuditoria({
+      usuario_nome: usuarioAlteracao,
+      acao: 'EDITOU OP',
+      setor: 'OP',
+      equipamento_id: opId,
+    });
 
     revalidatePath('/admin');
     return { success: true };
@@ -362,7 +385,7 @@ export async function salvarAssinaturaRecibo(opId: string, assinaturaBase64: str
 
     if (updateError) throw updateError;
 
-    // 5. Registar na auditoria
+    // 5. Registar na auditoria interna da OP
     await supabaseAdmin.from('historico_op').insert([{
       op_id: opId,
       usuario_nome: 'SISTEMA (AUTOMAÇÃO)',

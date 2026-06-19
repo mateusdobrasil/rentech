@@ -226,6 +226,10 @@ export default function Navbar() {
             Webmail
           </Link>
 
+          <Link href="/freelance" onClick={closeMenu} className="rounded-md px-3 py-3 text-base font-bold hover:bg-[#284B8C]/30 hover:text-white transition-colors">
+              Freelancer
+          </Link>
+
           <div className="my-4 h-px w-full bg-[#284B8C]/40" />
 
           {/* Acesso restrito / Admin */}

@@ -100,6 +100,15 @@ const MODULOS_SISTEMA = [
     permissoes_permitidas: ['ADMINISTRADOR', 'OPERACIONAL', 'FINANCEIRO', 'ADMINISTRATIVO'],
     cor: 'border-blue-500/50 hover:border-blue-500',
     bgIcon: 'bg-blue-50 text-blue-600'
+  },
+  {
+    titulo: 'Auditoria — Log',
+    descricao: 'Histórico completo de todas as ações realizadas no sistema: acessos, edições e alterações.',
+    icone: '🔍',
+    link: '/admin/log',
+    permissoes_permitidas: ['ADMINISTRADOR'],
+    cor: 'border-slate-500/50 hover:border-slate-500',
+    bgIcon: 'bg-slate-50 text-slate-600'
   }
 ];
 

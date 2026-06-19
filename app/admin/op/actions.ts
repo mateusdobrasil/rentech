@@ -319,3 +319,60 @@ export async function dispararEmailOP(op: any, emailSolicitante: string, apenasC
     return { success: false, message: error.message || "Falha na conexão com o servidor de e-mail." };
   }
 }
+
+// Assinatura das Ordens de Pagamento
+
+export async function salvarAssinaturaRecibo(opId: string, assinaturaBase64: string, ip: string = '0.0.0.0') {
+  try {
+    // 1. Converter Base64 para Buffer (Ficheiro de Imagem)
+    const base64Data = assinaturaBase64.replace(/^data:image\/\w+;base64,/, "");
+    const buffer = Buffer.from(base64Data, 'base64');
+    
+    const fileName = `assinatura_${opId}_${Date.now()}.png`;
+
+    // 2. Fazer Upload para o Supabase Storage (no bucket 'recibos_assinados')
+    const { error: uploadError } = await supabaseAdmin.storage
+      .from('recibos_assinados')
+      .upload(fileName, buffer, {
+        contentType: 'image/png',
+        upsert: true
+      });
+
+    if (uploadError) throw uploadError;
+
+    // 3. Obter o Link Público da Assinatura
+    const { data: publicUrlData } = supabaseAdmin.storage
+      .from('recibos_assinados')
+      .getPublicUrl(fileName);
+
+    const imageUrl = publicUrlData.publicUrl;
+
+    // 4. Atualizar a OP no Banco de Dados
+    const dataHoraAssinatura = new Date().toISOString();
+    
+    const { error: updateError } = await supabaseAdmin
+      .from('ordens_pagamento')
+      .update({
+        recibo_url: imageUrl,
+        data_assinatura: dataHoraAssinatura,
+        status: 'PAGO E ASSINADO', // Muda o status automaticamente!
+        updated_at: dataHoraAssinatura
+      })
+      .eq('id', opId);
+
+    if (updateError) throw updateError;
+
+    // 5. Registar na auditoria
+    await supabaseAdmin.from('historico_op').insert([{
+      op_id: opId,
+      usuario_nome: 'SISTEMA (AUTOMAÇÃO)',
+      acao: `RECIBO ASSINADO DIGITALMENTE (IP: ${ip})`
+    }]);
+
+    revalidatePath('/admin');
+    return { success: true, url: imageUrl };
+  } catch (error: any) {
+    console.error("Erro ao salvar assinatura:", error);
+    return { success: false, message: error.message };
+  }
+}

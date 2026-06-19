@@ -1,8 +1,18 @@
 "use server";
 
+import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
 import { revalidatePath } from 'next/cache';
 import nodemailer from 'nodemailer';
+
+// ============================================================================
+// CLIENTE ADMIN: IGNORA RLS PARA OPERAÇÕES DO SERVIDOR
+// Certifique-se de que a variável SUPABASE_SERVICE_ROLE_KEY está no seu .env.local
+// ============================================================================
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
 // Tipagem de segurança para garantir que a OP não falte dados
 export interface NovaOPData {
@@ -27,10 +37,10 @@ export interface NovaOPData {
   file_url: string;
 }
 
-// 1. Criar Nova OP
+// 1. Criar Nova OP (Usa supabaseAdmin para garantir a gravação)
 export async function criarOP(data: NovaOPData) {
   try {
-    const { data: novaOp, error } = await supabase
+    const { data: novaOp, error } = await supabaseAdmin
       .from('ordens_pagamento')
       .insert([data])
       .select('id')
@@ -39,23 +49,19 @@ export async function criarOP(data: NovaOPData) {
     if (error) throw error;
 
     // Registra a criação no histórico de auditoria
-    await supabase.from('historico_op').insert([{
+    await supabaseAdmin.from('historico_op').insert([{
       op_id: novaOp.id,
       usuario_nome: data.responsavel_nome,
       acao: 'CRIOU OP'
     }]);
 
     // =========================================================
-    // NOVO: DISPARO AUTOMÁTICO DE E-MAIL NA CRIAÇÃO
+    // DISPARO AUTOMÁTICO DE E-MAIL NA CRIAÇÃO
     // =========================================================
     try {
-      // Chama a função de e-mail passando os dados da OP recém-criada
-      // e o e-mail do responsável para garantir que ele receba a cópia
       await dispararEmailOP(data, data.responsavel_email);
     } catch (emailError) {
       console.error("A OP foi criada, mas houve um erro no disparo do e-mail:", emailError);
-      // Nota: Não damos um 'throw' aqui para não cancelar a criação da OP
-      // caso o servidor de e-mail da locaweb/hostgator dê alguma instabilidade momentânea.
     }
     
     revalidatePath('/admin');
@@ -65,17 +71,15 @@ export async function criarOP(data: NovaOPData) {
   }
 }
 
+// 2. Listar OPs (Usa supabaseAdmin para não ser barrado pelo RLS)
 export async function listarOPs(nivelAcesso: string, usuarioAtual: string) {
   try {
-    // 1. Inicia a busca na tabela (ajuste 'ordens_pagamento' para o nome exato da sua tabela no Supabase se for diferente)
-    let query = supabase
+    let query = supabaseAdmin
       .from('ordens_pagamento')
       .select('*')
       .order('data_criacao', { ascending: false }); // Traz as mais recentes primeiro
 
-    // 2. A MÁGICA ACONTECE AQUI: 
-    // Se o nível NÃO for 'DIR' (Diretor/Admin), ele trava a busca para trazer apenas as OPs do usuário.
-    // Se for 'DIR', ele ignora esse filtro e traz o banco de dados inteiro!
+    // Se o nível NÃO for 'DIR', trava a busca para trazer apenas as OPs do usuário.
     if (nivelAcesso !== 'DIR') {
       query = query.ilike('responsavel_nome', usuarioAtual);
     }
@@ -91,10 +95,10 @@ export async function listarOPs(nivelAcesso: string, usuarioAtual: string) {
   }
 }
 
-// 3. Atualizar Status (Substitui o atualizarStatusOP)
+// 3. Atualizar Status (Usa supabaseAdmin)
 export async function atualizarStatus(opId: string, novoStatus: string, usuarioAlteracao: string) {
   try {
-    const { error } = await supabase
+    const { error } = await supabaseAdmin
       .from('ordens_pagamento')
       .update({ status: novoStatus, updated_at: new Date().toISOString() })
       .eq('id', opId);
@@ -102,7 +106,7 @@ export async function atualizarStatus(opId: string, novoStatus: string, usuarioA
     if (error) throw error;
 
     // Salva na Caixa Preta / Histórico quem mexeu na OP
-    await supabase.from('historico_op').insert([{
+    await supabaseAdmin.from('historico_op').insert([{
       op_id: opId,
       usuario_nome: usuarioAlteracao,
       acao: `MUDOU STATUS PARA ${novoStatus}`
@@ -115,10 +119,10 @@ export async function atualizarStatus(opId: string, novoStatus: string, usuarioA
   }
 }
 
-// 4. Buscar OP Específica para Edição (Substitui o getOPForEdit)
+// 4. Buscar OP Específica para Edição (Usa supabaseAdmin)
 export async function buscarOP(opId: string) {
   try {
-    const { data: op, error } = await supabase
+    const { data: op, error } = await supabaseAdmin
       .from('ordens_pagamento')
       .select('*')
       .eq('id', opId)
@@ -131,17 +135,17 @@ export async function buscarOP(opId: string) {
   }
 }
 
-// 5. Atualizar Dados da OP (Substitui o updateOPData)
+// 5. Atualizar Dados da OP (Usa supabaseAdmin)
 export async function atualizarOP(opId: string, dadosAtualizados: Partial<NovaOPData>, usuarioAlteracao: string) {
   try {
-    const { error } = await supabase
+    const { error } = await supabaseAdmin
       .from('ordens_pagamento')
       .update({ ...dadosAtualizados, updated_at: new Date().toISOString() })
       .eq('id', opId);
 
     if (error) throw error;
 
-    await supabase.from('historico_op').insert([{
+    await supabaseAdmin.from('historico_op').insert([{
       op_id: opId,
       usuario_nome: usuarioAlteracao,
       acao: 'EDITOU DADOS DA OP'
@@ -159,7 +163,6 @@ export async function atualizarOP(opId: string, dadosAtualizados: Partial<NovaOP
 // ============================================================================
 export async function dispararEmailOP(op: any, emailSolicitante: string, apenasCopia: boolean = false) {
   try {
-    const nodemailer = require('nodemailer');
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT) || 465,

@@ -29,6 +29,7 @@ export default function GestaoFreelancers() {
   // Filtros
   const [busca, setBusca] = useState('');
   const [filtroEspecialidade, setFiltroEspecialidade] = useState('');
+  const [filtroNivel, setFiltroNivel] = useState(''); // NOVO: Estado para filtro de nível
 
   const [modalOpen, setModalOpen] = useState<{ open: boolean; free: Freelancer | null }>({ open: false, free: null });
 
@@ -46,24 +47,44 @@ export default function GestaoFreelancers() {
     loadFreelancers();
   }, [router]);
 
-  // Filtro Dinâmico
+  // Filtro Dinâmico Combinado (Busca + Setor + Nível Técnico)
   const filtrados = useMemo(() => {
     let lista = freelancers;
-    const termo = busca.toLowerCase();
+    const termo = busca.toLowerCase().trim();
 
+    // 1. Filtro por Termo de Busca (Nome ou Telefone)
     if (termo) {
       lista = lista.filter(f => f.nome.toLowerCase().includes(termo) || f.telefone.includes(termo));
     }
 
-    if (filtroEspecialidade) {
+    // 2. Filtro Combinado de Setor e Nível Técnico
+    const nivelProcurado = filtroNivel.toLowerCase();
+
+    if (filtroEspecialidade && !filtroNivel) {
+      // Caso A: Apenas o Setor está selecionado
       lista = lista.filter(f => {
-        const nivel = (f as any)[`nivel_${filtroEspecialidade}`];
-        return nivel && nivel !== 'Não trabalho com o Item';
+        const nivelStr = String((f as any)[`nivel_${filtroEspecialidade}`] || '').toLowerCase();
+        return nivelStr && nivelStr !== 'não trabalho com o item';
+      });
+    } else if (!filtroEspecialidade && filtroNivel) {
+      // Caso B: Apenas o Nível Técnico está selecionado (Busca em qualquer coluna)
+      lista = lista.filter(f => 
+        String(f.nivel_led || '').toLowerCase().includes(nivelProcurado) ||
+        String(f.nivel_videowall || '').toLowerCase().includes(nivelProcurado) ||
+        String(f.nivel_tv || '').toLowerCase().includes(nivelProcurado) ||
+        String(f.nivel_audio || '').toLowerCase().includes(nivelProcurado) ||
+        String(f.nivel_luz || '').toLowerCase().includes(nivelProcurado)
+      );
+    } else if (filtroEspecialidade && filtroNivel) {
+      // Caso C: Ambos selecionados (Cruzamento exato de Setor + Nível)
+      lista = lista.filter(f => {
+        const nivelStr = String((f as any)[`nivel_${filtroEspecialidade}`] || '').toLowerCase();
+        return nivelStr && nivelStr.includes(nivelProcurado);
       });
     }
 
     return lista;
-  }, [freelancers, busca, filtroEspecialidade]);
+  }, [freelancers, busca, filtroEspecialidade, filtroNivel]);
 
   if (loading) {
     return (
@@ -125,9 +146,11 @@ export default function GestaoFreelancers() {
           </div>
         </div>
 
-        {/* BARRA DE PESQUISA E FILTRO */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col lg:flex-row gap-4 items-center">
-          <div className="flex-1 w-full relative">
+        {/* BARRA DE PESQUISA E FILTROS EXPANDIDA */}
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col lg:flex-row gap-3 items-center">
+          
+          {/* Busca por texto livre */}
+          <div className="flex-1 w-full">
             <input 
               type="text" 
               placeholder="🔍 Buscar por Nome ou Telefone..." 
@@ -136,13 +159,15 @@ export default function GestaoFreelancers() {
               onChange={(e) => setBusca(e.target.value)}
             />
           </div>
-          <div className="w-full lg:w-64 relative shadow-sm">
+
+          {/* Dropdown 1: Setor / Especialidade */}
+          <div className="w-full lg:w-56 shadow-sm">
             <select 
-              className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#64748B] outline-none transition-all cursor-pointer focus:border-[#336699]"
+              className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0C1D4D] outline-none transition-all cursor-pointer focus:border-[#336699] bg-[#F8FAFC]"
               value={filtroEspecialidade}
               onChange={(e) => setFiltroEspecialidade(e.target.value)}
             >
-              <option value="">Filtro: Todos os Setores</option>
+              <option value="">⚙️ Todos os Setores</option>
               <option value="led">Painel de LED</option>
               <option value="videowall">Video Wall</option>
               <option value="tv">Televisores</option>
@@ -150,6 +175,23 @@ export default function GestaoFreelancers() {
               <option value="luz">Iluminação</option>
             </select>
           </div>
+
+          {/* Dropdown 2: Nível Técnico (NOVO) */}
+          <div className="w-full lg:w-56 shadow-sm">
+            <select 
+              className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0C1D4D] outline-none transition-all cursor-pointer focus:border-[#336699] bg-[#F8FAFC]"
+              value={filtroNivel}
+              onChange={(e) => setFiltroNivel(e.target.value)}
+            >
+              <option value="">📊 Todos os Níveis</option>
+              <option value="Ajudante">Ajudante / Carregador</option>
+              <option value="Instalador">Instalador Estrutural</option>
+              <option value="Configura">Configuração Técnica</option>
+              <option value="Opera">Operador de Sistema</option>
+              <option value="Coordena">Coordenador / Líder</option>
+            </select>
+          </div>
+
         </div>
       </div>
 
@@ -160,7 +202,7 @@ export default function GestaoFreelancers() {
             <thead className="bg-[#F8FAFC] sticky top-0 z-10 shadow-sm">
               <tr className="text-[#64748B] text-[10px] uppercase tracking-wider font-bold">
                 <th className="p-4 border-b-2 border-[#E2E8F0]">Nome e Contato</th>
-                <th className="p-4 border-b-2 border-[#E2E8F0]">Média de Nível (Skills)</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0]">Níveis de Skill Cadastrados</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0]">PIX (Tipo/Chave)</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0]">Data de Cadastro</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] text-center">Ações</th>
@@ -168,7 +210,7 @@ export default function GestaoFreelancers() {
             </thead>
             <tbody className="divide-y divide-[#E2E8F0] text-xs">
               {filtrados.length === 0 ? (
-                <tr><td colSpan={5} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Nenhum freelancer encontrado.</td></tr>
+                <tr><td colSpan={5} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Nenhum freelancer encontrado para os filtros selecionados.</td></tr>
               ) : (
                 filtrados.map((free) => (
                   <tr key={free.id} className="hover:bg-[#F8FAFC] transition-colors">
@@ -177,11 +219,11 @@ export default function GestaoFreelancers() {
                       <span className="text-[#64748B] font-semibold">📱 {free.telefone}</span>
                     </td>
                     <td className="p-4">
-                      <div className="flex gap-2 flex-wrap max-w-[320px]">
-                        {free.nivel_led !== 'Não trabalho com o Item' && <span className="bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider">LED: {free.nivel_led.split(',')[0]}</span>}
-                        {free.nivel_tv !== 'Não trabalho com o Item' && <span className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider">TV: {free.nivel_tv.split(',')[0]}</span>}
-                        {free.nivel_audio !== 'Não trabalho com o Item' && <span className="bg-amber-50 text-amber-600 border border-amber-200 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider">Som: {free.nivel_audio.split(',')[0]}</span>}
-                        {free.nivel_luz !== 'Não trabalho com o Item' && <span className="bg-purple-50 text-purple-600 border border-purple-200 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider">Luz: {free.nivel_luz.split(',')[0]}</span>}
+                      <div className="flex gap-2 flex-wrap max-w-[350px]">
+                        {free.nivel_led && !free.nivel_led.toLowerCase().includes('não trabalho') && <span className="bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider" title={free.nivel_led}>LED: {free.nivel_led}</span>}
+                        {free.nivel_tv && !free.nivel_tv.toLowerCase().includes('não trabalho') && <span className="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider" title={free.nivel_tv}>TV: {free.nivel_tv}</span>}
+                        {free.nivel_audio && !free.nivel_audio.toLowerCase().includes('não trabalho') && <span className="bg-amber-50 text-amber-600 border border-amber-200 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider" title={free.nivel_audio}>Som: {free.nivel_audio}</span>}
+                        {free.nivel_luz && !free.nivel_luz.toLowerCase().includes('não trabalho') && <span className="bg-purple-50 text-purple-600 border border-purple-200 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider" title={free.nivel_luz}>Luz: {free.nivel_luz}</span>}
                       </div>
                     </td>
                     <td className="p-4">
@@ -234,19 +276,19 @@ export default function GestaoFreelancers() {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-[#F8FAFC] p-3 border border-[#E2E8F0] rounded-lg">
                     <span className="block text-[9px] font-bold uppercase tracking-wider text-[#94A3B8]">Painel de LED</span>
-                    <strong className={`text-xs ${modalOpen.free.nivel_led === 'Não trabalho com o Item' ? 'text-[#94A3B8]' : 'text-[#0C1D4D]'}`}>{modalOpen.free.nivel_led}</strong>
+                    <strong className={`text-xs ${modalOpen.free.nivel_led.toLowerCase().includes('não trabalho') ? 'text-[#94A3B8]' : 'text-[#0C1D4D]'}`}>{modalOpen.free.nivel_led}</strong>
                   </div>
                   <div className="bg-[#F8FAFC] p-3 border border-[#E2E8F0] rounded-lg">
                     <span className="block text-[9px] font-bold uppercase tracking-wider text-[#94A3B8]">Televisores / Video Wall</span>
-                    <strong className={`text-xs ${modalOpen.free.nivel_tv === 'Não trabalho com o Item' ? 'text-[#94A3B8]' : 'text-[#0C1D4D]'}`}>{modalOpen.free.nivel_tv}</strong>
+                    <strong className={`text-xs ${modalOpen.free.nivel_tv.toLowerCase().includes('não trabalho') ? 'text-[#94A3B8]' : 'text-[#0C1D4D]'}`}>{modalOpen.free.nivel_tv}</strong>
                   </div>
                   <div className="bg-[#F8FAFC] p-3 border border-[#E2E8F0] rounded-lg">
                     <span className="block text-[9px] font-bold uppercase tracking-wider text-[#94A3B8]">Áudio</span>
-                    <strong className={`text-xs ${modalOpen.free.nivel_audio === 'Não trabalho com o Item' ? 'text-[#94A3B8]' : 'text-[#0C1D4D]'}`}>{modalOpen.free.nivel_audio}</strong>
+                    <strong className={`text-xs ${modalOpen.free.nivel_audio.toLowerCase().includes('não trabalho') ? 'text-[#94A3B8]' : 'text-[#0C1D4D]'}`}>{modalOpen.free.nivel_audio}</strong>
                   </div>
                   <div className="bg-[#F8FAFC] p-3 border border-[#E2E8F0] rounded-lg">
                     <span className="block text-[9px] font-bold uppercase tracking-wider text-[#94A3B8]">Iluminação</span>
-                    <strong className={`text-xs ${modalOpen.free.nivel_luz === 'Não trabalho com o Item' ? 'text-[#94A3B8]' : 'text-[#0C1D4D]'}`}>{modalOpen.free.nivel_luz}</strong>
+                    <strong className={`text-xs ${modalOpen.free.nivel_luz.toLowerCase().includes('não trabalho') ? 'text-[#94A3B8]' : 'text-[#0C1D4D]'}`}>{modalOpen.free.nivel_luz}</strong>
                   </div>
                 </div>
               </div>

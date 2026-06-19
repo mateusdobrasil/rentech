@@ -10,36 +10,57 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   useEffect(() => {
     async function checkAuthAndLogAccess() {
-      // 1. Verifica se há uma sessão ativa
+      // 1. Verifica a sessão
       const { data: { session } } = await supabase.auth.getSession();
 
       if (!session) {
-        // Se não houver, expulsa para o login imediatamente
         router.push('/login');
         return;
       }
 
-      // 2. Regista a data e hora exata do acesso
+      // 2. Busca o nome do usuário para a Auditoria
+      const { data: perfil } = await supabase
+        .from('perfis_usuarios')
+        .select('nome')
+        .eq('id', session.user.id)
+        .single();
+
+      const nomeUsuario = perfil?.nome || session.user.email || 'Usuário Desconhecido';
       const dataHoraAtual = new Date().toISOString();
 
-      // 3. Atualiza silenciosamente no banco de dados
-      const { error } = await supabase
+      // 3. Atualiza silenciosamente o último acesso no perfil
+      await supabase
         .from('perfis_usuarios')
         .update({ ultimo_acesso: dataHoraAtual })
         .eq('id', session.user.id);
 
-      if (error) {
-        console.error("Erro ao registar último acesso no banco:", error.message);
+      // 4. Grava na Auditoria (Apenas se for o primeiro acesso da sessão atual)
+      if (!sessionStorage.getItem('logAcessoRegistrado')) {
+        const { error: logError } = await supabase
+          .from('logs_auditoria')
+          .insert([{
+            usuario_nome: nomeUsuario,
+            acao: 'ACESSO AO SISTEMA',
+            setor: 'HUB PRINCIPAL',
+            equipamento_id: null,
+            equipamento_nome: null
+          }]);
+
+        if (!logError) {
+          // Marca no navegador que o log já foi feito para não repetir no F5
+          sessionStorage.setItem('logAcessoRegistrado', 'true');
+        } else {
+          console.error("Erro ao gravar auditoria:", logError.message);
+        }
       }
 
-      // 4. Liberta a passagem para o conteúdo da página
+      // 5. Liberta a visualização da página
       setIsAuthorized(true);
     }
 
     checkAuthAndLogAccess();
   }, [router]);
 
-  // Enquanto verifica a identidade, mostra um loading suave
   if (!isAuthorized) {
     return (
       <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center">
@@ -48,6 +69,5 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     );
   }
 
-  // Se passou no teste, renderiza a página que o utilizador queria aceder
   return <>{children}</>;
 }

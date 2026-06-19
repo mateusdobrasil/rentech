@@ -120,8 +120,12 @@ export default function Navbar() {
             Dashboard P2S
           </Link>
 
-          <Link href="https://webmail.exchangecorp.com.br/" target="_blank" onClick={closeMenu} className="rounded-md px-3 py-3 text-base font-bold hover:bg-[#284B8C]/30 hover:text-white transition-colors">
+          <Link href="https://webmail.exchangecorp.com.br/" target="_blank" className="hover:text-[#336699] transition-colors">
             Webmail
+          </Link>
+
+          <Link href="/freelance" className="hover:text-[#336699] transition-colors">
+              Freelancer
           </Link>
 
           {/* Link Dinâmico para o Dashboard */}

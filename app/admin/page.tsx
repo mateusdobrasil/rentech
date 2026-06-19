@@ -68,6 +68,15 @@ const MODULOS_SISTEMA = [
     permissoes_permitidas: ['ADMINISTRADOR', 'ESTOQUE'],
     cor: 'border-amber-500/50 hover:border-amber-500',
     bgIcon: 'bg-amber-50 text-amber-600'
+  },
+  {
+    titulo: 'Banco de Talentos',
+    descricao: 'Acesso à lista de colaboradores Freelance, especialidades e chaves PIX.',
+    icone: '👷',
+    link: '/admin/freelance',
+    permissoes_permitidas: ['ADMINISTRADOR', 'OPERACIONAL', 'FINANCEIRO', 'ADMINISTRATIVO'],
+    cor: 'border-blue-500/50 hover:border-blue-500',
+    bgIcon: 'bg-blue-50 text-blue-600'
   }
 ];
 

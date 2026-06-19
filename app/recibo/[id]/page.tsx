@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, use } from 'react'; // <-- Adicionado o hook 'use'
 import Image from 'next/image';
 import { supabase } from '../../lib/supabase';
 import { salvarAssinaturaRecibo } from '../../admin/op/actions';
 import logoColorido from '../../imgs/logo.png'; 
 
-export default function AssinaturaReciboPage({ params }: { params: { id: string } }) {
+// ATUALIZAÇÃO NEXT.JS 15: params agora é uma Promise
+export default function AssinaturaReciboPage({ params }: { params: Promise<{ id: string }> }) {
+  // Desempacotando a Promise com o React.use()
+  const { id } = use(params);
+
   const [op, setOp] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -21,14 +25,14 @@ export default function AssinaturaReciboPage({ params }: { params: { id: string 
       const { data, error } = await supabase
         .from('ordens_pagamento')
         .select('*')
-        .eq('id', params.id)
+        .eq('id', id) // <-- Utiliza o 'id' desempacotado
         .single();
         
       if (!error && data) setOp(data);
       setLoading(false);
     }
     carregarOP();
-  }, [params.id]);
+  }, [id]); // <-- O hook agora depende do 'id' desempacotado
 
   // ==========================================
   // LÓGICA DO CANVAS (DESENHO DA ASSINATURA)
@@ -103,7 +107,7 @@ export default function AssinaturaReciboPage({ params }: { params: { id: string 
     // Converte o desenho para uma imagem Base64
     const base64Image = canvas.toDataURL('image/png');
     
-    // Chama a ação do servidor (com IP fictício por enquanto, ou obtido via headers)
+    // Chama a ação do servidor
     const res = await salvarAssinaturaRecibo(op.id, base64Image);
     
     if (res.success) {

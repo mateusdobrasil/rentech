@@ -157,11 +157,14 @@ export default function PainelFinanceiro() {
     const termoBusca = busca.toLowerCase().trim();
     
     return ops.filter(op => {
-      const matchBusca = !termoBusca || 
-        (op.os_numero || '').toLowerCase().includes(termoBusca) || 
-        (op.os_cliente || '').toLowerCase().includes(termoBusca) || 
-        (op.empresa_recebedora || '').toLowerCase().includes(termoBusca) || 
-        (op.natureza_pagamento || '').toLowerCase().includes(termoBusca);
+      const matchBusca = !termoBusca || [
+        String(op.numero_op), // Adicionado número da OP na busca
+        op.os_numero,
+        op.os_cliente,
+        op.responsavel_nome,
+        op.natureza_pagamento,
+        op.empresa_recebedora
+      ].some((campo) => (campo || '').toLowerCase().includes(termoBusca));
 
       const nomeResponsavelLimpo = (op.responsavel_nome || '').toUpperCase().trim();
       const matchResponsavel = !filtroResponsavel || nomeResponsavelLimpo === filtroResponsavel;
@@ -258,14 +261,19 @@ export default function PainelFinanceiro() {
   const anoAtual = new Date().getFullYear();
   const anosDisponiveis = [anoAtual - 1, anoAtual, anoAtual + 1, anoAtual + 2];
 
-  // Layout Estrutural do Recibo de Devolução
+  // ============================================================================
+  // TEMPLATE DO RECIBO (COM Nº DA OP)
+  // ============================================================================
   const renderReciboLayout = (op: OP) => (
     <div className="border-2 border-black p-8 md:p-12 rounded-xl bg-white w-full max-w-4xl mx-auto text-black shadow-none print:border-none">
       <div className="flex justify-between items-center border-b-2 border-black pb-6 mb-8">
         <Image src={logoColorido} alt="Rentech Logo" width={180} height={55} className="print:grayscale" />
         <div className="text-right">
           <h1 className="text-3xl font-black uppercase tracking-wider">RECIBO</h1>
-          <p className="text-lg font-bold text-gray-700">Nº da OP / OS: {op.os_numero || 'S/N'}</p>
+          <p className="text-lg font-bold text-gray-700">
+            Nº da OP: <span className="text-black">#{op.numero_op}</span> 
+            <span className="text-sm font-normal ml-2">/ OS: {op.os_numero || 'S/N'}</span>
+          </p>
         </div>
       </div>
 
@@ -358,7 +366,7 @@ export default function PainelFinanceiro() {
         <div className="px-4 md:px-8 py-2 flex-shrink-0">
           <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col lg:flex-row gap-3 items-center">
             <div className="flex-1 w-full">
-              <input type="text" placeholder="🔍 Busca livre (OS, Cliente, etc)..." className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0A2A4A] focus:border-[#336699] outline-none transition-all" value={busca} onChange={(e) => setBusca(e.target.value)} />
+              <input type="text" placeholder="🔍 Busca livre (Nº OP, OS, Cliente, etc)..." className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0A2A4A] focus:border-[#336699] outline-none transition-all" value={busca} onChange={(e) => setBusca(e.target.value)} />
             </div>
 
             <div className="w-full lg:w-auto flex relative shadow-sm rounded-lg">
@@ -402,10 +410,11 @@ export default function PainelFinanceiro() {
         {/* Tabela de Dados */}
         <div className="px-4 md:px-8 pb-8 flex-grow overflow-hidden flex flex-col mt-2">
           <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto">
-            <table className="w-full text-left border-collapse min-w-[1150px]">
+            <table className="w-full text-left border-collapse min-w-[1200px]">
               <thead className="bg-[#F8FAFC] sticky top-0 z-10 shadow-sm">
                 <tr className="text-[#64748B] text-[10px] uppercase tracking-wider font-bold">
                   <th className="p-4 border-b-2 border-[#E2E8F0] w-24">Data OP</th>
+                  <th className="p-4 border-b-2 border-[#E2E8F0] w-20">Nº OP</th>
                   <th className="p-4 border-b-2 border-[#E2E8F0] w-28">OS / Anexo</th>
                   <th className="p-4 border-b-2 border-[#E2E8F0] w-32">Solicitante</th>
                   <th className="p-4 border-b-2 border-[#E2E8F0] min-w-[120px] max-w-[140px]">Cliente</th>
@@ -419,15 +428,16 @@ export default function PainelFinanceiro() {
               </thead>
               <tbody className="divide-y divide-[#E2E8F0] text-xs">
                 {loading ? (
-                  <tr><td colSpan={10} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Carregando registros do banco de dados...</td></tr>
+                  <tr><td colSpan={11} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Carregando registros do banco de dados...</td></tr>
                 ) : opsFiltradas.length === 0 ? (
-                  <tr><td colSpan={10} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Nenhuma Ordem de Pagamento encontrada.</td></tr>
+                  <tr><td colSpan={11} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Nenhuma Ordem de Pagamento encontrada.</td></tr>
                 ) : (
                   opsFiltradas.map((op) => {
                     const statusAtual = op.status;
                     return (
                       <tr key={op.id} className="hover:bg-[#F8FAFC] transition-colors">
                         <td className="p-4 font-semibold text-[#94A3B8] whitespace-nowrap">{formatarData(op.data_criacao)}</td>
+                        <td className="p-4 font-black text-[#0C1D4D]">#{op.numero_op}</td>
                         <td className="p-4 whitespace-nowrap">
                           <span className="bg-[#E0F2FE] text-[#0369A1] font-bold px-2 py-1 rounded-md text-[10px] mr-1.5 inline-block">{op.os_numero || 'S/N'}</span>
                           {op.file_url && <a href={op.file_url} target="_blank" rel="noreferrer" className="text-base hover:scale-110 transition-transform inline-block" title="Ver Comprovante">📎</a>}
@@ -451,7 +461,7 @@ export default function PainelFinanceiro() {
                           </span>
                         </td>
                         
-                        {/* Ações */}
+                        {/* Ações Inteligentes e Modulares */}
                         <td className="p-4 text-center space-y-1.5">
                           {statusAtual !== 'PENDENTE' ? (
                             <span className="block text-[10px] font-black text-green-600 uppercase tracking-widest bg-green-50 py-1.5 rounded">✅ Pago</span>
@@ -500,7 +510,7 @@ export default function PainelFinanceiro() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
               <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white">
-                <h3 className="font-black uppercase tracking-wider text-sm">Detalhes da OP: {modalDetalhes.op.os_numero}</h3>
+                <h3 className="font-black uppercase tracking-wider text-sm">Detalhes da OP: #{modalDetalhes.op.numero_op} - OS: {modalDetalhes.op.os_numero}</h3>
                 <button onClick={() => setModalDetalhes({ open: false, op: null })} className="text-white hover:text-red-400 text-2xl leading-none">&times;</button>
               </div>
               <div className="p-6 overflow-y-auto">

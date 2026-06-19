@@ -33,6 +33,8 @@ interface OP {
   observacao: string;
   status: string;
   itens: ItemOP[];
+  recibo_url?: string;      // Adicionado para suportar a assinatura
+  data_assinatura?: string; // Adicionado para suportar a assinatura
 }
 
 export default function PainelResponsavel() {
@@ -48,11 +50,10 @@ export default function PainelResponsavel() {
   const [ops, setOps] = useState<OP[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // ── NOVOS: Estados de Filtro ──────────────────────────────────────────────
+  // Estados de Filtro
   const [busca, setBusca] = useState('');
   const [filtroResponsavel, setFiltroResponsavel] = useState('');
   const [filtroCliente, setFiltroCliente] = useState('');
-  // ──────────────────────────────────────────────────────────────────────────
 
   // Estados de Modais
   const [modalDetalhes, setModalDetalhes] = useState<{ open: boolean; op: OP | null }>({ open: false, op: null });
@@ -110,31 +111,27 @@ export default function PainelResponsavel() {
     if (!authLoading && usuarioAtual) carregarDados();
   }, [authLoading, usuarioAtual, nivelAcesso]);
 
-  // ── Listas únicas para os dropdowns (geradas a partir dos dados reais e normalizadas) ────
+  // Listas únicas para dropdowns
   const responsaveisUnicos = useMemo(() => {
-    // Normaliza para maiúsculo e remove espaços em branco extras
     const nomes = ops.map(op => (op.responsavel_nome || '').toUpperCase().trim()).filter(Boolean);
     return [...new Set(nomes)].sort();
   }, [ops]);
 
   const clientesUnicos = useMemo(() => {
-    // Normaliza para maiúsculo e remove espaços em branco extras
     const clientes = ops.map(op => (op.os_cliente || '').toUpperCase().trim()).filter(Boolean);
     return [...new Set(clientes)].sort();
   }, [ops]);
-  // ──────────────────────────────────────────────────────────────────────────
 
-  // ── OPs filtradas (computadas, sem estado extra, com normalização de case) ──────────────────────────
+  // OPs filtradas
   const opsFiltradas = useMemo(() => {
     const termo = busca.toLowerCase().trim();
     return ops.filter((op) => {
-      // Filtro de Busca Geral (mantém minúsculo para busca parcial)
       const matchBusca = !termo || [
+        String(op.numero_op),
         op.os_numero, op.os_cliente, op.responsavel_nome,
         op.natureza_pagamento, op.empresa_recebedora, op.status,
       ].some((campo) => (campo || '').toLowerCase().includes(termo));
 
-      // Filtro Específico (normaliza ambos os lados para MAIÚSCULO para comparação exata)
       const nomeResponsavelLimpo = (op.responsavel_nome || '').toUpperCase().trim();
       const matchResponsavel = !filtroResponsavel || nomeResponsavelLimpo === filtroResponsavel;
       
@@ -152,13 +149,12 @@ export default function PainelResponsavel() {
   };
 
   const filtrosAtivos = busca || filtroResponsavel || filtroCliente;
-  // ──────────────────────────────────────────────────────────────────────────
 
   // Utilitários
   const formatarMoeda = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
   const formatarData = (d: string) => d ? new Date(d).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '---';
 
-  // Lógica de edição (inalterada)
+  // Lógica de edição
   const abrirEdicao = (op: OP) => {
     const copiaOp = JSON.parse(JSON.stringify(op));
     if (!copiaOp.itens || copiaOp.itens.length === 0)
@@ -269,11 +265,9 @@ export default function PainelResponsavel() {
         </button>
       </div>
 
-      {/* ── BARRA DE FILTROS ─────────────────────────────────────────────────── */}
+      {/* BARRA DE FILTROS */}
       <div className="px-4 md:px-8 pt-5 pb-3 flex-shrink-0">
         <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm px-4 py-4 flex flex-col md:flex-row gap-3 items-stretch md:items-center">
-
-          {/* Busca geral */}
           <div className="relative flex-1 min-w-0">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
@@ -282,14 +276,13 @@ export default function PainelResponsavel() {
             </span>
             <input
               type="text"
-              placeholder="Buscar por OS, cliente, natureza, favorecido..."
+              placeholder="Buscar por Nº da OP, OS, cliente, natureza..."
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
               className="w-full pl-9 pr-4 py-2.5 border border-[#CBD5E1] rounded-lg text-sm outline-none focus:border-[#336699] focus:ring-1 focus:ring-[#336699]/30 transition-all placeholder:text-[#94A3B8]"
             />
           </div>
 
-          {/* Dropdown Responsável */}
           <select
             value={filtroResponsavel}
             onChange={(e) => setFiltroResponsavel(e.target.value)}
@@ -301,7 +294,6 @@ export default function PainelResponsavel() {
             ))}
           </select>
 
-          {/* Dropdown Cliente */}
           <select
             value={filtroCliente}
             onChange={(e) => setFiltroCliente(e.target.value)}
@@ -313,7 +305,6 @@ export default function PainelResponsavel() {
             ))}
           </select>
 
-          {/* Botão limpar (só aparece se algum filtro estiver ativo) */}
           {filtrosAtivos && (
             <button
               onClick={limparFiltros}
@@ -323,39 +314,37 @@ export default function PainelResponsavel() {
             </button>
           )}
         </div>
-
-        {/* Contador de resultados */}
         <p className="text-[11px] text-[#94A3B8] font-medium mt-2 ml-1">
           {filtrosAtivos
             ? `${opsFiltradas.length} de ${ops.length} OPs encontradas`
             : `${ops.length} OPs no total`}
         </p>
       </div>
-      {/* ──────────────────────────────────────────────────────────────────────── */}
 
-      {/* TABELA */}
+      {/* TABELA RECALIBRADA */}
       <div className="px-4 md:px-8 pb-6 flex-grow overflow-hidden flex flex-col">
         <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto">
-          <table className="w-full text-left border-collapse min-w-[900px]">
+          <table className="w-full text-left border-collapse min-w-[1150px]">
             <thead className="bg-[#F8FAFC] sticky top-0 shadow-sm z-10">
               <tr className="text-[#64748B] text-[10px] uppercase tracking-wider font-bold">
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-24">Data OP</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] w-20">Nº OP</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-24">OS</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-32">Responsável</th>
-                <th className="p-4 border-b-2 border-[#E2E8F0] w-40">Cliente</th>
-                <th className="p-4 border-b-2 border-[#E2E8F0]">Natureza / Descrição</th>
-                <th className="p-4 border-b-2 border-[#E2E8F0] w-40">Favorecido</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] min-w-[120px] max-w-[150px]">Cliente</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] min-w-[150px] max-w-[180px]">Natureza / Descrição</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] min-w-[140px] max-w-[160px]">Favorecido</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-32">Valor Total</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-28">Status</th>
-                <th className="p-4 border-b-2 border-[#E2E8F0] w-32 text-center">Ações</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] w-40 text-center">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E2E8F0] text-xs">
               {loading ? (
-                <tr><td colSpan={9} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Buscando as solicitações...</td></tr>
+                <tr><td colSpan={10} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Buscando as solicitações...</td></tr>
               ) : opsFiltradas.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="text-center py-12">
+                  <td colSpan={10} className="text-center py-12">
                     <p className="text-[#94A3B8] font-bold text-sm">Nenhuma OP encontrada.</p>
                     {filtrosAtivos && (
                       <button onClick={limparFiltros} className="mt-3 text-[#336699] font-bold text-xs underline">
@@ -366,25 +355,26 @@ export default function PainelResponsavel() {
                 </tr>
               ) : (
                 opsFiltradas.map((op) => {
-                  const isPago = op.status === 'PAGO';
+                  const isPago = op.status.includes('PAGO');
                   return (
                     <tr key={op.id} className="hover:bg-[#F8FAFC] transition-colors">
-                      <td className="p-4 font-semibold text-[#94A3B8]">{formatarData(op.data_criacao)}</td>
-                      <td className="p-4"><span className="bg-[#E0F2FE] text-[#0369A1] font-bold px-2 py-1 rounded-md text-[10px]">{op.os_numero || 'S/N'}</span></td>
-                      <td className="p-4 font-bold text-[#336699] truncate max-w-[120px]">{op.responsavel_nome}</td>
-                      <td className="p-4 font-bold truncate max-w-[150px]">{op.os_cliente}</td>
+                      <td className="p-4 font-semibold text-[#94A3B8] whitespace-nowrap">{formatarData(op.data_criacao)}</td>
+                      <td className="p-4 font-black text-[#0C1D4D]">#{op.numero_op}</td>
+                      <td className="p-4"><span className="bg-[#E0F2FE] text-[#0369A1] font-bold px-2 py-1 rounded-md text-[10px] whitespace-nowrap">{op.os_numero || 'S/N'}</span></td>
+                      <td className="p-4 font-bold text-[#336699] truncate max-w-[120px]" title={op.responsavel_nome}>{op.responsavel_nome}</td>
+                      <td className="p-4 font-bold truncate max-w-[150px]" title={op.os_cliente}>{op.os_cliente}</td>
                       <td className="p-4">
-                        <div className="font-semibold text-[#0A2A4A] truncate max-w-[200px]">{op.natureza_pagamento}</div>
-                        <button onClick={() => setModalDetalhes({ open: true, op })} className="text-[9px] font-black uppercase tracking-wider text-[#336699] hover:underline mt-1">Ver Detalhes</button>
+                        <div className="font-semibold text-[#0A2A4A] truncate max-w-[180px] mb-1">{op.natureza_pagamento}</div>
+                        <button onClick={() => setModalDetalhes({ open: true, op })} className="text-[9px] font-black uppercase tracking-wider text-[#336699] hover:underline">Ver Detalhes</button>
                       </td>
-                      <td className="p-4 font-bold text-[#64748B] truncate max-w-[150px]">{op.empresa_recebedora}</td>
-                      <td className="p-4 font-black text-[#0C1D4D]">{formatarMoeda(op.total_geral)}</td>
+                      <td className="p-4 font-bold text-[#64748B] truncate max-w-[160px]" title={op.empresa_recebedora}>{op.empresa_recebedora}</td>
+                      <td className="p-4 font-black text-[#0C1D4D] whitespace-nowrap">{formatarMoeda(op.total_geral)}</td>
                       <td className="p-4">
-                        <span className={`px-2 py-1 rounded-full text-[9px] font-black tracking-wider ${isPago ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-orange-100 text-orange-700 border border-orange-200'}`}>
+                        <span className={`px-2 py-1 rounded-full text-[9px] font-black tracking-wider whitespace-nowrap ${op.status.includes('ASSINADO') ? 'bg-purple-100 text-purple-700 border border-purple-200' : isPago ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-orange-100 text-orange-700 border border-orange-200'}`}>
                           {op.status}
                         </span>
                       </td>
-                      <td className="p-4 text-center space-y-2">
+                      <td className="p-4 text-center space-y-1.5">
                         <button
                           onClick={() => abrirEdicao(op)}
                           disabled={isPago}
@@ -392,6 +382,24 @@ export default function PainelResponsavel() {
                         >
                           ✏️ Editar
                         </button>
+                        
+                        <button 
+                          onClick={() => {
+                            const link = `${window.location.origin}/recibo/${op.id}`;
+                            navigator.clipboard.writeText(`Olá! Confirme o recebimento do seu pagamento assinando o recibo digital da Rentech pelo telemóvel aqui: ${link}`);
+                            alert('Link de assinatura digital copiado! Pronto para enviar no WhatsApp.');
+                          }} 
+                          className="w-full bg-[#E0F2FE] hover:bg-[#BAE6FD] border border-[#7DD3FC] text-[#0369A1] font-bold text-[9px] uppercase tracking-wider py-1.5 rounded transition-colors shadow-sm"
+                        >
+                          🔗 Link Assinatura
+                        </button>
+
+                        {op.recibo_url && (
+                          <a href={op.recibo_url} target="_blank" rel="noreferrer" className="w-full block text-center bg-purple-100 hover:bg-purple-200 border border-purple-300 text-purple-700 font-bold text-[9px] uppercase tracking-wider py-1.5 rounded transition-colors shadow-sm">
+                            👁️ Ver Assinatura
+                          </a>
+                        )}
+
                         <button
                           onClick={() => solicitarCopia(op)}
                           className="w-full bg-[#F0F4F8] border border-[#CBD5E1] text-[#64748B] font-bold text-[9px] uppercase tracking-wider py-1 rounded transition-colors hover:bg-[#E2E8F0]"
@@ -413,7 +421,7 @@ export default function PainelResponsavel() {
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
             <div className="bg-[#336699] p-4 flex justify-between items-center text-white">
-              <h3 className="font-black uppercase tracking-wider text-sm">Resumo da Solicitação</h3>
+              <h3 className="font-black uppercase tracking-wider text-sm">Resumo da Solicitação #{modalDetalhes.op.numero_op}</h3>
               <button onClick={() => setModalDetalhes({ open: false, op: null })} className="text-white hover:text-red-400 text-xl leading-none">&times;</button>
             </div>
             <div className="p-6">
@@ -441,7 +449,7 @@ export default function PainelResponsavel() {
         <div className="fixed inset-0 z-[200] flex items-start justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto py-10">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden mb-10 relative">
             <div className="bg-amber-500 p-5 flex justify-between items-center text-white sticky top-0 z-10">
-              <h3 className="font-black uppercase tracking-wider text-sm">✏️ Editando OP: {modalEdit.op.os_numero}</h3>
+              <h3 className="font-black uppercase tracking-wider text-sm">✏️ Editando OP #{modalEdit.op.numero_op} - OS: {modalEdit.op.os_numero}</h3>
               <button onClick={() => setModalEdit({ open: false, op: null })} className="text-white hover:text-red-900 text-2xl leading-none">&times;</button>
             </div>
             <div className="p-6 space-y-6">

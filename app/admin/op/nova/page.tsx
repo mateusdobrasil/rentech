@@ -6,13 +6,24 @@ import { useRouter } from 'next/navigation';
 import logoColorido from '../../../../app/imgs/logo.png';
 import { criarOP, NovaOPData } from '../actions'; 
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
-import { Analytics } from "@vercel/analytics/next"
+import { Analytics } from "@vercel/analytics/next";
 
 interface ItemOP {
   id: number;
   descricao: string;
   qtd: number;
   valorUnitario: number;
+}
+
+// Interface simplificada do Freelancer para o Modal (AGORA COM ENDEREÇO)
+interface FreelancerBusca {
+  id: string;
+  nome: string;
+  cpf: string;
+  telefone: string;
+  pix_chave: string;
+  pix_tipo: string;
+  endereco: string;
 }
 
 export default function NovaOrdemPagamento() {
@@ -42,9 +53,15 @@ export default function NovaOrdemPagamento() {
   const [dataVencimento, setDataVencimento] = useState('');
   const [obs, setObs] = useState('');
   
-  // NOVO: Estado para armazenar o arquivo selecionado
+  // Captura do arquivo selecionado
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [uploadStatus, setUploadStatus] = useState('');
+
+  // Modais e Estados da Busca de Freelancers
+  const [modalFreelanceAberto, setModalFreelanceAberto] = useState(false);
+  const [listaFreelancers, setListaFreelancers] = useState<FreelancerBusca[]>([]);
+  const [termoBuscaFree, setTermoBuscaFree] = useState('');
+  const [loadingFree, setLoadingFree] = useState(false);
 
   // Gestão Dinâmica de Itens
   const [itens, setItens] = useState<ItemOP[]>(
@@ -106,11 +123,9 @@ export default function NovaOrdemPagamento() {
     return itens.reduce((acc, item) => acc + (item.qtd * item.valorUnitario), 0);
   }, [itens]);
 
-  // NOVO: Captura do arquivo selecionado
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
-      // Verifica tamanho (Max 5MB)
       if (file.size > 5 * 1024 * 1024) {
         alert("O arquivo é muito grande. O limite máximo é 5MB.");
         e.target.value = '';
@@ -120,11 +135,52 @@ export default function NovaOrdemPagamento() {
     }
   };
 
+  // ============================================================================
+  // FUNÇÕES DE BUSCA DE FREELANCER 
+  // ============================================================================
+  const abrirModalFreelance = async () => {
+    setModalFreelanceAberto(true);
+    setLoadingFree(true);
+    // Busca os dados do Supabase, agora INCLUINDO O ENDEREÇO
+    const { data, error } = await supabase.from('freelancers').select('id, nome, cpf, telefone, pix_chave, pix_tipo, endereco').order('created_at', { ascending: false }).limit(100);
+    if (!error && data) {
+      setListaFreelancers(data);
+    }
+    setLoadingFree(false);
+  };
+
+  const selecionarFreelancer = (free: FreelancerBusca) => {
+    setEmpresaRecebedora(free.nome);
+    setCnpjCpf(free.cpf || '');
+    aplicarMascaraCpfCnpj(free.cpf || '');
+    setEndereco(free.endereco || ''); // PREENCHE O ENDEREÇO
+    setTipoPagamento('PIX');
+    
+    // Normaliza o tipo de Pix do banco com o tipo aceito no select da OP
+    let tipoMapeado = 'CELULAR';
+    const tipoFree = (free.pix_tipo || '').toUpperCase();
+    if (tipoFree.includes('CPF') || tipoFree.includes('CNPJ')) tipoMapeado = 'CPF/CNPJ';
+    if (tipoFree.includes('EMAIL') || tipoFree.includes('E-MAIL')) tipoMapeado = 'EMAIL';
+    if (tipoFree.includes('ALEAT')) tipoMapeado = 'ALEATÓRIO';
+    
+    setChavePix(tipoMapeado);
+    setDadosPagamento(free.pix_chave);
+    setModalFreelanceAberto(false);
+  };
+
+  const freelancersFiltrados = useMemo(() => {
+    if (!termoBuscaFree) return listaFreelancers;
+    const termo = termoBuscaFree.toLowerCase();
+    return listaFreelancers.filter(f => f.nome.toLowerCase().includes(termo) || (f.cpf && f.cpf.includes(termo)));
+  }, [listaFreelancers, termoBuscaFree]);
+
+  // ============================================================================
+  // ENVIO DO FORMULÁRIO 
+  // ============================================================================
   const handleSubmeterFormulario = async () => {
     setLoading(true);
     setUploadStatus('');
     
-    // Validações Base
     const itensValidos = itens
       .filter(i => i.descricao.trim() !== '' && i.qtd > 0)
       .map(i => ({ descricao: i.descricao.toUpperCase(), qtd: i.qtd, valor_unitario: i.valorUnitario, total: i.qtd * i.valorUnitario }));
@@ -137,27 +193,19 @@ export default function NovaOrdemPagamento() {
 
     let urlFinalAnexo = '';
 
-    // ============================================================================
-    // NOVO: LÓGICA DE UPLOAD PARA O SUPABASE STORAGE
-    // ============================================================================
     if (arquivo) {
       setUploadStatus('Fazendo upload do comprovante...');
-      // Gera um nome único para o arquivo para evitar substituição acidental
       const fileExt = arquivo.name.split('.').pop();
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
       const filePath = `anexos_ops/${fileName}`;
 
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('comprovantes')
-        .upload(filePath, arquivo);
+      const { error: uploadError } = await supabase.storage.from('comprovantes').upload(filePath, arquivo);
 
       if (uploadError) {
         setModal({ open: true, success: false, title: 'Erro no Anexo', msg: `Falha ao fazer upload: ${uploadError.message}` });
         setLoading(false);
         return;
       }
-
-      // Pega a URL pública para salvar no banco
       const { data: publicUrlData } = supabase.storage.from('comprovantes').getPublicUrl(filePath);
       urlFinalAnexo = publicUrlData.publicUrl;
     }
@@ -178,12 +226,12 @@ export default function NovaOrdemPagamento() {
       telefone_recebedora: '', 
       tipo_pagamento: tipoPagamento,
       chave_pix: tipoPagamento === 'PIX' ? chavePix : '',
-      dados_pagamento: dadosPagamento.toUpperCase(),
+      dados_pagamento: dadosPagamento, 
       data_vencimento: dataVencimento,
       observacao: obs.toUpperCase(),
       itens: itensValidos,
       total_geral: totalGeral,
-      file_url: urlFinalAnexo // AGORA SIM, RECEBE A URL DE NUVEM!
+      file_url: urlFinalAnexo 
     };
 
     const resposta = await criarOP(payload);
@@ -201,7 +249,7 @@ export default function NovaOrdemPagamento() {
     <div className="min-h-screen bg-[#F0F4F8] p-4 lg:p-10 font-sans text-[#0A2A4A] print:bg-white print:p-0">
       <Analytics/>
       
-      {/* Modal de Feedback */}
+      {/* Modal de Feedback Principal */}
       {modal.open && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm print:hidden">
           <div className="bg-white p-8 rounded-2xl shadow-2xl text-center max-w-sm w-full mx-4 transform transition-all">
@@ -219,6 +267,53 @@ export default function NovaOrdemPagamento() {
             >
               OK, VOLTAR
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* NOVO: Modal do Banco de Talentos (Freelancers) */}
+      {modalFreelanceAberto && (
+        <div className="fixed inset-0 z-[8000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white">
+              <h3 className="font-black uppercase tracking-wider text-sm">👷 Buscar no Banco de Talentos</h3>
+              <button onClick={() => setModalFreelanceAberto(false)} className="text-white hover:text-red-400 text-2xl leading-none">&times;</button>
+            </div>
+            
+            <div className="p-4 border-b border-[#E2E8F0] bg-[#F8FAFC]">
+              <input 
+                type="text" 
+                placeholder="Pesquisar por nome ou CPF..." 
+                className="w-full p-3 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] outline-none focus:border-[#336699]"
+                value={termoBuscaFree}
+                onChange={(e) => setTermoBuscaFree(e.target.value)}
+              />
+            </div>
+
+            <div className="overflow-y-auto flex-grow p-4 bg-white">
+              {loadingFree ? (
+                <div className="text-center py-10 text-[#64748B] font-bold text-sm">Carregando freelancers...</div>
+              ) : freelancersFiltrados.length === 0 ? (
+                <div className="text-center py-10 text-[#64748B] font-bold text-sm">Nenhum profissional encontrado.</div>
+              ) : (
+                <div className="space-y-3">
+                  {freelancersFiltrados.map((free) => (
+                    <div key={free.id} className="border border-[#E2E8F0] rounded-xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-[#336699] transition-colors">
+                      <div>
+                        <strong className="block text-sm font-black text-[#0C1D4D]">{free.nome}</strong>
+                        <p className="text-xs text-[#64748B] mt-1">CPF: {free.cpf || 'Não info.'} | Cel: {free.telefone}</p>
+                      </div>
+                      <button 
+                        onClick={() => selecionarFreelancer(free)}
+                        className="w-full sm:w-auto bg-[#E0F2FE] text-[#0369A1] hover:bg-[#BAE6FD] font-bold text-[10px] uppercase tracking-wider px-4 py-2 rounded-lg transition-colors flex-shrink-0"
+                      >
+                        Selecionar Dados
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -269,9 +364,9 @@ export default function NovaOrdemPagamento() {
             </div>
             <div>
               <label className="block text-xs font-bold text-[#64748B] uppercase tracking-wider mb-2">Natureza do Pagamento</label>
-              <select className="w-full p-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg text-sm text-[#0A2A4A] focus:border-[#00A8E8] outline-none font-semibold" value={natureza} onChange={(e) => setNatureza(e.target.value)}>
+              <select className="w-full p-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg text-sm text-[#0A2A4A] focus:border-[#00A8E8] outline-none font-semibold cursor-pointer" value={natureza} onChange={(e) => setNatureza(e.target.value)}>
                 <option value="SUBLOCAÇÃO">SUBLOCAÇÃO</option>
-                <option value="FREELANCE">FREELANCE</option>
+                <option value="FREELANCE">FREELANCE (Diárias)</option>
                 <option value="REEMBOLSO">REEMBOLSO</option>
                 <option value="HOSPEDAGEM">HOSPEDAGEM</option>
                 <option value="BV">BV (BONIFICAÇÃO/COMISSÃO)</option>
@@ -283,21 +378,34 @@ export default function NovaOrdemPagamento() {
           <section className="bg-[#F8FAFC] p-5 rounded-xl border border-[#E2E8F0]">
             <h3 className="text-sm font-black text-[#0A2A4A] uppercase tracking-widest mb-4 border-b border-[#E2E8F0] pb-2">Dados do Projeto / Evento</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <input type="text" placeholder="Nº DA OS" className="w-full p-3 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] uppercase" value={osNum} onChange={(e) => setOsNum(e.target.value)} />
-              <input type="text" placeholder="CLIENTE" className="w-full p-3 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] uppercase" value={osCliente} onChange={(e) => setOsCliente(e.target.value)} />
-              <input type="text" placeholder="EVENTO" className="w-full p-3 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] uppercase" value={osEvento} onChange={(e) => setOsEvento(e.target.value)} />
-              <input type="text" placeholder="PERÍODO (Ex: 10/05 a 12/05)" className="w-full p-3 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] uppercase" value={osPeriodo} onChange={(e) => setOsPeriodo(e.target.value)} />
+              <input type="text" placeholder="Nº DA OS" className="w-full p-3 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] uppercase focus:border-[#336699] outline-none" value={osNum} onChange={(e) => setOsNum(e.target.value)} />
+              <input type="text" placeholder="CLIENTE" className="w-full p-3 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] uppercase focus:border-[#336699] outline-none" value={osCliente} onChange={(e) => setOsCliente(e.target.value)} />
+              <input type="text" placeholder="EVENTO" className="w-full p-3 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] uppercase focus:border-[#336699] outline-none" value={osEvento} onChange={(e) => setOsEvento(e.target.value)} />
+              <input type="text" placeholder="PERÍODO (Ex: 10/05 a 12/05)" className="w-full p-3 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] uppercase focus:border-[#336699] outline-none" value={osPeriodo} onChange={(e) => setOsPeriodo(e.target.value)} />
             </div>
           </section>
 
-          {/* Sessão 3: Favorecido */}
+          {/* Sessão 3: Favorecido (COM LÓGICA DE FREELANCER) */}
           <section className="space-y-4">
-            <h3 className="text-sm font-black text-[#0A2A4A] uppercase tracking-widest mb-2 border-b border-[#E2E8F0] pb-2">Dados do Favorecido (Recebedor)</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <input type="text" placeholder="NOME DA EMPRESA OU PROFISSIONAL" className="w-full p-3 bg-white border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] uppercase font-bold" value={empresaRecebedora} onChange={(e) => setEmpresaRecebedora(e.target.value)} />
-              <input type="text" placeholder="CNPJ OU CPF" className="w-full p-3 bg-white border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] font-bold" value={cnpjCpf} onChange={(e) => aplicarMascaraCpfCnpj(e.target.value)} />
+            <div className="flex justify-between items-center border-b border-[#E2E8F0] pb-2 mb-2">
+              <h3 className="text-sm font-black text-[#0A2A4A] uppercase tracking-widest">Dados do Favorecido (Recebedor)</h3>
+              
+              {/* Botão Mágico que só aparece quando a natureza é FREELANCE */}
+              {natureza === 'FREELANCE' && (
+                <button 
+                  onClick={abrirModalFreelance} 
+                  className="bg-[#0C1D4D] text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-[#284B8C] transition-colors flex items-center gap-2 shadow-sm"
+                >
+                  👷 Autocompletar do Banco de Talentos
+                </button>
+              )}
             </div>
-            <input type="text" placeholder="ENDEREÇO COMPLETO" className="w-full p-3 bg-white border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] uppercase" value={endereco} onChange={(e) => setEndereco(e.target.value)} />
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <input type="text" placeholder="NOME DA EMPRESA OU PROFISSIONAL" className="w-full p-3 bg-white border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] uppercase font-bold focus:border-[#336699] outline-none" value={empresaRecebedora} onChange={(e) => setEmpresaRecebedora(e.target.value)} />
+              <input type="text" placeholder="CNPJ OU CPF" className="w-full p-3 bg-white border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] font-bold focus:border-[#336699] outline-none" value={cnpjCpf} onChange={(e) => aplicarMascaraCpfCnpj(e.target.value)} />
+            </div>
+            <input type="text" placeholder="ENDEREÇO COMPLETO (OPCIONAL)" className="w-full p-3 bg-white border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] uppercase focus:border-[#336699] outline-none" value={endereco} onChange={(e) => setEndereco(e.target.value)} />
           </section>
 
           {/* Sessão 4: Financeiro */}
@@ -333,7 +441,7 @@ export default function NovaOrdemPagamento() {
               </div>
             </div>
 
-            <input type="text" placeholder="DIGITE A CHAVE PIX, CÓDIGO DE BARRAS OU AGÊNCIA/CONTA" className="w-full p-3 bg-white border border-[#BAE6FD] rounded-lg text-sm text-[#0A2A4A] uppercase font-bold" value={dadosPagamento} onChange={(e) => setDadosPagamento(e.target.value)} />
+            <input type="text" placeholder="DIGITE A CHAVE PIX, CÓDIGO DE BARRAS OU AGÊNCIA/CONTA" className="w-full p-3 bg-white border border-[#BAE6FD] rounded-lg text-sm text-[#0A2A4A] font-bold outline-none focus:ring-2 focus:ring-[#00A8E8]" value={dadosPagamento} onChange={(e) => setDadosPagamento(e.target.value)} />
           </section>
 
           {/* Sessão 5: Itens da OP */}
@@ -355,7 +463,7 @@ export default function NovaOrdemPagamento() {
                   {itens.map((item) => (
                     <tr key={item.id} className="bg-white hover:bg-[#F8FAFC]">
                       <td className="p-2">
-                        <input type="text" placeholder="Detalhes do serviço..." className="w-full p-2 border border-transparent hover:border-[#CBD5E1] focus:border-[#00A8E8] rounded bg-transparent uppercase text-sm outline-none" value={item.descricao} onChange={(e) => atualizarItem(item.id, 'descricao', e.target.value)} />
+                        <input type="text" placeholder={natureza === 'FREELANCE' ? "Ex: Diária de Painel de LED..." : "Detalhes do serviço..."} className="w-full p-2 border border-transparent hover:border-[#CBD5E1] focus:border-[#00A8E8] rounded bg-transparent uppercase text-sm outline-none" value={item.descricao} onChange={(e) => atualizarItem(item.id, 'descricao', e.target.value)} />
                       </td>
                       <td className="p-2">
                         <input type="number" min="0" className="w-full p-2 border border-[#CBD5E1] rounded text-center text-sm font-semibold outline-none focus:border-[#00A8E8]" value={item.qtd || ''} onChange={(e) => atualizarItem(item.id, 'qtd', parseFloat(e.target.value) || 0)} />
@@ -401,7 +509,7 @@ export default function NovaOrdemPagamento() {
               </div>
               <div>
                 <label className="block text-xs font-bold text-[#64748B] uppercase tracking-wider mb-2">Observações Adicionais</label>
-                <input type="text" placeholder="Qualquer informação extra para o financeiro..." className="w-full p-3 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] uppercase" value={obs} onChange={(e) => setObs(e.target.value)} />
+                <input type="text" placeholder="Qualquer informação extra para o financeiro..." className="w-full p-3 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] uppercase focus:border-[#336699] outline-none" value={obs} onChange={(e) => setObs(e.target.value)} />
               </div>
             </div>
           </section>

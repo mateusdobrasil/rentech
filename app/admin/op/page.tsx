@@ -76,13 +76,7 @@ export default function HubOrdensPagamento() {
 
       <div className="flex-grow flex flex-col items-center p-4 py-12">
         <div className="mb-10 text-center">
-          <Image 
-            src={logoColorido} 
-            alt="Rentech Locadora" 
-            width={180} 
-            height={55} 
-            className="mx-auto mb-6 opacity-90"
-          />
+          
           <h1 className="text-2xl md:text-3xl font-black text-[#0C1D4D] uppercase tracking-wide">Portal de Pagamentos</h1>
           <p className="text-[#64748B] font-medium mt-2 max-w-lg mx-auto">
             Selecione abaixo a operação desejada. O acesso é restrito conforme suas permissões no sistema.

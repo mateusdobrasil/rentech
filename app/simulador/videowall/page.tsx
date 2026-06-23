@@ -138,7 +138,7 @@ export default function SimuladorVideoWall() {
   // 3. Cálculos de Engenharia Extraídos para a UI (Cards)
   const selectedLedMemo = useMemo(() => dbSetores.led.find(e => e.id === ledConfig.pitchId), [dbSetores, ledConfig.pitchId]);
   
-  // Pega os dados puros do equipamento selecionado (útil para os cards das outras categorias)
+  // Pega os dados puros do equipamento selecionado
   const selectedDeviceRaw = useMemo(() => {
     if (equipType === 'led') return null;
     const setorItens = dbSetores[equipType as keyof typeof dbSetores] || [];
@@ -190,7 +190,7 @@ export default function SimuladorVideoWall() {
     }
   }, [equipType, selectedLedMemo, selectedDeviceRaw, quantity, loading, ledCols, ledRows, totalModulosVisual, resX, resY, portasNecessarias]);
 
-  // Varáveis renderizadas nos Cards Genéricos (Não-LED)
+  // Variáveis renderizadas nos Cards Genéricos (Não-LED)
   const dimUn = selectedDeviceRaw ? `${selectedDeviceRaw.largura || 0}m x ${selectedDeviceRaw.altura || 0}m x ${selectedDeviceRaw.profundidade || 0}m` : '0m x 0m x 0m';
   const equipName = currentItemDraft?.name || '';
   const equipQtd = `Qtd: ${quantity}`;
@@ -265,7 +265,7 @@ export default function SimuladorVideoWall() {
   }, [projectList]);
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6 px-4 md:px-6 pb-4 md:pb-10 pt-4 bg-[#F0F4F8] text-[#0F172A] h-screen max-h-[800px] overflow-hidden font-sans print:bg-white print:text-black print:block">
+    <div className="flex flex-col lg:flex-row gap-6 px-4 md:px-6 pb-4 md:pb-10 pt-4 bg-[#F0F4F8] text-[#0F172A] h-screen max-h-[800px] overflow-hidden font-sans print:bg-white print:text-black print:block print:h-auto print:max-h-none">
       <Analytics/>
       
       {/* MODAL DE SUGESTÃO DE ACESSÓRIOS */}
@@ -416,6 +416,7 @@ export default function SimuladorVideoWall() {
           <div className="text-right">
             <h2 className="text-xl font-black uppercase tracking-tight text-black">Relatório de Engenharia Audiovisual</h2>
             <p className="text-sm text-gray-600">{clientData.evento && `Evento: ${clientData.evento}`} {clientData.cliente && `| Cliente: ${clientData.cliente}`}</p>
+            <p className="text-sm text-gray-600">{currentItemDraft?.name}</p>
           </div>
         </div>
 
@@ -434,7 +435,7 @@ export default function SimuladorVideoWall() {
         {!isProjectView ? (
           <div className="flex flex-col gap-3 flex-grow min-h-0">
             <h3 className="text-lg font-black text-[#0C1D4D] tracking-tight uppercase print:hidden flex-shrink-0">Monitoramento do Equipamento</h3>
-            
+                        
             <div className="flex-grow bg-[#F8FAFC] border border-[#E2E8F0] rounded-2xl flex flex-col items-center justify-center p-4 relative overflow-hidden min-h-[300px] bg-[radial-gradient(#CBD5E1_1px,transparent_1px)] bg-[size:24px_24px] print:border-none print:h-[350px] shadow-inner">
               {loading && (
                 <div className="absolute inset-0 bg-white/80 z-50 flex flex-col items-center justify-center rounded-2xl backdrop-blur-sm">
@@ -474,125 +475,118 @@ export default function SimuladorVideoWall() {
 
               {/* LÓGICA DE CARD PARA OS DEMAIS EQUIPAMENTOS */}
               {!loading && currentItemDraft && equipType !== 'led' && (
-                <div className="w-56 h-36 bg-[#0C1D4D] border-2 border-[#336699] shadow-[0_10px_30px_rgba(12,29,77,0.25)] flex flex-col items-center justify-center p-3 transition-all rounded-xl text-center">
-                  <span className="text-[8px] font-black text-[#60A5FA] tracking-widest uppercase mb-1.5">Simulação Rentech</span>
-                  <strong className="text-white text-sm font-black leading-tight mb-1.5">{currentItemDraft.name}</strong>
-                  <span className="text-[9px] text-[#94A3B8] block px-2 leading-relaxed">{currentItemDraft.details}</span>
+                <div className="w-56 h-36 bg-[#0C1D4D] border-2 border-[#336699] shadow-[0_10px_30px_rgba(12,29,77,0.25)] flex flex-col items-center justify-center p-3 transition-all rounded-xl text-center print:bg-gray-100 print:text-black print:border-black">
+                  <span className="text-[8px] font-black text-[#60A5FA] tracking-widest uppercase mb-1.5 print:text-gray-500">Simulação Rentech</span>
+                  <strong className="text-white text-sm font-black leading-tight mb-1.5 print:text-black">{currentItemDraft.name}</strong>
+                  <span className="text-[9px] text-[#94A3B8] block px-2 leading-relaxed print:text-gray-700">{currentItemDraft.details}</span>
                 </div>
               )}
             </div>
 
             {/* CARDS RÁPIDOS DE TELEMETRIA TÉCNICA */}
             {equipType === 'led' ? (
-              <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 flex-shrink-0">
-                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+              <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 flex-shrink-0 print:grid-cols-3 print:gap-4">
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                   <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Dimensão da Tela</span>
-                  <strong className="block text-base text-[#0C1D4D] font-black leading-none">{ledCols * 0.5}m x {ledRows * 0.5}m</strong>
+                  <strong className="block text-base text-[#0C1D4D] font-black leading-none print:text-black">{ledCols * 0.5}m x {ledRows * 0.5}m</strong>
                 </div>
                 
-                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                   <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Módulos de 50cm</span>
-                  <strong className="block text-base text-[#0C1D4D] font-black leading-none">{totalModulosVisual} un.</strong>
-                  <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">{totalPixels.toLocaleString('pt-BR')} pixels</span>
+                  <strong className="block text-base text-[#0C1D4D] font-black leading-none print:text-black">{totalModulosVisual} un.</strong>
+                  <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1 print:text-gray-600">{totalPixels.toLocaleString('pt-BR')} pixels</span>
                 </div>
                 
-                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                   <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Resolução Total</span>
-                  <strong className="block text-base text-[#0C1D4D] font-black leading-none">{resX} x {resY} px</strong>
-                  <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">Formato: MP4 / Codec: H.264</span>
+                  <strong className="block text-base text-[#0C1D4D] font-black leading-none print:text-black">{resX} x {resY} px</strong>
+                  <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1 print:text-gray-600">Formato: MP4 / Codec: H.264</span>
                 </div>
                 
-                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                   <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Sinal de Vídeo</span>
-                  <strong className="block text-base text-[#0C1D4D] font-black leading-none">{portasNecessarias} Porta(s)</strong>
-                  <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">Capac: 650k px/porta</span>
+                  <strong className="block text-base text-[#0C1D4D] font-black leading-none print:text-black">{portasNecessarias} Porta(s)</strong>
+                  <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1 print:text-gray-600">Capac: 650k px/porta</span>
                 </div>
                 
-                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                   <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Peso Estimado</span>
-                  <strong className="block text-base text-[#0C1D4D] font-black leading-none">{currentItemDraft?.weight.toFixed(1) || '0.0'} kg</strong>
+                  <strong className="block text-base text-[#0C1D4D] font-black leading-none print:text-black">{currentItemDraft?.weight.toFixed(1) || '0.0'} kg</strong>
                 </div>
                 
-                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#16A34A] hover:shadow-md transition-shadow flex flex-col justify-center">
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#16A34A] flex flex-col justify-center print:border-black">
                   <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Consumo Máximo</span>
-                  <strong className="block text-base text-[#16A34A] font-black leading-none">{currentItemDraft?.watts || '0'} W</strong>
-                  <span className="block text-[10px] text-[#16A34A] font-semibold opacity-80 mt-1">{currentItemDraft ? ((currentItemDraft.watts / 1000) / 0.8).toFixed(2) : '0.00'} kVA</span>
+                  <strong className="block text-base text-[#16A34A] font-black leading-none print:text-black">{currentItemDraft?.watts || '0'} W</strong>
+                  <span className="block text-[10px] text-[#16A34A] font-semibold opacity-80 mt-1 print:text-black">{currentItemDraft ? ((currentItemDraft.watts / 1000) / 0.8).toFixed(2) : '0.00'} kVA</span>
                 </div>
               </div>
             ) : (
               /* CATEGORIAS NÃO-LED (5 CARDS) */
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 flex-shrink-0">
-                
-                {/* 1. DIMENSÃO UN. */}
-                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 flex-shrink-0 print:grid-cols-3 print:gap-4">
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                   <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Dimensão Un.</span>
-                  <strong className="block text-base text-[#0C1D4D] font-black leading-none truncate" title={dimUn}>{dimUn}</strong>
+                  <strong className="block text-base text-[#0C1D4D] font-black leading-none truncate print:text-black" title={dimUn}>{dimUn}</strong>
                 </div>
 
-                {/* 2. EQUIPAMENTO E QTD */}
-                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                   <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Equipamento</span>
-                  <strong className="block text-sm text-[#0C1D4D] font-black leading-tight truncate" title={equipName}>{equipName}</strong>
-                  <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">{equipQtd}</span>
+                  <strong className="block text-sm text-[#0C1D4D] font-black leading-tight truncate print:text-black" title={equipName}>{equipName}</strong>
+                  <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1 print:text-gray-600">{equipQtd}</span>
                 </div>
 
-                {/* 3. CARD DINÂMICO BASEADO NO TIPO */}
                 {['tv', 'mon', 'touch'].includes(equipType) && (
-                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                     <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Resolução / Vídeo</span>
-                    <strong className="block text-base text-[#0C1D4D] font-black leading-none">{selectedDeviceRaw?.resolucao || '1920 x 1080'} px</strong>
-                    <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">Sinal: HDMI/DP</span>
+                    <strong className="block text-base text-[#0C1D4D] font-black leading-none print:text-black">{selectedDeviceRaw?.resolucao || '1920 x 1080'} px</strong>
+                    <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1 print:text-gray-600">Sinal: HDMI/DP</span>
                   </div>
                 )}
                 {equipType === 'sound' && (
-                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                     <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Sinal de Áudio</span>
-                    <strong className="block text-base text-[#0C1D4D] font-black leading-none">XLR / P10</strong>
-                    <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">Analógico/Digital</span>
+                    <strong className="block text-base text-[#0C1D4D] font-black leading-none print:text-black">XLR / P10</strong>
+                    <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1 print:text-gray-600">Analógico/Digital</span>
                   </div>
                 )}
                 {equipType === 'light' && (
-                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                     <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Controle DMX</span>
-                    <strong className="block text-base text-[#0C1D4D] font-black leading-none truncate" title={selectedDeviceRaw?.dmx || 'DMX512'}>{selectedDeviceRaw?.dmx || 'DMX512'}</strong>
-                    <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">Sinal DMX512</span>
+                    <strong className="block text-base text-[#0C1D4D] font-black leading-none truncate print:text-black" title={selectedDeviceRaw?.dmx || 'DMX512'}>{selectedDeviceRaw?.dmx || 'DMX512'}</strong>
+                    <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1 print:text-gray-600">Sinal DMX512</span>
                   </div>
                 )}
                 {equipType === 'truss' && (
-                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                     <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Detalhes Técnicos</span>
-                    <strong className="block text-sm text-[#0C1D4D] font-black leading-tight truncate" title={selectedDeviceRaw?.detalhes || 'Alumínio'}>{selectedDeviceRaw?.detalhes || 'Alumínio'}</strong>
-                    <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">Ferragem / Alumínio</span>
+                    <strong className="block text-sm text-[#0C1D4D] font-black leading-tight truncate print:text-black" title={selectedDeviceRaw?.detalhes || 'Alumínio'}>{selectedDeviceRaw?.detalhes || 'Alumínio'}</strong>
+                    <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1 print:text-gray-600">Ferragem / Alumínio</span>
                   </div>
                 )}
                 {equipType === 'acc' && (
-                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                     <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Detalhes Técnicos</span>
-                    <strong className="block text-sm text-[#0C1D4D] font-black leading-tight truncate" title={selectedDeviceRaw?.detalhes || 'Acessório'}>{selectedDeviceRaw?.detalhes || 'Acessório'}</strong>
-                    <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1">Periférico / Cabeamento</span>
+                    <strong className="block text-sm text-[#0C1D4D] font-black leading-tight truncate print:text-black" title={selectedDeviceRaw?.detalhes || 'Acessório'}>{selectedDeviceRaw?.detalhes || 'Acessório'}</strong>
+                    <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1 print:text-gray-600">Periférico / Cabeamento</span>
                   </div>
                 )}
 
-                {/* 4. PESO BRUTO */}
-                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] hover:shadow-md transition-shadow flex flex-col justify-center">
+                <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                   <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Peso Bruto</span>
-                  <strong className="block text-base text-[#0C1D4D] font-black leading-none">{pesoBruto}</strong>
+                  <strong className="block text-base text-[#0C1D4D] font-black leading-none print:text-black">{pesoBruto}</strong>
                 </div>
 
-                {/* 5. CONSUMO (Se for estrutura, exibe Zero e fica cinza) */}
                 {equipType === 'truss' ? (
-                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#64748B] hover:shadow-md transition-shadow flex flex-col justify-center">
+                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#64748B] flex flex-col justify-center print:border-black">
                     <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Consumo</span>
                     <strong className="block text-base text-[#64748B] font-black leading-none">Zero</strong>
                   </div>
                 ) : (
-                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#16A34A] hover:shadow-md transition-shadow flex flex-col justify-center">
+                  <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#16A34A] flex flex-col justify-center print:border-black">
                     <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Consumo</span>
-                    <strong className="block text-base text-[#16A34A] font-black leading-none">{wattsStr}</strong>
-                    <span className="block text-[10px] text-[#16A34A] font-semibold opacity-80 mt-1">{kvaStr}</span>
+                    <strong className="block text-base text-[#16A34A] font-black leading-none print:text-black">{wattsStr}</strong>
+                    <span className="block text-[10px] text-[#16A34A] font-semibold opacity-80 mt-1 print:text-black">{kvaStr}</span>
                   </div>
                 )}
-                
               </div>
             )}
           </div>

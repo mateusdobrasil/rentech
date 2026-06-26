@@ -3,12 +3,14 @@
 
 import nodemailer from 'nodemailer';
 import { createClient } from '@supabase/supabase-js';
-import { supabase } from './lib/supabase';
+import { revalidatePath } from 'next/cache';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+const supabaseAdmin = supabaseUrl && supabaseServiceRoleKey
+  ? createClient(supabaseUrl, supabaseServiceRoleKey)
+  : null;
 
 // ============================================================================
 // 1. FUNÇÃO DE E-MAIL (ORÇAMENTOS DO SITE)
@@ -75,8 +77,113 @@ interface LogPayload {
   equipamento_nome?: string | null;
 }
 
+export async function uploadArquivoDownload(formData: FormData) {
+  try {
+    const nome = (formData.get('nome') as string | null)?.trim();
+    const descricao = (formData.get('descricao') as string | null)?.trim() ?? '';
+    const categoria = (formData.get('categoria') as string | null)?.trim() || 'COMERCIAL';
+    const usuarioNome = (formData.get('usuarioNome') as string | null)?.trim() || 'Usuário';
+    const file = formData.get('file');
+
+    if (!nome || !file || !(file instanceof File)) {
+      return { success: false, message: 'Preencha o nome e selecione um arquivo.' };
+    }
+
+    if (!supabaseAdmin) {
+      return { success: false, message: 'Credenciais do Supabase ausentes.' };
+    }
+
+    const fileExt = file.name.split('.').pop() || 'bin';
+    const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
+    const filePath = `${categoria.toLowerCase()}/${fileName}`;
+
+    const { error: uploadError } = await supabaseAdmin.storage
+      .from('downloads')
+      .upload(filePath, file, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: file.type || 'application/octet-stream'
+      });
+
+    if (uploadError) {
+      throw new Error(uploadError.message);
+    }
+
+    const { data: publicUrlData } = supabaseAdmin.storage.from('downloads').getPublicUrl(filePath);
+    const tamanhoMB = parseFloat((file.size / (1024 * 1024)).toFixed(2));
+
+    const { error: dbError } = await supabaseAdmin.from('arquivos_download').insert([{
+      nome,
+      descricao,
+      categoria,
+      file_url: publicUrlData.publicUrl,
+      file_path: filePath,
+      tamanho_mb: tamanhoMB
+    }]);
+
+    if (dbError) {
+      throw new Error(dbError.message);
+    }
+
+    await registrarLogAuditoria({
+      usuario_nome: usuarioNome,
+      acao: `CADASTRO DE ARQUIVO: ${nome}`,
+      setor: 'GESTAO DE DOWNLOADS',
+      equipamento_nome: `Categoria: ${categoria}`
+    });
+
+    revalidatePath('/admin/downloads');
+    return { success: true };
+  } catch (error: any) {
+    console.error('Erro ao enviar arquivo para o portal:', error.message);
+    return { success: false, message: error.message || 'Falha ao enviar arquivo.' };
+  }
+}
+
+export async function removerArquivoDownload(formData: FormData) {
+  try {
+    const id = (formData.get('id') as string | null)?.trim();
+    const filePath = (formData.get('filePath') as string | null)?.trim();
+    const usuarioNome = (formData.get('usuarioNome') as string | null)?.trim() || 'Usuário';
+
+    if (!id || !filePath) {
+      return { success: false, message: 'Registro inválido para exclusão.' };
+    }
+
+    if (!supabaseAdmin) {
+      return { success: false, message: 'Credenciais do Supabase ausentes.' };
+    }
+
+    const { error: storageError } = await supabaseAdmin.storage.from('downloads').remove([filePath]);
+    if (storageError) {
+      throw new Error(storageError.message);
+    }
+
+    const { error: dbError } = await supabaseAdmin.from('arquivos_download').delete().eq('id', id);
+    if (dbError) {
+      throw new Error(dbError.message);
+    }
+
+    await registrarLogAuditoria({
+      usuario_nome: usuarioNome,
+      acao: `EXCLUSÃO DE ARQUIVO: ${id}`,
+      setor: 'GESTAO DE DOWNLOADS'
+    });
+
+    revalidatePath('/admin/downloads');
+    return { success: true };
+  } catch (error: any) {
+    console.error('Erro ao remover arquivo do portal:', error.message);
+    return { success: false, message: error.message || 'Falha ao remover arquivo.' };
+  }
+}
+
 export async function registrarLogAuditoria(payload: LogPayload) {
   try {
+    if (!supabaseAdmin) {
+      throw new Error('Credenciais do Supabase ausentes.');
+    }
+
     const { error } = await supabaseAdmin
       .from('logs_auditoria')
       .insert([{
@@ -98,4 +205,22 @@ export async function registrarLogAuditoria(payload: LogPayload) {
     console.error("Falha crítica ao tentar gravar o log de auditoria:", error.message);
     return { success: false, message: error.message };
   }
+}
+
+// ============================================================================
+// 3. VERIFICAÇÃO SEGURA DE SENHA DO PORTAL DE DOWNLOADS
+// ============================================================================
+export async function verificarSenhaDownloads(senhaDigitada: string) {
+  const senhaCorreta = process.env.DOWNLOADS_PASSWORD;
+
+  if (!senhaCorreta) {
+    console.error("Erro: A variável DOWNLOADS_PASSWORD não está configurada no servidor.");
+    return { success: false, message: "O acesso não foi configurado corretamente no servidor." };
+  }
+
+  if (senhaDigitada === senhaCorreta) {
+    return { success: true };
+  }
+
+  return { success: false, message: "Senha incorreta. Tente novamente." };
 }

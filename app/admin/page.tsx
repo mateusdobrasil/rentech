@@ -66,6 +66,15 @@ const MODULOS_SISTEMA = [
     bgIcon: 'bg-green-50 text-green-600'
   },
   {
+    titulo: 'Portal de Downloads',
+    descricao: 'Faça upload e gerencie os arquivos, softwares e manuais públicos da Rentech.',
+    icone: '📁',
+    link: '/admin/downloads',
+    permissoes_permitidas: ['ADMINISTRADOR','OPERACIONAL'],
+    cor: 'border-cyan-500/50 hover:border-cyan-500',
+    bgIcon: 'bg-cyan-50 text-cyan-600'
+  },
+  {
     titulo: 'Conteúdo Site',
     descricao: 'Gerencie os textos principais, vídeos e canais de contato da página inicial em tempo real.',
     icone: '🌐',

@@ -12,6 +12,11 @@ export default function Navbar() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [simOpen, setSimOpen] = useState(false);
+  const [menuOpen2, setMenuOpen2] = useState(false);
+  const [simOpen2, setSimOpen2] = useState(false);
+  const [menuOpen3, setMenuOpen3] = useState(false);
+  const [simOpen3, setSimOpen3] = useState(false);
+
 
   useEffect(() => {
     // Se o Supabase não estiver configurado, mantém o estado deslogado e evita chamadas que falhariam.
@@ -64,11 +69,35 @@ export default function Navbar() {
     setSimOpen(false);
   };
 
+  const closeMenu2 = () => {
+    setMenuOpen2(false);
+    setSimOpen2(false);
+  };
+
+  const closeMenu3 = () => {
+    setMenuOpen3(false);
+    setSimOpen3(false);
+  };
+
   const simuladores = [
     { href: '/simulador/videowall', label: 'Simulador de LED / VW / TV' },
     { href: '/simulador/tela', label: 'Simulador de Tela' },
     { href: '/simulador/grid', label: 'Simulador de LED em GRID' },
     { href: '/simulador/curvatura', label: 'Simulador de Curvatura' },
+  ];
+
+  const ferramentas = [
+    { href: 'https://rentech.dashboard.primestart.net/', label: 'Dashboard P2S', target: '_blank' },
+    { href: 'https://webmail.exchangecorp.com.br/', label: 'Webmail', target: '_blank' },
+    { href: '/freelance', label: 'Freelancer' },
+    { href: '/downloads', label: 'Downloads' },
+  ];
+
+  const socialmedia = [
+    { href: 'https://www.instagram.com/rentechlocadora/', label: 'Instagram', target: '_blank' },
+    { href: 'https://www.facebook.com/LocadoraRentech', label: 'Facebook', target: '_blank' },
+    { href: 'https://www.youtube.com/@locadorarentech50', label: 'YouTube', target: '_blank' },
+    { href: 'https://x.com/LocadoraRentech', label: 'Twitter', target: '_blank' },
   ];
 
   return (
@@ -89,14 +118,8 @@ export default function Navbar() {
 
         {/* ===================== NAVEGAÇÃO DESKTOP ===================== */}
         <div className="hidden lg:flex items-center space-x-8 text-sm font-bold text-[#B3B3B3]">
-          {/* Links Públicos */}
-          <Link href="/#especialidades" className="hover:text-[#336699] transition-colors">Especialidades</Link>
-          <Link href="/#portfolio" className="hover:text-[#336699] transition-colors">Cases</Link>
 
-          {/* Divisor Visual */}
-          <div className="w-px h-5 bg-[#284B8C]/50"></div>
-
-          {/* Links do Ecossistema Operacional/Interno */}
+          {/* Links do Ecossistema Simuladores */}
           <div className="relative group">
             <Link href="/simulador" className="flex items-center gap-1 hover:text-[#336699] transition-colors">
               Simuladores
@@ -116,17 +139,47 @@ export default function Navbar() {
             </div>
           </div>
 
-          <Link href="https://rentech.dashboard.primestart.net/" target="_blank" className="hover:text-[#336699] transition-colors">
-            Dashboard P2S
-          </Link>
+          {/* Links do Ecossistema Ferramentas */}
+          <div className="relative group">
+            <Link href="" className="flex items-center gap-1 hover:text-[#336699] transition-colors">
+              Ferramentas
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+            </Link>
+            {/* Dropdown de Ferramentas */}
+            <div className="absolute top-full left-0 mt-4 w-56 bg-[#0C1D4D] border border-[#284B8C] rounded-md shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+              {ferramentas.map((f, i) => (
+                <Link
+                  key={f.href}
+                  href={f.href}
+                  target={f.target}
+                  className={`block px-4 py-3 text-xs text-[#B3B3B3] hover:bg-[#284B8C]/30 hover:text-white ${i < ferramentas.length - 1 ? 'border-b border-[#284B8C]/30' : ''}`}
+                >
+                  {f.label}
+                </Link>
+              ))}
+            </div>
+          </div>
 
-          <Link href="https://webmail.exchangecorp.com.br/" target="_blank" className="hover:text-[#336699] transition-colors">
-            Webmail
-          </Link>
-
-          <Link href="/freelance" className="hover:text-[#336699] transition-colors">
-              Freelancer
-          </Link>
+          {/* Links do Ecossistema Social Media */}
+          <div className="relative group">
+            <Link href="" className="flex items-center gap-1 hover:text-[#336699] transition-colors">
+              Social Media
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+            </Link>
+            {/* Dropdown de Social Media */}
+            <div className="absolute top-full left-0 mt-4 w-56 bg-[#0C1D4D] border border-[#284B8C] rounded-md shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+              {socialmedia.map((s, i) => (
+                <Link
+                  key={s.href}
+                  href={s.href}
+                  target={s.target}
+                  className={`block px-4 py-3 text-xs text-[#B3B3B3] hover:bg-[#284B8C]/30 hover:text-white ${i < socialmedia.length - 1 ? 'border-b border-[#284B8C]/30' : ''}`}
+                >
+                  {s.label}
+                </Link>
+              ))}
+            </div>
+          </div>
 
           {/* Link Dinâmico para o Dashboard */}
           <Link href="/admin" className="flex items-center gap-2 text-[#999999] hover:text-white transition-colors border border-[#666666]/30 px-3 py-1.5 rounded-md hover:border-[#336699] bg-black/20">
@@ -178,6 +231,7 @@ export default function Navbar() {
               <span className={`absolute left-0 block h-0.5 w-5 bg-current transition-all duration-300 ${menuOpen ? 'top-1.5 -rotate-45' : 'top-3'}`}></span>
             </div>
           </button>
+          
         </div>
       </div>
 
@@ -194,11 +248,7 @@ export default function Navbar() {
         className={`fixed right-0 top-[65px] z-50 h-[calc(100vh-65px)] w-full max-w-xs overflow-y-auto border-l border-[#284B8C]/40 bg-[#0C1D4D] transition-transform duration-300 lg:hidden ${menuOpen ? 'translate-x-0' : 'translate-x-full'}`}
       >
         <div className="flex flex-col p-5 text-[#B3B3B3]">
-          {/* Links públicos */}
-          <span className="px-1 pb-2 text-[10px] font-black uppercase tracking-widest text-[#666666]">Navegação</span>
-          <Link href="/#especialidades" onClick={closeMenu} className="rounded-md px-3 py-3 text-base font-bold hover:bg-[#284B8C]/30 hover:text-white transition-colors">Especialidades</Link>
-          <Link href="/#portfolio" onClick={closeMenu} className="rounded-md px-3 py-3 text-base font-bold hover:bg-[#284B8C]/30 hover:text-white transition-colors">Cases</Link>
-
+          
           {/* Acordeão de Simuladores */}
           <button
             onClick={() => setSimOpen((v) => !v)}
@@ -218,17 +268,43 @@ export default function Navbar() {
             </div>
           </div>
 
-          <Link href="https://rentech.dashboard.primestart.net/" target="_blank" onClick={closeMenu} className="rounded-md px-3 py-3 text-base font-bold hover:bg-[#284B8C]/30 hover:text-white transition-colors">
-            Dashboard P2S
-          </Link>
+          {/* Acordeão de Ferramentas */}
+          <button
+            onClick={() => setSimOpen2((v) => !v)}
+            className="flex items-center justify-between rounded-md px-3 py-3 text-base font-bold hover:bg-[#284B8C]/30 hover:text-white transition-colors"
+            aria-expanded={simOpen2}
+          >
+            Ferramentas
+            <svg className={`h-4 w-4 transition-transform duration-200 ${simOpen2 ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+          </button>
+          <div className={`overflow-hidden transition-all duration-300 ${simOpen2 ? 'max-h-72' : 'max-h-0'}`}>
+            <div className="ml-3 flex flex-col border-l border-[#284B8C]/40 pl-2">
+              {ferramentas.map((f) => (
+                <Link key={f.href} href={f.href} target={f.target} onClick={closeMenu2} className="rounded-md px-3 py-2.5 text-sm hover:bg-[#284B8C]/30 hover:text-white transition-colors">
+                  {f.label}
+                </Link>
+              ))}
+            </div>
+          </div>
 
-          <Link href="https://webmail.exchangecorp.com.br/" target="_blank" onClick={closeMenu} className="rounded-md px-3 py-3 text-base font-bold hover:bg-[#284B8C]/30 hover:text-white transition-colors">
-            Webmail
-          </Link>
-
-          <Link href="/freelance" onClick={closeMenu} className="rounded-md px-3 py-3 text-base font-bold hover:bg-[#284B8C]/30 hover:text-white transition-colors">
-              Freelancer
-          </Link>
+          {/* Acordeão de Social Media */}
+          <button
+            onClick={() => setSimOpen3((v) => !v)}
+            className="flex items-center justify-between rounded-md px-3 py-3 text-base font-bold hover:bg-[#284B8C]/30 hover:text-white transition-colors"
+            aria-expanded={simOpen3}
+          >
+            Social Media
+            <svg className={`h-4 w-4 transition-transform duration-200 ${simOpen3 ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+          </button>
+          <div className={`overflow-hidden transition-all duration-300 ${simOpen3 ? 'max-h-72' : 'max-h-0'}`}>
+            <div className="ml-3 flex flex-col border-l border-[#284B8C]/40 pl-2">
+              {socialmedia.map((s) => (
+                <Link key={s.href} href={s.href} target={s.target} onClick={closeMenu3} className="rounded-md px-3 py-2.5 text-sm hover:bg-[#284B8C]/30 hover:text-white transition-colors">
+                  {s.label}
+                </Link>
+              ))}
+            </div>
+          </div>
 
           <div className="my-4 h-px w-full bg-[#284B8C]/40" />
 

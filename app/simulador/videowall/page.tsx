@@ -80,8 +80,14 @@ export default function SimuladorVideoWall() {
     async function loadSupabaseData() {
       try {
         setLoading(true);
-        const { data: equipData, error: equipError } = await supabase.from('equipamentos').select('*').eq('ativo', true);
-        const { data: gatilhosData, error: gatilhosError } = await supabase.from('gatilhos_acessorios').select('*');
+        // Otimização: Selecione apenas as colunas necessárias para a operação.
+        const { data: equipData, error: equipError } = await supabase
+          .from('equipamentos')
+          .select('id, categoria_id, nome, peso, consumo_watts, largura, altura, profundidade, resolucao, dmx, detalhes, imagem_url')
+          .eq('ativo', true);
+        const { data: gatilhosData, error: gatilhosError } = await supabase
+          .from('gatilhos_acessorios')
+          .select('id, acessorio_id, categoria_alvo_id, equipamento_alvo_id');
 
         if (equipError) throw equipError;
         if (gatilhosError) throw gatilhosError;

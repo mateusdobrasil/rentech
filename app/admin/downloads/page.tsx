@@ -204,6 +204,7 @@ export default function GestorDownloads() {
                 <option value="OPERACIONAL">Manuais Operacionais</option>
                 <option value="SOFTWARES">Softwares e Drivers</option>
                 <option value="CLIENTES">Documentos para Clientes</option>
+                <option value="MIDIA">Mídia</option>
               </select>
             </div>
 

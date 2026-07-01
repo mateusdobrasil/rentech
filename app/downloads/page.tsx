@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
-import { verificarSenhaDownloads } from '../actions'; // Importação da Server Action
+import { verificarSenhaDownloads } from '../actions'; 
 
 interface Arquivo {
   id: string;
@@ -13,6 +13,21 @@ interface Arquivo {
   file_url: string;
   tamanho_mb: number;
 }
+
+// ============================================================================
+// FUNÇÃO UTILITÁRIA PARA IDENTIFICAR O TIPO DE MÍDIA PELA URL
+// ============================================================================
+const getMediaType = (url: string) => {
+  if (!url) return 'document';
+  
+  // Limpa parâmetros de URL (ex: ?t=123) para ler a extensão corretamente
+  const cleanUrl = url.split('?')[0].toLowerCase(); 
+  
+  if (cleanUrl.match(/\.(jpeg|jpg|gif|png|webp|bmp)$/)) return 'image';
+  if (cleanUrl.match(/\.(mp4|webm|mov|ogg)$/)) return 'video';
+  
+  return 'document';
+};
 
 export default function PortalDownloads() {
   const [arquivos, setArquivos] = useState<Arquivo[]>([]);
@@ -77,7 +92,7 @@ export default function PortalDownloads() {
   }, [arquivosFiltrados]);
 
   // ============================================================================
-  // TELA DE BLOQUEIO POR SENHA (RENDERIZADA SE NÃO ESTIVER AUTORIZADO)
+  // TELA DE BLOQUEIO POR SENHA
   // ============================================================================
   if (!isAuthorized) {
     return (
@@ -120,7 +135,7 @@ export default function PortalDownloads() {
   }
 
   // ============================================================================
-  // INTERFACE PRINCIPAL DO PORTAL (RENDERIZADA APÓS ACERTAR A SENHA)
+  // INTERFACE PRINCIPAL DO PORTAL
   // ============================================================================
   return (
     <div className="min-h-screen bg-[#F8FAFC] font-sans text-[#0F172A] py-12">
@@ -160,25 +175,49 @@ export default function PortalDownloads() {
                 </h3>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {lista.map(arq => (
-                    <div key={arq.id} className="bg-white p-6 rounded-2xl shadow-sm border border-[#F1F5F9] flex flex-col hover:border-[#336699]/30 transition-all">
-                      <div className="flex-grow mb-6">
-                        <strong className="block text-[#0C1D4D] font-black text-sm mb-2 uppercase">{arq.nome}</strong>
-                        <p className="text-[#64748B] text-xs leading-relaxed">{arq.descricao || 'Sem descrição.'}</p>
+                  {lista.map(arq => {
+                    const mediaType = getMediaType(arq.file_url);
+
+                    return (
+                      <div key={arq.id} className="bg-white rounded-2xl shadow-sm border border-[#F1F5F9] flex flex-col hover:border-[#336699]/30 transition-all overflow-hidden group">
+                        
+                        {/* 1. SEÇÃO DE PREVIEW DE MÍDIA (Foto ou Vídeo) */}
+                        {mediaType === 'image' && (
+                          <div className="w-full h-40 bg-gray-100 relative overflow-hidden border-b border-[#F1F5F9]">
+                            <img src={arq.file_url} alt={arq.nome} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                          </div>
+                        )}
+                        {mediaType === 'video' && (
+                          <div className="w-full h-40 bg-black relative border-b border-[#F1F5F9]">
+                            <video src={arq.file_url} controls preload="metadata" className="w-full h-full object-cover" />
+                          </div>
+                        )}
+
+                        {/* 2. TEXTOS E BOTÕES (Ajustados com Padding) */}
+                        <div className="p-6 flex flex-col flex-grow">
+                          <div className="flex-grow mb-6">
+                            <strong className="block text-[#0C1D4D] font-black text-sm mb-2 uppercase">{arq.nome}</strong>
+                            <p className="text-[#64748B] text-xs leading-relaxed">{arq.descricao || 'Sem descrição.'}</p>
+                          </div>
+                          
+                          <div className="flex items-center justify-between pt-4 border-t border-[#F8FAFC]">
+                            <span className="text-[10px] font-bold text-[#94A3B8]">
+                              {arq.tamanho_mb > 0 ? `${arq.tamanho_mb} MB` : 'Link Externo'}
+                            </span>
+                            <a 
+                              href={arq.file_url} 
+                              target="_blank" 
+                              rel="noreferrer"
+                              className="bg-[#336699] text-white px-4 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-[#0C1D4D] transition-colors"
+                            >
+                              Acessar
+                            </a>
+                          </div>
+                        </div>
+
                       </div>
-                      <div className="flex items-center justify-between pt-4 border-t border-[#F8FAFC]">
-                        <span className="text-[10px] font-bold text-[#94A3B8]">{arq.tamanho_mb} MB</span>
-                        <a 
-                          href={arq.file_url} 
-                          target="_blank" 
-                          rel="noreferrer"
-                          className="bg-[#336699] text-white px-4 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-[#0C1D4D] transition-colors"
-                        >
-                          Baixar
-                        </a>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ))}

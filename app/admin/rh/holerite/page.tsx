@@ -252,7 +252,13 @@ const montarDadosHolerite = (
   const salarioBaseExibido = regra.paga_salario_base ? func.salario_folha : 0;
   const complementoContratoExibido = regra.paga_salario_base ? Math.max(0, func.salario_contrato - func.salario_folha) : 0;
 
-  const descontosAtivos = descontosFunc.filter(d => d.tipo === 'FIXO' ? mesRef >= d.mes_inicio : (mesRef >= d.mes_inicio && mesRef <= d.mes_fim));
+  const descontosAtivos = descontosFunc.filter(d => {
+    if (mesRef < d.mes_inicio) return false;
+    if (d.tipo === 'FIXO') return true;
+    // Parcelado: vigente até o mês da última parcela (recalculado, não confia no mes_fim gravado)
+    const fimReal = (d.mes_inicio && d.parcelas > 0) ? calcularMesFim(d.mes_inicio, d.parcelas) : d.mes_fim;
+    return mesRef <= fimReal;
+  });
   const bonusAtivos = bonusFunc.filter(b => b.recorrencia === 'MENSAL' || b.mes_referencia === mesRef);
 
   const totalBonusGrid = bonusAtivos.reduce((acc, curr) => acc + curr.valor, 0);
@@ -490,6 +496,8 @@ export default function HoleritePage() {
 
   // Snapshot dos dados carregados, para detectar alterações não salvas na ficha
   const [snapshotFicha, setSnapshotFicha] = useState('');
+  const [mostrarQuitados, setMostrarQuitados] = useState(false);
+  const [mostrarBonusEncerrados, setMostrarBonusEncerrados] = useState(false);
 
   const fichaAtualSerializada = useMemo(
     () => JSON.stringify({ form, descontos, bonus }),
@@ -875,7 +883,35 @@ export default function HoleritePage() {
   const salarioBaseCalculo = form.salario_folha > 0 ? form.salario_folha : form.salario_contrato;
   const valorHoraBase = salarioBaseCalculo / 220;
 
-  const funcFiltrados = useMemo(() => listaFuncionarios.filter(f => f.nome_completo.toLowerCase().includes(buscaGrid.toLowerCase())), [listaFuncionarios, buscaGrid]);
+  const funcFiltrados = useMemo(() =>
+    listaFuncionarios
+      .filter(f => f.nome_completo.toLowerCase().includes(buscaGrid.toLowerCase()))
+      .sort((a, b) => {
+        // Inativos vão para o fim; dentro de cada grupo, ordem alfabética
+        if (a.ativo !== b.ativo) return a.ativo ? -1 : 1;
+        return a.nome_completo.localeCompare(b.nome_completo);
+      }),
+    [listaFuncionarios, buscaGrid]);
+
+  // Separa descontos vigentes dos já quitados. O fim é RECALCULADO a partir de
+  // mes_inicio + parcelas (não confia no mes_fim gravado, que pode estar defasado
+  // em registros antigos). Quitado = mês atual passou do mês da última parcela.
+  const descontosComIndice = useMemo(() => descontos.map((d, idx) => {
+    let quitado = false;
+    if (d.tipo === 'PARCELADO' && d.mes_inicio && d.parcelas > 0) {
+      const fimReal = calcularMesFim(d.mes_inicio, d.parcelas);
+      quitado = mesReferencia > fimReal;
+    }
+    return { d, idx, quitado };
+  }), [descontos, mesReferencia]);
+  const qtdQuitados = useMemo(() => descontosComIndice.filter(x => x.quitado).length, [descontosComIndice]);
+
+  // Bônus de única vez cuja competência já passou (não incide mais neste mês)
+  const bonusComIndice = useMemo(() => bonus.map((b, idx) => ({
+    b, idx,
+    encerrado: b.recorrencia === 'UNICO' && !!b.mes_referencia && mesReferencia > b.mes_referencia
+  })), [bonus, mesReferencia]);
+  const qtdBonusEncerrados = useMemo(() => bonusComIndice.filter(x => x.encerrado).length, [bonusComIndice]);
 
   const totalFechados = lote.filter(l => l.fechamento).length;
 
@@ -1107,16 +1143,36 @@ export default function HoleritePage() {
                         </div>
                         <p className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-3 uppercase">ℹ️ As datas são a COMPETÊNCIA (mês trabalhado). O pagamento sai sempre no mês seguinte.</p>
                         <div className="space-y-3">
-                          {bonus.map((b, idx) => (
-                            <div key={idx} className="p-3 bg-green-50/30 border border-green-100 rounded-lg grid grid-cols-2 gap-2 relative group">
-                              <button onClick={() => removeBonus(idx)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 font-bold opacity-0 group-hover:opacity-100">X</button>
-                              <div className="col-span-2"><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Descrição</label><input type="text" value={b.descricao} onChange={e => { const n = [...bonus]; n[idx].descricao = e.target.value; setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs uppercase" /></div>
-                              <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Valor R$</label><input type="number" step="0.01" value={b.valor} onChange={e => { const n = [...bonus]; n[idx].valor = Number(e.target.value); setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs text-[#16A34A] font-bold" /></div>
-                              <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Recorrência</label><select value={b.recorrencia} onChange={e => { const n = [...bonus]; n[idx].recorrencia = e.target.value as 'MENSAL'|'UNICO'; setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white"><option value="UNICO">Única Vez</option><option value="MENSAL">Fixo (Mensal)</option></select></div>
-                              {b.recorrencia === 'UNICO' && <div className="col-span-2"><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Competência do Bônus</label><input type="month" value={b.mes_referencia} onChange={e => { const n = [...bonus]; n[idx].mes_referencia = e.target.value; setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs" />{b.mes_referencia && <p className="text-[9px] font-bold text-emerald-600 mt-0.5 uppercase">💵 Sai no pagamento de {competenciaParaPagamento(b.mes_referencia)}</p>}</div>}
+                          {bonusComIndice
+                            .filter(({ encerrado }) => mostrarBonusEncerrados || !encerrado)
+                            .map(({ b, idx, encerrado }) => (
+                            <div key={idx} className={`p-3 border rounded-lg grid grid-cols-2 gap-2 relative group ${encerrado ? 'bg-gray-100 border-gray-200' : 'bg-green-50/30 border-green-100'}`}>
+                              {!encerrado && <button onClick={() => removeBonus(idx)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 font-bold opacity-0 group-hover:opacity-100">X</button>}
+                              <div className="col-span-2 flex items-center justify-between gap-2">
+                                <input type="text" placeholder="Descrição" value={b.descricao} disabled={encerrado} onChange={e => { const n = [...bonus]; n[idx].descricao = e.target.value; setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs uppercase disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" />
+                                {encerrado && <span className="text-[9px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded font-black uppercase whitespace-nowrap">🔒 Pago</span>}
+                              </div>
+                              <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Valor R$</label><input type="number" step="0.01" value={b.valor} disabled={encerrado} onChange={e => { const n = [...bonus]; n[idx].valor = Number(e.target.value); setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs text-[#16A34A] font-bold disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
+                              <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Recorrência</label><select value={b.recorrencia} disabled={encerrado} onChange={e => { const n = [...bonus]; n[idx].recorrencia = e.target.value as 'MENSAL'|'UNICO'; setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed"><option value="UNICO">Única Vez</option><option value="MENSAL">Fixo (Mensal)</option></select></div>
+                              {b.recorrencia === 'UNICO' && <div className="col-span-2"><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Competência do Bônus</label><input type="month" value={b.mes_referencia} disabled={encerrado} onChange={e => { const n = [...bonus]; n[idx].mes_referencia = e.target.value; setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" />{b.mes_referencia && <p className="text-[9px] font-bold text-emerald-600 mt-0.5 uppercase">💵 Sai no pagamento de {competenciaParaPagamento(b.mes_referencia)}</p>}</div>}
                             </div>
                           ))}
+
+                          {bonus.length === 0 && (
+                            <p className="text-[11px] text-gray-400 font-medium text-center py-2 uppercase">Nenhum bônus lançado</p>
+                          )}
                         </div>
+
+                        {qtdBonusEncerrados > 0 && (
+                          <button
+                            onClick={() => setMostrarBonusEncerrados(!mostrarBonusEncerrados)}
+                            className="w-full mt-3 text-[10px] font-black uppercase tracking-wider text-gray-500 hover:text-[#0C1D4D] bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg py-2 transition-colors"
+                          >
+                            {mostrarBonusEncerrados
+                              ? `▲ Ocultar ${qtdBonusEncerrados} bônus já pago(s)`
+                              : `▼ Ver ${qtdBonusEncerrados} bônus já pago(s)`}
+                          </button>
+                        )}
                       </div>
 
                       <div className="bg-white p-5 rounded-2xl shadow-sm border border-red-200">
@@ -1126,10 +1182,9 @@ export default function HoleritePage() {
                         </div>
                         <p className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-3 uppercase">ℹ️ A "Competência 1ª Parcela" é o mês trabalhado. O desconto sai no pagamento do mês seguinte.</p>
                         <div className="space-y-3">
-                          {descontos.map((d, idx) => {
-                            // Desconto parcelado cujo último mês de cobrança já passou:
-                            // continua no banco (histórico), mas não entra em meses posteriores.
-                            const quitado = d.tipo === 'PARCELADO' && !!d.mes_fim && mesReferencia > d.mes_fim;
+                          {descontosComIndice
+                            .filter(({ quitado }) => mostrarQuitados || !quitado)
+                            .map(({ d, idx, quitado }) => {
                             return (
                             <div key={idx} className={`p-3 border rounded-lg grid grid-cols-2 gap-2 relative group ${quitado ? 'bg-gray-100 border-gray-200' : 'bg-red-50/30 border-red-100'}`}>
                               {!quitado && <button onClick={() => removeDesconto(idx)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 font-bold opacity-0 group-hover:opacity-100">X</button>}
@@ -1164,7 +1219,25 @@ export default function HoleritePage() {
                             </div>
                             );
                           })}
+
+                          {descontos.length === 0 && (
+                            <p className="text-[11px] text-gray-400 font-medium text-center py-2 uppercase">Nenhum desconto lançado</p>
+                          )}
+                          {descontos.length > 0 && qtdQuitados === descontos.length && !mostrarQuitados && (
+                            <p className="text-[11px] text-gray-400 font-medium text-center py-2 uppercase">Todos os descontos deste colaborador já estão quitados</p>
+                          )}
                         </div>
+
+                        {qtdQuitados > 0 && (
+                          <button
+                            onClick={() => setMostrarQuitados(!mostrarQuitados)}
+                            className="w-full mt-3 text-[10px] font-black uppercase tracking-wider text-gray-500 hover:text-[#0C1D4D] bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg py-2 transition-colors"
+                          >
+                            {mostrarQuitados
+                              ? `▲ Ocultar ${qtdQuitados} desconto(s) quitado(s)`
+                              : `▼ Ver ${qtdQuitados} desconto(s) quitado(s)`}
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>

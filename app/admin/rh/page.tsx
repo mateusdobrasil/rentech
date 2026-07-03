@@ -24,6 +24,12 @@ export default function RhHub() {
       descricao: 'Motor de regras de cálculo (CLT, PJ, Temporário, etc).',
       icone: '⚙️', link: '/admin/rh/parametros',
       cor: 'bg-purple-50 border-purple-200 text-purple-700', hover: 'hover:border-purple-500'
+    }​,
+    {
+      titulo: 'Relatórios e Dashboards',
+      descricao: 'Relatórios financeiro e analíticos.',
+      icone: '📊', link: '/admin/rh/relatorios',
+      cor: 'bg-purple-50 border-purple-200 text-purple-700', hover: 'hover:border-purple-500'
     }
   ];
 
@@ -35,7 +41,7 @@ export default function RhHub() {
           <h1 className="text-3xl font-black text-[#0C1D4D] uppercase tracking-tight">Setor de RH</h1>
           <p className="text-[#64748B] font-medium">Gestão de jornada, folha financeira e regras operacionais.</p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {modulosRh.map((m) => (
             <button key={m.titulo} onClick={() => router.push(m.link)} className={`text-left p-6 rounded-2xl border-2 transition-all shadow-sm ${m.cor} ${m.hover} group`}>
               <div className="text-4xl mb-4 group-hover:scale-110 transition-transform duration-300">{m.icone}</div>

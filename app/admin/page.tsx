@@ -66,6 +66,15 @@ const MODULOS_SISTEMA = [
     bgIcon: 'bg-green-50 text-green-600'
   },
   {
+    titulo: 'RH',
+    descricao: 'Importe os registros do relógio, calcule horas extras e gere espelhos de jornada.',
+    icone: '⏱️',
+    link: '/admin/rh',
+    permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
+    cor: 'border-rose-500/50 hover:border-rose-500',
+    bgIcon: 'bg-rose-50 text-rose-600'
+  },
+  {
     titulo: 'Portal de Downloads',
     descricao: 'Faça upload e gerencie os arquivos, softwares e manuais públicos da Rentech.',
     icone: '📁',
@@ -84,15 +93,6 @@ const MODULOS_SISTEMA = [
     bgIcon: 'bg-blue-50 text-[#336699]'
   },
   {
-    titulo: 'Gestão de Acessos',
-    descricao: 'Controle de usuários, blocks e alteração de níveis de permissão da equipe.',
-    icone: '🔐',
-    link: '/admin/permissoes',
-    permissoes_permitidas: ['ADMINISTRADOR'],
-    cor: 'border-purple-500/50 hover:border-purple-500',
-    bgIcon: 'bg-purple-50 text-purple-600'
-  },
-  {
     titulo: 'Controle de Estoque',
     descricao: 'Gestão de entrada, saída e manutenção de equipamentos cadastrados.',
     icone: '📦',
@@ -109,6 +109,15 @@ const MODULOS_SISTEMA = [
     permissoes_permitidas: ['ADMINISTRADOR', 'OPERACIONAL', 'FINANCEIRO', 'ADMINISTRATIVO'],
     cor: 'border-blue-500/50 hover:border-blue-500',
     bgIcon: 'bg-blue-50 text-blue-600'
+  },
+  {
+    titulo: 'Gestão de Acessos',
+    descricao: 'Controle de usuários, blocks e alteração de níveis de permissão da equipe.',
+    icone: '🔐',
+    link: '/admin/permissoes',
+    permissoes_permitidas: ['ADMINISTRADOR'],
+    cor: 'border-purple-500/50 hover:border-purple-500',
+    bgIcon: 'bg-purple-50 text-purple-600'
   },
   {
     titulo: 'Auditoria — Log',

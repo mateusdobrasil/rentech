@@ -1,0 +1,848 @@
+"use client";
+
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { useRouter } from 'next/navigation';
+import Image from 'next/image';
+import { supabase } from '../../../lib/supabase';
+import { Analytics } from "@vercel/analytics/next";
+import { registrarLogAuditoria } from '../../../actions';
+import logoColorido from '../../../../app/imgs/logo.png';
+
+interface RegistroDiario {
+  id?: string;
+  funcionario_nome: string;
+  data_registro: string; 
+  entrada_1: string | null;
+  saida_1: string | null;
+  entrada_2: string | null;
+  saida_2: string | null;
+  minutos_trabalhados: number;
+}
+
+interface Abono {
+  id?: string;
+  funcionario_nome: string;
+  data_abono: string; 
+  dia_todo: boolean;
+  hora_inicio: string | null;
+  hora_fim: string | null;
+  minutos_abonados: number;
+  motivo: string | null;
+}
+
+export default function GestaoDePonto() {
+  const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const abonoFileInputRef = useRef<HTMLInputElement>(null);
+
+  const [registros, setRegistros] = useState<RegistroDiario[]>([]);
+  const [abonos, setAbonos] = useState<Abono[]>([]);
+  const [feriadosGlobais, setFeriadosGlobais] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [usuarioAtual, setUsuarioAtual] = useState('');
+
+  const [viewMode, setViewMode] = useState<'resumo' | 'espelho' | 'espelho_todos' | 'abonos'>('resumo');
+  const [funcionarioSelecionado, setFuncionarioSelecionado] = useState('');
+  const [abonosConsolidado, setAbonosConsolidado] = useState(false);
+
+  const [mesAnoSelecionado, setMesAnoSelecionado] = useState(() => {
+    const hoje = new Date();
+    return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
+  });
+
+  useEffect(() => {
+    carregarAcessoEDados();
+  }, [mesAnoSelecionado]);
+
+  const carregarAcessoEDados = async (mesAnoAlvo?: string) => {
+    setLoading(true);
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) {
+      const { data: perfil } = await supabase.from('perfis_usuarios').select('nome').eq('id', session.user.id).single();
+      if (perfil) setUsuarioAtual(perfil.nome);
+    }
+
+    // Busca Feriados Dinâmicos do Banco
+    const { data: fData } = await supabase.from('folha_feriados').select('data_feriado');
+    const feriadosList = fData ? fData.map(f => f.data_feriado) : [];
+    setFeriadosGlobais(feriadosList);
+
+    const mesAno = mesAnoAlvo || mesAnoSelecionado;
+    const [ano, mes] = mesAno.split('-');
+    const dataInicio = `${ano}-${mes}-01`;
+    const ultimoDia = new Date(Number(ano), Number(mes), 0).getDate();
+    const dataFim = `${ano}-${mes}-${String(ultimoDia).padStart(2, '0')}`;
+
+    // Busca Abonos do Mês
+    const { data: abonosData } = await supabase
+      .from('folha_ponto_abono')
+      .select('id, funcionario_nome, data_abono, dia_todo, hora_inicio, hora_fim, minutos_abonados, motivo')
+      .gte('data_abono', dataInicio)
+      .lte('data_abono', dataFim);
+    if (abonosData) setAbonos(abonosData);
+
+    const { data } = await supabase
+      .from('folha_ponto_diaria')
+      .select('id, funcionario_nome, data_registro, entrada_1, saida_1, entrada_2, saida_2, minutos_trabalhados')
+      .gte('data_registro', dataInicio)
+      .lte('data_registro', dataFim)
+      .order('data_registro', { ascending: true });
+    
+    if (data) setRegistros(data);
+    setLoading(false);
+  };
+
+  const timeToMinutes = (timeStr: string | null) => {
+    if (!timeStr) return 0;
+    const [h, m] = timeStr.split(':').map(Number);
+    return (h * 60) + m;
+  };
+
+  const minutesToTimeStr = (totalMins: number) => {
+    const isNegative = totalMins < 0;
+    const absMins = Math.abs(totalMins);
+    const h = Math.floor(absMins / 60);
+    const m = absMins % 60;
+    return `${isNegative ? '-' : ''}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  };
+
+  const getDiaSemana = (dataIso: string) => {
+    const partes = dataIso.split('-');
+    return new Date(parseInt(partes[0], 10), parseInt(partes[1], 10) - 1, parseInt(partes[2], 10)).getDay();
+  };
+
+  // Dia não útil (sábado, domingo ou feriado) tem carga horária zero:
+  // abono nesses dias não gera crédito de horas.
+  const isDiaNaoUtil = (dataIso: string, feriados: string[]) => {
+    const diaSemana = getDiaSemana(dataIso);
+    return diaSemana === 0 || diaSemana === 6 || feriados.includes(dataIso);
+  };
+
+  const minutosAbonadosEfetivos = (abono: { minutos_abonados: number } | undefined, dataIso: string) => {
+    if (!abono) return 0;
+    return isDiaNaoUtil(dataIso, feriadosGlobais) ? 0 : abono.minutos_abonados;
+  };
+
+  // Parser de CSV que respeita aspas, campos vazios, vírgulas e
+  // quebras de linha dentro de campos (ex.: observações longas do Pontomais)
+  const parseCsv = (text: string): string[][] => {
+    const rows: string[][] = [];
+    let row: string[] = [];
+    let cell = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      if (char === '"') {
+        if (inQuotes && text[i + 1] === '"') { cell += '"'; i++; }
+        else inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        row.push(cell.trim()); cell = '';
+      } else if ((char === '\n' || char === '\r') && !inQuotes) {
+        if (char === '\r' && text[i + 1] === '\n') i++;
+        row.push(cell.trim()); cell = '';
+        if (row.some(c => c !== '')) rows.push(row);
+        row = [];
+      } else {
+        cell += char;
+      }
+    }
+    row.push(cell.trim());
+    if (row.some(c => c !== '')) rows.push(row);
+    return rows;
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsProcessing(true);
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const text = e.target?.result as string;
+        const lines = text.split('\n');
+        
+        const startIndex = lines.findIndex(l => l.includes('Nome') && l.includes('Data') && l.includes('Hora'));
+        if (startIndex === -1) throw new Error('Formato de CSV inválido. Certifique-se de ser a exportação do Pontomais.');
+
+        const mapaPonto: Record<string, string[]> = {};
+        let anoRef = '';
+        let mesRef = '';
+
+        for (let i = startIndex + 1; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+
+          const match = line.match(/^([^,]+),"[^,]+,\s*([^"]+)",([0-9:]+)/);
+          if (match) {
+            const nome = match[1].trim();
+            const dataBr = match[2].trim(); 
+            const hora = match[3].trim(); 
+
+            const [dia, mes, ano] = dataBr.split('/');
+            const dataIso = `${ano}-${mes}-${dia}`;
+            
+            if (!anoRef) { anoRef = ano; mesRef = mes; }
+
+            const key = `${nome}|${dataIso}`;
+            if (!mapaPonto[key]) mapaPonto[key] = [];
+            mapaPonto[key].push(hora);
+          }
+        }
+
+        const registrosProcessados: Omit<RegistroDiario, 'id'>[] = [];
+        const nomesNoCsv = new Set<string>();
+
+        Object.keys(mapaPonto).forEach(key => {
+          const [nome, dataRegistro] = key.split('|');
+          const batidas = mapaPonto[key].sort(); 
+
+          nomesNoCsv.add(nome);
+
+          const e1 = batidas[0] || null;
+          const s1 = batidas[1] || null;
+          const e2 = batidas[2] || null;
+          const s2 = batidas[3] || null;
+
+          let minutosTrabalhados = 0;
+
+          if (e1 && s1 && !e2 && !s2) {
+            let mins = timeToMinutes(s1) - timeToMinutes(e1);
+            if (mins >= 360) mins = mins - 60; 
+            minutosTrabalhados = mins;
+          } else {
+            if (e1 && s1) minutosTrabalhados += (timeToMinutes(s1) - timeToMinutes(e1));
+            if (e2 && s2) minutosTrabalhados += (timeToMinutes(s2) - timeToMinutes(e2));
+          }
+
+          registrosProcessados.push({
+            funcionario_nome: nome, data_registro: dataRegistro,
+            entrada_1: e1, saida_1: s1, entrada_2: e2, saida_2: s2,
+            minutos_trabalhados: minutosTrabalhados
+          });
+        });
+
+        const ultimoDia = new Date(Number(anoRef), Number(mesRef), 0).getDate();
+        const dataFim = `${anoRef}-${mesRef}-${String(ultimoDia).padStart(2, '0')}`;
+
+        await supabase.from('folha_ponto_diaria').delete()
+          .in('funcionario_nome', Array.from(nomesNoCsv))
+          .gte('data_registro', `${anoRef}-${mesRef}-01`)
+          .lte('data_registro', dataFim);
+
+        const { error: insertError } = await supabase.from('folha_ponto_diaria').insert(registrosProcessados);
+        if (insertError) throw insertError;
+
+        await registrarLogAuditoria({
+          usuario_nome: usuarioAtual,
+          acao: `IMPORTAÇÃO DE PONTO (BATIDAS)`,
+          setor: 'RECURSOS HUMANOS / PONTO'
+        });
+
+        alert(`Sucesso! ${registrosProcessados.length} dias de trabalho importados.`);
+        
+        const mesIdentificado = `${anoRef}-${mesRef}`;
+        setMesAnoSelecionado(mesIdentificado);
+        carregarAcessoEDados(mesIdentificado);
+        setViewMode('resumo');
+
+      } catch (error: any) { alert(error.message); } 
+      finally { setIsProcessing(false); if (fileInputRef.current) fileInputRef.current.value = ''; }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleAbonoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsProcessing(true);
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const text = e.target?.result as string;
+        const rows = parseCsv(text);
+
+        // Localiza a linha de cabeçalho (o relatório do Pontomais tem linhas extras antes)
+        const headerIndex = rows.findIndex(r =>
+          r[0] === 'Nome' && r[1] === 'Data' && (r[2] || '').startsWith('Dia todo')
+        );
+        if (headerIndex === -1) {
+          throw new Error('Formato de CSV de abono inválido. Certifique-se de ser a exportação do Pontomais.');
+        }
+
+        const abonosProcessados: Omit<Abono, 'id'>[] = [];
+        const nomesNoCsv = new Set<string>();
+        let anoRef = '';
+        let mesRef = '';
+
+        for (let i = headerIndex + 1; i < rows.length; i++) {
+          const columns = rows[i];
+          if (columns.length < 13) continue;
+
+          const nome = columns[0];
+          const dataCompleta = columns[1];      // "Ter, 02/06/2026"
+          const diaTodo = columns[2] === 'Sim';
+          const horaInicio = columns[3] || null;
+          const horaFim = columns[4] || null;
+          const status = columns[6];
+          const motivo = columns[11] || null;
+
+          // Só importa abonos aprovados
+          if (status !== 'Aprovada') continue;
+
+          const dataBrMatch = dataCompleta.match(/(\d{2}\/\d{2}\/\d{4})/);
+          if (!nome || !dataBrMatch) continue;
+
+          const [dia, mes, ano] = dataBrMatch[0].split('/');
+          const dataAbono = `${ano}-${mes}-${dia}`;
+
+          if (!anoRef) { anoRef = ano; mesRef = mes; }
+          nomesNoCsv.add(nome);
+
+          let minutosAbonados = 0;
+          if (diaTodo) {
+            minutosAbonados = 480; // 8 horas (jornada padrão)
+          } else if (horaInicio && horaFim) {
+            minutosAbonados = timeToMinutes(horaFim) - timeToMinutes(horaInicio);
+          }
+
+          abonosProcessados.push({
+            funcionario_nome: nome,
+            data_abono: dataAbono,
+            dia_todo: diaTodo,
+            hora_inicio: horaInicio,
+            hora_fim: horaFim,
+            minutos_abonados: minutosAbonados,
+            motivo: motivo
+          });
+        }
+
+        if (abonosProcessados.length === 0) {
+          throw new Error('Nenhum registro de abono válido encontrado no arquivo.');
+        }
+
+        const ultimoDia = new Date(Number(anoRef), Number(mesRef), 0).getDate();
+        const dataFim = `${anoRef}-${mesRef}-${String(ultimoDia).padStart(2, '0')}`;
+
+        const { error: deleteError } = await supabase.from('folha_ponto_abono').delete()
+          .in('funcionario_nome', Array.from(nomesNoCsv))
+          .gte('data_abono', `${anoRef}-${mesRef}-01`)
+          .lte('data_abono', dataFim);
+        if (deleteError) throw new Error(`Falha ao limpar abonos antigos: ${deleteError.message}`);
+
+        const { error: insertError, data: inseridos } = await supabase
+          .from('folha_ponto_abono')
+          .insert(abonosProcessados)
+          .select('id');
+        if (insertError) throw new Error(`Falha ao gravar no banco: ${insertError.message}`);
+        if (!inseridos || inseridos.length === 0) {
+          throw new Error('O banco não gravou nenhuma linha. Verifique as policies de RLS da tabela folha_ponto_abono.');
+        }
+
+        await registrarLogAuditoria({
+          usuario_nome: usuarioAtual,
+          acao: `IMPORTAÇÃO DE ABONOS (${file.name})`,
+          setor: 'RECURSOS HUMANOS / PONTO'
+        });
+
+        alert(`Sucesso! ${abonosProcessados.length} registros de abono importados.`);
+
+        const mesIdentificado = `${anoRef}-${mesRef}`;
+        setMesAnoSelecionado(mesIdentificado);
+        carregarAcessoEDados(mesIdentificado);
+        setViewMode('resumo');
+
+      } catch (error: any) { alert(`Erro ao processar arquivo de abonos: ${error.message}`); }
+      finally { setIsProcessing(false); if (abonoFileInputRef.current) abonoFileInputRef.current.value = ''; }
+    };
+    reader.readAsText(file, 'UTF-8');
+  };
+
+  const resumoGeral = useMemo(() => {
+    const mapa: Record<string, { nome: string; totalMins: number; extraSemMins: number; extraSabMins: number; extraDomMins: number }> = {};
+    
+    const todosOsNomes = [...new Set([...registros.map(r => r.funcionario_nome), ...abonos.map(a => a.funcionario_nome)])];
+
+    todosOsNomes.forEach(nome => {
+        mapa[nome] = { nome, totalMins: 0, extraSemMins: 0, extraSabMins: 0, extraDomMins: 0 };
+    });
+
+    const dadosCombinados: Record<string, { trabalhados: number, abonados: number, data: string }> = {};
+
+    registros.forEach(r => {
+        const key = `${r.funcionario_nome}|${r.data_registro}`;
+        if (!dadosCombinados[key]) dadosCombinados[key] = { trabalhados: 0, abonados: 0, data: r.data_registro };
+        dadosCombinados[key].trabalhados = r.minutos_trabalhados;
+    });
+
+    abonos.forEach(a => {
+        const key = `${a.funcionario_nome}|${a.data_abono}`;
+        if (!dadosCombinados[key]) dadosCombinados[key] = { trabalhados: 0, abonados: 0, data: a.data_abono };
+        dadosCombinados[key].abonados = a.minutos_abonados;
+    });
+
+    Object.entries(dadosCombinados).forEach(([key, val]) => {
+        const [nome, dataRegistro] = key.split('|');
+        if (!mapa[nome]) return;
+
+        const diaSemana = getDiaSemana(dataRegistro);
+        const isFeriado = feriadosGlobais.includes(dataRegistro);
+        const is100 = diaSemana === 0 || diaSemana === 6 || isFeriado;
+
+        // Em dia não útil a carga é zero, então abono não gera crédito de horas
+        const abonadosEfetivos = is100 ? 0 : val.abonados;
+
+        const minutosTotaisDoDia = val.trabalhados + abonadosEfetivos;
+        mapa[nome].totalMins += minutosTotaisDoDia;
+
+        const cargaHorariaMinutos = is100 ? 0 : 480;
+        const saldoDiarioMins = minutosTotaisDoDia - cargaHorariaMinutos;
+
+        if (saldoDiarioMins > 0) {
+            if (isFeriado || diaSemana === 0) { 
+                mapa[nome].extraDomMins += saldoDiarioMins;
+            } else if (diaSemana === 6) { 
+                mapa[nome].extraSabMins += saldoDiarioMins;
+            } else { 
+                mapa[nome].extraSemMins += saldoDiarioMins;
+            }
+        }
+    });
+
+    return Object.values(mapa).sort((a, b) => a.nome.localeCompare(b.nome));
+  }, [registros, abonos, feriadosGlobais]);
+
+  const funcionariosUnicos = useMemo(() => [...new Set([...registros.map(r => r.funcionario_nome), ...abonos.map(a => a.funcionario_nome)])].sort(), [registros, abonos]);
+
+  // Abonos do mês ordenados por nome e depois por data
+  const abonosOrdenados = useMemo(() => {
+    return [...abonos].sort((a, b) =>
+      a.funcionario_nome.localeCompare(b.funcionario_nome) || a.data_abono.localeCompare(b.data_abono)
+    );
+  }, [abonos]);
+
+  // Consolidado de abonos por funcionário: nº de dias, minutos totais e parciais
+  const abonosPorFuncionario = useMemo(() => {
+    const mapa: Record<string, { nome: string; qtd: number; totalMins: number; qtdDiaTodo: number; qtdParcial: number }> = {};
+    abonos.forEach(a => {
+      if (!mapa[a.funcionario_nome]) mapa[a.funcionario_nome] = { nome: a.funcionario_nome, qtd: 0, totalMins: 0, qtdDiaTodo: 0, qtdParcial: 0 };
+      mapa[a.funcionario_nome].qtd += 1;
+      mapa[a.funcionario_nome].totalMins += a.minutos_abonados;
+      if (a.dia_todo) mapa[a.funcionario_nome].qtdDiaTodo += 1;
+      else mapa[a.funcionario_nome].qtdParcial += 1;
+    });
+    return Object.values(mapa).sort((a, b) => a.nome.localeCompare(b.nome));
+  }, [abonos]);
+
+  const totalAbonosMin = useMemo(() => abonos.reduce((acc, a) => acc + a.minutos_abonados, 0), [abonos]);
+
+  const abrirEspelhoUnico = (nome: string) => { setFuncionarioSelecionado(nome); setViewMode('espelho'); };
+  const abrirTodosEspelhos = () => setViewMode('espelho_todos');
+  const voltarResumo = () => { setViewMode('resumo'); setFuncionarioSelecionado(''); };
+
+  const RenderEspelho = ({ nome, registrosFunc }: { nome: string, registrosFunc: RegistroDiario[] }) => {
+    const [ano, mes] = mesAnoSelecionado.split('-').map(Number);
+    const diasNoMes = new Date(ano, mes, 0).getDate();
+
+    const todosOsDiasDoMes = Array.from({ length: diasNoMes }, (_, i) => {
+        const dia = i + 1;
+        const data = new Date(ano, mes - 1, dia);
+        const dataIso = data.toISOString().split('T')[0];
+        
+        const registroDoDia = registrosFunc.find(r => r.data_registro === dataIso);
+        const abonoDoDia = abonos.find(a => a.funcionario_nome === nome && a.data_abono === dataIso);
+
+        return { data, dataIso, registroDoDia, abonoDoDia };
+    });
+
+    const calcularTotaisFuncionario = (dias: typeof todosOsDiasDoMes) => {
+        let totalTrabalhado = 0;
+        let totalExtra = 0;
+        
+        dias.forEach(({ registroDoDia, abonoDoDia, dataIso }) => {
+            const minutosTrabalhados = registroDoDia?.minutos_trabalhados || 0;
+            const minutosAbonados = minutosAbonadosEfetivos(abonoDoDia, dataIso);
+            const minutosTotaisDoDia = minutosTrabalhados + minutosAbonados;
+
+            totalTrabalhado += minutosTotaisDoDia;
+
+            const diaSemana = getDiaSemana(dataIso);
+            const isFeriado = feriadosGlobais.includes(dataIso);
+            const is100 = diaSemana === 0 || diaSemana === 6 || isFeriado;
+            
+            const cargaHorariaMinutos = is100 ? 0 : 480;
+            totalExtra += (minutosTotaisDoDia - cargaHorariaMinutos);
+        });
+        
+        return {
+            trabalhadoStr: minutesToTimeStr(totalTrabalhado),
+            extraStr: minutesToTimeStr(totalExtra),
+            isExtraPositivo: totalExtra >= 0
+        };
+    };
+
+    const totais = calcularTotaisFuncionario(todosOsDiasDoMes);
+    
+    return (
+      <main className="espelho-doc bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-6 lg:p-10 print:border-none print:shadow-none print:p-0 print:mb-0 mb-8" style={{ pageBreakAfter: 'always' }}>
+        <div className="flex justify-between items-end border-b-2 border-black pb-4 mb-6">
+          <div className="hidden print:block mb-2"><Image src={logoColorido} alt="Rentech" width={180} height={55} /></div>
+          <div className="text-left print:text-right w-full">
+            <h2 className="text-2xl font-black text-black uppercase tracking-tight">Espelho de Ponto Eletrônico</h2>
+            <div className="mt-2 text-sm text-gray-700 space-y-0.5">
+              <p><strong>Colaborador:</strong> {nome}</p>
+              <p><strong>Competência:</strong> {mesAnoSelecionado.split('-').reverse().join('/')}</p>
+              <p><strong>Jornada Padrão:</strong> 08:00h (Segunda a Sexta)</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-center border-collapse">
+            <thead>
+              <tr className="bg-[#F8FAFC] border-y-2 border-black text-xs uppercase font-black tracking-wider text-[#0C1D4D] print:text-black">
+                <th className="p-3 text-left">Data do Registro</th>
+                <th className="p-3">Entrada 1</th>
+                <th className="p-3">Saída 1</th>
+                <th className="p-3">Entrada 2</th>
+                <th className="p-3">Saída 2</th>
+                <th className="p-3 bg-blue-50 print:bg-transparent">H. Trabalhadas</th>
+                <th className="p-3 bg-slate-50 print:bg-transparent">Saldo Diário</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#E2E8F0] border-b-2 border-black font-medium">
+              {todosOsDiasDoMes.map(({ dataIso, registroDoDia, abonoDoDia }, idx) => {
+                const dataFormatada = dataIso.split('-').reverse().join('/');
+                const diaSemana = getDiaSemana(dataIso);
+                const isFeriado = feriadosGlobais.includes(dataIso);
+                const is100 = diaSemana === 0 || diaSemana === 6 || isFeriado;
+
+                const minutosTrabalhados = registroDoDia?.minutos_trabalhados || 0;
+                const minutosAbonados = minutosAbonadosEfetivos(abonoDoDia, dataIso);
+                const minutosTotaisDoDia = minutosTrabalhados + minutosAbonados;
+
+                const e1 = registroDoDia?.entrada_1;
+                const s1 = registroDoDia?.saida_1;
+                const e2 = registroDoDia?.entrada_2;
+                const s2 = registroDoDia?.saida_2;
+
+                const erroBatida = (e1 && !s1) || (!e2 && s2) || (e2 && !s2);
+                
+                const cargaMins = is100 ? 0 : 480;
+                const saldoDiarioCalculado = minutosTotaisDoDia - cargaMins;
+                
+                const diaSemTrabalho = minutosTotaisDoDia === 0 && !is100;
+
+                return (
+                  <tr key={idx} className={`hover:bg-[#F8FAFC] transition-colors ${erroBatida ? 'bg-red-50' : ''} ${diaSemTrabalho ? 'text-gray-400' : ''}`}>
+                    <td className="p-3 text-left font-bold flex gap-2 items-center flex-wrap">
+                      {dataFormatada} 
+                      {is100 && minutosTotaisDoDia > 0 && <span className="text-[9px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-black uppercase print:hidden">{isFeriado ? 'FERIADO' : '100% EXTRA'}</span>}
+                      {abonoDoDia && !is100 && <span className="text-[9px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-black uppercase print:hidden">{abonoDoDia.dia_todo ? 'ABONO TOTAL' : 'ABONO PARCIAL'}</span>}
+                      {abonoDoDia && is100 && <span className="text-[9px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-black uppercase print:hidden">ABONO (DIA NÃO ÚTIL)</span>}
+                    </td>
+                    <td className="p-3">{e1 || '--:--'}</td>
+                    <td className="p-3">{s1 || '--:--'}</td>
+                    <td className="p-3">{e2 || '--:--'}</td>
+                    <td className="p-3">{s2 || '--:--'}</td>
+                    <td className="p-3 font-bold bg-blue-50/50 print:bg-transparent text-[#336699] print:text-black">
+                      {minutesToTimeStr(minutosTotaisDoDia)}
+                    </td>
+                    <td className={`p-3 font-black bg-slate-50/50 print:bg-transparent ${saldoDiarioCalculado >= 0 ? 'text-[#16A34A]' : 'text-red-500'} print:text-black`}>
+                      {saldoDiarioCalculado !== 0 || minutosTotaisDoDia > 0 ? minutesToTimeStr(saldoDiarioCalculado) : '--:--'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          <div className="mt-8 print:mt-4 flex justify-end">
+            <table className="w-full max-w-sm border-2 border-black text-sm">
+              <tbody>
+                <tr className="border-b border-gray-300">
+                  <td className="p-3 font-bold bg-gray-100 w-2/3">Total de Horas Trabalhadas</td>
+                  <td className="p-3 font-black text-right">{totais.trabalhadoStr}</td>
+                </tr>
+                <tr>
+                  <td className="p-3 font-bold bg-gray-100">Saldo Mensal Total</td>
+                  <td className="p-3 font-black text-right">{totais.extraStr}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="assinatura-espelho mt-24 pt-8 border-t-2 border-black flex flex-col items-center justify-center w-2/3 mx-auto hidden print:flex">
+            <strong className="text-base uppercase tracking-wider">{nome}</strong>
+            <p className="text-xs mt-1 text-gray-600">Assinatura do Colaborador</p>
+            <div className="mt-6 text-xs text-gray-500">São Paulo, ____ de ____________________ de 20____.</div>
+          </div>
+        </div>
+      </main>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">
+      <Analytics />
+
+      {/* Impressão: cada espelho em uma única página A4 */}
+      <style jsx global>{`
+        @media print {
+          @page { size: A4 portrait; margin: 8mm; }
+          .espelho-doc {
+            page-break-after: always;
+            break-inside: avoid;
+          }
+          .espelho-doc:last-child { page-break-after: auto; }
+          /* Compacta a tabela de dias para caber o mês inteiro em uma página */
+          .espelho-doc table td,
+          .espelho-doc table th { padding: 1.5px 6px !important; font-size: 10px !important; line-height: 1.15 !important; }
+          .espelho-doc h2 { font-size: 18px !important; }
+          .espelho-doc .assinatura-espelho { margin-top: 32px !important; padding-top: 16px !important; }
+        }
+      `}</style>
+      
+      <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex-shrink-0 flex justify-between items-center shadow-sm print:hidden">
+        <p className="text-[#0369A1] font-medium text-sm">
+          ⏱️ <strong>Controle de Ponto e Horas Extras</strong>. Feriados e sábados parametrizados via banco de dados.
+        </p>
+        <button onClick={() => router.push('/admin/rh')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
+          ⬅ VOLTAR AO RH
+        </button>
+      </div>
+
+      <div className="p-4 md:px-8 pt-6 flex-grow flex flex-col max-w-[1400px] mx-auto w-full">
+        
+        {viewMode === 'resumo' && (
+          <div className="flex flex-col lg:flex-row gap-6">
+            <aside className="w-full lg:w-80 flex-shrink-0 space-y-6">
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
+                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">1. Selecionar Mês</h3>
+                <input type="month" value={mesAnoSelecionado} onChange={(e) => setMesAnoSelecionado(e.target.value)} className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold outline-none focus:border-[#336699] bg-[#F8FAFC]" />
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
+                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">2. Importar Dados</h3>
+                <p className="text-xs text-[#64748B] mb-4">Carregue os CSVs para reescrever as batidas e abonos do mês.</p>
+                <div className="flex flex-col space-y-2">
+                  <input type="file" accept=".csv" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
+                  <button onClick={() => fileInputRef.current?.click()} disabled={isProcessing} className="w-full border-2 border-dashed border-[#336699] text-[#336699] font-black uppercase tracking-widest text-xs py-4 rounded-xl hover:bg-blue-50 transition-colors disabled:opacity-50">
+                    {isProcessing ? '⏳ Processando...' : '📥 PONTO (BATIDAS)'}
+                  </button>
+                  <input type="file" accept=".csv" className="hidden" ref={abonoFileInputRef} onChange={handleAbonoUpload} />
+                  <button onClick={() => abonoFileInputRef.current?.click()} disabled={isProcessing} className="w-full border-2 border-dashed border-green-600 text-green-600 font-black uppercase tracking-widest text-xs py-4 rounded-xl hover:bg-green-50 transition-colors disabled:opacity-50">
+                    {isProcessing ? '⏳ Processando...' : '➕ ABONOS (AUSÊNCIAS)'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
+                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">3. Abonos</h3>
+                <p className="text-xs text-[#64748B] mb-4">Consultar os abonos (ausências) lançados no mês selecionado.</p>
+                <button onClick={() => { setAbonosConsolidado(false); setViewMode('abonos'); }} className="w-full bg-green-600 hover:bg-green-700 text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
+                  📋 VER ABONOS DO MÊS
+                  {abonos.length > 0 && <span className="bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{abonos.length}</span>}
+                </button>
+              </div>
+            </aside>
+
+            <main className="flex-grow bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col h-fit">
+              <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC] flex flex-col sm:flex-row justify-between items-center gap-4">
+                <div>
+                  <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Consolidado da Equipe</h2>
+                  <p className="text-sm text-[#64748B]">Mês de Competência: {mesAnoSelecionado.split('-').reverse().join('/')}</p>
+                </div>
+                {resumoGeral.length > 0 && (
+                  <button onClick={abrirTodosEspelhos} className="bg-[#16A34A] text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-[#15803D] transition-all shadow-md">
+                    🖨️ IMPRIMIR TODOS (LOTE)
+                  </button>
+                )}
+              </div>
+              
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left border-collapse">
+                  <thead className="bg-white border-b-2 border-[#E2E8F0]">
+                    <tr className="text-[9px] xl:text-[10px] uppercase font-black tracking-widest text-[#64748B]">
+                      <th className="p-4">Colaborador</th>
+                      <th className="p-4 text-center">Horas Mês</th>
+                      <th className="p-4 text-center text-[#336699]">Extras (Seg-Sex)</th>
+                      <th className="p-4 text-center text-amber-600">Extras 100% (Sáb)</th>
+                      <th className="p-4 text-center text-red-600">Extras 100% (Dom/Fer)</th>
+                      <th className="p-4 text-right">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E2E8F0]">
+                    {loading ? (
+                      <tr><td colSpan={6} className="p-8 text-center text-[#94A3B8] font-bold">Carregando base de dados...</td></tr>
+                    ) : resumoGeral.length === 0 ? (
+                      <tr><td colSpan={6} className="p-8 text-center text-[#94A3B8] font-bold border-2 border-dashed border-gray-200 rounded-lg m-4 block w-auto">Nenhum registro encontrado para este mês.</td></tr>
+                    ) : (
+                      resumoGeral.map((item, idx) => (
+                        <tr key={idx} className="hover:bg-[#F8FAFC] transition-colors">
+                          <td className="p-4 font-black text-[#0C1D4D]">{item.nome}</td>
+                          <td className="p-4 text-center font-bold">{minutesToTimeStr(item.totalMins)}</td>
+                          <td className="p-4 text-center font-bold text-[#336699]">{minutesToTimeStr(item.extraSemMins)}</td>
+                          <td className="p-4 text-center font-bold text-amber-600">{minutesToTimeStr(item.extraSabMins)}</td>
+                          <td className="p-4 text-center font-bold text-red-600">{minutesToTimeStr(item.extraDomMins)}</td>
+                          <td className="p-4 text-right">
+                            <button onClick={() => abrirEspelhoUnico(item.nome)} className="bg-[#0C1D4D] text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-[#284B8C] transition-all shadow-sm">
+                              📄 Detalhes
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </main>
+          </div>
+        )}
+
+        {viewMode === 'espelho' && (
+          <div className="flex flex-col gap-4">
+            <div className="flex justify-between items-center print:hidden">
+              <button onClick={voltarResumo} className="text-[#64748B] font-bold text-sm hover:text-[#0C1D4D] transition-colors flex items-center gap-2">⬅ Voltar ao Resumo</button>
+              <button onClick={() => window.print()} className="bg-[#336699] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all">
+                🖨️ IMPRIMIR DOCUMENTO
+              </button>
+            </div>
+            <RenderEspelho nome={funcionarioSelecionado} registrosFunc={registros.filter(r => r.funcionario_nome === funcionarioSelecionado)} />
+          </div>
+        )}
+
+        {viewMode === 'espelho_todos' && (
+          <div className="flex flex-col gap-4">
+            <div className="flex justify-between items-center print:hidden mb-4 bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm">
+              <button onClick={voltarResumo} className="text-[#64748B] font-bold text-sm hover:text-[#0C1D4D] transition-colors flex items-center gap-2">⬅ Voltar ao Resumo</button>
+              <div className="flex items-center gap-4">
+                <span className="text-sm font-bold text-[#336699]">Serão geradas {funcionariosUnicos.length} páginas.</span>
+                <button onClick={() => window.print()} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#15803D] transition-all animate-pulse">
+                  🖨️ INICIAR IMPRESSÃO EM LOTE
+                </button>
+              </div>
+            </div>
+            
+            {funcionariosUnicos.map(nome => (
+              <RenderEspelho key={nome} nome={nome} registrosFunc={registros.filter(r => r.funcionario_nome === nome)} />
+            ))}
+          </div>
+        )}
+
+        {viewMode === 'abonos' && (
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-4 bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm print:hidden">
+              <button onClick={voltarResumo} className="text-[#64748B] font-bold text-sm hover:text-[#0C1D4D] transition-colors flex items-center gap-2">⬅ Voltar ao Resumo</button>
+              <div className="flex items-center gap-3">
+                <input type="month" value={mesAnoSelecionado} onChange={(e) => setMesAnoSelecionado(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+                <div className="flex bg-[#F1F5F9] p-1 rounded-lg border border-[#E2E8F0]">
+                  <button onClick={() => setAbonosConsolidado(false)} className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-md transition-all ${!abonosConsolidado ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>📋 Lançamentos</button>
+                  <button onClick={() => setAbonosConsolidado(true)} className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abonosConsolidado ? 'bg-[#16A34A] text-white shadow-sm' : 'text-[#64748B] hover:text-[#16A34A]'}`}>👥 Consolidado por Equipe</button>
+                </div>
+              </div>
+            </div>
+
+            <main className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col">
+              <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC] flex flex-col sm:flex-row justify-between items-center gap-4">
+                <div>
+                  <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">
+                    {abonosConsolidado ? 'Abonos — Consolidado por Equipe' : 'Abonos — Lançamentos do Mês'}
+                  </h2>
+                  <p className="text-sm text-[#64748B]">Competência: {mesAnoSelecionado.split('-').reverse().join('/')} • {abonos.length} lançamento(s) • Total abonado: {minutesToTimeStr(totalAbonosMin)}</p>
+                </div>
+              </div>
+
+              {loading ? (
+                <div className="p-12 text-center text-[#94A3B8] font-bold">Carregando abonos...</div>
+              ) : abonos.length === 0 ? (
+                <div className="p-12 text-center text-[#94A3B8] font-bold">
+                  Nenhum abono lançado para este mês. Importe o CSV de abonos na barra lateral.
+                </div>
+              ) : !abonosConsolidado ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left border-collapse">
+                    <thead className="bg-white border-b-2 border-[#E2E8F0]">
+                      <tr className="text-[9px] xl:text-[10px] uppercase font-black tracking-widest text-[#64748B]">
+                        <th className="p-4">Colaborador</th>
+                        <th className="p-4">Data</th>
+                        <th className="p-4 text-center">Tipo</th>
+                        <th className="p-4 text-center">Período</th>
+                        <th className="p-4 text-center">Tempo Abonado</th>
+                        <th className="p-4">Motivo</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0]">
+                      {abonosOrdenados.map((a, idx) => {
+                        const diaNaoUtil = isDiaNaoUtil(a.data_abono, feriadosGlobais);
+                        return (
+                          <tr key={a.id || idx} className="hover:bg-[#F8FAFC] transition-colors">
+                            <td className="p-4 font-black text-[#0C1D4D]">{a.funcionario_nome}</td>
+                            <td className="p-4 font-bold">{a.data_abono.split('-').reverse().join('/')}</td>
+                            <td className="p-4 text-center">
+                              {a.dia_todo
+                                ? <span className="text-[9px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-black uppercase">Dia Todo</span>
+                                : <span className="text-[9px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-black uppercase">Parcial</span>}
+                            </td>
+                            <td className="p-4 text-center text-xs font-medium text-gray-600">
+                              {a.dia_todo ? '—' : `${a.hora_inicio || '--:--'} às ${a.hora_fim || '--:--'}`}
+                            </td>
+                            <td className="p-4 text-center font-bold">
+                              {diaNaoUtil
+                                ? <span className="text-gray-400" title="Dia não útil: abono não gera crédito de horas">{minutesToTimeStr(a.minutos_abonados)} *</span>
+                                : minutesToTimeStr(a.minutos_abonados)}
+                            </td>
+                            <td className="p-4 text-xs font-medium text-gray-600">{a.motivo || '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <p className="p-4 text-[10px] text-gray-400 font-medium">* Abono em dia não útil (sábado, domingo ou feriado): registrado, mas não gera crédito de horas no cálculo.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left border-collapse">
+                    <thead className="bg-white border-b-2 border-[#E2E8F0]">
+                      <tr className="text-[9px] xl:text-[10px] uppercase font-black tracking-widest text-[#64748B]">
+                        <th className="p-4">Colaborador</th>
+                        <th className="p-4 text-center">Total de Abonos</th>
+                        <th className="p-4 text-center text-green-700">Dias Inteiros</th>
+                        <th className="p-4 text-center text-blue-700">Parciais</th>
+                        <th className="p-4 text-center">Tempo Total Abonado</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0]">
+                      {abonosPorFuncionario.map((item, idx) => (
+                        <tr key={idx} className="hover:bg-[#F8FAFC] transition-colors">
+                          <td className="p-4 font-black text-[#0C1D4D]">{item.nome}</td>
+                          <td className="p-4 text-center font-bold">{item.qtd}</td>
+                          <td className="p-4 text-center font-bold text-green-700">{item.qtdDiaTodo}</td>
+                          <td className="p-4 text-center font-bold text-blue-700">{item.qtdParcial}</td>
+                          <td className="p-4 text-center font-black">{minutesToTimeStr(item.totalMins)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-[#0C1D4D] bg-[#F8FAFC] font-black text-[#0C1D4D]">
+                        <td className="p-4 uppercase text-xs tracking-wider">Total da Equipe</td>
+                        <td className="p-4 text-center">{abonos.length}</td>
+                        <td className="p-4 text-center text-green-700">{abonosPorFuncionario.reduce((s, i) => s + i.qtdDiaTodo, 0)}</td>
+                        <td className="p-4 text-center text-blue-700">{abonosPorFuncionario.reduce((s, i) => s + i.qtdParcial, 0)}</td>
+                        <td className="p-4 text-center">{minutesToTimeStr(totalAbonosMin)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </main>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}

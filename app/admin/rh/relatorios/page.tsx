@@ -223,6 +223,7 @@ export default function RelatoriosRH() {
   const [loading, setLoading] = useState(true);
   const [linhas, setLinhas] = useState<LinhaRelatorio[]>([]);
   const [ordenacao, setOrdenacao] = useState<'nome' | 'liquido' | 'extras' | 'faltas'>('nome');
+  const [modoFinanceiro, setModoFinanceiro] = useState(false);
 
   const [mesReferencia, setMesReferencia] = useState(() => {
     const hoje = new Date();
@@ -374,6 +375,9 @@ export default function RelatoriosRH() {
           </div>
           <div className="flex items-center gap-3">
             <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+            <button onClick={() => setModoFinanceiro(true)} disabled={linhas.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">
+              💵 Relatório Financeiro
+            </button>
             <button onClick={() => window.print()} disabled={linhas.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
               🖨️ Imprimir / PDF
             </button>
@@ -382,10 +386,85 @@ export default function RelatoriosRH() {
 
         {/* Cabeçalho de impressão */}
         <div className="hidden print:block mb-4 border-b-2 border-black pb-2">
-          <h1 className="text-xl font-black uppercase">Relatório da Folha — {formatarMesAnoBR(mesReferencia)}</h1>
+          <h1 className="text-xl font-black uppercase">{modoFinanceiro ? 'Relatório Financeiro' : 'Relatório da Folha'} — {formatarMesAnoBR(mesReferencia)}</h1>
           <p className="text-sm">Emitido em {new Date().toLocaleDateString('pt-BR')} • {linhas.length} funcionário(s)</p>
         </div>
 
+        {/* ==================== RELATÓRIO FINANCEIRO ==================== */}
+        {modoFinanceiro && !loading && linhas.length > 0 && (
+          <div>
+            <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-4 mb-6 no-print">
+              <div>
+                <h2 className="text-lg font-black text-[#16A34A] uppercase tracking-wider">💵 Relatório Financeiro — {formatarMesAnoBR(mesReferencia)}</h2>
+                <p className="text-sm text-[#64748B]">Grid de pagamento: créditos, débitos e valor a receber por funcionário.</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={() => setModoFinanceiro(false)} className="text-[#64748B] font-bold text-sm hover:text-[#0C1D4D] transition-colors flex items-center gap-2">⬅ Relatório Completo</button>
+                <button onClick={() => window.print()} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#15803D] transition-all">
+                  🖨️ Imprimir Grid Financeiro
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden print:border-none print:shadow-none">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left border-collapse">
+                  <thead className="bg-[#F8FAFC] print:bg-transparent border-b-2 border-black">
+                    <tr className="text-[10px] uppercase font-black tracking-widest text-[#0C1D4D] print:text-black">
+                      <th className="p-3 w-10 text-center">#</th>
+                      <th className="p-3">Colaborador</th>
+                      <th className="p-3">Cargo</th>
+                      <th className="p-3 text-right text-green-700 print:text-black">Créditos</th>
+                      <th className="p-3 text-right text-red-600 print:text-black">Débitos</th>
+                      <th className="p-3 text-right">Valor a Receber</th>
+                      <th className="p-3 text-center w-32 print:table-cell">Assinatura</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E2E8F0]">
+                    {[...linhas].sort((a, b) => a.nome.localeCompare(b.nome)).map((l, i) => (
+                      <tr key={i} className="hover:bg-[#F8FAFC] print:hover:bg-transparent">
+                        <td className="p-3 text-center text-gray-400 font-bold">{i + 1}</td>
+                        <td className="p-3 font-black text-[#0C1D4D] print:text-black">{l.nome}</td>
+                        <td className="p-3 text-xs text-gray-500 uppercase">{l.cargo}</td>
+                        <td className="p-3 text-right font-bold text-green-700 print:text-black">{formatCurrency(l.totalCreditos)}</td>
+                        <td className="p-3 text-right font-bold text-red-600 print:text-black">{formatCurrency(l.totalDebitos)}</td>
+                        <td className="p-3 text-right font-black text-[#0C1D4D] print:text-black text-base">{formatCurrency(l.liquido)}</td>
+                        <td className="p-3 border-l border-gray-200 print:border-black"></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-black bg-[#F8FAFC] print:bg-transparent font-black text-[#0C1D4D] print:text-black">
+                      <td className="p-3"></td>
+                      <td className="p-3 uppercase text-xs tracking-wider" colSpan={2}>Total Geral ({linhas.length} func.)</td>
+                      <td className="p-3 text-right text-green-700 print:text-black">{formatCurrency(totais.creditos)}</td>
+                      <td className="p-3 text-right text-red-600 print:text-black">{formatCurrency(totais.debitos)}</td>
+                      <td className="p-3 text-right text-base">{formatCurrency(totais.liquido)}</td>
+                      <td className="p-3 border-l border-gray-200 print:border-black"></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            <div className="mt-8 hidden print:flex justify-between text-xs px-4">
+              <div className="text-center">
+                <div className="border-t-2 border-black w-56 pt-1">Responsável Financeiro</div>
+              </div>
+              <div className="text-center">
+                <div className="border-t-2 border-black w-56 pt-1">Diretoria</div>
+              </div>
+            </div>
+
+            <p className="text-[10px] text-gray-400 font-medium mt-4 no-print">
+              Valores de folhas fechadas são os congelados no fechamento; folhas em aberto são calculadas ao vivo.
+            </p>
+          </div>
+        )}
+
+        {/* ==================== RELATÓRIO COMPLETO ==================== */}
+        {!modoFinanceiro && (
+        <>
         {loading ? (
           <div className="bg-white border-2 border-dashed border-gray-300 rounded-2xl p-16 text-center text-gray-400 font-bold uppercase tracking-wider">
             Montando o relatório...
@@ -505,6 +584,8 @@ export default function RelatoriosRH() {
               Folhas fechadas usam os valores congelados no fechamento. Folhas em aberto são calculadas ao vivo e podem mudar conforme o ponto.
             </p>
           </>
+        )}
+        </>
         )}
       </div>
     </div>

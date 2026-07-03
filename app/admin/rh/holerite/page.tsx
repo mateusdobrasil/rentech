@@ -68,6 +68,15 @@ const formatarMesAnoBR = (mesAnoIso: string) => {
   return `${mes}/${ano}`;
 };
 
+// A RenTech paga a competência no MÊS SEGUINTE. Esta função traduz a
+// competência (mês trabalhado) para o mês em que o dinheiro efetivamente sai.
+const competenciaParaPagamento = (mesAnoIso: string) => {
+  if (!mesAnoIso) return '';
+  const [ano, mes] = mesAnoIso.split('-').map(Number);
+  const d = new Date(ano, mes, 1); // mes (0-based) + 1 = mês seguinte
+  return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+};
+
 const calcularMesFim = (mesInicio: string, parcelas: number) => {
   if (!mesInicio || parcelas < 1) return mesInicio;
   const [ano, mes] = mesInicio.split('-').map(Number);
@@ -293,7 +302,8 @@ const HoleriteDoc = ({ nome, dados, mesRef, fechamento }: {
         <Image src={logoColorido} alt="Rentech Logo" width={140} height={44} />
         <div className="text-right">
           <h1 className="text-lg font-black uppercase text-[#0C1D4D] print:text-black">Demonstrativo de Pagamento</h1>
-          <p className="text-sm font-bold text-gray-700">Ref: {formatarMesAnoBR(mesRef)}</p>
+          <p className="text-sm font-bold text-gray-700">Competência: {formatarMesAnoBR(mesRef)}</p>
+          <p className="text-sm font-black text-emerald-700 print:text-black">Pagamento: {competenciaParaPagamento(mesRef)}</p>
           {!fechamento && <p className="text-[10px] font-black text-amber-600 uppercase print:hidden">Prévia — folha em aberto</p>}
         </div>
       </div>
@@ -981,8 +991,17 @@ export default function HoleritePage() {
                   </div>
 
                   <div className="flex items-center gap-3">
-                    <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
-                    <button onClick={salvarColaborador} disabled={loading} className={`font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md transition-all active:scale-[0.98] disabled:opacity-50 ${temAlteracoesNaoSalvas ? 'bg-[#16A34A] hover:bg-[#15803D] text-white animate-pulse' : 'bg-[#0C1D4D] hover:bg-[#284B8C] text-white'}`}>
+                    <div className="flex flex-col">
+                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-0.5">Competência (mês trabalhado)</label>
+                      <div className="flex items-center gap-2">
+                        <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+                        <div className="flex flex-col items-start bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1">
+                          <span className="text-[8px] font-black text-emerald-600 uppercase tracking-wider leading-none">Pagamento</span>
+                          <span className="text-sm font-black text-emerald-700 leading-tight">{competenciaParaPagamento(mesReferencia)}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <button onClick={salvarColaborador} disabled={loading} className={`font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md transition-all active:scale-[0.98] disabled:opacity-50 self-end ${temAlteracoesNaoSalvas ? 'bg-[#16A34A] hover:bg-[#15803D] text-white animate-pulse' : 'bg-[#0C1D4D] hover:bg-[#284B8C] text-white'}`}>
                       {loading ? '⏳ Gravando...' : '💾 Gravar'}
                     </button>
                   </div>
@@ -1086,6 +1105,7 @@ export default function HoleritePage() {
                           <h3 className="font-black text-[#16A34A] uppercase tracking-wider">Bônus e Prêmios</h3>
                           <button onClick={addBonus} className="text-[10px] bg-green-100 text-green-700 font-black px-3 py-1.5 rounded uppercase tracking-wider">+ ADICIONAR</button>
                         </div>
+                        <p className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-3 uppercase">ℹ️ As datas são a COMPETÊNCIA (mês trabalhado). O pagamento sai sempre no mês seguinte.</p>
                         <div className="space-y-3">
                           {bonus.map((b, idx) => (
                             <div key={idx} className="p-3 bg-green-50/30 border border-green-100 rounded-lg grid grid-cols-2 gap-2 relative group">
@@ -1093,7 +1113,7 @@ export default function HoleritePage() {
                               <div className="col-span-2"><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Descrição</label><input type="text" value={b.descricao} onChange={e => { const n = [...bonus]; n[idx].descricao = e.target.value; setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs uppercase" /></div>
                               <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Valor R$</label><input type="number" step="0.01" value={b.valor} onChange={e => { const n = [...bonus]; n[idx].valor = Number(e.target.value); setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs text-[#16A34A] font-bold" /></div>
                               <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Recorrência</label><select value={b.recorrencia} onChange={e => { const n = [...bonus]; n[idx].recorrencia = e.target.value as 'MENSAL'|'UNICO'; setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white"><option value="UNICO">Única Vez</option><option value="MENSAL">Fixo (Mensal)</option></select></div>
-                              {b.recorrencia === 'UNICO' && <div className="col-span-2"><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Mês Referência</label><input type="month" value={b.mes_referencia} onChange={e => { const n = [...bonus]; n[idx].mes_referencia = e.target.value; setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs" /></div>}
+                              {b.recorrencia === 'UNICO' && <div className="col-span-2"><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Competência do Bônus</label><input type="month" value={b.mes_referencia} onChange={e => { const n = [...bonus]; n[idx].mes_referencia = e.target.value; setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs" />{b.mes_referencia && <p className="text-[9px] font-bold text-emerald-600 mt-0.5 uppercase">💵 Sai no pagamento de {competenciaParaPagamento(b.mes_referencia)}</p>}</div>}
                             </div>
                           ))}
                         </div>
@@ -1104,6 +1124,7 @@ export default function HoleritePage() {
                           <h3 className="font-black text-red-600 uppercase tracking-wider">Débitos e Descontos</h3>
                           <button onClick={addDesconto} className="text-[10px] bg-red-100 text-red-700 font-black px-3 py-1.5 rounded uppercase tracking-wider">+ ADICIONAR</button>
                         </div>
+                        <p className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-3 uppercase">ℹ️ A "Competência 1ª Parcela" é o mês trabalhado. O desconto sai no pagamento do mês seguinte.</p>
                         <div className="space-y-3">
                           {descontos.map((d, idx) => {
                             // Desconto parcelado cujo último mês de cobrança já passou:
@@ -1123,18 +1144,21 @@ export default function HoleritePage() {
                                   <option value="FIXO">Fixo (Mensal)</option>
                                 </select>
                               </div>
-                              <div><input type="month" value={d.mes_inicio} disabled={quitado} onChange={e => handleDescontoChange(idx, 'mes_inicio', e.target.value)} className="w-full p-1.5 border border-gray-200 rounded text-xs disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
+                              <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Competência 1ª Parcela</label><input type="month" value={d.mes_inicio} disabled={quitado} onChange={e => handleDescontoChange(idx, 'mes_inicio', e.target.value)} className="w-full p-1.5 border border-gray-200 rounded text-xs disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
                               
                               {d.tipo === 'PARCELADO' ? (
-                                <div><input type="number" placeholder="Qtd Parc." value={d.parcelas} disabled={quitado} onChange={e => handleDescontoChange(idx, 'parcelas', Number(e.target.value))} className="w-full p-1.5 border border-gray-200 rounded text-xs disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
+                                <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Qtd Parcelas</label><input type="number" placeholder="Qtd Parc." value={d.parcelas} disabled={quitado} onChange={e => handleDescontoChange(idx, 'parcelas', Number(e.target.value))} className="w-full p-1.5 border border-gray-200 rounded text-xs disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
                               ) : (
-                                <div className="w-full p-1.5 bg-gray-100 text-gray-500 rounded text-[10px] text-center font-bold">FIXO CONTÍNUO</div>
+                                <div className="flex items-end"><div className="w-full p-1.5 bg-gray-100 text-gray-500 rounded text-[10px] text-center font-bold">FIXO CONTÍNUO</div></div>
                               )}
 
-                              {d.tipo === 'PARCELADO' && d.mes_fim && (
-                                <div className="col-span-2 text-[10px] font-bold text-gray-500 uppercase">
-                                  Última cobrança: {d.mes_fim.split('-').reverse().join('/')}
-                                  {quitado && ' — encerrada, bloqueada para edição'}
+                              {d.tipo === 'PARCELADO' && d.mes_inicio && (
+                                <div className="col-span-2 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1.5">
+                                  <p className="text-[9px] font-black text-emerald-700 uppercase leading-tight">
+                                    💵 1ª parcela paga em {competenciaParaPagamento(d.mes_inicio)}
+                                    {d.mes_fim && ` • última em ${competenciaParaPagamento(d.mes_fim)}`}
+                                  </p>
+                                  {quitado && <p className="text-[9px] font-bold text-gray-500 uppercase mt-0.5">Encerrada, bloqueada para edição</p>}
                                 </div>
                               )}
                             </div>

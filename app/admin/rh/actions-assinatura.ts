@@ -2,55 +2,65 @@
 
 // app/admin/rh/actions-assinatura.ts
 // Orquestra o envio de holerites para assinatura na Autentique.
+// - exige folha FECHADA (usa o snapshot congelado como fonte da verdade)
+// - gera o PDF no servidor (lib/gerarHoleritePdf)
 // - grava o controle em folha_holerite_assinaturas (service role)
 // - chama o cliente da Autentique (lib/autentique)
-// O PDF é recebido como base64 (gerado na etapa anterior do fluxo).
 import { supabaseAdmin } from '../../lib/supabase';
 import { autentiqueCriarDocumento, autentiqueConsultarDocumento } from '../../lib/autentique';
+import { gerarHoleritePdf } from '../../lib/gerarHoleritePdf';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
-// Normaliza celular BR para E.164 (+55DDDNUMERO). Retorna null se inválido.
 function normalizarCelularBR(celular?: string | null): string | null {
   if (!celular) return null;
   const digits = celular.replace(/\D/g, '');
-  if (digits.length < 10) return null;              // sem DDD+numero
+  if (digits.length < 10) return null;
   const comPais = digits.startsWith('55') ? digits : `55${digits}`;
   return `+${comPais}`;
 }
 
 // ============================================================================
-// ENVIAR HOLERITE PARA ASSINATURA
+// ENVIAR HOLERITE PARA ASSINATURA (somente folha FECHADA)
 // ============================================================================
 export async function enviarHoleriteAssinaturaAction(payload: {
   funcionarioNome: string;
-  mesReferencia: string;          // competência 'AAAA-MM'
-  cpf: string;
-  celular?: string | null;
-  email?: string | null;
-  pdfBase64: string;              // conteúdo do PDF do holerite
-  nomeDocumento: string;          // ex: "Holerite 06/2026 — João da Silva"
+  mesReferencia: string;
   enviadoPor: string;
-  sandbox: boolean;               // true = teste (não gasta créditos)
+  sandbox: boolean;
 }): Promise<Resultado> {
   const db = supabaseAdmin();
-  const {
-    funcionarioNome, mesReferencia, cpf, celular, email,
-    pdfBase64, nomeDocumento, enviadoPor, sandbox
-  } = payload;
-
-  // Validações mínimas antes de gastar uma chamada de API
-  const cpfLimpo = (cpf || '').replace(/\D/g, '');
-  if (cpfLimpo.length !== 11) {
-    return { ok: false, erro: 'CPF do funcionário ausente ou inválido. Preencha o CPF na ficha antes de enviar para assinatura.' };
-  }
-  const celularE164 = normalizarCelularBR(celular);
-  if (!celularE164 && !email) {
-    return { ok: false, erro: 'Informe celular ou e-mail do funcionário na ficha para enviar o link de assinatura.' };
-  }
+  const { funcionarioNome, mesReferencia, enviadoPor, sandbox } = payload;
 
   try {
-    // Impede reenvio se já assinado
+    // 1) Só envia holerite de folha FECHADA — busca o snapshot congelado
+    const { data: fechamento } = await db
+      .from('folha_holerites')
+      .select('dados, fechado_em')
+      .eq('funcionario_nome', funcionarioNome)
+      .eq('mes_referencia', mesReferencia)
+      .maybeSingle();
+    if (!fechamento?.dados) {
+      return { ok: false, erro: 'A folha deste mês não está fechada para este funcionário. Feche a folha antes de enviar para assinatura.' };
+    }
+
+    // 2) Busca dados pessoais (CPF, celular, e-mail) da ficha
+    const { data: func } = await db
+      .from('folha_funcionarios')
+      .select('cpf, celular, email')
+      .eq('nome_completo', funcionarioNome)
+      .maybeSingle();
+
+    const cpfLimpo = (func?.cpf || '').replace(/\D/g, '');
+    if (cpfLimpo.length !== 11) {
+      return { ok: false, erro: `CPF de ${funcionarioNome} ausente ou inválido. Preencha o CPF na ficha antes de enviar.` };
+    }
+    const celularE164 = normalizarCelularBR(func?.celular);
+    if (!celularE164 && !func?.email) {
+      return { ok: false, erro: `Informe celular ou e-mail de ${funcionarioNome} na ficha para enviar o link de assinatura.` };
+    }
+
+    // 3) Impede reenvio se já assinado
     const { data: existente } = await db
       .from('folha_holerite_assinaturas')
       .select('status')
@@ -61,21 +71,29 @@ export async function enviarHoleriteAssinaturaAction(payload: {
       return { ok: false, erro: 'Este holerite já foi assinado. Não é possível reenviar.' };
     }
 
-    // Chama a Autentique
-    // Buffer.from devolve um Buffer (subclasse de Uint8Array); a lib aceita Uint8Array.
-    const pdfBytes = new Uint8Array(Buffer.from(pdfBase64, 'base64'));
+    // 4) Gera o PDF a partir do snapshot congelado
+    const pdfBytes = await gerarHoleritePdf({
+      nome: funcionarioNome,
+      cpf: func?.cpf || null,
+      mesReferencia,
+      dados: fechamento.dados,
+      fechadoEm: fechamento.fechado_em,
+      empresaNome: 'RENTECH'
+    });
+
+    // 5) Cria o documento na Autentique (com validação por CPF + WhatsApp)
     const doc = await autentiqueCriarDocumento({
-      nomeDocumento,
+      nomeDocumento: `Holerite ${mesReferencia.split('-').reverse().join('/')} — ${funcionarioNome}`,
       signatarioNome: funcionarioNome,
       signatarioCpf: cpfLimpo,
       signatarioCelular: celularE164 || undefined,
-      signatarioEmail: email || undefined,
+      signatarioEmail: func?.email || undefined,
       pdfBuffer: pdfBytes,
       pdfNomeArquivo: `${funcionarioNome.replace(/\s+/g, '-').toLowerCase()}-${mesReferencia}.pdf`,
       sandbox
     });
 
-    // Grava/atualiza o controle
+    // 6) Grava/atualiza o controle
     const { error } = await db.from('folha_holerite_assinaturas').upsert({
       funcionario_nome: funcionarioNome,
       mes_referencia: mesReferencia,
@@ -92,6 +110,59 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     if (error) throw new Error(`Documento criado na Autentique (${doc.docId}), mas falha ao gravar o controle: ${error.message}`);
 
     return { ok: true, info: { docId: doc.docId, link: doc.linkAssinatura, sandbox } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// ENVIO EM LOTE: todos os holerites FECHADOS do mês ainda não assinados
+// ============================================================================
+export async function enviarHoleritesLoteAction(payload: {
+  mesReferencia: string;
+  enviadoPor: string;
+  sandbox: boolean;
+}): Promise<Resultado> {
+  const db = supabaseAdmin();
+  const { mesReferencia, enviadoPor, sandbox } = payload;
+
+  try {
+    // Todos os funcionários com folha fechada no mês
+    const { data: fechados } = await db
+      .from('folha_holerites')
+      .select('funcionario_nome')
+      .eq('mes_referencia', mesReferencia);
+    if (!fechados?.length) {
+      return { ok: false, erro: 'Nenhuma folha fechada neste mês. Feche a folha antes de enviar para assinatura.' };
+    }
+
+    // Já assinados/enviados: não reenviar
+    const { data: jaEnviados } = await db
+      .from('folha_holerite_assinaturas')
+      .select('funcionario_nome, status')
+      .eq('mes_referencia', mesReferencia);
+    const bloqueados = new Set((jaEnviados || [])
+      .filter(a => a.status === 'ASSINADO' || a.status === 'ENVIADO' || a.status === 'VISUALIZADO')
+      .map(a => a.funcionario_nome));
+
+    const alvos = fechados.map(f => f.funcionario_nome).filter(n => !bloqueados.has(n));
+    if (alvos.length === 0) {
+      return { ok: false, erro: 'Todos os holerites fechados deste mês já foram enviados ou assinados.' };
+    }
+
+    const resultados: { nome: string; ok: boolean; erro?: string }[] = [];
+    for (const nome of alvos) {
+      const r = await enviarHoleriteAssinaturaAction({ funcionarioNome: nome, mesReferencia, enviadoPor, sandbox });
+      resultados.push({ nome, ok: r.ok, erro: r.erro });
+    }
+
+    const enviados = resultados.filter(r => r.ok).length;
+    const falhas = resultados.filter(r => !r.ok);
+
+    return {
+      ok: enviados > 0,
+      info: { enviados, total: alvos.length, falhas: falhas.map(f => `${f.nome}: ${f.erro}`) }
+    };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

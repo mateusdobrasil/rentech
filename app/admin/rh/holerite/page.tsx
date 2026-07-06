@@ -7,6 +7,7 @@ import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
 import { salvarColaboradorAction, fecharFolhaLoteAction, reabrirFolhaAction } from './actions-folha';
+import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction } from '../actions-assinatura';
 import logoColorido from '../../../../app/imgs/logo.png';
 
 // Utilitários
@@ -151,6 +152,7 @@ interface ItemLote {
   func: FuncionarioFin;
   dados: DadosHolerite;
   fechamento: Fechamento | null;
+  statusAssinatura: string | null; // null = nunca enviado; ENVIADO | VISUALIZADO | ASSINADO | REJEITADO
 }
 
 const REGRA_PADRAO: RegraContrato = {
@@ -484,6 +486,8 @@ export default function HoleritePage() {
 
   // Lote: holerites de TODOS os funcionários ativos do mês (aba Espelho)
   const [lote, setLote] = useState<ItemLote[]>([]);
+  const [enviandoAssinatura, setEnviandoAssinatura] = useState<string | null>(null); // nome em envio, ou 'LOTE'
+  const [sandboxAssinatura, setSandboxAssinatura] = useState(true); // começa em teste por segurança
 
   // Fechamento do funcionário selecionado (aviso na aba de parâmetros)
   const [fechamentoSelecionado, setFechamentoSelecionado] = useState<Fechamento | null>(null);
@@ -657,13 +661,17 @@ export default function HoleritePage() {
   const carregarLote = async (mesAno: string) => {
     setLoadingLote(true);
     try {
-      const [{ data: funcs }, { data: descs }, { data: bons }, { data: fechs }, ponto] = await Promise.all([
+      const [{ data: funcs }, { data: descs }, { data: bons }, { data: fechs }, { data: assins }, ponto] = await Promise.all([
         supabase.from('folha_funcionarios').select('*').eq('ativo', true).order('nome_completo'),
         supabase.from('folha_descontos').select('*'),
         supabase.from('folha_bonus').select('*'),
         supabase.from('folha_holerites').select('*').eq('mes_referencia', mesAno),
+        supabase.from('folha_holerite_assinaturas').select('funcionario_nome, status').eq('mes_referencia', mesAno),
         buscarPontoDoMes(mesAno)
       ]);
+
+      const assinPorFunc: Record<string, string> = {};
+      (assins || []).forEach(a => { assinPorFunc[a.funcionario_nome] = a.status; });
 
       const descPorFunc: Record<string, Desconto[]> = {};
       (descs || []).forEach(d => {
@@ -690,7 +698,7 @@ export default function HoleritePage() {
           bonusPorFunc[f.nome_completo] || [],
           apuracao, mesAno
         );
-        return { func: f, dados, fechamento: fechPorFunc[f.nome_completo] || null };
+        return { func: f, dados, fechamento: fechPorFunc[f.nome_completo] || null, statusAssinatura: assinPorFunc[f.nome_completo] || null };
       });
 
       setLote(lista);
@@ -787,6 +795,68 @@ export default function HoleritePage() {
     } catch (e: any) {
       alert('Erro ao reabrir as folhas: ' + e.message);
       setLoadingLote(false);
+    }
+  };
+
+  // ============================================================================
+  // ENVIO PARA ASSINATURA (Autentique) — somente holerite de folha FECHADA
+  // ============================================================================
+  const enviarAssinatura = async (item: ItemLote) => {
+    if (!item.fechamento) {
+      alert('Só é possível enviar para assinatura holerites com a folha FECHADA.');
+      return;
+    }
+    if (item.statusAssinatura === 'ASSINADO') {
+      alert('Este holerite já foi assinado.');
+      return;
+    }
+    const jaEnviado = item.statusAssinatura === 'ENVIADO' || item.statusAssinatura === 'VISUALIZADO';
+    if (!confirm(
+      `${jaEnviado ? 'REENVIAR' : 'Enviar'} o holerite de ${item.func.nome_completo} (${formatarMesAnoBR(mesReferencia)}) para assinatura?\n\n` +
+      `Destino: ${item.func.celular ? 'WhatsApp ' + item.func.celular : item.func.email || 'sem contato'}\n` +
+      `CPF exigido na assinatura: ${item.func.cpf || 'NÃO PREENCHIDO ⚠'}\n` +
+      (sandboxAssinatura ? '\n🧪 MODO TESTE (sandbox): não gasta créditos e o documento é temporário.' : '\n⚠ MODO REAL: consome um documento do seu plano Autentique.')
+    )) return;
+
+    setEnviandoAssinatura(item.func.nome_completo);
+    try {
+      const res = await enviarHoleriteAssinaturaAction({
+        funcionarioNome: item.func.nome_completo,
+        mesReferencia,
+        enviadoPor: usuarioAtual,
+        sandbox: sandboxAssinatura
+      });
+      if (!res.ok) throw new Error(res.erro);
+      alert(`Holerite enviado para assinatura!${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`);
+      carregarLote(mesReferencia);
+    } catch (e: any) {
+      alert('Erro ao enviar para assinatura: ' + e.message);
+    } finally {
+      setEnviandoAssinatura(null);
+    }
+  };
+
+  const enviarAssinaturaTodos = async () => {
+    const fechadosNaoAssinados = lote.filter(l => l.fechamento && l.statusAssinatura !== 'ASSINADO' && l.statusAssinatura !== 'ENVIADO' && l.statusAssinatura !== 'VISUALIZADO');
+    if (fechadosNaoAssinados.length === 0) {
+      alert('Não há holerites fechados pendentes de envio neste mês.');
+      return;
+    }
+    if (!confirm(
+      `Enviar ${fechadosNaoAssinados.length} holerite(s) fechado(s) para assinatura?\n\n` +
+      (sandboxAssinatura ? '🧪 MODO TESTE (sandbox): não gasta créditos.' : `⚠ MODO REAL: consome ${fechadosNaoAssinados.length} documento(s) do seu plano Autentique.`)
+    )) return;
+
+    setEnviandoAssinatura('LOTE');
+    try {
+      const res = await enviarHoleritesLoteAction({ mesReferencia, enviadoPor: usuarioAtual, sandbox: sandboxAssinatura });
+      const falhasMsg = res.info?.falhas?.length ? `\n\nFalhas:\n${res.info.falhas.join('\n')}` : '';
+      alert(`${res.info?.enviados || 0} de ${res.info?.total || 0} holerite(s) enviado(s).${falhasMsg}`);
+      carregarLote(mesReferencia);
+    } catch (e: any) {
+      alert('Erro no envio em lote: ' + e.message);
+    } finally {
+      setEnviandoAssinatura(null);
     }
   };
 
@@ -1291,6 +1361,31 @@ export default function HoleritePage() {
                 </div>
               </div>
 
+              {/* Barra de ASSINATURA DIGITAL */}
+              {totalFechados > 0 && (
+                <div className="w-full max-w-5xl bg-indigo-50 border border-indigo-200 p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-3 mb-6 print:hidden">
+                  <div className="flex items-center gap-3">
+                    <span className="text-lg">✍️</span>
+                    <div>
+                      <h3 className="text-sm font-black text-indigo-900 uppercase tracking-wider">Assinatura Digital (Autentique)</h3>
+                      <p className="text-[11px] text-indigo-700 font-bold">Envia os holerites fechados para assinatura com validação por CPF.</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 flex-wrap justify-center">
+                    <label className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider cursor-pointer bg-white px-3 py-2 rounded-lg border border-indigo-200">
+                      <input type="checkbox" checked={sandboxAssinatura} onChange={e => setSandboxAssinatura(e.target.checked)} />
+                      <span className={sandboxAssinatura ? 'text-amber-600' : 'text-red-600'}>{sandboxAssinatura ? '🧪 Modo Teste' : '⚠ Modo Real'}</span>
+                    </label>
+                    <button onClick={enviarAssinaturaTodos} disabled={enviandoAssinatura !== null} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50">
+                      {enviandoAssinatura === 'LOTE' ? '⏳ Enviando...' : '📤 Enviar Todos p/ Assinatura'}
+                    </button>
+                    <button onClick={() => router.push('/admin/rh/assinaturas')} className="bg-white border-2 border-indigo-300 text-indigo-700 font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl hover:bg-indigo-50 transition-all">
+                      📋 Acompanhar
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {loadingLote ? (
                 <div className="w-full max-w-5xl bg-white border-2 border-dashed border-gray-300 rounded-2xl p-16 text-center text-gray-400 font-bold uppercase tracking-wider print:hidden">
                   Montando os holerites do mês...
@@ -1303,16 +1398,37 @@ export default function HoleritePage() {
                 lote.map(item => (
                   <div key={item.func.nome_completo} className="w-full max-w-5xl flex flex-col items-center">
                     <div className="w-full flex justify-between items-center mb-2 print:hidden">
-                      <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider ${item.fechamento ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                        {item.fechamento
-                          ? `🔒 Fechada em ${new Date(item.fechamento.fechado_em).toLocaleDateString('pt-BR')} por ${item.fechamento.fechado_por || '—'}`
-                          : '⚠ Em aberto — valores podem mudar com o ponto'}
-                      </span>
-                      {item.fechamento && (
-                        <button onClick={() => reabrirFolhaDe(item.fechamento!)} disabled={loadingLote} className="text-[10px] font-black text-red-600 uppercase tracking-wider hover:bg-red-50 px-3 py-1 rounded disabled:opacity-50">
-                          🔓 Reabrir
-                        </button>
-                      )}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider ${item.fechamento ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                          {item.fechamento
+                            ? `🔒 Fechada em ${new Date(item.fechamento.fechado_em).toLocaleDateString('pt-BR')} por ${item.fechamento.fechado_por || '—'}`
+                            : '⚠ Em aberto — valores podem mudar com o ponto'}
+                        </span>
+                        {item.statusAssinatura && (
+                          <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider ${
+                            item.statusAssinatura === 'ASSINADO' ? 'bg-green-100 text-green-700' :
+                            item.statusAssinatura === 'VISUALIZADO' ? 'bg-blue-100 text-blue-700' :
+                            item.statusAssinatura === 'REJEITADO' ? 'bg-red-100 text-red-700' :
+                            'bg-indigo-100 text-indigo-700'
+                          }`}>
+                            {item.statusAssinatura === 'ASSINADO' ? '✅ Assinado' :
+                             item.statusAssinatura === 'VISUALIZADO' ? '👁 Visualizado' :
+                             item.statusAssinatura === 'REJEITADO' ? '✖ Rejeitado' : '📤 Enviado'}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {item.fechamento && item.statusAssinatura !== 'ASSINADO' && (
+                          <button onClick={() => enviarAssinatura(item)} disabled={enviandoAssinatura !== null} className="text-[10px] font-black text-indigo-600 uppercase tracking-wider hover:bg-indigo-50 px-3 py-1 rounded disabled:opacity-50 border border-indigo-200">
+                            {enviandoAssinatura === item.func.nome_completo ? '⏳ Enviando...' : item.statusAssinatura ? '↻ Reenviar' : '📤 Assinatura'}
+                          </button>
+                        )}
+                        {item.fechamento && (
+                          <button onClick={() => reabrirFolhaDe(item.fechamento!)} disabled={loadingLote} className="text-[10px] font-black text-red-600 uppercase tracking-wider hover:bg-red-50 px-3 py-1 rounded disabled:opacity-50">
+                            🔓 Reabrir
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <HoleriteDoc
                       nome={item.func.nome_completo}

@@ -169,6 +169,24 @@ export async function enviarHoleritesLoteAction(payload: {
 }
 
 // ============================================================================
+// LISTAR ASSINATURAS DE UM MÊS (para a página de acompanhamento)
+// ============================================================================
+export async function listarAssinaturasAction(payload: { mesReferencia: string }): Promise<Resultado> {
+  const db = supabaseAdmin();
+  try {
+    const { data, error } = await db
+      .from('folha_holerite_assinaturas')
+      .select('*')
+      .eq('mes_referencia', payload.mesReferencia)
+      .order('funcionario_nome');
+    if (error) throw new Error(error.message);
+    return { ok: true, info: { assinaturas: data || [] } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
 // CONSULTAR STATUS (fallback do webhook — uso pontual)
 // ============================================================================
 export async function consultarAssinaturaAction(payload: {

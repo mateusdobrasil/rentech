@@ -37,10 +37,11 @@ export async function autentiqueCriarDocumento(p: CriarDocumentoParams): Promise
   const token = getToken();
 
   // Monta o signatário. Prioriza WhatsApp se houver celular; senão e-mail.
-  // A validação por CPF entra em security_verifications (type CPF).
+  // A validação por CPF vai em configs.cpf (garante que só aquele CPF assina) —
+  // NÃO em security_verifications, que é para biometria/documento com foto.
   const signer: any = {
     action: 'SIGN',
-    security_verifications: [{ type: 'CPF', cpf: p.signatarioCpf }]
+    configs: { cpf: p.signatarioCpf }
   };
   if (p.signatarioCelular) {
     signer.phone = p.signatarioCelular;

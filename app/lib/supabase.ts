@@ -22,3 +22,20 @@ export const supabase = createClient(
   supabaseUrl ?? 'https://placeholder.supabase.co',
   supabaseKey ?? 'public-anon-key'
 );
+
+// lib/supabaseAdmin.ts
+// Cliente Supabase com SERVICE ROLE. NUNCA importe isto em componentes client:
+// a service role key ignora o RLS e só pode existir no servidor.
+
+export function supabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !serviceKey) {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY ou NEXT_PUBLIC_SUPABASE_URL não configuradas no ambiente do servidor.');
+  }
+
+  return createClient(url, serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false }
+  });
+}

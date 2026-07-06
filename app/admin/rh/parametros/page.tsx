@@ -4,6 +4,11 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
+import {
+  salvarFeriadoAction, excluirFeriadoAction,
+  adicionarCatalogoAction, removerCatalogoAction,
+  salvarRegraAction, excluirRegraAction
+} from './actions-parametros';
 
 interface RegraRH {
   id?: string;
@@ -87,14 +92,11 @@ export default function ParametrosRH() {
 
     setSalvandoFeriado(true);
     try {
-      const { error } = await supabase.from('folha_feriados').insert({
+      const res = await salvarFeriadoAction({
         data_feriado: novoFeriado.data_feriado,
-        descricao: novoFeriado.descricao.toUpperCase().trim() || null
+        descricao: novoFeriado.descricao
       });
-      if (error) {
-        if (error.code === '23505') throw new Error(`A data ${formatarDataBR(novoFeriado.data_feriado)} já está cadastrada como feriado.`);
-        throw new Error(error.message);
-      }
+      if (!res.ok) throw new Error(res.erro);
       setNovoFeriado({ data_feriado: '', descricao: '' });
       carregarFeriados();
     } catch (e: any) {
@@ -110,14 +112,12 @@ export default function ParametrosRH() {
 
     setSalvandoFeriado(true);
     try {
-      const { error } = await supabase.from('folha_feriados').update({
+      const res = await salvarFeriadoAction({
+        id: feriadoEditando.id,
         data_feriado: feriadoEditando.data_feriado,
-        descricao: (feriadoEditando.descricao || '').toUpperCase().trim() || null
-      }).eq('id', feriadoEditando.id);
-      if (error) {
-        if (error.code === '23505') throw new Error(`A data ${formatarDataBR(feriadoEditando.data_feriado)} já está cadastrada como feriado.`);
-        throw new Error(error.message);
-      }
+        descricao: feriadoEditando.descricao || ''
+      });
+      if (!res.ok) throw new Error(res.erro);
       setFeriadoEditando(null);
       carregarFeriados();
     } catch (e: any) {
@@ -135,8 +135,8 @@ export default function ParametrosRH() {
 
     setSalvandoFeriado(true);
     try {
-      const { error } = await supabase.from('folha_feriados').delete().eq('id', f.id);
-      if (error) throw new Error(error.message);
+      const res = await excluirFeriadoAction(f.id);
+      if (!res.ok) throw new Error(res.erro);
       carregarFeriados();
     } catch (e: any) {
       alert('Erro ao excluir feriado: ' + e.message);
@@ -167,11 +167,8 @@ export default function ParametrosRH() {
 
     setSalvandoCatalogo(true);
     try {
-      const { error } = await supabase.from(tabela).insert({ nome: nomeNormalizado });
-      if (error) {
-        if (error.code === '23505') throw new Error(`"${nomeNormalizado}" já está cadastrado.`);
-        throw new Error(error.message);
-      }
+      const res = await adicionarCatalogoAction({ tabela, nome: nomeNormalizado });
+      if (!res.ok) throw new Error(res.erro);
       if (tabela === 'folha_cargo') setNovoCargo('');
       else setNovoTipoContrato('');
       carregarCatalogos();
@@ -183,29 +180,15 @@ export default function ParametrosRH() {
   };
 
   const removerCatalogo = async (tabela: 'folha_cargo' | 'folha_tipocontrato', item: ItemCatalogo) => {
+    // Só pede confirmação para cargos que não estão em uso; a verificação de
+    // vínculo é feita dentro da action (e retorna a lista de quem usa).
+    if (tabela === 'folha_tipocontrato' && !confirm(`Excluir "${item.nome}" do catálogo?`)) return;
+    if (tabela === 'folha_cargo' && !confirm(`Excluir "${item.nome}" do catálogo? (Só é possível se nenhum funcionário o utiliza.)`)) return;
+
     setSalvandoCatalogo(true);
     try {
-      // Cargo em uso não pode ser removido, senão a ficha do funcionário fica órfã
-      if (tabela === 'folha_cargo') {
-        const { data: emUso, error: buscaError } = await supabase
-          .from('folha_funcionarios')
-          .select('nome_completo')
-          .eq('cargo', item.nome);
-        if (buscaError) throw new Error(`Falha ao verificar vínculos: ${buscaError.message}`);
-        if (emUso && emUso.length > 0) {
-          alert(
-            `Não é possível excluir o cargo "${item.nome}": ${emUso.length} funcionário(s) usam este cargo:\n\n` +
-            `${emUso.map(f => f.nome_completo).join(', ')}\n\n` +
-            `Altere o cargo desses colaboradores antes de excluir.`
-          );
-          return;
-        }
-      }
-
-      if (!confirm(`Excluir "${item.nome}" do catálogo?`)) return;
-
-      const { error } = await supabase.from(tabela).delete().eq('id', item.id);
-      if (error) throw new Error(error.message);
+      const res = await removerCatalogoAction({ tabela, id: item.id, nome: item.nome });
+      if (!res.ok) throw new Error(res.erro);
       carregarCatalogos();
     } catch (e: any) {
       alert('Erro ao excluir: ' + e.message);
@@ -275,46 +258,12 @@ export default function ParametrosRH() {
 
     setLoading(true);
     try {
-      const estaRenomeando = nomeOriginal !== null && nomeOriginal !== nomeNormalizado;
+      const res = await salvarRegraAction({ regra: payload, nomeOriginal });
+      if (!res.ok) throw new Error(res.erro);
 
-      if (estaRenomeando) {
-        // ====================================================================
-        // RENOMEAR DE VERDADE: atualiza a regra E migra os funcionários
-        // vinculados, para ninguém ficar órfão apontando pro nome antigo.
-        // ====================================================================
-        const jaExiste = regras.some(r => r.nome_regra === nomeNormalizado);
-        if (jaExiste) {
-          throw new Error(`Já existe uma regra chamada "${nomeNormalizado}". Escolha outro nome.`);
-        }
-
-        const { error: updateError } = await supabase
-          .from('folha_parametros')
-          .update(payload)
-          .eq('nome_regra', nomeOriginal);
-        if (updateError) throw new Error(`Falha ao renomear a regra: ${updateError.message}`);
-
-        const { data: migrados, error: migrarError } = await supabase
-          .from('folha_funcionarios')
-          .update({ tipo_contrato: nomeNormalizado })
-          .eq('tipo_contrato', nomeOriginal)
-          .select('nome_completo');
-        if (migrarError) {
-          throw new Error(
-            `A regra foi renomeada, mas houve falha ao migrar os funcionários vinculados: ${migrarError.message}. ` +
-            `Corrija manualmente o tipo de contrato dos funcionários que usavam "${nomeOriginal}".`
-          );
-        }
-
-        alert(
-          `Regra renomeada de "${nomeOriginal}" para "${nomeNormalizado}". ` +
-          `${migrados?.length || 0} funcionário(s) migrado(s) junto.`
-        );
+      if (res.info?.renomeada) {
+        alert(`Regra renomeada de "${res.info.nomeAntigo}" para "${res.info.nomeNovo}". ${res.info.migrados} funcionário(s) migrado(s) junto.`);
       } else {
-        const { error: upsertError } = await supabase
-          .from('folha_parametros')
-          .upsert(payload, { onConflict: 'nome_regra' });
-        if (upsertError) throw new Error(`Falha ao salvar: ${upsertError.message}`);
-
         alert('Parâmetro salvo com sucesso!');
       }
 
@@ -329,34 +278,15 @@ export default function ParametrosRH() {
   };
 
   // ==========================================================================
-  // EXCLUSÃO PROTEGIDA: regra em uso não pode ser apagada, senão os
-  // funcionários caem no fallback silencioso do holerite (60/60/100)
+  // EXCLUSÃO PROTEGIDA: regra em uso não pode ser apagada (verificado na action)
   // ==========================================================================
   const deletarRegra = async (nome: string) => {
+    if (!confirm(`Tem certeza que deseja excluir o modelo ${nome}?\n\nSó será excluído se nenhum funcionário estiver vinculado a ele.`)) return;
+
     setDeletando(nome);
     try {
-      const { data: vinculados, error: buscaError } = await supabase
-        .from('folha_funcionarios')
-        .select('nome_completo')
-        .eq('tipo_contrato', nome);
-      if (buscaError) throw new Error(`Falha ao verificar vínculos: ${buscaError.message}`);
-
-      if (vinculados && vinculados.length > 0) {
-        const nomes = vinculados.map(v => v.nome_completo).join(', ');
-        alert(
-          `Não é possível excluir "${nome}": ${vinculados.length} funcionário(s) usam esta regra:\n\n${nomes}\n\n` +
-          `Altere o tipo de contrato desses colaboradores na tela de Holerites antes de excluir.`
-        );
-        return;
-      }
-
-      if (!confirm(`Tem certeza que deseja excluir o modelo ${nome}? Nenhum funcionário está vinculado a ele.`)) return;
-
-      const { error: deleteError } = await supabase
-        .from('folha_parametros')
-        .delete()
-        .eq('nome_regra', nome);
-      if (deleteError) throw new Error(`Falha ao excluir: ${deleteError.message}`);
+      const res = await excluirRegraAction(nome);
+      if (!res.ok) throw new Error(res.erro);
 
       if (nomeOriginal === nome) {
         setForm(formPadrao);

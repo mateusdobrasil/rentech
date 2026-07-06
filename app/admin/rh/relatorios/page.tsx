@@ -59,7 +59,8 @@ const REGRA_PADRAO: RegraContrato = {
 // ============================================================================
 const apurarPonto = (
   dias: Record<string, { trabalhados: number; abonados: number }>,
-  feriados: string[], mesAno: string
+  feriados: string[], mesAno: string,
+  dataAdmissao?: string | null, dataDesligamento?: string | null
 ) => {
   let mins60 = 0, mins100 = 0, diasFds = 0, minsTrabalhadosTotal = 0;
 
@@ -89,6 +90,8 @@ const apurarPonto = (
       const data = new Date(ano, mes - 1, d);
       if (data > hoje) break;
       const dataIso = `${ano}-${String(mes).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      if (dataAdmissao && dataIso < dataAdmissao) continue;
+      if (dataDesligamento && dataIso > dataDesligamento) continue;
       const ds = data.getDay();
       if (ds === 0 || ds === 6 || feriados.includes(dataIso)) continue;
       const reg = dias[dataIso];
@@ -285,7 +288,7 @@ export default function RelatoriosRH() {
       (fechs || []).forEach(f => { fechPorFunc[f.funcionario_nome] = f.dados; });
 
       const resultado: LinhaRelatorio[] = (funcs || []).map((f: FuncionarioFin) => {
-        const ap = apurarPonto(porFunc[f.nome_completo] || {}, feriados, mesAno);
+        const ap = apurarPonto(porFunc[f.nome_completo] || {}, feriados, mesAno, (f as any).data_admissao, (f as any).data_desligamento);
         const fechado = !!fechPorFunc[f.nome_completo];
 
         // Se a folha está fechada, usa os totais congelados; senão calcula ao vivo

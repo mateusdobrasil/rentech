@@ -6,6 +6,7 @@ import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
+import { salvarColaboradorAction, fecharFolhaLoteAction, reabrirFolhaAction } from './actions-folha';
 import logoColorido from '../../../../app/imgs/logo.png';
 
 // Utilitários
@@ -115,6 +116,8 @@ interface FuncionarioFin {
   recebe_refeicao: boolean; valor_refeicao: number;
   salario_folha: number; salario_contrato: number;
   valor_diaria: number; valor_adiantamento: number;
+  data_admissao: string | null; data_desligamento: string | null;
+  data_nascimento: string | null; cpf: string | null; celular: string | null; email: string | null;
 }
 
 interface Desconto { id?: string; funcionario_nome?: string; descricao: string; tipo: 'FIXO' | 'PARCELADO'; parcelas: number; mes_inicio: string; mes_fim: string; valor_parcela: number; }
@@ -165,7 +168,9 @@ const REGRA_PADRAO: RegraContrato = {
 const apurarPonto = (
   dias: Record<string, { trabalhados: number; abonados: number }>,
   feriados: string[],
-  mesAno: string
+  mesAno: string,
+  dataAdmissao?: string | null,
+  dataDesligamento?: string | null
 ) => {
   let mins60 = 0; let mins100 = 0; let diasFds = 0;
 
@@ -187,9 +192,9 @@ const apurarPonto = (
 
   // ==========================================================================
   // FALTAS: dias úteis (seg-sex, não feriado) sem batida E sem abono.
-  // Dias futuros não contam. Se o funcionário não tem NENHUM registro no mês
-  // (ponto ainda não importado), não apura falta — evita descontar o mês
-  // inteiro por engano antes da importação.
+  // Não conta: dias futuros; dias anteriores à admissão; dias após o
+  // desligamento. Sem NENHUM registro no mês, não apura falta (ponto não
+  // importado) — evita descontar o mês inteiro por engano.
   // ==========================================================================
   let faltas = 0;
   const temRegistroNoMes = Object.values(dias).some(v => v.trabalhados > 0 || v.abonados > 0);
@@ -203,6 +208,11 @@ const apurarPonto = (
       const data = new Date(ano, mes - 1, d);
       if (data > hoje) break; // não conta dias que ainda não aconteceram
       const dataIso = `${ano}-${String(mes).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+      // Fora do vínculo empregatício: não é falta
+      if (dataAdmissao && dataIso < dataAdmissao) continue;
+      if (dataDesligamento && dataIso > dataDesligamento) continue;
+
       const diaSemana = data.getDay();
       if (diaSemana === 0 || diaSemana === 6 || feriados.includes(dataIso)) continue;
 
@@ -486,7 +496,9 @@ export default function HoleritePage() {
   const defaultForm: FuncionarioFin = {
     nome_completo: '', cargo: '', tipo_contrato: 'CLT + Contrato', ativo: true,
     recebe_transporte: false, valor_transporte: 0, recebe_refeicao: false, valor_refeicao: 0,
-    salario_folha: 0, salario_contrato: 0, valor_diaria: 0, valor_adiantamento: 0
+    salario_folha: 0, salario_contrato: 0, valor_diaria: 0, valor_adiantamento: 0,
+    data_admissao: null, data_desligamento: null,
+    data_nascimento: null, cpf: null, celular: null, email: null
   };
   
   const [form, setForm] = useState<FuncionarioFin>(defaultForm);
@@ -498,6 +510,7 @@ export default function HoleritePage() {
   const [snapshotFicha, setSnapshotFicha] = useState('');
   const [mostrarQuitados, setMostrarQuitados] = useState(false);
   const [mostrarBonusEncerrados, setMostrarBonusEncerrados] = useState(false);
+  const [fichaExpandida, setFichaExpandida] = useState(false);
 
   const fichaAtualSerializada = useMemo(
     () => JSON.stringify({ form, descontos, bonus }),
@@ -626,7 +639,7 @@ export default function HoleritePage() {
     setFechamentoSelecionado(fechData || null);
 
     const { porFuncionario, feriados } = await buscarPontoDoMes(mesAno, nome);
-    setApuracaoSelecionado(apurarPonto(porFuncionario[nome] || {}, feriados, mesAno));
+    setApuracaoSelecionado(apurarPonto(porFuncionario[nome] || {}, feriados, mesAno, funcData.data_admissao, funcData.data_desligamento));
 
     // Snapshot dos dados recém-carregados (baseline para detectar edições)
     setSnapshotFicha(JSON.stringify({
@@ -670,7 +683,7 @@ export default function HoleritePage() {
       (fechs || []).forEach(f => { fechPorFunc[f.funcionario_nome] = f; });
 
       const lista: ItemLote[] = (funcs || []).map(f => {
-        const apuracao = apurarPonto(ponto.porFuncionario[f.nome_completo] || {}, ponto.feriados, mesAno);
+        const apuracao = apurarPonto(ponto.porFuncionario[f.nome_completo] || {}, ponto.feriados, mesAno, f.data_admissao, f.data_desligamento);
         const dados = montarDadosHolerite(
           f, regrasContrato,
           descPorFunc[f.nome_completo] || [],
@@ -710,27 +723,9 @@ export default function HoleritePage() {
 
     setLoadingLote(true);
     try {
-      const agora = new Date().toISOString();
-      const linhas = abertos.map(l => ({
-        funcionario_nome: l.func.nome_completo,
-        mes_referencia: mesReferencia,
-        dados: l.dados,
-        total_creditos: Number(l.dados.totalCreditos.toFixed(2)),
-        total_debitos: Number(l.dados.totalDebitos.toFixed(2)),
-        valor_liquido: Number(l.dados.valorLiquidoReceber.toFixed(2)),
-        fechado_por: usuarioAtual || null,
-        fechado_em: agora
-      }));
-
-      const { error } = await supabase.from('folha_holerites')
-        .upsert(linhas, { onConflict: 'funcionario_nome,mes_referencia' });
-      if (error) throw new Error(error.message);
-
-      await registrarLogAuditoria({
-        usuario_nome: usuarioAtual,
-        acao: `FECHAMENTO DE FOLHA EM LOTE (${formatarMesAnoBR(mesReferencia)}): ${abertos.length} funcionário(s), líquido total ${formatCurrency(totalLiquido)}`,
-        setor: 'RECURSOS HUMANOS / HOLERITES'
-      });
+      const linhas = abertos.map(l => ({ funcionario_nome: l.func.nome_completo, dados: l.dados }));
+      const res = await fecharFolhaLoteAction({ mesReferencia, linhas, usuarioNome: usuarioAtual });
+      if (!res.ok) throw new Error(res.erro);
 
       alert(`Folha de ${formatarMesAnoBR(mesReferencia)} fechada para ${abertos.length} funcionário(s)!`);
       carregarLote(mesReferencia);
@@ -749,18 +744,48 @@ export default function HoleritePage() {
 
     setLoadingLote(true);
     try {
-      const { error } = await supabase.from('folha_holerites').delete().eq('id', fech.id);
-      if (error) throw new Error(error.message);
-
-      await registrarLogAuditoria({
-        usuario_nome: usuarioAtual,
-        acao: `REABERTURA DE FOLHA: ${fech.funcionario_nome} (${formatarMesAnoBR(fech.mes_referencia)})`,
-        setor: 'RECURSOS HUMANOS / HOLERITES'
+      const res = await reabrirFolhaAction({
+        ids: [fech.id], mesReferencia: fech.mes_referencia, usuarioNome: usuarioAtual,
+        descricao: fech.funcionario_nome
       });
+      if (!res.ok) throw new Error(res.erro);
 
       carregarLote(mesReferencia);
     } catch (e: any) {
       alert('Erro ao reabrir a folha: ' + e.message);
+      setLoadingLote(false);
+    }
+  };
+
+  // ============================================================================
+  // REABERTURA EM LOTE: reabre a folha de TODOS os funcionários fechados do mês
+  // ============================================================================
+  const reabrirFolhaTodos = async () => {
+    const fechados = lote.filter(l => l.fechamento);
+    if (fechados.length === 0) {
+      alert('Nenhuma folha fechada neste mês para reabrir.');
+      return;
+    }
+
+    if (!confirm(
+      `Reabrir a folha de ${formatarMesAnoBR(mesReferencia)} para TODOS os ${fechados.length} funcionário(s) fechado(s)?\n\n` +
+      `Os holerites voltarão a ser calculados ao vivo e poderão mudar conforme o ponto, os feriados e as regras.\n\n` +
+      `Use apenas para corrigir um fechamento feito com dados errados.`
+    )) return;
+
+    setLoadingLote(true);
+    try {
+      const ids = fechados.map(l => l.fechamento!.id);
+      const res = await reabrirFolhaAction({
+        ids, mesReferencia, usuarioNome: usuarioAtual,
+        descricao: `${fechados.length} funcionário(s) em lote`
+      });
+      if (!res.ok) throw new Error(res.erro);
+
+      alert(`${fechados.length} folha(s) de ${formatarMesAnoBR(mesReferencia)} reaberta(s).`);
+      carregarLote(mesReferencia);
+    } catch (e: any) {
+      alert('Erro ao reabrir as folhas: ' + e.message);
       setLoadingLote(false);
     }
   };
@@ -781,49 +806,8 @@ export default function HoleritePage() {
     setLoading(true);
 
     try {
-      const { error: upsertError } = await supabase
-        .from('folha_funcionarios')
-        .upsert(form, { onConflict: 'nome_completo' });
-      if (upsertError) throw new Error(`Falha ao gravar a ficha: ${upsertError.message}`);
-
-      const { error: delDescError } = await supabase
-        .from('folha_descontos').delete().eq('funcionario_nome', form.nome_completo);
-      if (delDescError) throw new Error(`Falha ao limpar descontos antigos: ${delDescError.message}`);
-
-      if (descontos.length > 0) {
-        const limpaDescontos = descontos.map(d => ({
-          funcionario_nome: form.nome_completo,
-          descricao: d.descricao || 'DESCONTO', tipo: d.tipo,
-          parcelas: d.tipo === 'FIXO' ? 1 : (Number(d.parcelas) || 1),
-          mes_inicio: d.mes_inicio,
-          mes_fim: d.tipo === 'FIXO' ? '2099-12' : d.mes_fim,
-          valor_parcela: Number(d.valor_parcela) || 0
-        }));
-        const { error: insDescError } = await supabase
-          .from('folha_descontos').insert(limpaDescontos);
-        if (insDescError) throw new Error(`Falha ao gravar descontos: ${insDescError.message}`);
-      }
-
-      const { error: delBonusError } = await supabase
-        .from('folha_bonus').delete().eq('funcionario_nome', form.nome_completo);
-      if (delBonusError) throw new Error(`Falha ao limpar bônus antigos: ${delBonusError.message}`);
-
-      if (bonus.length > 0) {
-        const limpaBonus = bonus.map(b => ({
-          funcionario_nome: form.nome_completo,
-          descricao: b.descricao || 'PRÊMIO', recorrencia: b.recorrencia,
-          mes_referencia: b.mes_referencia, valor: Number(b.valor) || 0
-        }));
-        const { error: insBonusError } = await supabase
-          .from('folha_bonus').insert(limpaBonus);
-        if (insBonusError) throw new Error(`Falha ao gravar bônus: ${insBonusError.message}`);
-      }
-
-      await registrarLogAuditoria({
-        usuario_nome: usuarioAtual,
-        acao: `ATUALIZAÇÃO FINANCEIRA INTEGRADA: ${form.nome_completo}`,
-        setor: 'RECURSOS HUMANOS / HOLERITES'
-      });
+      const res = await salvarColaboradorAction({ form, descontos, bonus, usuarioNome: usuarioAtual });
+      if (!res.ok) throw new Error(res.erro);
 
       alert("Ficha guardada com sucesso!");
       // Atualiza o baseline: dados salvos passam a ser o novo "sem alterações"
@@ -1093,14 +1077,30 @@ export default function HoleritePage() {
                     
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] space-y-4 h-fit">
                       <div className="flex justify-between items-center border-b border-[#E2E8F0] pb-2">
-                        <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider">Dados Financeiros Base</h3>
-                        <button onClick={alternarStatusAtivo} className={`text-[10px] px-3 py-1 rounded font-black uppercase tracking-wider transition-colors ${form.ativo ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-green-50 text-green-600 hover:bg-green-100'}`}>
-                          {form.ativo ? 'SUSPENDER COLABORADOR' : 'REATIVAR COLABORADOR'}
+                        <button onClick={() => setFichaExpandida(!fichaExpandida)} className="flex items-center gap-2 text-left group">
+                          <span className="text-[#336699] font-black text-lg transition-transform" style={{ transform: fichaExpandida ? 'rotate(90deg)' : 'none' }}>▸</span>
+                          <div>
+                            <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider group-hover:text-[#336699] transition-colors">{form.nome_completo || 'Novo Colaborador'}</h3>
+                            {!fichaExpandida && <span className="text-[10px] text-gray-400 font-bold uppercase">{form.cargo || 'sem cargo'} • {form.tipo_contrato} • clique para editar dados</span>}
+                          </div>
+                        </button>
+                        <button onClick={alternarStatusAtivo} className={`text-[10px] px-3 py-1 rounded font-black uppercase tracking-wider transition-colors flex-shrink-0 ${form.ativo ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-green-50 text-green-600 hover:bg-green-100'}`}>
+                          {form.ativo ? 'SUSPENDER' : 'REATIVAR'}
                         </button>
                       </div>
                       
+                      {fichaExpandida && (
                       <div className="grid grid-cols-2 gap-4">
                         <div className="col-span-2"><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Nome Completo</label><input type="text" value={form.nome_completo} onChange={e => setForm({...form, nome_completo: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-gray-50 uppercase" /></div>
+
+                        <div className="col-span-2 grid grid-cols-2 gap-4 bg-indigo-50/50 p-3 rounded-lg border border-indigo-100">
+                          <div className="col-span-2 text-[10px] font-black text-indigo-600 uppercase tracking-wider">Dados Pessoais (para assinatura digital)</div>
+                          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">CPF</label><input type="text" value={form.cpf || ''} onChange={e => setForm({...form, cpf: e.target.value || null})} placeholder="000.000.000-00" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+                          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Data de Nascimento</label><input type="date" value={form.data_nascimento || ''} onChange={e => setForm({...form, data_nascimento: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+                          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Celular (WhatsApp)</label><input type="tel" value={form.celular || ''} onChange={e => setForm({...form, celular: e.target.value || null})} placeholder="(11) 90000-0000" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+                          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">E-mail</label><input type="email" value={form.email || ''} onChange={e => setForm({...form, email: e.target.value || null})} placeholder="nome@email.com" className="w-full p-2 border border-gray-300 rounded text-sm lowercase" /></div>
+                        </div>
+
                         <div>
                           <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Cargo</label>
                           <select value={form.cargo} onChange={e => setForm({...form, cargo: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white uppercase text-[#0C1D4D]">
@@ -1116,6 +1116,18 @@ export default function HoleritePage() {
                           <select value={form.tipo_contrato} onChange={e => setForm({...form, tipo_contrato: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white uppercase text-[#0C1D4D]">
                             {Object.keys(regrasContrato).map(k => <option key={k} value={k}>{k}</option>)}
                           </select>
+                        </div>
+
+                        <div className="col-span-2 grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Data de Admissão</label>
+                            <input type="date" value={form.data_admissao || ''} onChange={e => setForm({...form, data_admissao: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold" />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Data de Desligamento</label>
+                            <input type="date" value={form.data_desligamento || ''} onChange={e => setForm({...form, data_desligamento: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-red-600" />
+                            {form.data_desligamento && <p className="text-[9px] font-bold text-red-500 mt-0.5 uppercase">Faltas não contam após esta data</p>}
+                          </div>
                         </div>
                         
                         <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Salário Folha</label><input type="number" step="0.01" value={form.salario_folha} onChange={e => setForm({...form, salario_folha: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-[#0C1D4D]" /></div>
@@ -1133,6 +1145,7 @@ export default function HoleritePage() {
                         </div>
                         <div className="col-span-2"><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Adiantamento (Dia 20)</label><input type="number" step="0.01" value={form.valor_adiantamento} onChange={e => setForm({...form, valor_adiantamento: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-red-600" /></div>
                       </div>
+                      )}
                     </div>
 
                     <div className="space-y-6">
@@ -1267,6 +1280,11 @@ export default function HoleritePage() {
                   <button onClick={fecharFolhaTodos} disabled={loadingLote || lote.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">
                     🔒 Fechar Folha do Mês (Todos)
                   </button>
+                  {totalFechados > 0 && (
+                    <button onClick={reabrirFolhaTodos} disabled={loadingLote} className="bg-white border-2 border-red-300 text-red-600 font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl hover:bg-red-50 transition-all disabled:opacity-50">
+                      🔓 Reabrir Todos ({totalFechados})
+                    </button>
+                  )}
                   <button onClick={() => window.print()} disabled={lote.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
                     🖨️ Imprimir Todos ({lote.length} páginas)
                   </button>

@@ -6,6 +6,7 @@ import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
+import { importarPontoAction, importarAbonosAction } from './actions-ponto';
 import logoColorido from '../../../../app/imgs/logo.png';
 
 interface RegistroDiario {
@@ -224,22 +225,14 @@ export default function GestaoDePonto() {
           });
         });
 
-        const ultimoDia = new Date(Number(anoRef), Number(mesRef), 0).getDate();
-        const dataFim = `${anoRef}-${mesRef}-${String(ultimoDia).padStart(2, '0')}`;
-
-        await supabase.from('folha_ponto_diaria').delete()
-          .in('funcionario_nome', Array.from(nomesNoCsv))
-          .gte('data_registro', `${anoRef}-${mesRef}-01`)
-          .lte('data_registro', dataFim);
-
-        const { error: insertError } = await supabase.from('folha_ponto_diaria').insert(registrosProcessados);
-        if (insertError) throw insertError;
-
-        await registrarLogAuditoria({
-          usuario_nome: usuarioAtual,
-          acao: `IMPORTAÇÃO DE PONTO (BATIDAS)`,
-          setor: 'RECURSOS HUMANOS / PONTO'
+        const res = await importarPontoAction({
+          registros: registrosProcessados,
+          nomes: Array.from(nomesNoCsv),
+          anoRef, mesRef,
+          usuarioNome: usuarioAtual,
+          nomeArquivo: file.name
         });
+        if (!res.ok) throw new Error(res.erro);
 
         alert(`Sucesso! ${registrosProcessados.length} dias de trabalho importados.`);
         
@@ -324,29 +317,14 @@ export default function GestaoDePonto() {
           throw new Error('Nenhum registro de abono válido encontrado no arquivo.');
         }
 
-        const ultimoDia = new Date(Number(anoRef), Number(mesRef), 0).getDate();
-        const dataFim = `${anoRef}-${mesRef}-${String(ultimoDia).padStart(2, '0')}`;
-
-        const { error: deleteError } = await supabase.from('folha_ponto_abono').delete()
-          .in('funcionario_nome', Array.from(nomesNoCsv))
-          .gte('data_abono', `${anoRef}-${mesRef}-01`)
-          .lte('data_abono', dataFim);
-        if (deleteError) throw new Error(`Falha ao limpar abonos antigos: ${deleteError.message}`);
-
-        const { error: insertError, data: inseridos } = await supabase
-          .from('folha_ponto_abono')
-          .insert(abonosProcessados)
-          .select('id');
-        if (insertError) throw new Error(`Falha ao gravar no banco: ${insertError.message}`);
-        if (!inseridos || inseridos.length === 0) {
-          throw new Error('O banco não gravou nenhuma linha. Verifique as policies de RLS da tabela folha_ponto_abono.');
-        }
-
-        await registrarLogAuditoria({
-          usuario_nome: usuarioAtual,
-          acao: `IMPORTAÇÃO DE ABONOS (${file.name})`,
-          setor: 'RECURSOS HUMANOS / PONTO'
+        const res = await importarAbonosAction({
+          abonos: abonosProcessados,
+          nomes: Array.from(nomesNoCsv),
+          anoRef, mesRef,
+          usuarioNome: usuarioAtual,
+          nomeArquivo: file.name
         });
+        if (!res.ok) throw new Error(res.erro);
 
         alert(`Sucesso! ${abonosProcessados.length} registros de abono importados.`);
 

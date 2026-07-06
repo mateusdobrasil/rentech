@@ -7,7 +7,7 @@ import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
 import { importarPontoAction, importarAbonosAction } from '../actions/actions-ponto';
-import SepararHolerites from '../actions/SepararHolerites';
+import SepararHolerites from './SepararHolerites';
 import logoColorido from '../../../../app/imgs/logo.png';
 
 interface RegistroDiario {

@@ -6,9 +6,9 @@
 // - gera o PDF no servidor (lib/gerarHoleritePdf)
 // - grava o controle em folha_holerite_assinaturas (service role)
 // - chama o cliente da Autentique (lib/autentique)
-import { supabaseAdmin } from '../../lib/supabase';
-import { autentiqueCriarDocumento, autentiqueConsultarDocumento } from '../../lib/autentique';
-import { gerarHoleritePdf } from '../../lib/gerarHoleritePdf';
+import { supabaseAdmin } from '../../../lib/supabase';
+import { autentiqueCriarDocumento, autentiqueConsultarDocumento } from '../../../lib/autentique';
+import { gerarHoleritePdf } from '../../../lib/gerarHoleritePdf';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 

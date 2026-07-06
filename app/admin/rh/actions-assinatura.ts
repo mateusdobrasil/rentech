@@ -205,17 +205,17 @@ export async function consultarAssinaturaAction(payload: {
     const doc = await autentiqueConsultarDocumento(ctrl.autentique_doc_id);
     const assinatura = (doc?.signatures || [])[0];
 
-    const assinou = !!assinatura?.signed?.created;
-    const visualizou = !!assinatura?.viewed?.created;
-    const rejeitou = !!assinatura?.rejected?.created;
+    const assinou = !!assinatura?.signed?.created_at;
+    const visualizou = !!assinatura?.viewed?.created_at;
+    const rejeitou = !!assinatura?.rejected?.created_at;
 
     const novoStatus = rejeitou ? 'REJEITADO' : assinou ? 'ASSINADO' : visualizou ? 'VISUALIZADO' : 'ENVIADO';
 
     await db.from('folha_holerite_assinaturas').update({
       status: novoStatus,
       arquivo_assinado: doc?.files?.pades || doc?.files?.signed || null,
-      visualizado_em: assinatura?.viewed?.created || null,
-      assinado_em: assinatura?.signed?.created || null,
+      visualizado_em: assinatura?.viewed?.created_at || null,
+      assinado_em: assinatura?.signed?.created_at || null,
       atualizado_em: new Date().toISOString()
     }).eq('autentique_doc_id', ctrl.autentique_doc_id);
 

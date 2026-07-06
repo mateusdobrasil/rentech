@@ -137,9 +137,9 @@ export async function autentiqueConsultarDocumento(docId: string) {
           email
           created_at
           action { name }
-          viewed  { created }
-          signed  { created }
-          rejected { created }
+          viewed  { created_at }
+          signed  { created_at }
+          rejected { created_at }
         }
       }
     }

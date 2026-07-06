@@ -62,6 +62,17 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
     return w.PDFLib;
   };
 
+  // Converte bytes → base64 em blocos. Fazer String.fromCharCode(...array) de
+  // uma vez estoura a pilha ("Maximum call stack size exceeded") em PDFs grandes.
+  const bytesParaBase64 = (bytes: Uint8Array): string => {
+    let binario = '';
+    const bloco = 0x8000; // 32KB por vez
+    for (let i = 0; i < bytes.length; i += bloco) {
+      binario += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + bloco)));
+    }
+    return btoa(binario);
+  };
+
   const handleArquivo = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -102,7 +113,7 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
         const [copiada] = await novoPdf.copyPages(pdfOrigem, [i - 1]);
         novoPdf.addPage(copiada);
         const bytes = await novoPdf.save();
-        const pdfBase64 = btoa(String.fromCharCode(...new Uint8Array(bytes)));
+        const pdfBase64 = bytesParaBase64(bytes);
 
         // pré-associação por ordem alfabética: página i → i-ésimo elegível
         const funcionarioNome = elegiveis[i - 1]?.nome_completo || '';

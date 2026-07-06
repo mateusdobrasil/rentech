@@ -531,6 +531,7 @@ export default function HoleritePage() {
   const [cargosCatalogo, setCargosCatalogo] = useState<string[]>([]);
   
   const [buscaGrid, setBuscaGrid] = useState('');
+  const [filtroContrato, setFiltroContrato] = useState('TODOS');
   const [funcionarioSelecionado, setFuncionarioSelecionado] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'config' | 'impressao'>('config');
 
@@ -989,15 +990,23 @@ export default function HoleritePage() {
   const salarioBaseCalculo = form.salario_folha > 0 ? form.salario_folha : form.salario_contrato;
   const valorHoraBase = salarioBaseCalculo / 220;
 
+  // Tipos de contrato presentes na equipe (para o filtro), em ordem alfabética
+  const contratosDisponiveis = useMemo(() => {
+    const set = new Set<string>();
+    listaFuncionarios.forEach(f => { if (f.tipo_contrato) set.add(f.tipo_contrato); });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [listaFuncionarios]);
+
   const funcFiltrados = useMemo(() =>
     listaFuncionarios
       .filter(f => f.nome_completo.toLowerCase().includes(buscaGrid.toLowerCase()))
+      .filter(f => filtroContrato === 'TODOS' || f.tipo_contrato === filtroContrato)
       .sort((a, b) => {
         // Inativos vão para o fim; dentro de cada grupo, ordem alfabética
         if (a.ativo !== b.ativo) return a.ativo ? -1 : 1;
         return a.nome_completo.localeCompare(b.nome_completo);
       }),
-    [listaFuncionarios, buscaGrid]);
+    [listaFuncionarios, buscaGrid, filtroContrato]);
 
   // Separa descontos vigentes dos já quitados. O fim é RECALCULADO a partir de
   // mes_inicio + parcelas (não confia no mes_fim gravado, que pode estar defasado
@@ -1058,6 +1067,18 @@ export default function HoleritePage() {
               type="text" placeholder="Buscar nome..." value={buscaGrid} onChange={e => setBuscaGrid(e.target.value)}
               className="w-full p-2.5 rounded-lg text-sm text-white bg-[#1E3A6E] outline-none font-bold placeholder:text-blue-200"
             />
+            <select
+              value={filtroContrato} onChange={e => setFiltroContrato(e.target.value)}
+              className="w-full mt-3 p-2.5 rounded-lg text-sm text-white bg-[#1E3A6E] outline-none font-bold cursor-pointer"
+            >
+              <option value="TODOS">Todos os contratos</option>
+              {contratosDisponiveis.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            {filtroContrato !== 'TODOS' && (
+              <p className="text-[10px] text-blue-200 font-bold mt-2 uppercase tracking-wider">
+                {funcFiltrados.length} de {listaFuncionarios.length} — filtrado por contrato
+              </p>
+            )}
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden max-h-[65vh] overflow-y-auto">

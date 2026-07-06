@@ -6,8 +6,8 @@ import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
-import { salvarColaboradorAction, fecharFolhaLoteAction, reabrirFolhaAction } from './actions-folha';
-import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction } from '../actions-assinatura';
+import { salvarColaboradorAction, fecharFolhaLoteAction, reabrirFolhaAction } from '../actions/actions-folha';
+import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction } from '../actions/actions-assinatura';
 import logoColorido from '../../../../app/imgs/logo.png';
 
 // Utilitários

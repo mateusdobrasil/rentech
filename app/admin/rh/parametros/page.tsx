@@ -8,7 +8,7 @@ import {
   salvarFeriadoAction, excluirFeriadoAction,
   adicionarCatalogoAction, removerCatalogoAction,
   salvarRegraAction, excluirRegraAction
-} from './actions-parametros';
+} from '../actions/actions-parametros';
 
 interface RegraRH {
   id?: string;
@@ -24,6 +24,7 @@ interface RegraRH {
   direito_vr: boolean;
   direito_vt: boolean;
   modalidade_beneficio: 'POR_DIA' | 'VALOR_FECHADO';
+  recebe_holerite_contabilidade: boolean;
 }
 
 interface ItemCatalogo { id: number; nome: string; }
@@ -67,7 +68,8 @@ export default function ParametrosRH() {
     desconta_faltas: true,
     direito_vr: false,
     direito_vt: false,
-    modalidade_beneficio: 'POR_DIA'
+    modalidade_beneficio: 'POR_DIA',
+    recebe_holerite_contabilidade: true
   };
   
   const [form, setForm] = useState<RegraRH>(formPadrao);
@@ -217,7 +219,8 @@ export default function ParametrosRH() {
         tipo_pagamento_fds: r.tipo_pagamento_fds === 'HORA_100' ? 'HORA_PERCENTUAL' : r.tipo_pagamento_fds,
         direito_vr: r.direito_vr ?? false,
         direito_vt: r.direito_vt ?? false,
-        modalidade_beneficio: r.modalidade_beneficio || 'POR_DIA'
+        modalidade_beneficio: r.modalidade_beneficio || 'POR_DIA',
+        recebe_holerite_contabilidade: r.recebe_holerite_contabilidade ?? true
       })));
     }
     setLoading(false);
@@ -535,6 +538,14 @@ export default function ParametrosRH() {
                   <input type="checkbox" checked={form.desconta_faltas} onChange={e => setForm({...form, desconta_faltas: e.target.checked})} className="w-4 h-4 accent-[#336699]" />
                   Habilitar Desconto de Faltas?
                 </label>
+              </div>
+
+              <div className="border border-gray-200 p-4 rounded-xl bg-gray-50/50">
+                <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
+                  <input type="checkbox" checked={form.recebe_holerite_contabilidade} onChange={e => setForm({...form, recebe_holerite_contabilidade: e.target.checked})} className="w-4 h-4 accent-[#336699]" />
+                  Recebe holerite da contabilidade?
+                </label>
+                <p className="text-[9px] font-bold text-gray-400 mt-1 uppercase">Se marcado, entra na separação dos PDFs de adiantamento e pagamento</p>
               </div>
 
               <div className={`border p-4 rounded-xl ${form.calcula_extras_padrao ? 'border-gray-200 bg-gray-50/50' : 'border-red-200 bg-red-50'}`}>

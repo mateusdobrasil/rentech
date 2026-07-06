@@ -6,7 +6,8 @@ import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
-import { importarPontoAction, importarAbonosAction } from './actions-ponto';
+import { importarPontoAction, importarAbonosAction } from '../actions/actions-ponto';
+import SepararHolerites from '../actions/SepararHolerites';
 import logoColorido from '../../../../app/imgs/logo.png';
 
 interface RegistroDiario {
@@ -43,9 +44,10 @@ export default function GestaoDePonto() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [usuarioAtual, setUsuarioAtual] = useState('');
 
-  const [viewMode, setViewMode] = useState<'resumo' | 'espelho' | 'espelho_todos' | 'abonos'>('resumo');
+  const [viewMode, setViewMode] = useState<'resumo' | 'espelho' | 'espelho_todos' | 'abonos' | 'separar_holerites'>('resumo');
   const [funcionarioSelecionado, setFuncionarioSelecionado] = useState('');
   const [abonosConsolidado, setAbonosConsolidado] = useState(false);
+  const [elegiveisContabilidade, setElegiveisContabilidade] = useState<{ nome_completo: string; tipo_contrato: string }[]>([]);
 
   const [mesAnoSelecionado, setMesAnoSelecionado] = useState(() => {
     const hoje = new Date();
@@ -91,6 +93,25 @@ export default function GestaoDePonto() {
       .order('data_registro', { ascending: true });
     
     if (data) setRegistros(data);
+
+    // Funcionários elegíveis à separação de holerite (contrato com a flag ligada),
+    // em ordem alfabética — base da pré-associação por ordem.
+    const { data: regrasData } = await supabase
+      .from('folha_parametros')
+      .select('nome_regra, recebe_holerite_contabilidade');
+    const contratosComHolerite = new Set(
+      (regrasData || []).filter(r => r.recebe_holerite_contabilidade !== false).map(r => r.nome_regra)
+    );
+    const { data: funcData } = await supabase
+      .from('folha_funcionarios')
+      .select('nome_completo, tipo_contrato')
+      .eq('ativo', true)
+      .order('nome_completo');
+    const elegiveis = (funcData || [])
+      .filter(f => contratosComHolerite.has(f.tipo_contrato))
+      .map(f => ({ nome_completo: f.nome_completo, tipo_contrato: f.tipo_contrato }));
+    setElegiveisContabilidade(elegiveis);
+
     setLoading(false);
   };
 
@@ -626,6 +647,15 @@ export default function GestaoDePonto() {
                   {abonos.length > 0 && <span className="bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{abonos.length}</span>}
                 </button>
               </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
+                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">4. Holerites da Contabilidade</h3>
+                <p className="text-xs text-[#64748B] mb-4">Importar e separar por funcionário os PDFs de adiantamento e pagamento, para anexar à assinatura.</p>
+                <button onClick={() => setViewMode('separar_holerites')} className="w-full bg-[#0C1D4D] hover:bg-[#284B8C] text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
+                  📄 SEPARAR HOLERITES
+                  <span className="bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{elegiveisContabilidade.length}</span>
+                </button>
+              </div>
             </aside>
 
             <main className="flex-grow bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col h-fit">
@@ -709,6 +739,15 @@ export default function GestaoDePonto() {
               <RenderEspelho key={nome} nome={nome} registrosFunc={registros.filter(r => r.funcionario_nome === nome)} />
             ))}
           </div>
+        )}
+
+        {viewMode === 'separar_holerites' && (
+          <SepararHolerites
+            mesReferencia={mesAnoSelecionado}
+            usuarioAtual={usuarioAtual}
+            elegiveis={elegiveisContabilidade}
+            onFechar={voltarResumo}
+          />
         )}
 
         {viewMode === 'abonos' && (

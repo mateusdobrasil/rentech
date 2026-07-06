@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-import { listarAssinaturasAction, consultarAssinaturaAction } from '../actions-assinatura';
+import { listarAssinaturasAction, consultarAssinaturaAction } from '../actions/actions-assinatura';
 
 interface Assinatura {
   id: number;

@@ -15,8 +15,9 @@ export interface DadosHoleritePdf {
   bonusAtivos: { descricao: string; recorrencia: string; valor: number }[];
   descontosAtivos: { descricao: string; tipo: string; parcelas: number; mes_inicio: string; valor_parcela: number }[];
   valorAdiantamento: number;
-  recebeTransporte: boolean; valorTransporte: number;
-  recebeRefeicao: boolean; valorRefeicao: number;
+  qtdVr: number; qtdVt: number; diariaVr: number; diariaVt: number;
+  totalVr: number; totalVt: number;
+  descontoVrFaltas: number; descontoVtFaltas: number;
   regra: { tipo_pagamento_fds: string; percentual_extra_semana: number; percentual_extra_dom_fer: number; desconta_faltas: boolean };
   cargo: string; tipoContrato: string; ativo: boolean;
   totalCreditos: number; totalDebitos: number; valorLiquidoReceber: number;
@@ -134,8 +135,8 @@ export async function gerarHoleritePdf(p: GerarPdfParams): Promise<Uint8Array> {
     creditos.push(['DIÁRIAS FDS/APOIO', `${v.diasTrabalhadosFds}D`, v.totalDiariasFdsFechada]);
   }
   v.bonusAtivos.forEach(b => creditos.push([b.descricao.toUpperCase().slice(0, 26), b.recorrencia === 'MENSAL' ? 'FIXO' : 'PRÊMIO', b.valor]));
-  if (v.recebeRefeicao) creditos.push(['REEMBOLSO REFEIÇÃO', 'FIXO', v.valorRefeicao]);
-  if (v.recebeTransporte) creditos.push(['REEMBOLSO TRANSPORTE', 'FIXO', v.valorTransporte]);
+  if (v.totalVr > 0) creditos.push([`VALE REFEIÇÃO (VR)`, `${v.qtdVr}× ${BRL(v.diariaVr)}`, v.totalVr]);
+  if (v.totalVt > 0) creditos.push([`VALE TRANSPORTE (VT)`, `${v.qtdVt}× ${BRL(v.diariaVt)}`, v.totalVt]);
 
   // Linhas de débito
   const debitos: [string, string, number][] = [];
@@ -145,6 +146,8 @@ export async function gerarHoleritePdf(p: GerarPdfParams): Promise<Uint8Array> {
     debitos.push([d.descricao.toUpperCase().slice(0, 26), ref, d.valor_parcela]);
   });
   if (v.regra.desconta_faltas && v.valorDescontoFaltas > 0) debitos.push([`FALTAS (${v.diasFaltas}D)`, `${v.diasFaltas}D`, v.valorDescontoFaltas]);
+  if (v.descontoVrFaltas > 0) debitos.push([`DESC. VR POR FALTA`, `${v.diasFaltas}× ${BRL(v.diariaVr)}`, v.descontoVrFaltas]);
+  if (v.descontoVtFaltas > 0) debitos.push([`DESC. VT POR FALTA`, `${v.diasFaltas}× ${BRL(v.diariaVt)}`, v.descontoVtFaltas]);
 
   const linhaAltura = 15;
   const maxLinhas = Math.max(creditos.length, debitos.length, 4);

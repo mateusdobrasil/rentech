@@ -21,6 +21,9 @@ interface RegraRH {
   percentual_extra_dom_fer: number;
   valor_diaria_fds: number;
   desconta_faltas: boolean;
+  direito_vr: boolean;
+  direito_vt: boolean;
+  modalidade_beneficio: 'POR_DIA' | 'VALOR_FECHADO';
 }
 
 interface ItemCatalogo { id: number; nome: string; }
@@ -61,7 +64,10 @@ export default function ParametrosRH() {
     tipo_pagamento_fds: 'HORA_PERCENTUAL', 
     percentual_extra_dom_fer: 100, 
     valor_diaria_fds: 0, 
-    desconta_faltas: true
+    desconta_faltas: true,
+    direito_vr: false,
+    direito_vt: false,
+    modalidade_beneficio: 'POR_DIA'
   };
   
   const [form, setForm] = useState<RegraRH>(formPadrao);
@@ -208,7 +214,10 @@ export default function ParametrosRH() {
         percentual_extra_semana: r.percentual_extra_semana ?? 60,
         percentual_extra_sabado: r.percentual_extra_sabado ?? 60,
         percentual_extra_dom_fer: r.percentual_extra_dom_fer ?? 100,
-        tipo_pagamento_fds: r.tipo_pagamento_fds === 'HORA_100' ? 'HORA_PERCENTUAL' : r.tipo_pagamento_fds
+        tipo_pagamento_fds: r.tipo_pagamento_fds === 'HORA_100' ? 'HORA_PERCENTUAL' : r.tipo_pagamento_fds,
+        direito_vr: r.direito_vr ?? false,
+        direito_vt: r.direito_vt ?? false,
+        modalidade_beneficio: r.modalidade_beneficio || 'POR_DIA'
       })));
     }
     setLoading(false);
@@ -535,6 +544,40 @@ export default function ParametrosRH() {
                 </label>
                 {!form.calcula_extras_padrao && <p className="text-[9px] font-bold text-red-600 mt-1 uppercase">Contrato fechado: nenhuma hora extra ou diária será paga</p>}
               </div>
+            </div>
+
+            {/* BENEFÍCIOS VR / VT */}
+            <div className="border-2 border-teal-200 bg-teal-50/40 p-5 rounded-xl">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-black text-teal-800 uppercase tracking-wider text-sm">Benefícios — Vale Refeição e Transporte</h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer border border-teal-200 bg-white p-3 rounded-lg">
+                  <input type="checkbox" checked={form.direito_vr} onChange={e => setForm({...form, direito_vr: e.target.checked})} className="w-4 h-4 accent-teal-600" />
+                  Direito a VR (refeição)?
+                </label>
+                <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer border border-teal-200 bg-white p-3 rounded-lg">
+                  <input type="checkbox" checked={form.direito_vt} onChange={e => setForm({...form, direito_vt: e.target.checked})} className="w-4 h-4 accent-teal-600" />
+                  Direito a VT (transporte)?
+                </label>
+                <div className="border border-teal-200 bg-white p-3 rounded-lg">
+                  <label className="block text-[10px] font-black text-teal-700 uppercase mb-1">Modalidade do valor</label>
+                  <select value={form.modalidade_beneficio} onChange={e => setForm({...form, modalidade_beneficio: e.target.value as RegraRH['modalidade_beneficio']})} disabled={!form.direito_vr && !form.direito_vt} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white disabled:opacity-50">
+                    <option value="POR_DIA">Por Dia (lança a diária)</option>
+                    <option value="VALOR_FECHADO">Valor Fechado (lança o mês, ÷30)</option>
+                  </select>
+                </div>
+              </div>
+              {(form.direito_vr || form.direito_vt) && (
+                <div className="bg-white border border-teal-100 rounded-lg p-3 text-[11px] text-teal-800 font-medium leading-relaxed">
+                  <strong className="uppercase text-[10px] block mb-1">Como os benefícios são gerados (automático pelo ponto):</strong>
+                  • <strong>Dia de semana:</strong> só gera 1 VR (janta) quando o extra passa de 3h.<br/>
+                  • <strong>Sáb/Dom/Feriado até 8h:</strong> 1 VT + 1 VR (almoço).<br/>
+                  • <strong>Sáb/Dom/Feriado acima de 8h:</strong> 1 VT + 2 VR (almoço + janta).<br/>
+                  • Dia útil normal (8h) não gera benefício. Faltou = não gera (desconto automático).<br/>
+                  {form.modalidade_beneficio === 'VALOR_FECHADO' && <span className="text-teal-600">• Modalidade fechada: a diária de cada evento = valor lançado na ficha ÷ 30.</span>}
+                </div>
+              )}
             </div>
 
             {!form.calcula_extras_padrao ? (

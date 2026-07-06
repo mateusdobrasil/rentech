@@ -109,6 +109,10 @@ interface RegraContrato {
   percentual_extra_dom_fer: number;
   valor_diaria_fds: number;
   desconta_faltas: boolean;
+  // Benefícios VR/VT por evento (regra 4)
+  direito_vr: boolean;
+  direito_vt: boolean;
+  modalidade_beneficio: 'POR_DIA' | 'VALOR_FECHADO'; // vale para VR e VT juntos
 }
 
 interface FuncionarioFin {
@@ -132,8 +136,9 @@ interface DadosHolerite {
   salarioBaseExibido: number; complementoContratoExibido: number;
   bonusAtivos: Bonus[]; descontosAtivos: Desconto[];
   valorAdiantamento: number;
-  recebeTransporte: boolean; valorTransporte: number;
-  recebeRefeicao: boolean; valorRefeicao: number;
+  qtdVr: number; qtdVt: number; diariaVr: number; diariaVt: number;
+  totalVr: number; totalVt: number; modalidade: 'POR_DIA' | 'VALOR_FECHADO';
+  descontoVrFaltas: number; descontoVtFaltas: number; totalDescontoBeneficios: number;
   regra: RegraContrato;
   cargo: string; tipoContrato: string; ativo: boolean;
   totalCreditos: number; totalDebitos: number; valorLiquidoReceber: number;
@@ -159,7 +164,8 @@ const REGRA_PADRAO: RegraContrato = {
   nome_regra: 'PADRÃO',
   paga_salario_base: true, calcula_extras_padrao: true, percentual_extra_semana: 60,
   percentual_extra_sabado: 60, tipo_pagamento_fds: 'HORA_PERCENTUAL', percentual_extra_dom_fer: 100,
-  valor_diaria_fds: 0, desconta_faltas: true
+  valor_diaria_fds: 0, desconta_faltas: true,
+  direito_vr: false, direito_vt: false, modalidade_beneficio: 'POR_DIA'
 };
 
 // ============================================================================
@@ -175,6 +181,8 @@ const apurarPonto = (
   dataDesligamento?: string | null
 ) => {
   let mins60 = 0; let mins100 = 0; let diasFds = 0;
+  // Eventos de benefício (regra 4): quantidade de VR e VT gerados no mês
+  let qtdVr = 0; let qtdVt = 0;
 
   Object.entries(dias).forEach(([dataIso, v]) => {
     const diaSemana = getDiaSemana(dataIso);
@@ -182,13 +190,26 @@ const apurarPonto = (
 
     if (isFeriado || diaSemana === 0) {
       // Dia não útil: abono não gera crédito; conta só o efetivamente trabalhado
-      if (v.trabalhados > 0) { mins100 += v.trabalhados; diasFds++; }
+      if (v.trabalhados > 0) {
+        mins100 += v.trabalhados; diasFds++;
+        // FDS/feriado: até 8h = 1 VT + 1 VR (almoço); mais de 8h = +1 VR (janta)
+        qtdVt += 1;
+        qtdVr += v.trabalhados > 480 ? 2 : 1;
+      }
     } else if (diaSemana === 6) {
-      if (v.trabalhados > 0) { mins60 += v.trabalhados; diasFds++; }
+      if (v.trabalhados > 0) {
+        mins60 += v.trabalhados; diasFds++;
+        // Sábado segue a mesma regra de FDS
+        qtdVt += 1;
+        qtdVr += v.trabalhados > 480 ? 2 : 1;
+      }
     } else {
       // Dia útil: abono soma à jornada antes de apurar o excedente
       const extraDia = (v.trabalhados + v.abonados) - 480;
       if (extraDia > 0) mins60 += extraDia;
+      // Dia útil só gera VR (janta) quando o EXTRA registrado passa de 3h.
+      // Dia útil normal não gera VR nem VT.
+      if (extraDia > 180) qtdVr += 1;
     }
   });
 
@@ -224,7 +245,7 @@ const apurarPonto = (
     }
   }
 
-  return { mins60, mins100, diasFds, faltas };
+  return { mins60, mins100, diasFds, faltas, qtdVr, qtdVt };
 };
 
 // ============================================================================
@@ -236,7 +257,7 @@ const montarDadosHolerite = (
   regras: Record<string, RegraContrato>,
   descontosFunc: Desconto[],
   bonusFunc: Bonus[],
-  apuracao: { mins60: number; mins100: number; diasFds: number; faltas: number },
+  apuracao: { mins60: number; mins100: number; diasFds: number; faltas: number; qtdVr: number; qtdVt: number },
   mesRef: string
 ): DadosHolerite => {
   const regra = regras[func.tipo_contrato] || { ...REGRA_PADRAO, nome_regra: func.tipo_contrato || 'PADRÃO' };
@@ -276,8 +297,24 @@ const montarDadosHolerite = (
   const totalBonusGrid = bonusAtivos.reduce((acc, curr) => acc + curr.valor, 0);
   const totalDescontosGrid = descontosAtivos.reduce((acc, curr) => acc + curr.valor_parcela, 0);
 
-  // VT e VR ticados entram no Total de Créditos
-  const totalAdicionais = (func.recebe_transporte ? func.valor_transporte : 0) + (func.recebe_refeicao ? func.valor_refeicao : 0);
+  // ==========================================================================
+  // BENEFÍCIOS VR/VT POR EVENTO (regra 4):
+  // - Direito e modalidade vêm da REGRA; os valores vêm da FICHA.
+  // - Modalidade POR_DIA: valor lançado é a diária, usada direto por evento.
+  // - Modalidade VALOR_FECHADO: valor lançado é o mês cheio; a diária
+  //   equivalente é o valor ÷ 30 (dias corridos), usada por evento.
+  // - qtdVr / qtdVt são os eventos contados no ponto (regra 4).
+  // ==========================================================================
+  const modalidade = regra.modalidade_beneficio;
+  const diariaVr = modalidade === 'VALOR_FECHADO' ? (func.valor_refeicao / 30) : func.valor_refeicao;
+  const diariaVt = modalidade === 'VALOR_FECHADO' ? (func.valor_transporte / 30) : func.valor_transporte;
+
+  const qtdVr = regra.direito_vr ? apuracao.qtdVr : 0;
+  const qtdVt = regra.direito_vt ? apuracao.qtdVt : 0;
+
+  const totalVr = qtdVr * diariaVr;
+  const totalVt = qtdVt * diariaVt;
+  const totalAdicionais = totalVr + totalVt;
 
   // ==========================================================================
   // DESCONTO DE FALTAS: (valor do contrato ÷ 30) × dias de falta.
@@ -288,8 +325,17 @@ const montarDadosHolerite = (
   const diasFaltas = regra.desconta_faltas ? apuracao.faltas : 0;
   const valorDescontoFaltas = diasFaltas > 0 ? (baseFaltas / 30) * diasFaltas : 0;
 
+  // ==========================================================================
+  // ACERTO DE VR/VT POR FALTA: o benefício base é pago por fora; aqui apenas
+  // descontamos 1 diária de VR e/ou VT por dia de falta (conforme o direito do
+  // contrato), já que naquele dia o funcionário recebeu por fora sem trabalhar.
+  // ==========================================================================
+  const descontoVrFaltas = (regra.direito_vr ? apuracao.faltas : 0) * diariaVr;
+  const descontoVtFaltas = (regra.direito_vt ? apuracao.faltas : 0) * diariaVt;
+  const totalDescontoBeneficios = descontoVrFaltas + descontoVtFaltas;
+
   const totalCreditos = salarioBaseExibido + complementoContratoExibido + totalBonusGrid + totalExtra60 + totalExtra100 + totalDiariasFdsFechada + totalAdicionais;
-  const totalDebitos = func.valor_adiantamento + totalDescontosGrid + valorDescontoFaltas;
+  const totalDebitos = func.valor_adiantamento + totalDescontosGrid + valorDescontoFaltas + totalDescontoBeneficios;
   const valorLiquidoReceber = totalCreditos - totalDebitos;
 
   return {
@@ -299,8 +345,9 @@ const montarDadosHolerite = (
     salarioBaseExibido, complementoContratoExibido,
     bonusAtivos, descontosAtivos,
     valorAdiantamento: func.valor_adiantamento,
-    recebeTransporte: func.recebe_transporte, valorTransporte: func.valor_transporte,
-    recebeRefeicao: func.recebe_refeicao, valorRefeicao: func.valor_refeicao,
+    // Benefícios por evento (crédito) e acerto por falta (débito)
+    qtdVr, qtdVt, diariaVr, diariaVt, totalVr, totalVt, modalidade,
+    descontoVrFaltas, descontoVtFaltas, totalDescontoBeneficios,
     regra,
     cargo: func.cargo, tipoContrato: func.tipo_contrato, ativo: func.ativo,
     totalCreditos, totalDebitos, valorLiquidoReceber
@@ -401,8 +448,8 @@ const HoleriteDoc = ({ nome, dados, mesRef, fechamento }: {
                 </tr>
               ))}
 
-              {v.recebeRefeicao && <tr><td className="p-1">REEMBOLSO REFEIÇÃO OPERACIONAL</td><td className="p-1 border-x border-gray-300 text-center text-[10px] font-black">FIXO</td><td className="p-1 text-right">{formatCurrency(v.valorRefeicao)}</td></tr>}
-              {v.recebeTransporte && <tr><td className="p-1">REEMBOLSO TRANSPORTE LOGÍSTICO</td><td className="p-1 border-x border-gray-300 text-center text-[10px] font-black">FIXO</td><td className="p-1 text-right">{formatCurrency(v.valorTransporte)}</td></tr>}
+              {v.totalVr > 0 && <tr><td className="p-1">VALE REFEIÇÃO (VR)</td><td className="p-1 border-x border-gray-300 text-center text-[10px] font-black">{v.qtdVr}× {formatCurrency(v.diariaVr)}</td><td className="p-1 text-right">{formatCurrency(v.totalVr)}</td></tr>}
+              {v.totalVt > 0 && <tr><td className="p-1">VALE TRANSPORTE (VT)</td><td className="p-1 border-x border-gray-300 text-center text-[10px] font-black">{v.qtdVt}× {formatCurrency(v.diariaVt)}</td><td className="p-1 text-right">{formatCurrency(v.totalVt)}</td></tr>}
 
               {Array.from({ length: Math.max(0, 3 - v.bonusAtivos.length) }).map((_, i) => <tr key={`esp-cred-${i}`}><td className="p-1 text-transparent">_</td><td className="border-x border-gray-300"></td><td></td></tr>)}
             </tbody>
@@ -445,6 +492,9 @@ const HoleriteDoc = ({ nome, dados, mesRef, fechamento }: {
                   <tr><td className="p-1 text-gray-400">FALTAS</td><td className="p-1 border-x border-gray-300 text-center">-</td><td className="p-1 text-right text-gray-400">-</td></tr>
                 )
               )}
+
+              {v.descontoVrFaltas > 0 && <tr><td className="p-1">DESC. VR POR FALTA</td><td className="p-1 border-x border-gray-300 text-center text-[10px] font-black">{v.diasFaltas}× {formatCurrency(v.diariaVr)}</td><td className="p-1 text-right">{formatCurrency(v.descontoVrFaltas)}</td></tr>}
+              {v.descontoVtFaltas > 0 && <tr><td className="p-1">DESC. VT POR FALTA</td><td className="p-1 border-x border-gray-300 text-center text-[10px] font-black">{v.diasFaltas}× {formatCurrency(v.diariaVt)}</td><td className="p-1 text-right">{formatCurrency(v.descontoVtFaltas)}</td></tr>}
 
               {Array.from({ length: Math.max(0, 4 - v.descontosAtivos.length) }).map((_, i) => <tr key={`esp-deb-${i}`}><td className="p-1 text-transparent">_</td><td className="border-x border-gray-300"></td><td></td></tr>)}
             </tbody>
@@ -508,7 +558,7 @@ export default function HoleritePage() {
   const [form, setForm] = useState<FuncionarioFin>(defaultForm);
   const [descontos, setDescontos] = useState<Desconto[]>([]);
   const [bonus, setBonus] = useState<Bonus[]>([]);
-  const [apuracaoSelecionado, setApuracaoSelecionado] = useState({ mins60: 0, mins100: 0, diasFds: 0, faltas: 0 });
+  const [apuracaoSelecionado, setApuracaoSelecionado] = useState({ mins60: 0, mins100: 0, diasFds: 0, faltas: 0, qtdVr: 0, qtdVt: 0 });
 
   // Snapshot dos dados carregados, para detectar alterações não salvas na ficha
   const [snapshotFicha, setSnapshotFicha] = useState('');
@@ -556,7 +606,9 @@ export default function HoleritePage() {
           percentual_extra_sabado: r.percentual_extra_sabado ?? 60,
           tipo_pagamento_fds: r.tipo_pagamento_fds === 'HORA_100' ? 'HORA_PERCENTUAL' : (r.tipo_pagamento_fds || 'HORA_PERCENTUAL'),
           percentual_extra_dom_fer: r.percentual_extra_dom_fer ?? 100,
-          valor_diaria_fds: r.valor_diaria_fds ?? 0, desconta_faltas: r.desconta_faltas
+          valor_diaria_fds: r.valor_diaria_fds ?? 0, desconta_faltas: r.desconta_faltas,
+          direito_vr: r.direito_vr ?? false, direito_vt: r.direito_vt ?? false,
+          modalidade_beneficio: r.modalidade_beneficio || 'POR_DIA'
         };
       });
       setRegrasContrato(mapaRegras);
@@ -863,7 +915,7 @@ export default function HoleritePage() {
   const prepararNovo = () => {
     setFuncionarioSelecionado('NOVO'); setForm(defaultForm);
     setDescontos([]); setBonus([]);
-    setApuracaoSelecionado({ mins60: 0, mins100: 0, diasFds: 0, faltas: 0 });
+    setApuracaoSelecionado({ mins60: 0, mins100: 0, diasFds: 0, faltas: 0, qtdVr: 0, qtdVt: 0 });
     setFechamentoSelecionado(null);
     setActiveTab('config');
   };
@@ -1100,7 +1152,7 @@ export default function HoleritePage() {
                 <div className="flex flex-col gap-6 print:hidden pb-20">
                   {/* PAINEL DE DIAGNÓSTICO: mostra o que o ponto apurou e a regra em vigor */}
                   {funcionarioSelecionado !== 'NOVO' && (
-                    <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
+                    <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 grid grid-cols-2 md:grid-cols-6 gap-4 text-center">
                       <div>
                         <p className="text-[9px] font-black text-gray-400 uppercase tracking-wider">Extras Seg-Sáb ({regraAtiva.percentual_extra_semana}%)</p>
                         <p className="text-lg font-black text-[#336699]">{formatTimeStr(apuracaoSelecionado.mins60)}</p>
@@ -1119,6 +1171,20 @@ export default function HoleritePage() {
                             ? `- ${formatCurrency(dadosSelecionado.valorDescontoFaltas)}`
                             : 'regra não desconta'}
                         </p>
+                      </div>
+                      <div>
+                        <p className="text-[9px] font-black text-gray-400 uppercase tracking-wider">VR / VT (eventos)</p>
+                        {(regraAtiva.direito_vr || regraAtiva.direito_vt) ? (
+                          <>
+                            <p className="text-lg font-black text-teal-600">{dadosSelecionado.qtdVr}vr · {dadosSelecionado.qtdVt}vt</p>
+                            <p className="text-[10px] font-bold text-gray-500">+{formatCurrency(dadosSelecionado.totalVr + dadosSelecionado.totalVt)}</p>
+                            {dadosSelecionado.totalDescontoBeneficios > 0 && (
+                              <p className="text-[10px] font-bold text-red-500">-{formatCurrency(dadosSelecionado.totalDescontoBeneficios)} ({dadosSelecionado.diasFaltas}f)</p>
+                            )}
+                          </>
+                        ) : (
+                          <p className="text-[10px] font-bold text-gray-400 mt-2">sem direito</p>
+                        )}
                       </div>
                       <div>
                         <p className="text-[9px] font-black text-gray-400 uppercase tracking-wider">Hora Base</p>
@@ -1203,16 +1269,45 @@ export default function HoleritePage() {
                         <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Salário Folha</label><input type="number" step="0.01" value={form.salario_folha} onChange={e => setForm({...form, salario_folha: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-[#0C1D4D]" /></div>
                         <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Salário Contrato Total</label><input type="number" step="0.01" value={form.salario_contrato} onChange={e => setForm({...form, salario_contrato: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-[#16A34A]" /></div>
                         
-                        <div className="col-span-2 grid grid-cols-2 gap-4 bg-blue-50/50 p-3 rounded-lg border border-blue-100">
-                          <div>
-                            <label className="flex items-center gap-2 text-[10px] font-bold text-[#336699] uppercase mb-2"><input type="checkbox" checked={form.recebe_transporte} onChange={e => setForm({...form, recebe_transporte: e.target.checked})} />Vale Transporte</label>
-                            <input type="number" step="0.01" disabled={!form.recebe_transporte} value={form.valor_transporte} onChange={e => setForm({...form, valor_transporte: Number(e.target.value)})} className="w-full p-2 border border-blue-200 rounded text-sm disabled:opacity-50" />
+                        {(regraAtiva.direito_vr || regraAtiva.direito_vt) ? (
+                          <div className="col-span-2 bg-blue-50/50 p-3 rounded-lg border border-blue-100">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[10px] font-black text-[#336699] uppercase tracking-wider">Benefícios (VR / VT)</span>
+                              <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-700">
+                                {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' ? 'Valor Fechado (÷30)' : 'Por Dia'}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                              {regraAtiva.direito_vr && (
+                                <div>
+                                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">
+                                    {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' ? 'VR — Valor do Mês' : 'VR — Diária'}
+                                  </label>
+                                  <input type="number" step="0.01" value={form.valor_refeicao} onChange={e => setForm({...form, valor_refeicao: Number(e.target.value)})} className="w-full p-2 border border-blue-200 rounded text-sm" />
+                                  {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' && form.valor_refeicao > 0 && (
+                                    <p className="text-[9px] font-bold text-blue-600 mt-0.5 uppercase">Diária: {formatCurrency(form.valor_refeicao / 30)}</p>
+                                  )}
+                                </div>
+                              )}
+                              {regraAtiva.direito_vt && (
+                                <div>
+                                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">
+                                    {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' ? 'VT — Valor do Mês' : 'VT — Diária'}
+                                  </label>
+                                  <input type="number" step="0.01" value={form.valor_transporte} onChange={e => setForm({...form, valor_transporte: Number(e.target.value)})} className="w-full p-2 border border-blue-200 rounded text-sm" />
+                                  {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' && form.valor_transporte > 0 && (
+                                    <p className="text-[9px] font-bold text-blue-600 mt-0.5 uppercase">Diária: {formatCurrency(form.valor_transporte / 30)}</p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            <p className="text-[9px] text-blue-500 font-medium mt-2 uppercase">Os valores são gerados por dia trabalhado conforme a jornada. Configure o direito e a modalidade no Motor de Regras.</p>
                           </div>
-                          <div>
-                            <label className="flex items-center gap-2 text-[10px] font-bold text-[#336699] uppercase mb-2"><input type="checkbox" checked={form.recebe_refeicao} onChange={e => setForm({...form, recebe_refeicao: e.target.checked})} />Vale Refeição</label>
-                            <input type="number" step="0.01" disabled={!form.recebe_refeicao} value={form.valor_refeicao} onChange={e => setForm({...form, valor_refeicao: Number(e.target.value)})} className="w-full p-2 border border-blue-200 rounded text-sm disabled:opacity-50" />
+                        ) : (
+                          <div className="col-span-2 bg-gray-50 p-3 rounded-lg border border-gray-200 text-[10px] font-bold text-gray-400 uppercase text-center">
+                            Este contrato ({form.tipo_contrato}) não dá direito a VR/VT. Ajuste no Motor de Regras se necessário.
                           </div>
-                        </div>
+                        )}
                         <div className="col-span-2"><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Adiantamento (Dia 20)</label><input type="number" step="0.01" value={form.valor_adiantamento} onChange={e => setForm({...form, valor_adiantamento: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-red-600" /></div>
                       </div>
                       )}

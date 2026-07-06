@@ -31,6 +31,7 @@ interface RegraContrato {
   percentual_extra_semana: number; percentual_extra_sabado: number;
   tipo_pagamento_fds: 'HORA_PERCENTUAL' | 'VALOR_DIARIA';
   percentual_extra_dom_fer: number; valor_diaria_fds: number; desconta_faltas: boolean;
+  direito_vr?: boolean; direito_vt?: boolean; modalidade_beneficio?: 'POR_DIA' | 'VALOR_FECHADO';
 }
 interface FuncionarioFin {
   nome_completo: string; cargo: string; tipo_contrato: string; ativo: boolean;
@@ -62,7 +63,7 @@ const apurarPonto = (
   feriados: string[], mesAno: string,
   dataAdmissao?: string | null, dataDesligamento?: string | null
 ) => {
-  let mins60 = 0, mins100 = 0, diasFds = 0, minsTrabalhadosTotal = 0;
+  let mins60 = 0, mins100 = 0, diasFds = 0, minsTrabalhadosTotal = 0, qtdVr = 0, qtdVt = 0;
 
   Object.entries(dias).forEach(([dataIso, v]) => {
     const diaSemana = getDiaSemana(dataIso);
@@ -71,12 +72,13 @@ const apurarPonto = (
     minsTrabalhadosTotal += v.trabalhados + abonEfetivo;
 
     if (isFeriado || diaSemana === 0) {
-      if (v.trabalhados > 0) { mins100 += v.trabalhados; diasFds++; }
+      if (v.trabalhados > 0) { mins100 += v.trabalhados; diasFds++; qtdVt += 1; qtdVr += v.trabalhados > 480 ? 2 : 1; }
     } else if (diaSemana === 6) {
-      if (v.trabalhados > 0) { mins60 += v.trabalhados; diasFds++; }
+      if (v.trabalhados > 0) { mins60 += v.trabalhados; diasFds++; qtdVt += 1; qtdVr += v.trabalhados > 480 ? 2 : 1; }
     } else {
       const extraDia = (v.trabalhados + v.abonados) - 480;
       if (extraDia > 0) mins60 += extraDia;
+      if (extraDia > 180) qtdVr += 1;
     }
   });
 
@@ -99,7 +101,7 @@ const apurarPonto = (
     }
   }
 
-  return { mins60, mins100, diasFds, faltas, minsTrabalhadosTotal };
+  return { mins60, mins100, diasFds, faltas, minsTrabalhadosTotal, qtdVr, qtdVt };
 };
 
 // ============================================================================
@@ -108,7 +110,7 @@ const apurarPonto = (
 const calcularFinanceiro = (
   func: FuncionarioFin, regras: Record<string, RegraContrato>,
   descontosFunc: Desconto[], bonusFunc: Bonus[],
-  ap: { mins60: number; mins100: number; diasFds: number; faltas: number }, mesRef: string
+  ap: { mins60: number; mins100: number; diasFds: number; faltas: number; qtdVr: number; qtdVt: number }, mesRef: string
 ) => {
   const regra = regras[func.tipo_contrato] || { ...REGRA_PADRAO, nome_regra: func.tipo_contrato || 'PADRÃO' };
   const salarioBaseCalculo = func.salario_folha > 0 ? func.salario_folha : func.salario_contrato;
@@ -131,14 +133,24 @@ const calcularFinanceiro = (
   const bonusAtivos = bonusFunc.filter(b => b.recorrencia === 'MENSAL' || b.mes_referencia === mesRef);
   const totalBonus = bonusAtivos.reduce((s, b) => s + b.valor, 0);
   const totalDesc = descAtivos.reduce((s, d) => s + d.valor_parcela, 0);
-  const totalAdicionais = (func.recebe_transporte ? func.valor_transporte : 0) + (func.recebe_refeicao ? func.valor_refeicao : 0);
+
+  // VR/VT por evento (regra 4): direito e modalidade da regra, valores da ficha
+  const modalidade = (regra as any).modalidade_beneficio || 'POR_DIA';
+  const diariaVr = modalidade === 'VALOR_FECHADO' ? (func.valor_refeicao / 30) : func.valor_refeicao;
+  const diariaVt = modalidade === 'VALOR_FECHADO' ? (func.valor_transporte / 30) : func.valor_transporte;
+  const totalVr = ((regra as any).direito_vr ? ap.qtdVr : 0) * diariaVr;
+  const totalVt = ((regra as any).direito_vt ? ap.qtdVt : 0) * diariaVt;
+  const totalAdicionais = totalVr + totalVt;
+
+  // Acerto de VR/VT por falta: 1 diária descontada por dia de falta (conforme direito)
+  const descontoBeneficios = ((regra as any).direito_vr ? ap.faltas * diariaVr : 0) + ((regra as any).direito_vt ? ap.faltas * diariaVt : 0);
 
   const baseFaltas = func.salario_contrato > 0 ? func.salario_contrato : func.salario_folha;
   const diasFaltas = regra.desconta_faltas ? ap.faltas : 0;
   const valorDescontoFaltas = diasFaltas > 0 ? (baseFaltas / 30) * diasFaltas : 0;
 
   const totalCreditos = salarioBaseExibido + complemento + totalBonus + totalExtra60 + totalExtra100 + totalDiarias + totalAdicionais;
-  const totalDebitos = func.valor_adiantamento + totalDesc + valorDescontoFaltas;
+  const totalDebitos = func.valor_adiantamento + totalDesc + valorDescontoFaltas + descontoBeneficios;
   const liquido = totalCreditos - totalDebitos;
 
   return { totalCreditos, totalDebitos, liquido };
@@ -263,7 +275,8 @@ export default function RelatoriosRH() {
           nome_regra: r.nome_regra, paga_salario_base: r.paga_salario_base, calcula_extras_padrao: r.calcula_extras_padrao,
           percentual_extra_semana: r.percentual_extra_semana ?? 60, percentual_extra_sabado: r.percentual_extra_sabado ?? 60,
           tipo_pagamento_fds: r.tipo_pagamento_fds === 'HORA_100' ? 'HORA_PERCENTUAL' : (r.tipo_pagamento_fds || 'HORA_PERCENTUAL'),
-          percentual_extra_dom_fer: r.percentual_extra_dom_fer ?? 100, valor_diaria_fds: r.valor_diaria_fds ?? 0, desconta_faltas: r.desconta_faltas
+          percentual_extra_dom_fer: r.percentual_extra_dom_fer ?? 100, valor_diaria_fds: r.valor_diaria_fds ?? 0, desconta_faltas: r.desconta_faltas,
+          direito_vr: r.direito_vr ?? false, direito_vt: r.direito_vt ?? false, modalidade_beneficio: r.modalidade_beneficio || 'POR_DIA'
         };
       });
 

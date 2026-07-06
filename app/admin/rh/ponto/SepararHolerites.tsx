@@ -99,14 +99,22 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
       for (let i = 1; i <= totalPaginas; i++) {
         setProgresso(`Separando página ${i} de ${totalPaginas}...`);
 
-        // preview (escala baixa, só para conferência visual)
+        // Preview: renderiza SÓ o cabeçalho (canto superior esquerdo), onde ficam
+        // o nome e os dados do funcionário. Escala maior deixa o texto nítido;
+        // recortamos ~24% da altura e ~50% da largura (metade esquerda).
         const page = await doc.getPage(i);
-        const viewport = page.getViewport({ scale: 0.7 });
+        const viewport = page.getViewport({ scale: 1.4 });
+        const fatiaTopo = Math.round(viewport.height * 0.24);
+        const fatiaLargura = Math.round(viewport.width * 0.5);
         const canvas = document.createElement('canvas');
-        canvas.width = viewport.width; canvas.height = viewport.height;
+        canvas.width = fatiaLargura;                   // metade esquerda
+        canvas.height = fatiaTopo;                     // só a faixa do cabeçalho
         const ctx = canvas.getContext('2d')!;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // render normal; o canvas menor "corta" naturalmente o que passa da faixa
         await page.render({ canvasContext: ctx, viewport }).promise;
-        const imagemDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+        const imagemDataUrl = canvas.toDataURL('image/jpeg', 0.85);
 
         // recorta a página i para um PDF isolado
         const novoPdf = await PDFLib.PDFDocument.create();
@@ -236,7 +244,7 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
                     {dup && <span className="text-[9px] font-black text-red-600 uppercase">⚠ duplicado</span>}
                     {!p.funcionarioNome && <span className="text-[9px] font-black text-amber-600 uppercase">ignorada</span>}
                   </div>
-                  <img src={p.imagemDataUrl} alt={`Página ${p.paginaOrigem}`} className="w-full h-56 object-contain object-top bg-white" />
+                  <img src={p.imagemDataUrl} alt={`Cabeçalho da página ${p.paginaOrigem}`} className="w-full object-contain bg-white border-b border-gray-100" />
                   <div className="p-2 border-t border-gray-200">
                     <select
                       value={p.funcionarioNome}

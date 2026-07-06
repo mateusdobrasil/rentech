@@ -7,7 +7,7 @@ import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
 import { salvarColaboradorAction, fecharFolhaLoteAction, reabrirFolhaAction } from '../actions/actions-folha';
-import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction } from '../actions/actions-assinatura';
+import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction } from '../actions//actions-assinatura';
 import logoColorido from '../../../../app/imgs/logo.png';
 
 // Utilitários
@@ -880,7 +880,8 @@ export default function HoleritePage() {
         sandbox: sandboxAssinatura
       });
       if (!res.ok) throw new Error(res.erro);
-      alert(`Holerite enviado para assinatura!${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`);
+      const anexosMsg = res.info?.anexados?.length ? `\n\nAnexado: resumo + ${res.info.anexados.join(' + ')}` : '\n\n(só o resumo — sem documentos da contabilidade neste mês)';
+      alert(`Holerite enviado para assinatura!${anexosMsg}${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`);
       carregarLote(mesReferencia);
     } catch (e: any) {
       alert('Erro ao enviar para assinatura: ' + e.message);

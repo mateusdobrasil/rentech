@@ -9,8 +9,34 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { autentiqueCriarDocumento, autentiqueConsultarDocumento } from '../../../lib/autentique';
 import { gerarHoleritePdf } from '../../../lib/gerarHoleritePdf';
+import { mergePdfs } from '../../../lib/mergePdf';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
+
+const BUCKET_DOCS = 'documentos-folha';
+
+// Busca um anexo da contabilidade no Storage; retorna null se não existir.
+async function baixarAnexoContabil(
+  db: ReturnType<typeof supabaseAdmin>,
+  mesReferencia: string,
+  tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL',
+  funcionarioNome: string
+): Promise<Uint8Array | null> {
+  // Confirma no banco que há registro (evita chamada de Storage à toa)
+  const { data: reg } = await db
+    .from('folha_documentos_contabeis')
+    .select('storage_path')
+    .eq('funcionario_nome', funcionarioNome)
+    .eq('mes_referencia', mesReferencia)
+    .eq('tipo', tipo)
+    .maybeSingle();
+  if (!reg?.storage_path) return null;
+
+  const { data, error } = await db.storage.from(BUCKET_DOCS).download(reg.storage_path);
+  if (error || !data) return null;
+  const buf = await data.arrayBuffer();
+  return new Uint8Array(buf);
+}
 
 function normalizarCelularBR(celular?: string | null): string | null {
   if (!celular) return null;
@@ -71,8 +97,8 @@ export async function enviarHoleriteAssinaturaAction(payload: {
       return { ok: false, erro: 'Este holerite já foi assinado. Não é possível reenviar.' };
     }
 
-    // 4) Gera o PDF a partir do snapshot congelado
-    const pdfBytes = await gerarHoleritePdf({
+    // 4) Gera o PDF (nosso resumo) a partir do snapshot congelado
+    const resumoBytes = await gerarHoleritePdf({
       nome: funcionarioNome,
       cpf: func?.cpf || null,
       mesReferencia,
@@ -80,6 +106,19 @@ export async function enviarHoleriteAssinaturaAction(payload: {
       fechadoEm: fechamento.fechado_em,
       empresaNome: 'RENTECH'
     });
+
+    // 4b) Anexa os documentos da contabilidade que existirem no Storage.
+    // Ordem: nosso resumo → adiantamento → holerite mensal.
+    // Se não houver anexo, envia só o resumo (comportamento padrão).
+    const adiantamento = await baixarAnexoContabil(db, mesReferencia, 'ADIANTAMENTO', funcionarioNome);
+    const holeriteMensal = await baixarAnexoContabil(db, mesReferencia, 'HOLERITE_MENSAL', funcionarioNome);
+
+    const partes = [resumoBytes, adiantamento, holeriteMensal].filter((p): p is Uint8Array => !!p);
+    const pdfBytes = partes.length > 1 ? await mergePdfs(partes) : resumoBytes;
+    const anexados = [
+      adiantamento ? 'adiantamento' : null,
+      holeriteMensal ? 'holerite' : null
+    ].filter(Boolean);
 
     // 5) Cria o documento na Autentique (com validação por CPF + WhatsApp)
     const doc = await autentiqueCriarDocumento({
@@ -109,7 +148,7 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     }, { onConflict: 'funcionario_nome,mes_referencia' });
     if (error) throw new Error(`Documento criado na Autentique (${doc.docId}), mas falha ao gravar o controle: ${error.message}`);
 
-    return { ok: true, info: { docId: doc.docId, link: doc.linkAssinatura, sandbox } };
+    return { ok: true, info: { docId: doc.docId, link: doc.linkAssinatura, sandbox, anexados } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
@@ -219,7 +258,19 @@ export async function consultarAssinaturaAction(payload: {
       atualizado_em: new Date().toISOString()
     }).eq('autentique_doc_id', ctrl.autentique_doc_id);
 
-    return { ok: true, info: { status: novoStatus } };
+    // DEBUG TEMPORÁRIO: retorna o que a Autentique devolveu nos eventos,
+    // para diagnosticar por que as datas vieram vazias. Remover depois.
+    return {
+      ok: true,
+      info: {
+        status: novoStatus,
+        debug: {
+          viewed: assinatura?.viewed ?? null,
+          signed: assinatura?.signed ?? null,
+          rejected: assinatura?.rejected ?? null
+        }
+      }
+    };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

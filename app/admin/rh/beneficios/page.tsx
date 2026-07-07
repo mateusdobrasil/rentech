@@ -5,17 +5,17 @@ import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import {
   listarCatalogosBeneficioAction, criarTipoBeneficioAction, criarMeioBeneficioAction,
-  salvarBeneficioAction, alternarBeneficioAction, historicoBeneficioAction, painelBeneficiosAction
+  salvarBeneficioAction, alternarBeneficioAction, historicoBeneficioAction, painelBeneficiosAction,
+  gridBeneficiosAction
 } from '../actions/actions-beneficios';
 
 const BRL = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
 interface LinhaFunc {
   nome: string; cargo: string; contrato: string;
-  vr: { valor: number; modalidade: string } | null;
-  vt: { valor: number; modalidade: string } | null;
-  beneficiosFixos: { id: number; tipo: string; meio: string; valor: number; modalidade: string; observacao: string | null }[];
+  beneficiosFixos: { id: number; tipoId: number; meioId: number; tipo: string; meio: string; valor: number; modalidade: string; qtdDias: number | null; observacao: string | null }[];
   totalFixos: number;
+  temVariavel: boolean;
   semNenhum: boolean;
 }
 
@@ -29,14 +29,25 @@ export default function BeneficiosPage() {
   const [busca, setBusca] = useState('');
   const [filtro, setFiltro] = useState<'TODOS' | 'COM' | 'SEM'>('TODOS');
 
-  // Modal de concessão
+  // Modal de concessão/edição
   const [modalFunc, setModalFunc] = useState<string | null>(null);
+  const [editId, setEditId] = useState<number | null>(null);
   const [formTipo, setFormTipo] = useState('');
   const [formMeio, setFormMeio] = useState('');
   const [formValor, setFormValor] = useState('');
-  const [formModalidade, setFormModalidade] = useState<'VALOR_UNICO' | 'POR_DIARIA'>('VALOR_UNICO');
+  const [formModalidade, setFormModalidade] = useState<'VALOR_UNICO' | 'POR_DIARIA' | 'DIAS_FIXOS'>('VALOR_UNICO');
+  const [formQtdDias, setFormQtdDias] = useState('');
   const [formObs, setFormObs] = useState('');
   const [salvando, setSalvando] = useState(false);
+
+  // Grid consolidado (mês)
+  const [mostrarGrid, setMostrarGrid] = useState(false);
+  const [gridMes, setGridMes] = useState(() => {
+    const h = new Date(); const c = new Date(h.getFullYear(), h.getMonth() - 1, 1);
+    return `${c.getFullYear()}-${String(c.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [grid, setGrid] = useState<{ diasUteis: number; funcionarios: any[]; meiosResumo: any[]; totalGeral: number } | null>(null);
+  const [carregandoGrid, setCarregandoGrid] = useState(false);
 
   // Histórico
   const [histAberto, setHistAberto] = useState<number | null>(null);
@@ -79,26 +90,78 @@ export default function BeneficiosPage() {
     somaFixos: linhas.reduce((s, l) => s + l.totalFixos, 0)
   }), [linhas]);
 
-  const abrirModal = (nome: string) => {
-    setModalFunc(nome); setFormTipo(''); setFormMeio(''); setFormValor(''); setFormModalidade('VALOR_UNICO'); setFormObs('');
+  const abrirNovo = (nome: string) => {
+    setModalFunc(nome); setEditId(null);
+    setFormTipo(''); setFormMeio(''); setFormValor(''); setFormModalidade('VALOR_UNICO'); setFormQtdDias(''); setFormObs('');
+  };
+
+  // Item 4: editar um benefício já lançado — abre o modal preenchido
+  const abrirEdicao = (nome: string, b: LinhaFunc['beneficiosFixos'][0]) => {
+    setModalFunc(nome); setEditId(b.id);
+    setFormTipo(String(b.tipoId)); setFormMeio(String(b.meioId));
+    setFormValor(String(b.valor)); setFormModalidade(b.modalidade as any);
+    setFormQtdDias(b.qtdDias ? String(b.qtdDias) : ''); setFormObs(b.observacao || '');
   };
 
   const salvarBeneficio = async () => {
     if (!formTipo || !formMeio) { alert('Escolha o tipo e o meio de pagamento.'); return; }
+    if (formModalidade === 'DIAS_FIXOS' && (!Number(formQtdDias) || Number(formQtdDias) <= 0)) {
+      alert('Informe a quantidade de dias.'); return;
+    }
     setSalvando(true);
     try {
       const res = await salvarBeneficioAction({
+        id: editId || undefined,
         funcionarioNome: modalFunc!, tipoId: Number(formTipo), meioId: Number(formMeio),
-        valorMensal: Number(formValor) || 0, modalidade: formModalidade, observacao: formObs || null, usuarioNome: usuarioAtual
+        valorMensal: Number(formValor) || 0, modalidade: formModalidade,
+        qtdDias: formModalidade === 'DIAS_FIXOS' ? Number(formQtdDias) : null,
+        observacao: formObs || null, usuarioNome: usuarioAtual
       });
       if (!res.ok) throw new Error(res.erro);
-      setModalFunc(null);
+      setModalFunc(null); setEditId(null);
       carregar();
+      if (mostrarGrid) gerarGrid();
     } catch (e: any) {
       alert('Erro ao salvar: ' + e.message);
     } finally {
       setSalvando(false);
     }
+  };
+
+  // Item 2: grid consolidado por meio de pagamento
+  const gerarGrid = async () => {
+    setMostrarGrid(true); setCarregandoGrid(true);
+    try {
+      const res = await gridBeneficiosAction({ mesReferencia: gridMes });
+      if (res.ok) setGrid(res.info);
+    } catch (e: any) {
+      alert('Erro ao gerar grid: ' + e.message);
+    } finally {
+      setCarregandoGrid(false);
+    }
+  };
+
+  // Exporta o grid como CSV (abre no Excel)
+  const exportarCSV = () => {
+    if (!grid) return;
+    const linhas: string[] = ['Funcionário;Benefício;Meio;Detalhe;Valor no mês'];
+    grid.funcionarios.forEach((f: any) => {
+      f.itens.forEach((it: any) => {
+        linhas.push(`"${f.funcionario_nome}";"${it.tipo}";"${it.meio}";"${it.detalhe}";${it.valorMes.toFixed(2)}`);
+      });
+      linhas.push(`"${f.funcionario_nome}";"TOTAL";"";"";${f.total.toFixed(2)}`);
+    });
+    linhas.push('');
+    linhas.push('Resumo por meio de pagamento;;;;');
+    grid.meiosResumo.forEach((m: any) => linhas.push(`"${m.meio}";;;;${m.total.toFixed(2)}`));
+    linhas.push(`"TOTAL GERAL";;;;${grid.totalGeral.toFixed(2)}`);
+
+    const csv = '\uFEFF' + linhas.join('\n'); // BOM para acento no Excel
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `beneficios-${gridMes}.csv`; a.click();
+    URL.revokeObjectURL(url);
   };
 
   const removerBeneficio = async (id: number, tipo: string, nome: string) => {
@@ -182,6 +245,9 @@ export default function BeneficiosPage() {
           <button onClick={() => setMostrarCatalogos(!mostrarCatalogos)} className="text-[10px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-4 py-2.5 rounded-lg uppercase tracking-wider">
             ⚙ Tipos e Meios
           </button>
+          <button onClick={gerarGrid} className="text-[10px] font-black bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-4 py-2.5 rounded-lg uppercase tracking-wider">
+            📊 Gerar Grid
+          </button>
         </div>
 
         {/* Painel de catálogos (colapsável) */}
@@ -226,13 +292,13 @@ export default function BeneficiosPage() {
                       <span className="text-[10px] text-gray-500 font-bold uppercase">{l.cargo || '—'} • {l.contrato}</span>
                     </div>
 
-                    {/* Chips de benefícios */}
+                    {/* Chips de benefícios (só fixos; VR/VT vive no holerite) */}
                     <div className="flex flex-wrap gap-2 flex-1">
-                      {l.vr && <span className="text-[10px] font-black bg-teal-50 text-teal-700 px-2.5 py-1 rounded-full uppercase">VR {BRL(l.vr.valor)}{l.vr.modalidade === 'VALOR_FECHADO' ? '/mês' : '/dia'}</span>}
-                      {l.vt && <span className="text-[10px] font-black bg-teal-50 text-teal-700 px-2.5 py-1 rounded-full uppercase">VT {BRL(l.vt.valor)}{l.vt.modalidade === 'VALOR_FECHADO' ? '/mês' : '/dia'}</span>}
                       {l.beneficiosFixos.map(b => (
-                        <span key={b.id} className="text-[10px] font-black bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full uppercase inline-flex items-center gap-1.5 group">
-                          {b.tipo} {BRL(b.valor)}{b.modalidade === 'POR_DIARIA' ? '/dia' : ''} · {b.meio}
+                        <span key={b.id} className="text-[10px] font-black bg-indigo-50 text-indigo-700 pl-2.5 pr-1.5 py-1 rounded-full uppercase inline-flex items-center gap-1.5">
+                          <button onClick={() => abrirEdicao(l.nome, b)} title="Editar" className="hover:underline">
+                            {b.tipo} {BRL(b.valor)}{b.modalidade === 'POR_DIARIA' ? '/dia' : b.modalidade === 'DIAS_FIXOS' ? `/dia×${b.qtdDias}` : ''} · {b.meio}
+                          </button>
                           <button onClick={() => verHistorico(b.id)} title="Histórico" className="text-indigo-400 hover:text-indigo-700">🕐</button>
                           <button onClick={() => removerBeneficio(b.id, b.tipo, l.nome)} title="Remover" className="text-indigo-400 hover:text-red-600">✕</button>
                         </span>
@@ -240,7 +306,7 @@ export default function BeneficiosPage() {
                       {l.semNenhum && <span className="text-[10px] font-black text-amber-600 uppercase px-2 py-1">⚠ Sem benefícios</span>}
                     </div>
 
-                    <button onClick={() => abrirModal(l.nome)} className="text-[10px] font-black text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg uppercase tracking-wider whitespace-nowrap">
+                    <button onClick={() => abrirNovo(l.nome)} className="text-[10px] font-black text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg uppercase tracking-wider whitespace-nowrap">
                       + Benefício
                     </button>
                   </div>
@@ -255,11 +321,84 @@ export default function BeneficiosPage() {
         </p>
       </div>
 
+      {/* Modal do GRID consolidado */}
+      {mostrarGrid && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setMostrarGrid(false)}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center p-5 border-b border-gray-200">
+              <div>
+                <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider">📊 Grid de Benefícios</h2>
+                <p className="text-sm text-gray-500">{grid ? `${grid.diasUteis} dias úteis no mês` : 'Carregando...'}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="month" value={gridMes} onChange={e => setGridMes(e.target.value)} className="p-2 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+                <button onClick={gerarGrid} className="text-[10px] font-black bg-[#336699] text-white px-3 py-2 rounded-lg uppercase">Atualizar</button>
+                <button onClick={exportarCSV} disabled={!grid} className="text-[10px] font-black bg-emerald-600 text-white px-3 py-2 rounded-lg uppercase disabled:opacity-50">⬇ CSV</button>
+                <button onClick={() => setMostrarGrid(false)} className="text-[10px] font-black bg-gray-100 px-3 py-2 rounded-lg uppercase">Fechar</button>
+              </div>
+            </div>
+
+            <div className="overflow-y-auto p-5">
+              {carregandoGrid ? (
+                <p className="text-center py-12 text-gray-400 font-bold uppercase">Calculando...</p>
+              ) : !grid || grid.funcionarios.length === 0 ? (
+                <p className="text-center py-12 text-gray-400 font-bold uppercase">Nenhum benefício cadastrado.</p>
+              ) : (
+                <>
+                  {/* Tabela por funcionário */}
+                  <table className="w-full text-sm text-left border-collapse mb-6">
+                    <thead className="bg-[#F8FAFC] border-b-2 border-gray-300">
+                      <tr>
+                        <th className="p-2 font-black text-[#0C1D4D] uppercase text-[10px]">Funcionário</th>
+                        <th className="p-2 font-black text-[#0C1D4D] uppercase text-[10px]">Benefícios</th>
+                        <th className="p-2 font-black text-[#0C1D4D] uppercase text-[10px] text-right">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {grid.funcionarios.map((f: any) => (
+                        <tr key={f.funcionario_nome}>
+                          <td className="p-2 font-black text-[#0C1D4D] align-top whitespace-nowrap">{f.funcionario_nome}</td>
+                          <td className="p-2">
+                            {f.itens.map((it: any, i: number) => (
+                              <div key={i} className="text-[11px] text-gray-600">
+                                <span className="font-black text-indigo-700 uppercase">{it.tipo}</span> · {it.meio} <span className="text-gray-400">({it.detalhe})</span> — <span className="font-bold">{BRL(it.valorMes)}</span>
+                              </div>
+                            ))}
+                          </td>
+                          <td className="p-2 text-right font-black text-indigo-700 align-top whitespace-nowrap">{BRL(f.total)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {/* Resumo por meio de pagamento */}
+                  <div className="bg-[#F8FAFC] rounded-xl p-4">
+                    <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider mb-3">Total por meio de pagamento</h3>
+                    <div className="space-y-1">
+                      {grid.meiosResumo.map((m: any) => (
+                        <div key={m.meio} className="flex justify-between items-center text-sm">
+                          <span className="font-bold text-gray-600 uppercase text-[11px]">{m.meio}</span>
+                          <span className="font-black text-[#0C1D4D]">{BRL(m.total)}</span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between items-center pt-2 mt-2 border-t-2 border-gray-300">
+                        <span className="font-black text-[#0C1D4D] uppercase text-xs">Total geral</span>
+                        <span className="font-black text-indigo-700 text-lg">{BRL(grid.totalGeral)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal de concessão */}
       {modalFunc && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setModalFunc(null)}>
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
-            <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Conceder benefício</h2>
+            <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider mb-1">{editId ? 'Editar benefício' : 'Conceder benefício'}</h2>
             <p className="text-sm text-gray-500 mb-4">{modalFunc}</p>
             <div className="space-y-3">
               <div>
@@ -278,31 +417,41 @@ export default function BeneficiosPage() {
               </div>
               <div>
                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Modalidade</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button type="button" onClick={() => setFormModalidade('VALOR_UNICO')} className={`p-2.5 rounded-lg text-[11px] font-black uppercase tracking-wider border-2 transition-all ${formModalidade === 'VALOR_UNICO' ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-400'}`}>
-                    Valor único
-                  </button>
-                  <button type="button" onClick={() => setFormModalidade('POR_DIARIA')} className={`p-2.5 rounded-lg text-[11px] font-black uppercase tracking-wider border-2 transition-all ${formModalidade === 'POR_DIARIA' ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-400'}`}>
-                    Por diária
-                  </button>
+                <div className="grid grid-cols-3 gap-2">
+                  {([['VALOR_UNICO', 'Valor único'], ['POR_DIARIA', 'Dias úteis'], ['DIAS_FIXOS', 'Dias fixos']] as const).map(([val, lbl]) => (
+                    <button key={val} type="button" onClick={() => setFormModalidade(val)} className={`p-2 rounded-lg text-[10px] font-black uppercase tracking-wider border-2 transition-all ${formModalidade === val ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-400'}`}>
+                      {lbl}
+                    </button>
+                  ))}
                 </div>
               </div>
-              <div>
-                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">
-                  {formModalidade === 'POR_DIARIA' ? 'Valor da diária (R$/dia)' : 'Valor mensal (R$)'}
-                </label>
-                <input type="number" step="0.01" value={formValor} onChange={e => setFormValor(e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg text-sm font-bold" />
-                {formModalidade === 'POR_DIARIA' && <p className="text-[10px] font-bold text-indigo-500 mt-1 uppercase">O total do mês = diária × dias úteis (calculado no relatório de cada mês).</p>}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">
+                    {formModalidade === 'VALOR_UNICO' ? 'Valor mensal (R$)' : 'Valor da diária (R$)'}
+                  </label>
+                  <input type="number" step="0.01" value={formValor} onChange={e => setFormValor(e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg text-sm font-bold" />
+                </div>
+                {formModalidade === 'DIAS_FIXOS' && (
+                  <div>
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Qtd. de dias</label>
+                    <input type="number" step="1" value={formQtdDias} onChange={e => setFormQtdDias(e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg text-sm font-bold" />
+                  </div>
+                )}
               </div>
+              {formModalidade === 'POR_DIARIA' && <p className="text-[10px] font-bold text-indigo-500 uppercase">Total do mês = diária × dias úteis (calculado por mês no grid/relatório).</p>}
+              {formModalidade === 'DIAS_FIXOS' && Number(formValor) > 0 && Number(formQtdDias) > 0 && (
+                <p className="text-[10px] font-bold text-indigo-600 uppercase">Total: {BRL(Number(formValor) * Number(formQtdDias))} ({BRL(Number(formValor))}/dia × {formQtdDias} dias)</p>
+              )}
               <div>
                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Observação (opcional)</label>
                 <input type="text" value={formObs} onChange={e => setFormObs(e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg text-sm" />
               </div>
             </div>
             <div className="flex gap-2 mt-5">
-              <button onClick={() => setModalFunc(null)} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 font-black uppercase tracking-wider text-xs py-3 rounded-xl">Cancelar</button>
+              <button onClick={() => { setModalFunc(null); setEditId(null); }} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 font-black uppercase tracking-wider text-xs py-3 rounded-xl">Cancelar</button>
               <button onClick={salvarBeneficio} disabled={salvando} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider text-xs py-3 rounded-xl disabled:opacity-50">
-                {salvando ? 'Salvando...' : 'Conceder'}
+                {salvando ? 'Salvando...' : editId ? 'Salvar' : 'Conceder'}
               </button>
             </div>
           </div>

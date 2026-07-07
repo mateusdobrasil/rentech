@@ -11,20 +11,30 @@ type Resultado = { ok: boolean; erro?: string; info?: any };
 // ============================================================================
 // DIAS ÚTEIS DO MÊS (seg-sex menos feriados cadastrados) — mesma régua do holerite
 // ============================================================================
+// ============================================================================
+// DIAS ÚTEIS DO MÊS (seg-sex menos feriados) — mesma régua do holerite.
+// Aceita janela opcional [inicio, fim] para contar só o período trabalhado
+// (admissão/desligamento no meio do mês → benefício proporcional).
+// ============================================================================
+function diasUteisNoPeriodo(ano: number, mes: number, feriados: Set<string>, inicioIso?: string | null, fimIso?: string | null): number {
+  const ultimoDia = new Date(ano, mes, 0).getDate();
+  let uteis = 0;
+  for (let d = 1; d <= ultimoDia; d++) {
+    const diaSemana = new Date(ano, mes - 1, d).getDay(); // 0=dom, 6=sáb
+    const iso = `${ano}-${String(mes).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    if (diaSemana === 0 || diaSemana === 6 || feriados.has(iso)) continue;
+    if (inicioIso && iso < inicioIso) continue;   // antes da admissão
+    if (fimIso && iso > fimIso) continue;          // depois do desligamento
+    uteis++;
+  }
+  return uteis;
+}
+
 async function contarDiasUteis(db: ReturnType<typeof supabaseAdmin>, mesAno: string): Promise<number> {
   const [ano, mes] = mesAno.split('-').map(Number);
   const { data: fers } = await db.from('folha_feriados').select('data_feriado');
   const feriados = new Set((fers || []).map(f => f.data_feriado));
-
-  const ultimoDia = new Date(ano, mes, 0).getDate();
-  let uteis = 0;
-  for (let d = 1; d <= ultimoDia; d++) {
-    const data = new Date(ano, mes - 1, d);
-    const diaSemana = data.getDay(); // 0=dom, 6=sáb
-    const iso = `${ano}-${String(mes).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    if (diaSemana !== 0 && diaSemana !== 6 && !feriados.has(iso)) uteis++;
-  }
-  return uteis;
+  return diasUteisNoPeriodo(ano, mes, feriados);
 }
 
 // ============================================================================
@@ -34,37 +44,127 @@ async function contarDiasUteis(db: ReturnType<typeof supabaseAdmin>, mesAno: str
 export async function beneficiosDoMesAction(payload: { mesReferencia: string }): Promise<Resultado> {
   const db = supabaseAdmin();
   try {
-    const diasUteis = await contarDiasUteis(db, payload.mesReferencia);
+    const { diasUteisMes, itens } = await calcularBeneficiosMes(db, payload.mesReferencia);
 
-    const { data: beneficios } = await db.from('folha_beneficios')
-      .select('id, funcionario_nome, valor_mensal, modalidade, tipo_id, meio_id')
-      .eq('ativo', true);
-    const { data: tipos } = await db.from('folha_beneficio_tipos').select('id, nome');
-    const { data: meios } = await db.from('folha_beneficio_meios').select('id, nome');
-    const nomeTipo = (id: number) => tipos?.find(t => t.id === id)?.nome || '—';
-    const nomeMeio = (id: number) => meios?.find(m => m.id === id)?.nome || '—';
-
-    // Agrupa por funcionário, calculando o valor do mês conforme a modalidade
+    // Agrupa por funcionário
     const porFunc: Record<string, any> = {};
-    (beneficios || []).forEach(b => {
-      const porDiaria = b.modalidade === 'POR_DIARIA';
-      const valorMes = porDiaria ? Number(b.valor_mensal) * diasUteis : Number(b.valor_mensal);
-      (porFunc[b.funcionario_nome] ||= { funcionario_nome: b.funcionario_nome, itens: [], total: 0 });
-      porFunc[b.funcionario_nome].itens.push({
-        tipo: nomeTipo(b.tipo_id), meio: nomeMeio(b.meio_id),
-        modalidade: b.modalidade, valorBase: Number(b.valor_mensal), valorMes,
-        detalhe: porDiaria ? `${BRLnum(Number(b.valor_mensal))}/dia × ${diasUteis}` : 'valor único'
-      });
-      porFunc[b.funcionario_nome].total += valorMes;
+    itens.forEach(it => {
+      (porFunc[it.funcionario_nome] ||= { funcionario_nome: it.funcionario_nome, itens: [], total: 0 });
+      porFunc[it.funcionario_nome].itens.push({ tipo: it.tipo, meio: it.meio, modalidade: it.modalidade, valorBase: it.valorBase, valorMes: it.valorMes, detalhe: it.detalhe });
+      porFunc[it.funcionario_nome].total += it.valorMes;
     });
 
-    return { ok: true, info: { diasUteis, funcionarios: Object.values(porFunc) } };
+    return { ok: true, info: { diasUteis: diasUteisMes, funcionarios: Object.values(porFunc) } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
 }
 
+// ============================================================================
+// NÚCLEO: calcula os benefícios de um mês, com proporcionalidade por
+// admissão/desligamento. Reutilizado pelo relatório e pelo grid.
+// ============================================================================
+async function calcularBeneficiosMes(db: ReturnType<typeof supabaseAdmin>, mesAno: string) {
+  const [ano, mes] = mesAno.split('-').map(Number);
+  const primeiroDoMes = `${ano}-${String(mes).padStart(2, '0')}-01`;
+  const ultimoNum = new Date(ano, mes, 0).getDate();
+  const ultimoDoMes = `${ano}-${String(mes).padStart(2, '0')}-${String(ultimoNum).padStart(2, '0')}`;
+
+  const { data: fers } = await db.from('folha_feriados').select('data_feriado');
+  const feriados = new Set((fers || []).map(f => f.data_feriado));
+
+  // Dias úteis do mês cheio (referência para quem trabalhou o mês todo)
+  const diasUteisMes = diasUteisNoPeriodo(ano, mes, feriados);
+
+  // Datas de admissão/desligamento de cada funcionário
+  const { data: funcs } = await db.from('folha_funcionarios')
+    .select('nome_completo, data_admissao, data_desligamento');
+  const dadosFunc: Record<string, { adm: string | null; deslig: string | null }> = {};
+  (funcs || []).forEach(f => { dadosFunc[f.nome_completo] = { adm: f.data_admissao, deslig: f.data_desligamento }; });
+
+  // Dias úteis trabalhados no mês por funcionário (respeitando admissão/desligamento)
+  const diasUteisTrabalhados = (nome: string): number => {
+    const d = dadosFunc[nome] || { adm: null, deslig: null };
+    // Se admitido depois do mês ou desligado antes, não trabalhou no mês
+    if (d.adm && d.adm.slice(0, 7) > mesAno) return 0;
+    if (d.deslig && d.deslig.slice(0, 7) < mesAno) return 0;
+    const inicio = (d.adm && d.adm > primeiroDoMes) ? d.adm : null;
+    const fim = (d.deslig && d.deslig < ultimoDoMes) ? d.deslig : null;
+    return diasUteisNoPeriodo(ano, mes, feriados, inicio, fim);
+  };
+
+  const { data: beneficios } = await db.from('folha_beneficios')
+    .select('id, funcionario_nome, valor_mensal, modalidade, qtd_dias, tipo_id, meio_id')
+    .eq('ativo', true);
+  const { data: tipos } = await db.from('folha_beneficio_tipos').select('id, nome');
+  const { data: meios } = await db.from('folha_beneficio_meios').select('id, nome');
+  const nomeTipo = (id: number) => tipos?.find(t => t.id === id)?.nome || '—';
+  const nomeMeio = (id: number) => meios?.find(m => m.id === id)?.nome || '—';
+
+  const itens = (beneficios || []).map(b => {
+    const diasTrab = diasUteisTrabalhados(b.funcionario_nome);
+    const parcial = diasTrab < diasUteisMes; // trabalhou só parte do mês
+    let valorMes: number;
+    let detalhe: string;
+
+    if (b.modalidade === 'POR_DIARIA') {
+      // Proporcional: dias úteis dentro do período trabalhado
+      valorMes = Number(b.valor_mensal) * diasTrab;
+      detalhe = `${BRLnum(Number(b.valor_mensal))}/dia × ${diasTrab} úteis${parcial ? ' (proporc.)' : ''}`;
+    } else if (b.modalidade === 'DIAS_FIXOS') {
+      // Teto: min(dias digitados, dias úteis trabalhados)
+      const digitados = Number(b.qtd_dias) || 0;
+      const diasPagos = Math.min(digitados, diasTrab);
+      valorMes = Number(b.valor_mensal) * diasPagos;
+      detalhe = `${BRLnum(Number(b.valor_mensal))}/dia × ${diasPagos} dias${diasPagos < digitados ? ` (teto ${digitados}, proporc.)` : ''}`;
+    } else {
+      // Valor único: não é proporcional
+      valorMes = Number(b.valor_mensal);
+      detalhe = 'valor único';
+    }
+
+    return {
+      funcionario_nome: b.funcionario_nome,
+      tipo: nomeTipo(b.tipo_id), meio: nomeMeio(b.meio_id),
+      modalidade: b.modalidade, valorBase: Number(b.valor_mensal), valorMes, detalhe,
+      diasTrab, parcial
+    };
+  });
+
+  return { ano, mes, diasUteisMes, itens };
+}
+
 const BRLnum = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// ============================================================================
+// GRID CONSOLIDADO DE BENEFÍCIOS (para a aba e o financeiro)
+// Retorna: por funcionário (itens + total) E por meio de pagamento + total geral.
+// ============================================================================
+export async function gridBeneficiosAction(payload: { mesReferencia: string }): Promise<Resultado> {
+  const db = supabaseAdmin();
+  try {
+    const { diasUteisMes, itens } = await calcularBeneficiosMes(db, payload.mesReferencia);
+
+    const porFunc: Record<string, any> = {};
+    const porMeio: Record<string, number> = {};
+    let totalGeral = 0;
+
+    itens.forEach(it => {
+      (porFunc[it.funcionario_nome] ||= { funcionario_nome: it.funcionario_nome, itens: [], total: 0 });
+      porFunc[it.funcionario_nome].itens.push({ tipo: it.tipo, meio: it.meio, valorMes: it.valorMes, detalhe: it.detalhe });
+      porFunc[it.funcionario_nome].total += it.valorMes;
+      porMeio[it.meio] = (porMeio[it.meio] || 0) + it.valorMes;
+      totalGeral += it.valorMes;
+    });
+
+    const funcionarios = Object.values(porFunc).sort((a: any, b: any) => a.funcionario_nome.localeCompare(b.funcionario_nome));
+    const meiosResumo = Object.entries(porMeio).map(([meio, total]) => ({ meio, total })).sort((a, b) => b.total - a.total);
+
+    return { ok: true, info: { diasUteis: diasUteisMes, funcionarios, meiosResumo, totalGeral } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
 
 // ============================================================================
 // CATÁLOGOS (tipos e meios)
@@ -123,16 +223,22 @@ export async function salvarBeneficioAction(payload: {
   tipoId: number;
   meioId: number;
   valorMensal: number;
-  modalidade: 'VALOR_UNICO' | 'POR_DIARIA';
+  modalidade: 'VALOR_UNICO' | 'POR_DIARIA' | 'DIAS_FIXOS';
+  qtdDias?: number | null;
   observacao?: string | null;
   usuarioNome: string;
 }): Promise<Resultado> {
   const db = supabaseAdmin();
-  const { id, funcionarioNome, tipoId, meioId, valorMensal, modalidade, observacao, usuarioNome } = payload;
+  const { id, funcionarioNome, tipoId, meioId, valorMensal, modalidade, qtdDias, observacao, usuarioNome } = payload;
 
   if (!funcionarioNome || !tipoId || !meioId) {
     return { ok: false, erro: 'Funcionário, tipo e meio de pagamento são obrigatórios.' };
   }
+  if (modalidade === 'DIAS_FIXOS' && (!qtdDias || qtdDias <= 0)) {
+    return { ok: false, erro: 'Informe a quantidade de dias para a modalidade "Dias fixos".' };
+  }
+
+  const diasField = modalidade === 'DIAS_FIXOS' ? (qtdDias || null) : null;
 
   try {
     // Nomes de meio para o histórico legível
@@ -145,10 +251,13 @@ export async function salvarBeneficioAction(payload: {
       if (!atual) return { ok: false, erro: 'Benefício não encontrado.' };
 
       const { error } = await db.from('folha_beneficios').update({
-        meio_id: meioId, valor_mensal: valorMensal, modalidade, observacao: observacao || null,
-        atualizado_em: new Date().toISOString()
+        tipo_id: tipoId, meio_id: meioId, valor_mensal: valorMensal, modalidade, qtd_dias: diasField,
+        observacao: observacao || null, atualizado_em: new Date().toISOString()
       }).eq('id', id);
-      if (error) throw new Error(error.message);
+      if (error) {
+        if (error.code === '23505') return { ok: false, erro: 'Este funcionário já tem este tipo de benefício.' };
+        throw new Error(error.message);
+      }
 
       // Registra histórico das mudanças relevantes
       const historico: any[] = [];
@@ -165,7 +274,7 @@ export async function salvarBeneficioAction(payload: {
       // Criação
       const { data: novo, error } = await db.from('folha_beneficios').insert({
         funcionario_nome: funcionarioNome, tipo_id: tipoId, meio_id: meioId,
-        valor_mensal: valorMensal, modalidade, observacao: observacao || null
+        valor_mensal: valorMensal, modalidade, qtd_dias: diasField, observacao: observacao || null
       }).select('id').single();
       if (error) {
         if (error.code === '23505') return { ok: false, erro: 'Este funcionário já tem este tipo de benefício. Edite o existente.' };
@@ -224,18 +333,12 @@ export async function painelBeneficiosAction(): Promise<Resultado> {
   try {
     // Funcionários ativos
     const { data: funcs } = await db.from('folha_funcionarios')
-      .select('nome_completo, tipo_contrato, valor_refeicao, valor_transporte, cargo')
+      .select('nome_completo, tipo_contrato, cargo')
       .eq('ativo', true).order('nome_completo');
-
-    // Regras (para saber direito a VR/VT e modalidade)
-    const { data: regras } = await db.from('folha_parametros')
-      .select('nome_regra, direito_vr, direito_vt, modalidade_beneficio');
-    const regraPorNome: Record<string, any> = {};
-    (regras || []).forEach(r => { regraPorNome[r.nome_regra] = r; });
 
     // Benefícios fixos ativos, com nomes de tipo e meio
     const { data: beneficios } = await db.from('folha_beneficios')
-      .select('id, funcionario_nome, valor_mensal, modalidade, ativo, observacao, tipo_id, meio_id')
+      .select('id, funcionario_nome, valor_mensal, modalidade, qtd_dias, ativo, observacao, tipo_id, meio_id')
       .eq('ativo', true);
     const { data: tipos } = await db.from('folha_beneficio_tipos').select('id, nome');
     const { data: meios } = await db.from('folha_beneficio_meios').select('id, nome');
@@ -245,34 +348,26 @@ export async function painelBeneficiosAction(): Promise<Resultado> {
     const benefPorFunc: Record<string, any[]> = {};
     (beneficios || []).forEach(b => {
       (benefPorFunc[b.funcionario_nome] ||= []).push({
-        id: b.id, tipo: nomeTipo(b.tipo_id), meio: nomeMeio(b.meio_id),
-        valor: Number(b.valor_mensal), modalidade: b.modalidade || 'VALOR_UNICO', observacao: b.observacao
+        id: b.id, tipoId: b.tipo_id, meioId: b.meio_id,
+        tipo: nomeTipo(b.tipo_id), meio: nomeMeio(b.meio_id),
+        valor: Number(b.valor_mensal), modalidade: b.modalidade || 'VALOR_UNICO',
+        qtdDias: b.qtd_dias, observacao: b.observacao
       });
     });
 
-    // Monta a linha de cada funcionário
+    // Monta a linha de cada funcionário (só benefícios fixos; VR/VT vive no holerite)
     const linhas = (funcs || []).map(f => {
-      const regra = regraPorNome[f.tipo_contrato] || {};
-      const temVr = regra.direito_vr === true;
-      const temVt = regra.direito_vt === true;
-      const modalidade = regra.modalidade_beneficio || 'POR_DIA';
       const fixos = benefPorFunc[f.nome_completo] || [];
-
-      // Total mensal dos benefícios de VALOR ÚNICO (os por-diária dependem do
-      // mês, então não entram num total fixo — aparecem calculados no relatório).
-      const totalFixos = fixos.filter(b => b.modalidade !== 'POR_DIARIA').reduce((s, b) => s + b.valor, 0);
-      const temPorDiaria = fixos.some(b => b.modalidade === 'POR_DIARIA');
-
+      const totalFixos = fixos.filter(b => b.modalidade === 'VALOR_UNICO').reduce((s, b) => s + b.valor, 0);
+      const temVariavel = fixos.some(b => b.modalidade !== 'VALOR_UNICO');
       return {
         nome: f.nome_completo,
         cargo: f.cargo,
         contrato: f.tipo_contrato,
-        vr: temVr ? { valor: Number(f.valor_refeicao) || 0, modalidade } : null,
-        vt: temVt ? { valor: Number(f.valor_transporte) || 0, modalidade } : null,
         beneficiosFixos: fixos,
         totalFixos,
-        temPorDiaria,
-        semNenhum: !temVr && !temVt && fixos.length === 0
+        temVariavel,
+        semNenhum: fixos.length === 0
       };
     });
 

@@ -3,9 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-import { 
-    listarAssinaturasAction, consultarAssinaturaAction, enviarDocumentoAvulsoAction, listarFuncionariosAtivosAction 
-  } from '../actions/actions-assinatura';
+import { listarAssinaturasAction, consultarAssinaturaAction, enviarDocumentoAvulsoAction, listarFuncionariosAtivosAction } from '../actions/actions-assinatura';
 
 interface Assinatura {
   id: number;
@@ -82,8 +80,8 @@ export default function AssinaturasPage() {
       if (!res.ok) throw new Error(res.erro);
       // DEBUG TEMPORÁRIO: mostra o que a Autentique devolveu nos eventos
       if (res.info?.debug) {
-        console.log('Autentique eventos:', res.info.debug);
-        alert(`Status: ${res.info.status}\n\nEventos retornados pela Autentique:\n${JSON.stringify(res.info.debug, null, 2)}`);
+        console.log('Autentique — signature bruto:', res.info.debug);
+        alert(`Status: ${res.info.status}\n\nSignature bruto da Autentique:\n${JSON.stringify(res.info.debug.signatureBruto, null, 2)}`);
       }
       carregar(mesReferencia);
     } catch (e: any) {

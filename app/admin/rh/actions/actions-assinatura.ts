@@ -354,16 +354,16 @@ export async function consultarAssinaturaAction(payload: {
       atualizado_em: new Date().toISOString()
     }).eq('autentique_doc_id', ctrl.autentique_doc_id);
 
-    // DEBUG TEMPORÁRIO: retorna o que a Autentique devolveu nos eventos,
-    // para diagnosticar por que as datas vieram vazias. Remover depois.
+    // DEBUG TEMPORÁRIO: retorna o objeto signature BRUTO completo que a
+    // Autentique devolveu, para ver todos os campos preenchidos. Remover depois.
     return {
       ok: true,
       info: {
         status: novoStatus,
         debug: {
-          viewed: assinatura?.viewed ?? null,
-          signed: assinatura?.signed ?? null,
-          rejected: assinatura?.rejected ?? null
+          signatureBruto: assinatura ?? null,
+          totalSignatures: doc?.signatures?.length ?? 0,
+          files: doc?.files ?? null
         }
       }
     };

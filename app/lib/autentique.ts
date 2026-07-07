@@ -130,6 +130,7 @@ export async function autentiqueConsultarDocumento(docId: string) {
       document(id: $id) {
         id
         name
+        created_at
         files { original signed pades }
         signatures {
           public_id
@@ -137,11 +138,17 @@ export async function autentiqueConsultarDocumento(docId: string) {
           email
           created_at
           action { name }
-          viewed  { created_at }
-          signed  { created_at }
-          rejected { created_at }
+          email_events { sent opened delivered }
+          viewed { ...event }
+          signed { ...event }
+          rejected { ...event }
         }
       }
+    }
+    fragment event on Event {
+      ip
+      created_at
+      reason
     }
   `;
 

@@ -46,7 +46,7 @@ export default function BeneficiosPage() {
     const h = new Date(); const c = new Date(h.getFullYear(), h.getMonth() - 1, 1);
     return `${c.getFullYear()}-${String(c.getMonth() + 1).padStart(2, '0')}`;
   });
-  const [grid, setGrid] = useState<{ diasUteis: number; funcionarios: any[]; meiosResumo: any[]; totalGeral: number } | null>(null);
+  const [grid, setGrid] = useState<{ diasUteis: number; colunas: string[]; funcionarios: any[]; totaisColuna: Record<string, number>; totalGeral: number } | null>(null);
   const [carregandoGrid, setCarregandoGrid] = useState(false);
 
   // Histórico
@@ -141,22 +141,25 @@ export default function BeneficiosPage() {
     }
   };
 
-  // Exporta o grid como CSV (abre no Excel)
+  // Exporta o grid como CSV matriz (abre no Excel)
   const exportarCSV = () => {
     if (!grid) return;
-    const linhas: string[] = ['Funcionário;Benefício;Meio;Detalhe;Valor no mês'];
+    const sep = ';';
+    const cabecalho = ['Funcionário', ...grid.colunas, 'Total'].map(c => `"${c}"`).join(sep);
+    const linhas: string[] = [cabecalho];
     grid.funcionarios.forEach((f: any) => {
-      f.itens.forEach((it: any) => {
-        linhas.push(`"${f.funcionario_nome}";"${it.tipo}";"${it.meio}";"${it.detalhe}";${it.valorMes.toFixed(2)}`);
-      });
-      linhas.push(`"${f.funcionario_nome}";"TOTAL";"";"";${f.total.toFixed(2)}`);
+      const cels = [`"${f.funcionario_nome}"`];
+      grid.colunas.forEach(c => cels.push((f.valores[c] || 0).toFixed(2).replace('.', ',')));
+      cels.push(f.total.toFixed(2).replace('.', ','));
+      linhas.push(cels.join(sep));
     });
-    linhas.push('');
-    linhas.push('Resumo por meio de pagamento;;;;');
-    grid.meiosResumo.forEach((m: any) => linhas.push(`"${m.meio}";;;;${m.total.toFixed(2)}`));
-    linhas.push(`"TOTAL GERAL";;;;${grid.totalGeral.toFixed(2)}`);
+    // Rodapé de totais
+    const rodape = ['"TOTAL"'];
+    grid.colunas.forEach(c => rodape.push((grid.totaisColuna[c] || 0).toFixed(2).replace('.', ',')));
+    rodape.push(grid.totalGeral.toFixed(2).replace('.', ','));
+    linhas.push(rodape.join(sep));
 
-    const csv = '\uFEFF' + linhas.join('\n'); // BOM para acento no Excel
+    const csv = '\uFEFF' + linhas.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -324,7 +327,7 @@ export default function BeneficiosPage() {
       {/* Modal do GRID consolidado */}
       {mostrarGrid && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setMostrarGrid(false)}>
-          <div className="bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-6xl w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-center p-5 border-b border-gray-200">
               <div>
                 <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider">📊 Grid de Benefícios</h2>
@@ -338,56 +341,45 @@ export default function BeneficiosPage() {
               </div>
             </div>
 
-            <div className="overflow-y-auto p-5">
+            <div className="overflow-auto p-5">
               {carregandoGrid ? (
                 <p className="text-center py-12 text-gray-400 font-bold uppercase">Calculando...</p>
               ) : !grid || grid.funcionarios.length === 0 ? (
                 <p className="text-center py-12 text-gray-400 font-bold uppercase">Nenhum benefício cadastrado.</p>
               ) : (
-                <>
-                  {/* Tabela por funcionário */}
-                  <table className="w-full text-sm text-left border-collapse mb-6">
-                    <thead className="bg-[#F8FAFC] border-b-2 border-gray-300">
-                      <tr>
-                        <th className="p-2 font-black text-[#0C1D4D] uppercase text-[10px]">Funcionário</th>
-                        <th className="p-2 font-black text-[#0C1D4D] uppercase text-[10px]">Benefícios</th>
-                        <th className="p-2 font-black text-[#0C1D4D] uppercase text-[10px] text-right">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {grid.funcionarios.map((f: any) => (
-                        <tr key={f.funcionario_nome}>
-                          <td className="p-2 font-black text-[#0C1D4D] align-top whitespace-nowrap">{f.funcionario_nome}</td>
-                          <td className="p-2">
-                            {f.itens.map((it: any, i: number) => (
-                              <div key={i} className="text-[11px] text-gray-600">
-                                <span className="font-black text-indigo-700 uppercase">{it.tipo}</span> · {it.meio} <span className="text-gray-400">({it.detalhe})</span> — <span className="font-bold">{BRL(it.valorMes)}</span>
-                              </div>
-                            ))}
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr className="bg-[#0C1D4D] text-white">
+                      <th className="p-2.5 text-left font-black uppercase text-[10px] tracking-wider sticky left-0 bg-[#0C1D4D] z-10">Funcionário</th>
+                      {grid.colunas.map(c => (
+                        <th key={c} className="p-2.5 text-right font-black uppercase text-[10px] tracking-wider whitespace-nowrap">{c}</th>
+                      ))}
+                      <th className="p-2.5 text-right font-black uppercase text-[10px] tracking-wider bg-indigo-700">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {grid.funcionarios.map((f: any, idx: number) => (
+                      <tr key={f.funcionario_nome} className={idx % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]'}>
+                        <td className={`p-2.5 font-black text-[#0C1D4D] whitespace-nowrap sticky left-0 z-10 ${idx % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]'}`}>{f.funcionario_nome}</td>
+                        {grid.colunas.map(c => (
+                          <td key={c} className="p-2.5 text-right tabular-nums text-gray-700">
+                            {f.valores[c] ? BRL(f.valores[c]) : <span className="text-gray-300">—</span>}
                           </td>
-                          <td className="p-2 text-right font-black text-indigo-700 align-top whitespace-nowrap">{BRL(f.total)}</td>
-                        </tr>
+                        ))}
+                        <td className="p-2.5 text-right font-black text-indigo-700 tabular-nums whitespace-nowrap bg-indigo-50/50">{BRL(f.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-[#F8FAFC] border-t-2 border-[#0C1D4D]">
+                      <td className="p-2.5 font-black text-[#0C1D4D] uppercase text-[11px] sticky left-0 bg-[#F8FAFC] z-10">Total</td>
+                      {grid.colunas.map(c => (
+                        <td key={c} className="p-2.5 text-right font-black text-[#0C1D4D] tabular-nums whitespace-nowrap">{BRL(grid.totaisColuna[c] || 0)}</td>
                       ))}
-                    </tbody>
-                  </table>
-
-                  {/* Resumo por meio de pagamento */}
-                  <div className="bg-[#F8FAFC] rounded-xl p-4">
-                    <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider mb-3">Total por meio de pagamento</h3>
-                    <div className="space-y-1">
-                      {grid.meiosResumo.map((m: any) => (
-                        <div key={m.meio} className="flex justify-between items-center text-sm">
-                          <span className="font-bold text-gray-600 uppercase text-[11px]">{m.meio}</span>
-                          <span className="font-black text-[#0C1D4D]">{BRL(m.total)}</span>
-                        </div>
-                      ))}
-                      <div className="flex justify-between items-center pt-2 mt-2 border-t-2 border-gray-300">
-                        <span className="font-black text-[#0C1D4D] uppercase text-xs">Total geral</span>
-                        <span className="font-black text-indigo-700 text-lg">{BRL(grid.totalGeral)}</span>
-                      </div>
-                    </div>
-                  </div>
-                </>
+                      <td className="p-2.5 text-right font-black text-indigo-700 text-base tabular-nums whitespace-nowrap bg-indigo-100">{BRL(grid.totalGeral)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
               )}
             </div>
           </div>

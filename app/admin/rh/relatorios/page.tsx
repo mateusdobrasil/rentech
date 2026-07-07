@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
-import { beneficiosDoMesAction } from '../actions/actions-beneficios';
+import { gridBeneficiosAction } from '../actions/actions-beneficios';
 
 // ============================================================================
 // UTILITÁRIOS (mesmas fórmulas do holerite, para os números baterem)
@@ -241,7 +241,7 @@ export default function RelatoriosRH() {
   const [ordenacao, setOrdenacao] = useState<'nome' | 'liquido' | 'extras' | 'faltas'>('nome');
   const [modoRelatorio, setModoRelatorio] = useState<'folha' | 'financeiro' | 'beneficios'>('folha');
   const modoFinanceiro = modoRelatorio === 'financeiro'; // compat com o código existente
-  const [beneficiosMes, setBeneficiosMes] = useState<{ diasUteis: number; funcionarios: any[] }>({ diasUteis: 0, funcionarios: [] });
+  const [beneficiosMes, setBeneficiosMes] = useState<{ diasUteis: number; colunas: string[]; funcionarios: any[]; totaisColuna: Record<string, number>; totalGeral: number }>({ diasUteis: 0, colunas: [], funcionarios: [], totaisColuna: {}, totalGeral: 0 });
 
   const [mesReferencia, setMesReferencia] = useState(() => {
     // Competência = mês anterior ao corrente (o mês corrente é o de pagamento)
@@ -255,7 +255,7 @@ export default function RelatoriosRH() {
   // Carrega os benefícios calculados para o mês (para o grid de benefícios)
   useEffect(() => {
     let vivo = true;
-    beneficiosDoMesAction({ mesReferencia }).then(res => {
+    gridBeneficiosAction({ mesReferencia }).then(res => {
       if (vivo && res.ok) setBeneficiosMes(res.info);
     });
     return () => { vivo = false; };
@@ -314,7 +314,17 @@ export default function RelatoriosRH() {
       const fechPorFunc: Record<string, any> = {};
       (fechs || []).forEach(f => { fechPorFunc[f.funcionario_nome] = f.dados; });
 
-      const resultado: LinhaRelatorio[] = (funcs || []).map((f: FuncionarioFin) => {
+      // Filtra quem estava ativo NO MÊS: admitido até o fim do mês e não
+      // desligado antes do início. Evita admitido em julho aparecer em junho.
+      const trabalhouNoMes = (f: any) => {
+        const adm = f.data_admissao as string | null;
+        const des = f.data_desligamento as string | null;
+        if (adm && adm.slice(0, 7) > mesAno) return false;      // admitido depois do mês
+        if (des && des.slice(0, 7) < mesAno) return false;      // desligado antes do mês
+        return true;
+      };
+
+      const resultado: LinhaRelatorio[] = (funcs || []).filter(trabalhouNoMes).map((f: FuncionarioFin) => {
         const ap = apurarPonto(porFunc[f.nome_completo] || {}, feriados, mesAno, (f as any).data_admissao, (f as any).data_desligamento);
         const fechado = !!fechPorFunc[f.nome_completo];
 
@@ -518,40 +528,36 @@ export default function RelatoriosRH() {
             ) : (
               <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden print:border-none print:shadow-none">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm text-left border-collapse">
+                  <table className="w-full text-sm border-collapse">
                     <thead className="bg-[#F8FAFC] print:bg-transparent border-b-2 border-black">
                       <tr>
-                        <th className="p-3 font-black text-[#0C1D4D] uppercase text-[11px] tracking-wider">Funcionário</th>
-                        <th className="p-3 font-black text-[#0C1D4D] uppercase text-[11px] tracking-wider">Benefícios</th>
-                        <th className="p-3 font-black text-[#0C1D4D] uppercase text-[11px] tracking-wider text-right">Total no mês</th>
+                        <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[11px] tracking-wider">Funcionário</th>
+                        {beneficiosMes.colunas.map((c: string) => (
+                          <th key={c} className="p-3 text-right font-black text-[#0C1D4D] uppercase text-[11px] tracking-wider whitespace-nowrap">{c}</th>
+                        ))}
+                        <th className="p-3 text-right font-black text-indigo-700 uppercase text-[11px] tracking-wider">Total</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#E2E8F0]">
                       {beneficiosMes.funcionarios.map((f: any) => (
                         <tr key={f.funcionario_nome} className="hover:bg-[#F8FAFC] print:hover:bg-transparent">
-                          <td className="p-3 font-black text-[#0C1D4D] align-top whitespace-nowrap">{f.funcionario_nome}</td>
-                          <td className="p-3">
-                            <div className="flex flex-col gap-1">
-                              {f.itens.map((it: any, i: number) => (
-                                <div key={i} className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-[11px] font-black text-indigo-700 uppercase">{it.tipo}</span>
-                                  <span className="text-[10px] font-bold text-gray-400 uppercase">· {it.meio}</span>
-                                  <span className="text-[10px] font-medium text-gray-500">({it.detalhe})</span>
-                                  <span className="text-[11px] font-black text-[#0C1D4D]">{formatCurrency(it.valorMes)}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </td>
-                          <td className="p-3 text-right font-black text-indigo-700 align-top whitespace-nowrap">{formatCurrency(f.total)}</td>
+                          <td className="p-3 font-black text-[#0C1D4D] whitespace-nowrap">{f.funcionario_nome}</td>
+                          {beneficiosMes.colunas.map((c: string) => (
+                            <td key={c} className="p-3 text-right tabular-nums text-gray-700">
+                              {f.valores[c] ? formatCurrency(f.valores[c]) : <span className="text-gray-300">—</span>}
+                            </td>
+                          ))}
+                          <td className="p-3 text-right font-black text-indigo-700 tabular-nums whitespace-nowrap">{formatCurrency(f.total)}</td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot>
                       <tr className="border-t-2 border-black bg-[#F8FAFC] print:bg-transparent">
-                        <td className="p-3 font-black text-[#0C1D4D] uppercase text-[11px]" colSpan={2}>Total geral dos benefícios fixos</td>
-                        <td className="p-3 text-right font-black text-indigo-700 text-base">
-                          {formatCurrency(beneficiosMes.funcionarios.reduce((s: number, f: any) => s + f.total, 0))}
-                        </td>
+                        <td className="p-3 font-black text-[#0C1D4D] uppercase text-[11px]">Total</td>
+                        {beneficiosMes.colunas.map((c: string) => (
+                          <td key={c} className="p-3 text-right font-black text-[#0C1D4D] tabular-nums whitespace-nowrap">{formatCurrency(beneficiosMes.totaisColuna[c] || 0)}</td>
+                        ))}
+                        <td className="p-3 text-right font-black text-indigo-700 text-base tabular-nums whitespace-nowrap">{formatCurrency(beneficiosMes.totalGeral)}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -560,7 +566,7 @@ export default function RelatoriosRH() {
             )}
 
             <p className="text-[10px] text-gray-400 font-medium mt-4 no-print">
-              VR e VT não entram aqui — são calculados por dia trabalhado no holerite. Este grid mostra os benefícios fixos (alimentação, saúde, etc.). Por diária = valor × {beneficiosMes.diasUteis} dias úteis do mês.
+              VR e VT não entram aqui — são calculados por dia trabalhado no holerite. Este grid mostra os benefícios fixos. Benefícios por diária = valor × dias úteis trabalhados (proporcional à admissão/desligamento). Mês com {beneficiosMes.diasUteis} dias úteis.
             </p>
           </div>
         )}

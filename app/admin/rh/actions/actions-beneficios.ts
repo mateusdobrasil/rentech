@@ -145,22 +145,28 @@ export async function gridBeneficiosAction(payload: { mesReferencia: string }): 
   try {
     const { diasUteisMes, itens } = await calcularBeneficiosMes(db, payload.mesReferencia);
 
-    const porFunc: Record<string, any> = {};
-    const porMeio: Record<string, number> = {};
-    let totalGeral = 0;
+    // Colunas = tipos de benefício que aparecem (ordenados alfabeticamente)
+    const tiposSet = new Set<string>();
+    itens.forEach(it => tiposSet.add(it.tipo));
+    const colunas = Array.from(tiposSet).sort((a, b) => a.localeCompare(b));
 
+    // Linhas = funcionários, com o valor de cada tipo de benefício
+    const porFunc: Record<string, any> = {};
     itens.forEach(it => {
-      (porFunc[it.funcionario_nome] ||= { funcionario_nome: it.funcionario_nome, itens: [], total: 0 });
-      porFunc[it.funcionario_nome].itens.push({ tipo: it.tipo, meio: it.meio, valorMes: it.valorMes, detalhe: it.detalhe });
+      (porFunc[it.funcionario_nome] ||= { funcionario_nome: it.funcionario_nome, valores: {}, total: 0 });
+      // Soma caso o funcionário tenha mais de um benefício do mesmo tipo (raro, mas seguro)
+      porFunc[it.funcionario_nome].valores[it.tipo] = (porFunc[it.funcionario_nome].valores[it.tipo] || 0) + it.valorMes;
       porFunc[it.funcionario_nome].total += it.valorMes;
-      porMeio[it.meio] = (porMeio[it.meio] || 0) + it.valorMes;
-      totalGeral += it.valorMes;
     });
 
     const funcionarios = Object.values(porFunc).sort((a: any, b: any) => a.funcionario_nome.localeCompare(b.funcionario_nome));
-    const meiosResumo = Object.entries(porMeio).map(([meio, total]) => ({ meio, total })).sort((a, b) => b.total - a.total);
 
-    return { ok: true, info: { diasUteis: diasUteisMes, funcionarios, meiosResumo, totalGeral } };
+    // Totais por coluna (rodapé)
+    const totaisColuna: Record<string, number> = {};
+    colunas.forEach(c => { totaisColuna[c] = funcionarios.reduce((s: number, f: any) => s + (f.valores[c] || 0), 0); });
+    const totalGeral = funcionarios.reduce((s: number, f: any) => s + f.total, 0);
+
+    return { ok: true, info: { diasUteis: diasUteisMes, colunas, funcionarios, totaisColuna, totalGeral } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

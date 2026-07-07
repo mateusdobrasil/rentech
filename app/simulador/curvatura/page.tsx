@@ -3,42 +3,36 @@
 import { useState, useEffect, useRef } from 'react';
 import { Analytics } from "@vercel/analytics/next";
 
-const MOD_W = 0.5; // Largura do módulo em metros
+const MOD_W = 0.5; // Largura exata do chassi em metros
 
 export default function SimuladorCurvatura() {
-  // Estados de Informações
+  // 1. Dados do Projeto
   const [projeto, setProjeto] = useState('');
   const [cliente, setCliente] = useState('');
 
-  // Estados de Configuração
-  const [modeloPainel, setModeloPainel] = useState<number>(5); // 5°, 15°, 45°
-  const [tipoCurva, setTipoCurva] = useState<'concavo' | 'convexo'>('concavo');
-  // ADICIONADO: 'circunferencia' às opções
+  // 2. O Painel
+  const [modeloPainel, setModeloPainel] = useState<number>(5); 
+  
+  // 3. Lógica da Curvatura (Como ele curva)
   const [modoAngulo, setModoAngulo] = useState<'unico' | 'diametro' | 'raio' | 'circunferencia' | 'multiplo'>('unico');
   const [angleInput, setAngleInput] = useState<string>('5');
   
-  // Estados de Dimensionamento
+  // 4. Dimensionamento (Qual o tamanho)
   const [sizeMode, setSizeMode] = useState<'qty' | 'corda' | 'linear'>('qty');
   const [qty, setQty] = useState<number>(10);
   const [inputCorda, setInputCorda] = useState<number>(2.0);
   const [inputLinear, setInputLinear] = useState<number>(5.0);
 
-  // Estados de Resultados / Telemetria
+  // 5. Motor de Resultados (Adicionado circDisplay)
   const [resultados, setResultados] = useState({
-    n: 0,
-    linear: 0,
-    corda: 0,
-    totalAngle: 0,
-    raioDisplay: '---',
-    diamDisplay: '---',
+    n: 0, linear: 0, corda: 0, totalAngle: 0, 
+    raioDisplay: '---', diamDisplay: '---', circDisplay: '---', 
     avisoSeguranca: ''
   });
 
-  // Referência para o Canvas
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isPrintMode, setIsPrintMode] = useState(false);
 
-  // Listener para impressão
   useEffect(() => {
     const handleBeforePrint = () => setIsPrintMode(true);
     const handleAfterPrint = () => setIsPrintMode(false);
@@ -50,23 +44,25 @@ export default function SimuladorCurvatura() {
     };
   }, []);
 
-  // Lógica principal: Recalcular e Desenhar sempre que houver mudança nos inputs
   useEffect(() => {
     calcularEDesenhar();
-  }, [projeto, cliente, modeloPainel, tipoCurva, modoAngulo, angleInput, sizeMode, qty, inputCorda, inputLinear, isPrintMode]);
+  }, [projeto, cliente, modeloPainel, modoAngulo, angleInput, sizeMode, qty, inputCorda, inputLinear, isPrintMode]);
 
+  // ============================================================================
+  // MOTOR MATEMÁTICO (FÍSICA POLIGONAL EXATA)
+  // ============================================================================
   const calcularEDesenhar = () => {
     let aviso = '';
     const maxPermitido = modeloPainel;
-    const nomeModelo = maxPermitido === 5 ? 'P2 Curvo' : maxPermitido === 15 ? 'P3 Curvo' : 'P2 Flexível';
+    const nomeModelo = maxPermitido === 5 ? 'P2 Indoor (Curvo Máx 5°)' : maxPermitido === 15 ? 'P3 Indoor (Curvo Máx 15°)' : 'P2 Flexível (Máx 45°)';
     
     let angles: number[] = [];
     let n = 0;
     
-    // ADICIONADO: 'circunferencia' nas opções tratadas automaticamente
-    if (modoAngulo === 'unico' || modoAngulo === 'diametro' || modoAngulo === 'raio' || modoAngulo === 'circunferencia') {
+    if (['unico', 'diametro', 'raio', 'circunferencia'].includes(modoAngulo)) {
       let anguloUnico = 0;
-      const raioMinimo = MOD_W / ((maxPermitido * Math.PI) / 180);
+      
+      const raioMinimo = MOD_W / (2 * Math.sin((maxPermitido / 2) * (Math.PI / 180)));
       const diametroMinimo = 2 * raioMinimo;
       const circMinima = diametroMinimo * Math.PI;
 
@@ -74,57 +70,39 @@ export default function SimuladorCurvatura() {
         let raioAlvo = 0;
 
         if (modoAngulo === 'diametro') {
-          let diametroAlvo = parseFloat(angleInput);
-          if (isNaN(diametroAlvo) || diametroAlvo <= 0) diametroAlvo = Math.ceil(diametroMinimo);
-          
-          if (diametroAlvo < diametroMinimo) {
-            diametroAlvo = diametroMinimo;
-            aviso = `Ajustado p/ diâmetro mín. (${diametroMinimo.toFixed(2)}m)`;
-          }
-          raioAlvo = diametroAlvo / 2;
+          let diam = parseFloat(angleInput);
+          if (isNaN(diam) || diam <= 0) diam = diametroMinimo;
+          if (diam < diametroMinimo) { diam = diametroMinimo; aviso = `Ajustado para diâmetro mínimo seguro (${diametroMinimo.toFixed(2)}m)`; }
+          raioAlvo = diam / 2;
         } else if (modoAngulo === 'raio') {
           raioAlvo = parseFloat(angleInput);
-          if (isNaN(raioAlvo) || raioAlvo <= 0) raioAlvo = Math.ceil(raioMinimo);
-          
-          if (raioAlvo < raioMinimo) {
-            raioAlvo = raioMinimo;
-            aviso = `Ajustado p/ raio mín. (${raioMinimo.toFixed(2)}m)`;
-          }
+          if (isNaN(raioAlvo) || raioAlvo <= 0) raioAlvo = raioMinimo;
+          if (raioAlvo < raioMinimo) { raioAlvo = raioMinimo; aviso = `Ajustado para raio mínimo seguro (${raioMinimo.toFixed(2)}m)`; }
         } else if (modoAngulo === 'circunferencia') {
-          let circAlvo = parseFloat(angleInput);
-          if (isNaN(circAlvo) || circAlvo <= 0) circAlvo = Math.ceil(circMinima);
-          
-          if (circAlvo < circMinima) {
-            circAlvo = circMinima;
-            aviso = `Circunferência exigiria curva > ${maxPermitido}°. Ajustado p/ ${circMinima.toFixed(2)}m.`;
-          }
-          raioAlvo = circAlvo / (2 * Math.PI);
+          let circ = parseFloat(angleInput);
+          if (isNaN(circ) || circ <= 0) circ = circMinima;
+          if (circ < circMinima) { circ = circMinima; aviso = `Ajustado para circunferência mínima segura (${circMinima.toFixed(2)}m)`; }
+          raioAlvo = circ / (2 * Math.PI);
         }
         
-        anguloUnico = (MOD_W / raioAlvo) * (180 / Math.PI);
+        anguloUnico = 2 * Math.asin(MOD_W / (2 * raioAlvo)) * (180 / Math.PI);
       } else {
         anguloUnico = parseFloat(angleInput);
         if (isNaN(anguloUnico)) anguloUnico = 0;
-        if (anguloUnico > maxPermitido) {
-          anguloUnico = maxPermitido;
-          aviso = `Ajustado p/ o limite (${maxPermitido}°)`;
-        }
+        if (anguloUnico > maxPermitido) { anguloUnico = maxPermitido; aviso = `Bloqueado mecânicamente em ${maxPermitido}° por chassi.`; }
       }
 
-      // Processamento de Quantidade/Tamanho
       if (modoAngulo === 'circunferencia') {
-        // Quando é circunferência plena, a quantidade de placas é fixa pelo comprimento total da curva dividida pela placa.
-        // O Círculo completo tem 360°.
         n = Math.round(360 / anguloUnico);
-        aviso = aviso || "Círculo Fechado Otimizado";
+        aviso = aviso || "Circunferência Perfeita Calculada";
       } else if (sizeMode === 'qty') {
         n = Math.max(1, qty);
       } else if (sizeMode === 'linear') {
         n = Math.max(1, Math.ceil(inputLinear / MOD_W));
       } else {
-        const raioCalc = MOD_W / (Math.max(anguloUnico, 0.1) * Math.PI / 180);
+        const raioCalc = MOD_W / (2 * Math.sin((Math.max(anguloUnico, 0.1) / 2) * (Math.PI / 180)));
         if (inputCorda >= raioCalc * 2 && anguloUnico > 0) {
-          aviso = "Corda solicitada maior que o diâmetro.";
+          aviso = "A corda solicitada é maior que o diâmetro do círculo.";
           n = 1;
         } else if (anguloUnico <= 0) {
           n = Math.max(1, Math.ceil(inputCorda / MOD_W));
@@ -136,7 +114,6 @@ export default function SimuladorCurvatura() {
       angles = Array(n).fill(anguloUnico);
 
     } else {
-      // Modo Múltiplo (S-Curve, Custom)
       const parts = angleInput.split(',');
       for (const part of parts) {
         let val = parseFloat(part.trim());
@@ -150,65 +127,60 @@ export default function SimuladorCurvatura() {
       n = angles.length;
     }
 
-    // Cálculos Finais da Telemetria
-    let raioDisplay = "Variável";
-    let diamDisplay = "Variável";
-
-    if (modoAngulo === 'unico' || modoAngulo === 'diametro' || modoAngulo === 'raio' || modoAngulo === 'circunferencia') {
-      const angBase = angles[0];
-      if (Math.abs(angBase) < 0.0001) {
-        raioDisplay = "Plano (Reto)";
-        diamDisplay = "Plano (Reto)";
-      } else {
-        const rCalc = MOD_W / (Math.abs(angBase) * Math.PI / 180);
-        raioDisplay = rCalc.toFixed(2) + " m";
-        diamDisplay = (rCalc * 2).toFixed(2) + " m";
-      }
-    }
-
     const pts = [{ x: 0, y: 0 }];
-    const dir = tipoCurva === 'concavo' ? -1 : 1;
     const totalAngleDeg = angles.reduce((sum, val) => sum + val, 0);
-    let currentHeading = -(totalAngleDeg * dir * Math.PI / 180) / 2;
+    
+    let currentHeading = -(totalAngleDeg * Math.PI / 180) / 2;
 
-    for (const a_deg of angles) {
-      const a_rad = a_deg * dir * (Math.PI / 180);
-      let chordLength, stepHeading;
-
-      if (Math.abs(a_rad) < 0.0001) {
-        chordLength = MOD_W;
-        stepHeading = currentHeading;
-      } else {
-        const r = MOD_W / Math.abs(a_rad);
-        chordLength = 2 * r * Math.sin(Math.abs(a_rad) / 2);
-        const turnDirection = a_rad > 0 ? 1 : -1;
-        stepHeading = currentHeading + (Math.abs(a_rad) / 2) * turnDirection;
-      }
-
-      const nextX = pts[pts.length - 1].x + chordLength * Math.cos(stepHeading);
-      const nextY = pts[pts.length - 1].y + chordLength * Math.sin(stepHeading);
+    for (let i = 0; i < n; i++) {
+      const a_deg = angles[i] || 0;
+      const a_rad = a_deg * (Math.PI / 180);
+      
+      const nextX = pts[pts.length - 1].x + MOD_W * Math.cos(currentHeading);
+      const nextY = pts[pts.length - 1].y + MOD_W * Math.sin(currentHeading);
       pts.push({ x: nextX, y: nextY });
+      
       currentHeading += a_rad;
     }
 
     const linear = n * MOD_W;
     const cordaFinal = Math.sqrt(Math.pow(pts[pts.length - 1].x - pts[0].x, 2) + Math.pow(pts[pts.length - 1].y - pts[0].y, 2));
 
-    setResultados({
-      n, linear, corda: cordaFinal, totalAngle: totalAngleDeg, raioDisplay, diamDisplay, avisoSeguranca: aviso
-    });
+    let raioDisplay = "Variável";
+    let diamDisplay = "Variável";
+    let circDisplay = "Variável";
+    
+    if (modoAngulo !== 'multiplo') {
+      const angBase = angles[0] || 0;
+      if (Math.abs(angBase) < 0.0001) {
+        raioDisplay = "Plano (Reto)"; 
+        diamDisplay = "Plano (Reto)";
+        circDisplay = "Plano (Reto)";
+      } else {
+        const rCalc = MOD_W / (2 * Math.sin((Math.abs(angBase) / 2) * (Math.PI / 180)));
+        raioDisplay = rCalc.toFixed(2) + " m";
+        diamDisplay = (rCalc * 2).toFixed(2) + " m";
+        circDisplay = (rCalc * 2 * Math.PI).toFixed(2) + " m";
+      }
+    }
 
-    // Chamada para Função de Desenho
+    setResultados({ 
+      n, linear, corda: cordaFinal, totalAngle: totalAngleDeg, 
+      raioDisplay, diamDisplay, circDisplay, avisoSeguranca: aviso 
+    });
+    
     desenharCanvas(pts, linear, cordaFinal, n, nomeModelo, projeto || "PROJETO RENTECH", cliente || "Não informado");
   };
 
+  // ============================================================================
+  // RENDERIZAÇÃO GRÁFICA NO CANVAS
+  // ============================================================================
   const desenharCanvas = (pts: {x:number, y:number}[], linear: number, corda: number, n: number, nomeModelo: string, pName: string, cName: string) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Ajuste de cores para o Light Mode
     ctx.fillStyle = isPrintMode ? '#ffffff' : '#F8FAFC';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -222,13 +194,28 @@ export default function SimuladorCurvatura() {
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
 
-    let escala = Math.min(canvas.width * 0.75 / (width || 0.001), canvas.height * 0.45 / (height || 0.001));
+    let escala = Math.min(canvas.width * 0.80 / (width || 0.001), canvas.height * 0.60 / (height || 0.001));
     if (escala > 400) escala = 400;
 
     const offsetX = (canvas.width / 2) - (cx * escala);
     const offsetY = (canvas.height / 2) - (cy * escala) + 50;
 
-    // Traçado principal do painel
+    if (pts.length > 1 && !isPrintMode) {
+      ctx.beginPath();
+      ctx.setLineDash([15, 15]);
+      ctx.moveTo(pts[0].x * escala + offsetX, pts[0].y * escala + offsetY);
+      ctx.lineTo(pts[pts.length - 1].x * escala + offsetX, pts[pts.length - 1].y * escala + offsetY);
+      ctx.strokeStyle = '#336699'; 
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.setLineDash([]); 
+
+      ctx.fillStyle = '#336699';
+      ctx.font = "bold 22px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(`Corda Real: ${corda.toFixed(2)}m`, canvas.width / 2, pts[0].y * escala + offsetY - 20);
+    }
+
     ctx.save();
     ctx.beginPath();
     ctx.moveTo(pts[0].x * escala + offsetX, pts[0].y * escala + offsetY);
@@ -237,194 +224,149 @@ export default function SimuladorCurvatura() {
     }
 
     if (!isPrintMode) {
-      ctx.shadowBlur = 15;
-      ctx.shadowColor = 'rgba(51, 102, 153, 0.3)';
-      ctx.strokeStyle = '#336699';
+      ctx.shadowBlur = 20;
+      ctx.shadowColor = 'rgba(12, 29, 77, 0.4)';
+      ctx.strokeStyle = '#0C1D4D';
     } else {
       ctx.strokeStyle = '#0C1D4D';
     }
     
-    ctx.lineWidth = 25;
+    ctx.lineWidth = 20;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.stroke();
     ctx.restore();
 
-    // Junções/Módulos (Bolinhas separadoras)
-    ctx.fillStyle = isPrintMode ? '#ffffff' : '#0C1D4D';
+    ctx.fillStyle = isPrintMode ? '#ffffff' : '#336699';
     for (let i = 1; i < pts.length - 1; i++) {
       ctx.beginPath();
-      ctx.arc(pts[i].x * escala + offsetX, pts[i].y * escala + offsetY, 8, 0, Math.PI * 2);
+      ctx.arc(pts[i].x * escala + offsetX, pts[i].y * escala + offsetY, 6, 0, Math.PI * 2);
       ctx.fill();
-      if (isPrintMode) {
-         ctx.strokeStyle = '#0C1D4D';
-         ctx.lineWidth = 2;
-         ctx.stroke();
-      }
     }
 
-    // Tipografia
     ctx.textAlign = "center";
     const baseColor = isPrintMode ? '#000000' : '#0C1D4D';
     const subColor = isPrintMode ? '#666666' : '#64748B';
-    const highlightColor = isPrintMode ? '#284B8C' : '#16A34A';
 
     ctx.fillStyle = baseColor;
     ctx.font = "900 42px sans-serif";
-    ctx.fillText(`${pName.toUpperCase()} - ${nomeModelo.toUpperCase()}`, canvas.width / 2, 80);
-
-    ctx.fillStyle = subColor;
-    ctx.font = "bold 28px sans-serif";
-    ctx.fillText(`Cliente: ${cName}`, canvas.width / 2, 125);
+    ctx.fillText(`${pName.toUpperCase()}`, canvas.width / 2, 70);
 
     ctx.fillStyle = subColor;
     ctx.font = "bold 24px sans-serif";
-    ctx.fillText(`Configuração: ${n} Módulos | Metragem Linear: ${linear.toFixed(2)}m`, canvas.width / 2, 165);
-
-    ctx.fillStyle = highlightColor;
-    ctx.font = "900 36px sans-serif";
-    ctx.fillText(`LARGURA TOTAL DA CORDA: ${corda.toFixed(2)}m`, canvas.width / 2, canvas.height - 100);
+    ctx.fillText(`Cliente: ${cName} | Equipamento: ${nomeModelo}`, canvas.width / 2, 110);
 
     ctx.fillStyle = subColor;
     ctx.font = "italic 22px sans-serif";
-    ctx.fillText(`Curvatura Total: ${resultados.totalAngle.toFixed(1)}° | Raio: ${resultados.raioDisplay}`, canvas.width / 2, canvas.height - 50);
+    ctx.fillText(`Curvatura Total: ${resultados.totalAngle.toFixed(1)}° | Raio Técnico: ${resultados.raioDisplay}`, canvas.width / 2, canvas.height - 40);
   };
 
   return (
-    <div className="flex flex-col lg:flex-row gap-3 px-4 md:px-6 pb-4 md:pb-6 pt-6 
-      bg-[#F0F4F8] text-[#0F172A] h-screen max-h-[800px] overflow-hidden font-sans print:bg-white 
-      print:text-black print:block print:p-0">
+    <div className="flex flex-col lg:flex-row gap-4 px-4 md:px-8 py-6 bg-[#F0F4F8] text-[#0F172A] min-h-screen font-sans print:bg-white print:text-black print:block print:p-0">
       <Analytics/>
       
-      {/* SIDEBAR TÉCNICA (Oculta na Impressão) */}
-      <aside className="bg-white p-3 md:p-4 rounded-2xl shadow-sm w-full lg:w-80 flex-shrink-0 flex flex-col border border-[#E2E8F0] overflow-y-auto print:hidden">
+      <aside className="w-full lg:w-[400px] flex-shrink-0 flex flex-col gap-4 print:hidden">
         
-        <div className="bg-[#F0F4F8] p-2.5 rounded-xl mb-3 border-l-4 border-l-[#336699]">
-          <h1 className="text-[10px] font-black uppercase tracking-widest text-[#0C1D4D] leading-tight">Engenharia LED <br/><span className="text-[#336699]">Curvo & Flexível</span></h1>
+        <div className="bg-[#0C1D4D] p-5 rounded-2xl shadow-md text-white">
+          <h1 className="text-xl font-black uppercase tracking-widest leading-tight">Engenharia LED</h1>
+          <p className="text-blue-300 text-xs mt-1">Simulador de Curvas e Polígonos</p>
         </div>
 
-        <div className="space-y-3 flex-grow">
-          {/* Dados do Cliente */}
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider mb-1 block">Projeto/Evento</label>
-              <input type="text" className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] focus:border-[#336699] outline-none" value={projeto} onChange={(e) => setProjeto(e.target.value)} />
-            </div>
-            <div>
-              <label className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider mb-1 block">Cliente</label>
-              <input type="text" className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] focus:border-[#336699] outline-none" value={cliente} onChange={(e) => setCliente(e.target.value)} />
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0] space-y-5">
+          <div>
+            <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-xs border-b border-gray-100 pb-2 mb-3">1. Dados do Projeto</h3>
+            <div className="space-y-3">
+              <div><label className="text-[10px] font-bold text-gray-500 uppercase">Projeto / Evento</label><input type="text" className="w-full p-2 border border-gray-300 rounded text-sm font-bold uppercase focus:border-[#336699] outline-none" value={projeto} onChange={(e) => setProjeto(e.target.value)} /></div>
+              <div><label className="text-[10px] font-bold text-gray-500 uppercase">Cliente</label><input type="text" className="w-full p-2 border border-gray-300 rounded text-sm font-bold focus:border-[#336699] outline-none" value={cliente} onChange={(e) => setCliente(e.target.value)} /></div>
             </div>
           </div>
 
-          <div className="border-t border-dashed border-[#CBD5E1]"></div>
-
-          {/* Configurações Estruturais */}
-          <div className="space-y-2.5">
-            <div>
-              <label className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider mb-1 block">Modelo do Painel</label>
-              <select className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] focus:border-[#336699] outline-none font-bold cursor-pointer" value={modeloPainel} onChange={(e) => setModeloPainel(parseInt(e.target.value))}>
-                <option value={15}>P3 Curvo (Máx 15°)</option>
-                <option value={5}>P2 Curvo (Máx 5°)</option>
-                <option value={45}>P2 Flexível (Máx 45°)</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider mb-1 block">Direção Principal</label>
-              <select className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] focus:border-[#336699] outline-none cursor-pointer" value={tipoCurva} onChange={(e) => setTipoCurva(e.target.value as any)}>
-                <option value="concavo">Côncavo (Para DENTRO)</option>
-                <option value="convexo">Convexo (Para FORA)</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider mb-1 block">Lógica do Ângulo</label>
-              <select className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] focus:border-[#336699] outline-none cursor-pointer" value={modoAngulo} onChange={(e) => setModoAngulo(e.target.value as any)}>
-                <option value="unico">Por Ângulo Constante</option>
-                <option value="diametro">Por Diâmetro da Curva (m)</option>
-                <option value="raio">Por Raio da Curva (m)</option>
-                <option value="circunferencia">Por Circunferência (m)</option>
-                <option value="multiplo">Por Placa Livre (S-Curve)</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider mb-1 block">
-                {modoAngulo === 'unico' ? 'Ângulo por Placa (°)' : modoAngulo === 'diametro' ? 'Diâmetro Alvo (m)' : modoAngulo === 'raio' ? 'Raio Alvo (m)' : modoAngulo === 'circunferencia' ? 'Circunferência (m)' : 'Ângulos (Por vírgula)'}
-              </label>
-              <input type="text" className="w-full p-1.5 bg-white border border-[#CBD5E1] rounded-lg text-sm text-[#0C1D4D] font-black outline-none focus:border-[#336699]" value={angleInput} onChange={(e) => setAngleInput(e.target.value)} />
-              {resultados.avisoSeguranca && <p className="text-[9px] text-[#D97706] font-bold mt-1 leading-tight">{resultados.avisoSeguranca}</p>}
-            </div>
-          </div>
-
-          {/* Ao selecionar Circunferência, as opções de dimensionamento de Qtd/Linear/Corda não fazem sentido,
-              pois a circunferência define sozinha quantas placas são necessárias. Escondemos os botões. */}
-          {modoAngulo !== 'circunferencia' && (
-            <>
-              <div className="border-t border-dashed border-[#CBD5E1]"></div>
-              {/* Dimensionamento */}
-              <div className="space-y-1.5 pb-1">
-                <label className="text-[9px] font-bold text-[#64748B] uppercase tracking-wider block">Definir Tamanho Por:</label>
-                <div className="flex gap-1 bg-[#F8FAFC] p-1 rounded-lg border border-[#CBD5E1]">
-                  <button onClick={() => setSizeMode('qty')} className={`flex-1 py-1 rounded-md text-[9px] font-bold uppercase transition-all ${sizeMode === 'qty' ? 'bg-[#336699] text-white shadow-sm' : 'text-[#64748B] hover:bg-[#E2E8F0]'}`}>Módulos</button>
-                  <button onClick={() => setSizeMode('corda')} className={`flex-1 py-1 rounded-md text-[9px] font-bold uppercase transition-all ${sizeMode === 'corda' ? 'bg-[#336699] text-white shadow-sm' : 'text-[#64748B] hover:bg-[#E2E8F0]'}`}>Corda</button>
-                  <button onClick={() => setSizeMode('linear')} className={`flex-1 py-1 rounded-md text-[9px] font-bold uppercase transition-all ${sizeMode === 'linear' ? 'bg-[#336699] text-white shadow-sm' : 'text-[#64748B] hover:bg-[#E2E8F0]'}`}>Linear</button>
+          <div>
+            <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-xs border-b border-gray-100 pb-2 mb-3">2. Estrutura Física</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Modelo de Gabinete</label>
+                <div className="grid grid-cols-3 gap-1 bg-gray-100 p-1 rounded-lg">
+                  <button onClick={() => setModeloPainel(5)} className={`py-1.5 text-[10px] font-black uppercase rounded ${modeloPainel === 5 ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:bg-gray-200'}`}>P2 (Max 5°)</button>
+                  <button onClick={() => setModeloPainel(15)} className={`py-1.5 text-[10px] font-black uppercase rounded ${modeloPainel === 15 ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:bg-gray-200'}`}>P3 (Max 15°)</button>
+                  <button onClick={() => setModeloPainel(45)} className={`py-1.5 text-[10px] font-black uppercase rounded ${modeloPainel === 45 ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:bg-gray-200'}`}>Flex (45°)</button>
                 </div>
-
-                {sizeMode === 'qty' && (
-                  <div><input type="number" min="1" className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] font-bold outline-none focus:border-[#336699]" value={qty} onChange={(e) => setQty(parseInt(e.target.value) || 1)} /></div>
-                )}
-                {sizeMode === 'corda' && (
-                  <div><input type="number" step="0.5" className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] font-bold outline-none focus:border-[#336699]" value={inputCorda} onChange={(e) => setInputCorda(parseFloat(e.target.value) || 1)} /></div>
-                )}
-                {sizeMode === 'linear' && (
-                  <div><input type="number" step="0.5" className="w-full p-1.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] font-bold outline-none focus:border-[#336699]" value={inputLinear} onChange={(e) => setInputLinear(parseFloat(e.target.value) || 1)} /></div>
-                )}
               </div>
-            </>
-          )}
-        </div>
+            </div>
+          </div>
 
-        <div className="mt-2 pt-2 border-t border-dashed border-[#CBD5E1]">
-          <button onClick={() => window.print()} className="w-full border-2 border-[#E2E8F0] text-[#64748B] p-2 rounded-xl font-black uppercase text-[10px] tracking-wider hover:bg-[#F8FAFC] hover:border-[#CBD5E1] transition-colors">
-            🖨️ Imprimir Projeto
+          <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+            <h3 className="font-black text-[#336699] uppercase tracking-wider text-[10px] mb-3">3. Definição da Curvatura</h3>
+            <select className="w-full p-2 bg-white border border-blue-200 rounded text-xs font-bold text-[#0C1D4D] mb-2 cursor-pointer outline-none" value={modoAngulo} onChange={(e) => setModoAngulo(e.target.value as any)}>
+              <option value="unico">Travar Ângulo por Placa (°)</option>
+              <option value="diametro">Informar Diâmetro da Curva (m)</option>
+              <option value="raio">Informar Raio da Curva (m)</option>
+              <option value="circunferencia">Informar Circunferência Total (m)</option>
+              <option value="multiplo">Painel S-Curve Livre (Custom)</option>
+            </select>
+            
+            <label className="text-[9px] font-bold text-gray-500 uppercase mt-2 block">
+              {modoAngulo === 'unico' ? 'Qual o ângulo entre as placas?' : modoAngulo === 'diametro' ? 'Qual o diâmetro desejado?' : modoAngulo === 'raio' ? 'Qual o raio desejado?' : modoAngulo === 'circunferencia' ? 'Tamanho da circunferência?' : 'Digite os ângulos separados por vírgula'}
+            </label>
+            <input type="text" className="w-full p-2 bg-white border border-blue-300 rounded text-sm text-[#0C1D4D] font-black focus:border-[#0C1D4D] outline-none" value={angleInput} onChange={(e) => setAngleInput(e.target.value)} />
+            {resultados.avisoSeguranca && <p className="text-[9px] text-[#0C1D4D] font-bold mt-1 bg-blue-100 p-1.5 rounded">{resultados.avisoSeguranca}</p>}
+          </div>
+
+          {modoAngulo !== 'circunferencia' && (
+            <div>
+              <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-xs border-b border-gray-100 pb-2 mb-3">4. Tamanho Final</h3>
+              <div className="flex gap-1 bg-gray-100 p-1 rounded-lg mb-2">
+                <button onClick={() => setSizeMode('qty')} className={`flex-1 py-1.5 rounded text-[9px] font-black uppercase transition-all ${sizeMode === 'qty' ? 'bg-[#336699] text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200'}`}>Qtd. Placas</button>
+                <button onClick={() => setSizeMode('corda')} className={`flex-1 py-1.5 rounded text-[9px] font-black uppercase transition-all ${sizeMode === 'corda' ? 'bg-[#336699] text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200'}`}>Larg. Corda</button>
+                <button onClick={() => setSizeMode('linear')} className={`flex-1 py-1.5 rounded text-[9px] font-black uppercase transition-all ${sizeMode === 'linear' ? 'bg-[#336699] text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200'}`}>Metr. Linear</button>
+              </div>
+
+              {sizeMode === 'qty' && <div><input type="number" min="1" className="w-full p-2 border border-[#336699] rounded text-sm font-black text-[#0C1D4D] outline-none" value={qty} onChange={(e) => setQty(parseInt(e.target.value) || 1)} /></div>}
+              {sizeMode === 'corda' && <div><input type="number" step="0.5" className="w-full p-2 border border-[#336699] rounded text-sm font-black text-[#0C1D4D] outline-none" value={inputCorda} onChange={(e) => setInputCorda(parseFloat(e.target.value) || 1)} /></div>}
+              {sizeMode === 'linear' && <div><input type="number" step="0.5" className="w-full p-2 border border-[#336699] rounded text-sm font-black text-[#0C1D4D] outline-none" value={inputLinear} onChange={(e) => setInputLinear(parseFloat(e.target.value) || 1)} /></div>}
+            </div>
+          )}
+
+          <button onClick={() => window.print()} className="w-full bg-[#0C1D4D] text-white py-3 rounded-xl font-black uppercase text-[10px] tracking-widest hover:bg-[#284B8C] shadow-md transition-colors mt-4">
+            🖨️ Gerar PDF / Imprimir
           </button>
         </div>
       </aside>
 
-      {/* ÁREA PRINCIPAL / CANVAS - Rola independentemente e com tamanho muito reduzido */}
-      <main className="flex-grow flex flex-col gap-2 relative print:p-8 overflow-y-auto pr-1">
+      <main className="flex-grow flex flex-col gap-4 relative print:p-8">
         
-        {/* Cards de Resultados - Mais compactos */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 flex-shrink-0 print:gap-2">
-          <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#336699] p-2.5 rounded-xl shadow-sm print:bg-white print:border-gray-400 print:text-black">
-            <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-0.5 print:text-gray-600">Gabinetes</span>
-            <strong className="block text-lg text-[#0C1D4D] font-black print:text-black">{resultados.n} un.</strong>
+        {/* CARDS DE RESULTADOS - AGORA COM 5 MÉTRICAS */}
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 flex-shrink-0 print:gap-4">
+          <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#0C1D4D] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
+            <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Total Gabinetes</span>
+            <strong className="block text-2xl text-[#0C1D4D] font-black print:text-black">{resultados.n} un.</strong>
           </div>
-          <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#336699] p-2.5 rounded-xl shadow-sm print:bg-white print:border-gray-400 print:text-black">
-            <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-0.5 print:text-gray-600">Metragem Linear</span>
-            <strong className="block text-lg text-[#0C1D4D] font-black print:text-black">{resultados.linear.toFixed(2)} m</strong>
+          <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#336699] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
+            <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Metragem Linear</span>
+            <strong className="block text-2xl text-[#336699] font-black print:text-black">{resultados.linear.toFixed(2)}m</strong>
           </div>
-          <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#16A34A] p-2.5 rounded-xl shadow-sm print:bg-white print:border-gray-400 print:text-black">
-            <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-0.5 print:text-gray-600">Corda Real</span>
-            <strong className="block text-lg text-[#16A34A] font-black print:text-green-700">{resultados.corda.toFixed(2)} m</strong>
+          <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#16A34A] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
+            <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Raio</span>
+            <strong className="block text-2xl text-[#16A34A] font-black print:text-black">{resultados.raioDisplay}</strong>
           </div>
-          <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#336699] p-2.5 rounded-xl shadow-sm print:bg-white print:border-gray-400 print:text-black">
-            <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-0.5 print:text-gray-600">Ângulo Gerado</span>
-            <strong className="block text-lg text-[#0C1D4D] font-black print:text-black">{resultados.totalAngle.toFixed(1)}°</strong>
+          <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#D97706] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
+            <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Diâmetro</span>
+            <strong className="block text-2xl text-[#D97706] font-black print:text-black">{resultados.diamDisplay}</strong>
+          </div>
+          <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#7C3AED] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
+            <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Circunferência</span>
+            <strong className="block text-2xl text-[#7C3AED] font-black print:text-black">{resultados.circDisplay}</strong>
           </div>
         </div>
 
-        {/* Workspace Canvas - Altura agressivamente reduzida para evitar rolagem de tela */}
-        <div className="flex-grow bg-[#F8FAFC] border border-[#E2E8F0] rounded-2xl relative overflow-hidden shadow-inner min-h-[150px] bg-[radial-gradient(#CBD5E1_1px,transparent_1px)] bg-[size:24px_24px] print:bg-transparent print:border-none print:shadow-none flex items-center justify-center">
+        <div className="flex-grow bg-white border border-[#E2E8F0] rounded-2xl relative overflow-hidden shadow-sm bg-[radial-gradient(#CBD5E1_1px,transparent_1px)] bg-[size:32px_32px] print:bg-transparent print:border-none print:shadow-none flex items-center justify-center min-h-[400px]">
           <canvas 
             ref={canvasRef} 
-            width={1800} 
-            height={850} 
-            className="w-full h-auto max-h-[70vh] object-contain print:max-h-[85vh]"
+            width={2000} 
+            height={1200} 
+            className="w-full h-full object-contain p-4 print:p-0"
           />
         </div>
-
       </main>
     </div>
   );

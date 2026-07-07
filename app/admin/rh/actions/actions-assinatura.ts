@@ -350,9 +350,10 @@ export async function baixarAssinadoAction(payload: {
       return { ok: true, info: { url: existente.signedUrl } };
     }
 
-    // 2) Busca a URL do assinado na Autentique e baixa COM O TOKEN
+    // Busca a URL do assinado na Autentique. Prioriza 'signed' (assinado.pdf),
+    // que é o que fica disponível; 'pades' pode retornar 404 se não gerado.
     const doc = await autentiqueConsultarDocumento(ctrl.autentique_doc_id);
-    const urlAssinado = doc?.files?.pades || doc?.files?.signed;
+    const urlAssinado = doc?.files?.signed || doc?.files?.pades;
     if (!urlAssinado) return { ok: false, erro: 'A Autentique ainda não disponibilizou o arquivo assinado.' };
 
     const token = process.env.AUTENTIQUE_API_TOKEN;
@@ -409,7 +410,7 @@ export async function consultarAssinaturaAction(payload: {
 
     await db.from('folha_holerite_assinaturas').update({
       status: novoStatus,
-      arquivo_assinado: doc?.files?.pades || doc?.files?.signed || null,
+      arquivo_assinado: doc?.files?.signed || doc?.files?.pades || null,
       visualizado_em: assinatura?.viewed?.created_at || null,
       assinado_em: assinatura?.signed?.created_at || null,
       atualizado_em: new Date().toISOString()

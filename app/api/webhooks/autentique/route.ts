@@ -1,54 +1,103 @@
 // app/api/webhooks/autentique/route.ts
-// Recebe os eventos da Autentique quando um documento é visualizado/assinado
-// e atualiza folha_holerite_assinaturas. Escrita via service role.
+// Recebe os eventos da Autentique e atualiza folha_holerite_assinaturas.
+// Escrita via service role.
 //
-// IMPORTANTE:
-// - A Autentique envia o corpo em x-www-form-urlencoded (não JSON).
-// - Configure a URL deste endpoint no painel da Autentique (Chaves de API > callback).
-// - Eventos de "rejeitado" não disparam webhook (só visualizado/assinado).
+// A Autentique tem DOIS formatos de webhook, e este endpoint aceita os dois:
+//  1) Clássico (painel): corpo em x-www-form-urlencoded, campos "partes[0][assinado][created]".
+//  2) Novo (Events/v2): corpo em application/json, com event.data.signatures[].
+// Detectamos pelo Content-Type e normalizamos para os mesmos campos de saída.
+//
+// Configure a URL deste endpoint no painel da Autentique.
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
 
-// Extrai um valor aninhado do payload form-urlencoded que a Autentique manda
-// como "partes[0][assinado][created]" etc. Fazemos um parse tolerante.
-function pick(obj: Record<string, string>, ...candidatos: string[]): string | null {
-  for (const c of candidatos) {
-    if (obj[c] != null && obj[c] !== '') return obj[c];
+type Extraido = {
+  docId: string | null;
+  assinadoEm: string | null;
+  visualizadoEm: string | null;
+  rejeitadoEm: string | null;
+};
+
+// ---- Formato CLÁSSICO: x-www-form-urlencoded (partes[0][...][created]) ----
+function extrairDeUrlEncoded(raw: string): Extraido {
+  const params = new URLSearchParams(raw);
+  const flat: Record<string, string> = {};
+  params.forEach((v, k) => { flat[k] = v; });
+
+  const pick = (...cs: string[]) => {
+    for (const c of cs) if (flat[c] != null && flat[c] !== '') return flat[c];
+    return null;
+  };
+
+  return {
+    docId: pick('uuid', 'id', 'document[id]', 'documento[uuid]'),
+    assinadoEm: pick('partes[0][assinado][created]', 'assinado[created]', 'signed[created]'),
+    visualizadoEm: pick('partes[0][visualizado][created]', 'visualizado[created]', 'viewed[created]'),
+    rejeitadoEm: pick('partes[0][rejeitado][created]', 'rejeitado[created]', 'rejected[created]'),
+  };
+}
+
+// ---- Formato NOVO: application/json (event.data com signatures[]) ----
+function extrairDeJson(body: any): Extraido {
+  // A estrutura do documento pode vir em event.data.object ou event.data
+  const data = body?.event?.data?.object || body?.event?.data || body?.data || body;
+  const docId = data?.id || data?.uuid || body?.event?.data?.id || null;
+
+  // Pega a primeira assinatura com evento preenchido
+  const sigs = data?.signatures || [];
+  let assinadoEm: string | null = null;
+  let visualizadoEm: string | null = null;
+  let rejeitadoEm: string | null = null;
+  for (const s of sigs) {
+    if (!assinadoEm && (s?.signed?.created_at || s?.signed?.created)) assinadoEm = s.signed.created_at || s.signed.created;
+    if (!visualizadoEm && (s?.viewed?.created_at || s?.viewed?.created)) visualizadoEm = s.viewed.created_at || s.viewed.created;
+    if (!rejeitadoEm && (s?.rejected?.created_at || s?.rejected?.created)) rejeitadoEm = s.rejected.created_at || s.rejected.created;
   }
-  return null;
+
+  return { docId, assinadoEm, visualizadoEm, rejeitadoEm };
 }
 
 export async function POST(req: NextRequest) {
   try {
-    // A Autentique manda x-www-form-urlencoded; lemos como texto e parseamos.
+    const contentType = (req.headers.get('content-type') || '').toLowerCase();
     const raw = await req.text();
-    const params = new URLSearchParams(raw);
-    const flat: Record<string, string> = {};
-    params.forEach((v, k) => { flat[k] = v; });
 
-    // O identificador do documento pode vir em campos diferentes conforme a versão.
-    const docId = pick(flat, 'uuid', 'id', 'document[id]', 'documento[uuid]');
-    if (!docId) {
-      // Sem id não há o que atualizar; responde 200 para a Autentique não reenviar em loop.
-      return NextResponse.json({ ok: false, motivo: 'sem id de documento no payload' }, { status: 200 });
+    let dados: Extraido;
+    let trilha: any;
+
+    if (contentType.includes('application/json')) {
+      const body = JSON.parse(raw);
+      dados = extrairDeJson(body);
+      trilha = body;
+    } else {
+      // urlencoded (ou desconhecido — tentamos urlencoded, que é o clássico)
+      dados = extrairDeUrlEncoded(raw);
+      const params = new URLSearchParams(raw);
+      const flat: Record<string, string> = {};
+      params.forEach((v, k) => { flat[k] = v; });
+      trilha = flat;
     }
 
-    const assinadoEm = pick(flat, 'partes[0][assinado][created]', 'assinado[created]', 'signed[created]');
-    const visualizadoEm = pick(flat, 'partes[0][visualizado][created]', 'visualizado[created]', 'viewed[created]');
+    if (!dados.docId) {
+      // Sem id não há o que atualizar; responde 200 para não haver reentrega em loop.
+      return NextResponse.json({ ok: false, motivo: 'sem id de documento no payload', contentType }, { status: 200 });
+    }
 
-    const status = assinadoEm ? 'ASSINADO' : visualizadoEm ? 'VISUALIZADO' : 'ENVIADO';
+    const status = dados.rejeitadoEm ? 'REJEITADO'
+      : dados.assinadoEm ? 'ASSINADO'
+      : dados.visualizadoEm ? 'VISUALIZADO'
+      : 'ENVIADO';
 
     const db = supabaseAdmin();
     const { error } = await db.from('folha_holerite_assinaturas').update({
       status,
-      trilha: flat,                              // guarda o payload completo para auditoria
-      visualizado_em: visualizadoEm || null,
-      assinado_em: assinadoEm || null,
+      trilha,                                    // payload completo para auditoria
+      visualizado_em: dados.visualizadoEm || null,
+      assinado_em: dados.assinadoEm || null,
       atualizado_em: new Date().toISOString()
-    }).eq('autentique_doc_id', docId);
+    }).eq('autentique_doc_id', dados.docId);
 
     if (error) {
-      // Loga mas responde 200 para evitar reentrega infinita
       console.error('Webhook Autentique — falha ao atualizar:', error.message);
       return NextResponse.json({ ok: false, erro: error.message }, { status: 200 });
     }

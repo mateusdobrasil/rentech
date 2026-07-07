@@ -4,8 +4,8 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { 
-    listarAssinaturasAction, consultarAssinaturaAction, enviarDocumentoAvulsoAction, listarFuncionariosAtivosAction } 
-  from '../actions/actions-assinatura';
+    listarAssinaturasAction, consultarAssinaturaAction, enviarDocumentoAvulsoAction, listarFuncionariosAtivosAction 
+  } from '../actions/actions-assinatura';
 
 interface Assinatura {
   id: number;
@@ -53,8 +53,10 @@ export default function AssinaturasPage() {
   const avulsoFileRef = useRef<HTMLInputElement>(null);
 
   const [mesReferencia, setMesReferencia] = useState(() => {
+    // Competência = mês anterior ao corrente (o mês corrente é o de pagamento)
     const h = new Date();
-    return `${h.getFullYear()}-${String(h.getMonth() + 1).padStart(2, '0')}`;
+    const comp = new Date(h.getFullYear(), h.getMonth() - 1, 1);
+    return `${comp.getFullYear()}-${String(comp.getMonth() + 1).padStart(2, '0')}`;
   });
 
   useEffect(() => { carregar(mesReferencia); }, [mesReferencia]);

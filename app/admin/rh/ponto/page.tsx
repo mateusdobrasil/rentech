@@ -50,8 +50,10 @@ export default function GestaoDePonto() {
   const [elegiveisContabilidade, setElegiveisContabilidade] = useState<{ nome_completo: string; tipo_contrato: string }[]>([]);
 
   const [mesAnoSelecionado, setMesAnoSelecionado] = useState(() => {
+    // Competência = mês anterior ao corrente (o mês corrente é o de pagamento)
     const hoje = new Date();
-    return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
+    const comp = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1);
+    return `${comp.getFullYear()}-${String(comp.getMonth() + 1).padStart(2, '0')}`;
   });
 
   useEffect(() => {

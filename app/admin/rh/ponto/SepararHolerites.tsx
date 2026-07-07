@@ -28,6 +28,7 @@ interface Props {
 }
 
 export default function SepararHolerites({ mesReferencia, usuarioAtual, elegiveis, onFechar }: Props) {
+  const [competencia, setCompetencia] = useState(mesReferencia);
   const [tipo, setTipo] = useState<'ADIANTAMENTO' | 'HOLERITE_MENSAL'>('ADIANTAMENTO');
   const [processando, setProcessando] = useState(false);
   const [progresso, setProgresso] = useState('');
@@ -35,6 +36,16 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
   const [nomeArquivo, setNomeArquivo] = useState('');
   const [salvando, setSalvando] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Formata 'AAAA-MM' → 'MM/AAAA'
+  const mesBR = (iso: string) => { if (!iso) return ''; const [a, m] = iso.split('-'); return `${m}/${a}`; };
+  // Mês de pagamento = competência + 1 mês (a Rentech paga no mês seguinte)
+  const mesPagamento = (comp: string) => {
+    if (!comp) return '';
+    const [a, m] = comp.split('-').map(Number);
+    const d = new Date(a, m, 1); // m já é o mês seguinte (0-based + 1)
+    return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+  };
 
   // Carrega o pdf.js uma vez (do CDN) e devolve a lib pronta
   const carregarPdfjs = async (): Promise<any> => {
@@ -160,7 +171,7 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
     setSalvando(true);
     try {
       const res = await salvarDocumentosContabeisAction({
-        mesReferencia, tipo, nomeArquivoOrigem: nomeArquivo, importadoPor: usuarioAtual, itens
+        mesReferencia: competencia, tipo, nomeArquivoOrigem: nomeArquivo, importadoPor: usuarioAtual, itens
       });
       if (!res.ok && !res.info) throw new Error(res.erro);
       const falhasMsg = res.info?.falhas?.length ? `\n\nFalhas:\n${res.info.falhas.join('\n')}` : '';
@@ -179,9 +190,28 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
         <div className="flex justify-between items-center mb-4">
           <div>
             <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Separar Holerites da Contabilidade</h2>
-            <p className="text-sm text-gray-500">Importa o PDF, separa por página e associa a cada funcionário. Competência {mesReferencia.split('-').reverse().join('/')}.</p>
+            <p className="text-sm text-gray-500">Importa o PDF, separa por página e associa a cada funcionário.</p>
           </div>
           <button onClick={onFechar} className="text-[10px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-4 py-2 rounded-lg uppercase tracking-wider">⬅ Voltar</button>
+        </div>
+
+        {/* Competência (editável) + mês de pagamento (calculado) */}
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4 flex flex-col sm:flex-row items-stretch sm:items-end gap-4">
+          <div className="flex-1">
+            <label className="block text-[10px] font-black text-blue-700 uppercase mb-1">Mês de competência</label>
+            <input type="month" value={competencia} onChange={e => setCompetencia(e.target.value)} disabled={paginas.length > 0} className="w-full p-2.5 border border-blue-300 rounded-lg text-sm font-bold bg-white disabled:opacity-50" />
+          </div>
+          <div className="hidden sm:flex items-center pb-3 text-blue-400 font-black">→</div>
+          <div className="flex-1">
+            <label className="block text-[10px] font-black text-blue-700 uppercase mb-1">Mês de pagamento (automático)</label>
+            <div className="w-full p-2.5 border border-blue-200 rounded-lg text-sm font-black bg-blue-100 text-blue-800">
+              {competencia ? mesPagamento(competencia) : '—'}
+            </div>
+          </div>
+          <div className="flex-[2] text-[11px] font-medium text-blue-700 pb-1">
+            Competência <strong>{mesBR(competencia) || '—'}</strong> será paga em <strong>{competencia ? mesPagamento(competencia) : '—'}</strong>.
+            {paginas.length > 0 && <span className="block text-amber-600 font-bold mt-1">Para trocar a competência, limpe a importação atual.</span>}
+          </div>
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-end">
@@ -194,7 +224,7 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
           </div>
           <div className="flex-1">
             <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Arquivo PDF da contabilidade</label>
-            <input ref={fileRef} type="file" accept="application/pdf" onChange={handleArquivo} disabled={processando} className="w-full text-sm file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-[#0C1D4D] file:text-white file:font-bold file:text-xs file:uppercase" />
+            <input ref={fileRef} type="file" accept="application/pdf" onChange={handleArquivo} disabled={processando || !competencia} className="w-full text-sm file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-[#0C1D4D] file:text-white file:font-bold file:text-xs file:uppercase disabled:opacity-50" />
           </div>
         </div>
 

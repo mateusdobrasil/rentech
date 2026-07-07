@@ -26,6 +26,12 @@ export default function RhHub() {
       cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
     },
     {
+      titulo: 'Gestão de Benefícios',
+      descricao: 'Transporte, refeiçao, alimentaçao e outros benefícios concedidos pela empresa.',
+      icone: '🎁', link: '/admin/rh/beneficios',
+      cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
+    },
+    {
       titulo: 'Parâmetros de Contrato',
       descricao: 'Motor de regras de cálculo (CLT, PJ, Temporário, etc).',
       icone: '⚙️', link: '/admin/rh/parametros',

@@ -322,6 +322,45 @@ export async function listarAssinaturasAction(payload: { mesReferencia: string }
 }
 
 // ============================================================================
+// ATUALIZAR TODAS AS ASSINATURAS NÃO FINALIZADAS (de um mês + avulsos)
+// Consulta a Autentique para cada uma que ainda não está ASSINADA/REJEITADA.
+// ============================================================================
+export async function atualizarTodasAssinaturasAction(payload: {
+  mesReferencia: string;
+}): Promise<Resultado> {
+  const db = supabaseAdmin();
+  try {
+    const { data: pendentes } = await db
+      .from('folha_holerite_assinaturas')
+      .select('funcionario_nome, mes_referencia, status')
+      .or(`mes_referencia.eq.${payload.mesReferencia},mes_referencia.like.AVULSO-%`)
+      .not('status', 'in', '("ASSINADO","REJEITADO")');
+
+    if (!pendentes?.length) {
+      return { ok: true, info: { atualizados: 0, total: 0, mudancas: [] } };
+    }
+
+    const mudancas: string[] = [];
+    let atualizados = 0;
+
+    for (const p of pendentes) {
+      const antes = p.status;
+      const r = await consultarAssinaturaAction({ funcionarioNome: p.funcionario_nome, mesReferencia: p.mes_referencia });
+      if (r.ok) {
+        atualizados++;
+        if (r.info?.status && r.info.status !== antes) {
+          mudancas.push(`${p.funcionario_nome}: ${antes} → ${r.info.status}`);
+        }
+      }
+    }
+
+    return { ok: true, info: { atualizados, total: pendentes.length, mudancas } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
 // BAIXAR DOCUMENTO ASSINADO
 // Os links files.signed/pades da Autentique exigem o token (Authorization),
 // então clicar direto no navegador retorna "não existe". Aqui baixamos com o

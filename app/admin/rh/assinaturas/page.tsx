@@ -3,10 +3,9 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-
 import 
   { 
-    listarAssinaturasAction, consultarAssinaturaAction, enviarDocumentoAvulsoAction, listarFuncionariosAtivosAction, baixarAssinadoAction 
+    listarAssinaturasAction, consultarAssinaturaAction, enviarDocumentoAvulsoAction, listarFuncionariosAtivosAction, baixarAssinadoAction, atualizarTodasAssinaturasAction 
   } from '../actions/actions-assinatura';
 
 interface Assinatura {
@@ -43,6 +42,7 @@ export default function AssinaturasPage() {
   const [assinaturas, setAssinaturas] = useState<Assinatura[]>([]);
   const [atualizando, setAtualizando] = useState<string | null>(null);
   const [baixandoAssinado, setBaixandoAssinado] = useState<string | null>(null);
+  const [atualizandoTodas, setAtualizandoTodas] = useState(false);
   const [filtro, setFiltro] = useState<'TODOS' | 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO'>('TODOS');
 
   // Upload avulso (advertências, avisos, etc.)
@@ -88,6 +88,26 @@ export default function AssinaturasPage() {
       alert('Erro ao atualizar status: ' + e.message);
     } finally {
       setAtualizando(null);
+    }
+  };
+
+  const atualizarTodas = async () => {
+    const pendentes = assinaturas.filter(a => a.status !== 'ASSINADO' && a.status !== 'REJEITADO').length;
+    if (pendentes === 0) { alert('Não há assinaturas pendentes para atualizar.'); return; }
+
+    setAtualizandoTodas(true);
+    try {
+      const res = await atualizarTodasAssinaturasAction({ mesReferencia });
+      if (!res.ok) throw new Error(res.erro);
+      const mudancasMsg = res.info?.mudancas?.length
+        ? `\n\nMudanças:\n${res.info.mudancas.join('\n')}`
+        : '\n\nNenhuma mudança de status desde a última consulta.';
+      alert(`${res.info?.atualizados || 0} de ${res.info?.total || 0} assinatura(s) consultada(s).${mudancasMsg}`);
+      carregar(mesReferencia);
+    } catch (e: any) {
+      alert('Erro ao atualizar as assinaturas: ' + e.message);
+    } finally {
+      setAtualizandoTodas(false);
     }
   };
 
@@ -188,6 +208,9 @@ export default function AssinaturasPage() {
           </div>
           <div className="flex items-center gap-3">
             <input type="month" value={mesReferencia} onChange={e => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+            <button onClick={atualizarTodas} disabled={atualizandoTodas} className="bg-[#336699] text-white font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
+              {atualizandoTodas ? '⏳ Atualizando...' : '↻ Atualizar Todas'}
+            </button>
             <button onClick={abrirUpload} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all">
               📎 Enviar Documento
             </button>

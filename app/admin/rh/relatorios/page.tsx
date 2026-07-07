@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
+import { beneficiosDoMesAction } from '../actions/actions-beneficios';
 
 // ============================================================================
 // UTILITÁRIOS (mesmas fórmulas do holerite, para os números baterem)
@@ -238,7 +239,9 @@ export default function RelatoriosRH() {
   const [loading, setLoading] = useState(true);
   const [linhas, setLinhas] = useState<LinhaRelatorio[]>([]);
   const [ordenacao, setOrdenacao] = useState<'nome' | 'liquido' | 'extras' | 'faltas'>('nome');
-  const [modoFinanceiro, setModoFinanceiro] = useState(false);
+  const [modoRelatorio, setModoRelatorio] = useState<'folha' | 'financeiro' | 'beneficios'>('folha');
+  const modoFinanceiro = modoRelatorio === 'financeiro'; // compat com o código existente
+  const [beneficiosMes, setBeneficiosMes] = useState<{ diasUteis: number; funcionarios: any[] }>({ diasUteis: 0, funcionarios: [] });
 
   const [mesReferencia, setMesReferencia] = useState(() => {
     // Competência = mês anterior ao corrente (o mês corrente é o de pagamento)
@@ -248,6 +251,15 @@ export default function RelatoriosRH() {
   });
 
   useEffect(() => { carregarRelatorio(mesReferencia); }, [mesReferencia]);
+
+  // Carrega os benefícios calculados para o mês (para o grid de benefícios)
+  useEffect(() => {
+    let vivo = true;
+    beneficiosDoMesAction({ mesReferencia }).then(res => {
+      if (vivo && res.ok) setBeneficiosMes(res.info);
+    });
+    return () => { vivo = false; };
+  }, [mesReferencia]);
 
   const carregarRelatorio = async (mesAno: string) => {
     setLoading(true);
@@ -393,8 +405,11 @@ export default function RelatoriosRH() {
           </div>
           <div className="flex items-center gap-3">
             <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
-            <button onClick={() => setModoFinanceiro(true)} disabled={linhas.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">
+            <button onClick={() => setModoRelatorio('financeiro')} disabled={linhas.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">
               💵 Relatório Financeiro
+            </button>
+            <button onClick={() => setModoRelatorio('beneficios')} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all">
+              🎁 Benefícios
             </button>
             <button onClick={() => window.print()} disabled={linhas.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
               🖨️ Imprimir / PDF
@@ -417,7 +432,7 @@ export default function RelatoriosRH() {
                 <p className="text-sm text-[#64748B]">Grid de pagamento: créditos, débitos e valor a receber por funcionário.</p>
               </div>
               <div className="flex items-center gap-3">
-                <button onClick={() => setModoFinanceiro(false)} className="text-[#64748B] font-bold text-sm hover:text-[#0C1D4D] transition-colors flex items-center gap-2">⬅ Relatório Completo</button>
+                <button onClick={() => setModoRelatorio('folha')} className="text-[#64748B] font-bold text-sm hover:text-[#0C1D4D] transition-colors flex items-center gap-2">⬅ Relatório Completo</button>
                 <button onClick={() => window.print()} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#15803D] transition-all">
                   🖨️ Imprimir Grid Financeiro
                 </button>
@@ -480,8 +495,78 @@ export default function RelatoriosRH() {
           </div>
         )}
 
+        {/* ==================== GRID DE BENEFÍCIOS ==================== */}
+        {modoRelatorio === 'beneficios' && (
+          <div>
+            <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-4 mb-6 no-print">
+              <div>
+                <h2 className="text-lg font-black text-indigo-600 uppercase tracking-wider">🎁 Benefícios — {formatarMesAnoBR(mesReferencia)}</h2>
+                <p className="text-sm text-[#64748B]">Benefícios fixos por funcionário. Mês com <strong>{beneficiosMes.diasUteis} dias úteis</strong> (usado nos benefícios por diária).</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={() => setModoRelatorio('folha')} className="text-[#64748B] font-bold text-sm hover:text-[#0C1D4D] transition-colors flex items-center gap-2">⬅ Relatório Completo</button>
+                <button onClick={() => window.print()} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all">
+                  🖨️ Imprimir Grid
+                </button>
+              </div>
+            </div>
+
+            {beneficiosMes.funcionarios.length === 0 ? (
+              <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-16 text-center text-gray-400 font-bold uppercase tracking-wider">
+                Nenhum benefício fixo cadastrado. Conceda benefícios na aba Benefícios do RH.
+              </div>
+            ) : (
+              <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden print:border-none print:shadow-none">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left border-collapse">
+                    <thead className="bg-[#F8FAFC] print:bg-transparent border-b-2 border-black">
+                      <tr>
+                        <th className="p-3 font-black text-[#0C1D4D] uppercase text-[11px] tracking-wider">Funcionário</th>
+                        <th className="p-3 font-black text-[#0C1D4D] uppercase text-[11px] tracking-wider">Benefícios</th>
+                        <th className="p-3 font-black text-[#0C1D4D] uppercase text-[11px] tracking-wider text-right">Total no mês</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0]">
+                      {beneficiosMes.funcionarios.map((f: any) => (
+                        <tr key={f.funcionario_nome} className="hover:bg-[#F8FAFC] print:hover:bg-transparent">
+                          <td className="p-3 font-black text-[#0C1D4D] align-top whitespace-nowrap">{f.funcionario_nome}</td>
+                          <td className="p-3">
+                            <div className="flex flex-col gap-1">
+                              {f.itens.map((it: any, i: number) => (
+                                <div key={i} className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-[11px] font-black text-indigo-700 uppercase">{it.tipo}</span>
+                                  <span className="text-[10px] font-bold text-gray-400 uppercase">· {it.meio}</span>
+                                  <span className="text-[10px] font-medium text-gray-500">({it.detalhe})</span>
+                                  <span className="text-[11px] font-black text-[#0C1D4D]">{formatCurrency(it.valorMes)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="p-3 text-right font-black text-indigo-700 align-top whitespace-nowrap">{formatCurrency(f.total)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-black bg-[#F8FAFC] print:bg-transparent">
+                        <td className="p-3 font-black text-[#0C1D4D] uppercase text-[11px]" colSpan={2}>Total geral dos benefícios fixos</td>
+                        <td className="p-3 text-right font-black text-indigo-700 text-base">
+                          {formatCurrency(beneficiosMes.funcionarios.reduce((s: number, f: any) => s + f.total, 0))}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <p className="text-[10px] text-gray-400 font-medium mt-4 no-print">
+              VR e VT não entram aqui — são calculados por dia trabalhado no holerite. Este grid mostra os benefícios fixos (alimentação, saúde, etc.). Por diária = valor × {beneficiosMes.diasUteis} dias úteis do mês.
+            </p>
+          </div>
+        )}
+
         {/* ==================== RELATÓRIO COMPLETO ==================== */}
-        {!modoFinanceiro && (
+        {modoRelatorio === 'folha' && (
         <>
         {loading ? (
           <div className="bg-white border-2 border-dashed border-gray-300 rounded-2xl p-16 text-center text-gray-400 font-bold uppercase tracking-wider">

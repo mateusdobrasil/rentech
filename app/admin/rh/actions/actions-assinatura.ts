@@ -322,6 +322,64 @@ export async function listarAssinaturasAction(payload: { mesReferencia: string }
 }
 
 // ============================================================================
+// BAIXAR DOCUMENTO ASSINADO
+// Os links files.signed/pades da Autentique exigem o token (Authorization),
+// então clicar direto no navegador retorna "não existe". Aqui baixamos com o
+// token no servidor, arquivamos no nosso Storage (cópia permanente) e
+// devolvemos uma signed URL para o usuário abrir.
+// ============================================================================
+export async function baixarAssinadoAction(payload: {
+  funcionarioNome: string; mesReferencia: string;
+}): Promise<Resultado> {
+  const db = supabaseAdmin();
+  try {
+    const { data: ctrl } = await db
+      .from('folha_holerite_assinaturas')
+      .select('autentique_doc_id, arquivo_assinado, status')
+      .eq('funcionario_nome', payload.funcionarioNome)
+      .eq('mes_referencia', payload.mesReferencia)
+      .maybeSingle();
+    if (!ctrl?.autentique_doc_id) return { ok: false, erro: 'Nenhum envio encontrado para este documento.' };
+    if (ctrl.status !== 'ASSINADO') return { ok: false, erro: 'O documento ainda não foi assinado.' };
+
+    const pathArquivado = `${payload.mesReferencia}/assinados/${slug(payload.funcionarioNome)}.pdf`;
+
+    // 1) Se já arquivamos antes, só gera a URL
+    const { data: existente } = await db.storage.from(BUCKET_DOCS).createSignedUrl(pathArquivado, 60 * 10);
+    if (existente?.signedUrl) {
+      return { ok: true, info: { url: existente.signedUrl } };
+    }
+
+    // 2) Busca a URL do assinado na Autentique e baixa COM O TOKEN
+    const doc = await autentiqueConsultarDocumento(ctrl.autentique_doc_id);
+    const urlAssinado = doc?.files?.pades || doc?.files?.signed;
+    if (!urlAssinado) return { ok: false, erro: 'A Autentique ainda não disponibilizou o arquivo assinado.' };
+
+    const token = process.env.AUTENTIQUE_API_TOKEN;
+    if (!token) return { ok: false, erro: 'AUTENTIQUE_API_TOKEN não configurado no servidor.' };
+
+    const resp = await fetch(urlAssinado, { headers: { Authorization: `Bearer ${token}` } });
+    if (!resp.ok) {
+      return { ok: false, erro: `Falha ao baixar o assinado da Autentique (HTTP ${resp.status}).` };
+    }
+    const bytes = new Uint8Array(await resp.arrayBuffer());
+
+    // 3) Arquiva no nosso Storage (cópia permanente) e devolve a URL
+    const { error: upErr } = await db.storage.from(BUCKET_DOCS).upload(pathArquivado, bytes, {
+      contentType: 'application/pdf', upsert: true
+    });
+    if (upErr) return { ok: false, erro: `Falha ao arquivar: ${upErr.message}` };
+
+    const { data: urlData, error: urlErr } = await db.storage.from(BUCKET_DOCS).createSignedUrl(pathArquivado, 60 * 10);
+    if (urlErr || !urlData?.signedUrl) return { ok: false, erro: 'Falha ao gerar o link do arquivo.' };
+
+    return { ok: true, info: { url: urlData.signedUrl } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
 // CONSULTAR STATUS (fallback do webhook — uso pontual)
 // ============================================================================
 export async function consultarAssinaturaAction(payload: {

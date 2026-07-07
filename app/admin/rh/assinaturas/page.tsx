@@ -3,7 +3,11 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-import { listarAssinaturasAction, consultarAssinaturaAction, enviarDocumentoAvulsoAction, listarFuncionariosAtivosAction } from '../actions/actions-assinatura';
+
+import 
+  { 
+    listarAssinaturasAction, consultarAssinaturaAction, enviarDocumentoAvulsoAction, listarFuncionariosAtivosAction, baixarAssinadoAction 
+  } from '../actions/actions-assinatura';
 
 interface Assinatura {
   id: number;
@@ -38,6 +42,7 @@ export default function AssinaturasPage() {
   const [loading, setLoading] = useState(true);
   const [assinaturas, setAssinaturas] = useState<Assinatura[]>([]);
   const [atualizando, setAtualizando] = useState<string | null>(null);
+  const [baixandoAssinado, setBaixandoAssinado] = useState<string | null>(null);
   const [filtro, setFiltro] = useState<'TODOS' | 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO'>('TODOS');
 
   // Upload avulso (advertências, avisos, etc.)
@@ -83,6 +88,21 @@ export default function AssinaturasPage() {
       alert('Erro ao atualizar status: ' + e.message);
     } finally {
       setAtualizando(null);
+    }
+  };
+
+  // Baixa o PDF assinado via servidor (o link da Autentique exige o token da
+  // API — clicar direto no navegador retorna "documento não existe").
+  const abrirAssinado = async (a: Assinatura) => {
+    setBaixandoAssinado(a.funcionario_nome);
+    try {
+      const res = await baixarAssinadoAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia });
+      if (!res.ok) throw new Error(res.erro);
+      window.open(res.info.url, '_blank', 'noopener,noreferrer');
+    } catch (e: any) {
+      alert('Erro ao abrir o documento assinado: ' + e.message);
+    } finally {
+      setBaixandoAssinado(null);
     }
   };
 
@@ -311,10 +331,10 @@ export default function AssinaturasPage() {
                                 🔗 Link
                               </a>
                             )}
-                            {a.arquivo_assinado && (
-                              <a href={a.arquivo_assinado} target="_blank" rel="noopener noreferrer" className="text-[10px] font-black text-green-700 uppercase tracking-wider hover:bg-green-50 px-2 py-1 rounded border border-green-200">
-                                ⬇ Assinado
-                              </a>
+                            {a.status === 'ASSINADO' && (
+                              <button onClick={() => abrirAssinado(a)} disabled={baixandoAssinado !== null} className="text-[10px] font-black text-green-700 uppercase tracking-wider hover:bg-green-50 px-2 py-1 rounded border border-green-200 disabled:opacity-50">
+                                {baixandoAssinado === a.funcionario_nome ? '⏳' : '⬇ Assinado'}
+                              </button>
                             )}
                           </div>
                         </td>

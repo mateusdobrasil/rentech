@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-import { listarAssinaturasAction, consultarAssinaturaAction } from '../actions/actions-assinatura';
+import { 
+    listarAssinaturasAction, consultarAssinaturaAction, enviarDocumentoAvulsoAction, listarFuncionariosAtivosAction } 
+  from '../actions/actions-assinatura';
 
 interface Assinatura {
   id: number;
@@ -19,6 +21,7 @@ interface Assinatura {
   enviado_em: string | null;
   visualizado_em: string | null;
   assinado_em: string | null;
+  titulo_avulso?: string | null;
 }
 
 const formatarMesAnoBR = (iso: string) => { if (!iso) return ''; const [a, m] = iso.split('-'); return `${m}/${a}`; };
@@ -38,6 +41,16 @@ export default function AssinaturasPage() {
   const [assinaturas, setAssinaturas] = useState<Assinatura[]>([]);
   const [atualizando, setAtualizando] = useState<string | null>(null);
   const [filtro, setFiltro] = useState<'TODOS' | 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO'>('TODOS');
+
+  // Upload avulso (advertências, avisos, etc.)
+  const [mostrarUpload, setMostrarUpload] = useState(false);
+  const [funcionarios, setFuncionarios] = useState<{ nome_completo: string; cpf: string | null }[]>([]);
+  const [avulsoFunc, setAvulsoFunc] = useState('');
+  const [avulsoTitulo, setAvulsoTitulo] = useState('');
+  const [avulsoArquivo, setAvulsoArquivo] = useState<File | null>(null);
+  const [avulsoSandbox, setAvulsoSandbox] = useState(true);
+  const [enviandoAvulso, setEnviandoAvulso] = useState(false);
+  const avulsoFileRef = useRef<HTMLInputElement>(null);
 
   const [mesReferencia, setMesReferencia] = useState(() => {
     const h = new Date();
@@ -65,11 +78,63 @@ export default function AssinaturasPage() {
     try {
       const res = await consultarAssinaturaAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia });
       if (!res.ok) throw new Error(res.erro);
+      // DEBUG TEMPORÁRIO: mostra o que a Autentique devolveu nos eventos
+      if (res.info?.debug) {
+        console.log('Autentique eventos:', res.info.debug);
+        alert(`Status: ${res.info.status}\n\nEventos retornados pela Autentique:\n${JSON.stringify(res.info.debug, null, 2)}`);
+      }
       carregar(mesReferencia);
     } catch (e: any) {
       alert('Erro ao atualizar status: ' + e.message);
     } finally {
       setAtualizando(null);
+    }
+  };
+
+  // Carrega funcionários quando o painel de upload abre
+  const abrirUpload = async () => {
+    setMostrarUpload(true);
+    if (funcionarios.length === 0) {
+      const res = await listarFuncionariosAtivosAction();
+      if (res.ok) setFuncionarios(res.info.funcionarios);
+    }
+  };
+
+  const fileParaBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+  const enviarAvulso = async () => {
+    if (!avulsoFunc) { alert('Selecione o funcionário.'); return; }
+    if (!avulsoTitulo.trim()) { alert('Informe o título do documento (ex: Advertência).'); return; }
+    if (!avulsoArquivo) { alert('Selecione o arquivo PDF.'); return; }
+    if (avulsoArquivo.type !== 'application/pdf') { alert('O arquivo deve ser PDF.'); return; }
+
+    if (!confirm(
+      `Enviar "${avulsoTitulo}" para ${avulsoFunc} assinar?\n\n` +
+      (avulsoSandbox ? '🧪 MODO TESTE (sandbox): não gasta créditos.' : '⚠ MODO REAL: consome um documento do plano Autentique.')
+    )) return;
+
+    setEnviandoAvulso(true);
+    try {
+      const pdfBase64 = await fileParaBase64(avulsoArquivo);
+      const res = await enviarDocumentoAvulsoAction({
+        funcionarioNome: avulsoFunc, tituloDocumento: avulsoTitulo, pdfBase64,
+        enviadoPor: '', sandbox: avulsoSandbox
+      });
+      if (!res.ok) throw new Error(res.erro);
+      alert(`Documento enviado para assinatura!${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`);
+      setAvulsoFunc(''); setAvulsoTitulo(''); setAvulsoArquivo(null);
+      if (avulsoFileRef.current) avulsoFileRef.current.value = '';
+      setMostrarUpload(false);
+      carregar(mesReferencia);
+    } catch (e: any) {
+      alert('Erro ao enviar: ' + e.message);
+    } finally {
+      setEnviandoAvulso(false);
     }
   };
 
@@ -108,11 +173,53 @@ export default function AssinaturasPage() {
           </div>
           <div className="flex items-center gap-3">
             <input type="month" value={mesReferencia} onChange={e => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
-            <button onClick={() => router.push('/admin/rh/holerite')} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all">
+            <button onClick={abrirUpload} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all">
+              📎 Enviar Documento
+            </button>
+            <button onClick={() => router.push('/admin/rh/holerites')} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all">
               Ir para Holerites
             </button>
           </div>
         </div>
+
+        {/* Painel de upload avulso */}
+        {mostrarUpload && (
+          <div className="bg-white p-5 rounded-2xl shadow-sm border-2 border-indigo-200 mb-6">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider">📎 Enviar Documento Avulso para Assinatura</h2>
+              <button onClick={() => setMostrarUpload(false)} className="text-[10px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg uppercase">Fechar</button>
+            </div>
+            <p className="text-xs text-gray-500 mb-4">Para advertências, avisos, comunicados — qualquer PDF que o funcionário precise assinar. A validação por CPF e o envio por WhatsApp seguem o mesmo padrão dos holerites.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Funcionário</label>
+                <select value={avulsoFunc} onChange={e => setAvulsoFunc(e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-white">
+                  <option value="">— Selecione —</option>
+                  {funcionarios.map(f => (
+                    <option key={f.nome_completo} value={f.nome_completo}>{f.nome_completo}{!f.cpf ? ' (sem CPF ⚠)' : ''}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Título do documento</label>
+                <input type="text" value={avulsoTitulo} onChange={e => setAvulsoTitulo(e.target.value)} placeholder="Ex: Advertência - atraso reincidente" className="w-full p-2.5 border border-gray-300 rounded-lg text-sm" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Arquivo PDF</label>
+                <input ref={avulsoFileRef} type="file" accept="application/pdf" onChange={e => setAvulsoArquivo(e.target.files?.[0] || null)} className="w-full text-sm file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-[#0C1D4D] file:text-white file:font-bold file:text-xs file:uppercase" />
+              </div>
+              <div className="flex items-end gap-3">
+                <label className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider cursor-pointer bg-gray-50 px-3 py-2.5 rounded-lg border border-gray-200">
+                  <input type="checkbox" checked={avulsoSandbox} onChange={e => setAvulsoSandbox(e.target.checked)} />
+                  <span className={avulsoSandbox ? 'text-amber-600' : 'text-red-600'}>{avulsoSandbox ? '🧪 Teste' : '⚠ Real'}</span>
+                </label>
+                <button onClick={enviarAvulso} disabled={enviandoAvulso} className="flex-1 bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50">
+                  {enviandoAvulso ? '⏳ Enviando...' : '📤 Enviar para Assinatura'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* KPIs por status */}
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
@@ -182,6 +289,9 @@ export default function AssinaturasPage() {
                       <tr key={a.id} className="hover:bg-[#F8FAFC] transition-colors">
                         <td className="p-3">
                           <span className="font-black text-[#0C1D4D] block">{a.funcionario_nome}</span>
+                          {a.titulo_avulso
+                            ? <span className="text-[10px] text-indigo-600 font-black block">📎 {a.titulo_avulso}</span>
+                            : <span className="text-[10px] text-gray-400 font-bold block uppercase">Holerite</span>}
                           <span className="text-[10px] text-gray-500 font-medium">
                             CPF {a.cpf || '—'}{a.sandbox && <span className="ml-1 text-amber-600 font-black">🧪 TESTE</span>}
                           </span>

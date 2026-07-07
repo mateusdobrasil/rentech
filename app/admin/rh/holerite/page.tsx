@@ -7,7 +7,7 @@ import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
 import { salvarColaboradorAction, fecharFolhaLoteAction, reabrirFolhaAction } from '../actions/actions-folha';
-import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction } from '../actions//actions-assinatura';
+import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction } from '../actions/actions-assinatura';
 import logoColorido from '../../../../app/imgs/logo.png';
 
 // Utilitários
@@ -113,6 +113,7 @@ interface RegraContrato {
   direito_vr: boolean;
   direito_vt: boolean;
   modalidade_beneficio: 'POR_DIA' | 'VALOR_FECHADO'; // vale para VR e VT juntos
+  so_documental: boolean; // não gera cálculo/folha; só armazena e envia holerites da contabilidade
 }
 
 interface FuncionarioFin {
@@ -158,6 +159,7 @@ interface ItemLote {
   dados: DadosHolerite;
   fechamento: Fechamento | null;
   statusAssinatura: string | null; // null = nunca enviado; ENVIADO | VISUALIZADO | ASSINADO | REJEITADO
+  soDocumental: boolean; // contrato que não gera cálculo (só recebe holerites da contabilidade)
 }
 
 const REGRA_PADRAO: RegraContrato = {
@@ -165,7 +167,7 @@ const REGRA_PADRAO: RegraContrato = {
   paga_salario_base: true, calcula_extras_padrao: true, percentual_extra_semana: 60,
   percentual_extra_sabado: 60, tipo_pagamento_fds: 'HORA_PERCENTUAL', percentual_extra_dom_fer: 100,
   valor_diaria_fds: 0, desconta_faltas: true,
-  direito_vr: false, direito_vt: false, modalidade_beneficio: 'POR_DIA'
+  direito_vr: false, direito_vt: false, modalidade_beneficio: 'POR_DIA', so_documental: false
 };
 
 // ============================================================================
@@ -609,7 +611,8 @@ export default function HoleritePage() {
           percentual_extra_dom_fer: r.percentual_extra_dom_fer ?? 100,
           valor_diaria_fds: r.valor_diaria_fds ?? 0, desconta_faltas: r.desconta_faltas,
           direito_vr: r.direito_vr ?? false, direito_vt: r.direito_vt ?? false,
-          modalidade_beneficio: r.modalidade_beneficio || 'POR_DIA'
+          modalidade_beneficio: r.modalidade_beneficio || 'POR_DIA',
+          so_documental: r.so_documental ?? false
         };
       });
       setRegrasContrato(mapaRegras);
@@ -743,16 +746,27 @@ export default function HoleritePage() {
       const fechPorFunc: Record<string, Fechamento> = {};
       (fechs || []).forEach(f => { fechPorFunc[f.funcionario_nome] = f; });
 
-      const lista: ItemLote[] = (funcs || []).map(f => {
-        const apuracao = apurarPonto(ponto.porFuncionario[f.nome_completo] || {}, ponto.feriados, mesAno, f.data_admissao, f.data_desligamento);
-        const dados = montarDadosHolerite(
-          f, regrasContrato,
-          descPorFunc[f.nome_completo] || [],
-          bonusPorFunc[f.nome_completo] || [],
-          apuracao, mesAno
-        );
-        return { func: f, dados, fechamento: fechPorFunc[f.nome_completo] || null, statusAssinatura: assinPorFunc[f.nome_completo] || null };
-      });
+      // Item 1: funcionário admitido DEPOIS do mês de referência não entra na
+      // folha daquele mês. Compara o mês de admissão com o mês selecionado.
+      const admitidoAteOMes = (dataAdmissao: string | null) => {
+        if (!dataAdmissao) return true; // sem data = assume que já estava
+        return dataAdmissao.slice(0, 7) <= mesAno; // 'AAAA-MM' <= 'AAAA-MM'
+      };
+
+      const lista: ItemLote[] = (funcs || [])
+        .filter(f => admitidoAteOMes(f.data_admissao))
+        .map(f => {
+          const regra = regrasContrato[f.tipo_contrato];
+          const soDocumental = regra?.so_documental === true;
+          const apuracao = apurarPonto(ponto.porFuncionario[f.nome_completo] || {}, ponto.feriados, mesAno, f.data_admissao, f.data_desligamento);
+          const dados = montarDadosHolerite(
+            f, regrasContrato,
+            descPorFunc[f.nome_completo] || [],
+            bonusPorFunc[f.nome_completo] || [],
+            apuracao, mesAno
+          );
+          return { func: f, dados, fechamento: fechPorFunc[f.nome_completo] || null, statusAssinatura: assinPorFunc[f.nome_completo] || null, soDocumental };
+        });
 
       setLote(lista);
     } catch (e: any) {
@@ -766,7 +780,7 @@ export default function HoleritePage() {
   // FECHAMENTO EM LOTE: congela a folha do mês de TODOS os funcionários abertos
   // ============================================================================
   const fecharFolhaTodos = async () => {
-    const abertos = lote.filter(l => !l.fechamento);
+    const abertos = lote.filter(l => !l.fechamento && !l.soDocumental);
     const jaFechados = lote.length - abertos.length;
 
     if (abertos.length === 0) {
@@ -855,7 +869,9 @@ export default function HoleritePage() {
   // ENVIO PARA ASSINATURA (Autentique) — somente holerite de folha FECHADA
   // ============================================================================
   const enviarAssinatura = async (item: ItemLote) => {
-    if (!item.fechamento) {
+    // Documental não tem folha fechada — envia só os anexos da contabilidade.
+    // Os demais exigem folha fechada.
+    if (!item.soDocumental && !item.fechamento) {
       alert('Só é possível enviar para assinatura holerites com a folha FECHADA.');
       return;
     }
@@ -865,9 +881,10 @@ export default function HoleritePage() {
     }
     const jaEnviado = item.statusAssinatura === 'ENVIADO' || item.statusAssinatura === 'VISUALIZADO';
     if (!confirm(
-      `${jaEnviado ? 'REENVIAR' : 'Enviar'} o holerite de ${item.func.nome_completo} (${formatarMesAnoBR(mesReferencia)}) para assinatura?\n\n` +
+      `${jaEnviado ? 'REENVIAR' : 'Enviar'} ${item.soDocumental ? 'os holerites da contabilidade' : 'o holerite'} de ${item.func.nome_completo} (${formatarMesAnoBR(mesReferencia)}) para assinatura?\n\n` +
       `Destino: ${item.func.celular ? 'WhatsApp ' + item.func.celular : item.func.email || 'sem contato'}\n` +
       `CPF exigido na assinatura: ${item.func.cpf || 'NÃO PREENCHIDO ⚠'}\n` +
+      (item.soDocumental ? '\n📄 Contrato documental: envia apenas os documentos da contabilidade (sem resumo calculado).' : '') +
       (sandboxAssinatura ? '\n🧪 MODO TESTE (sandbox): não gasta créditos e o documento é temporário.' : '\n⚠ MODO REAL: consome um documento do seu plano Autentique.')
     )) return;
 
@@ -877,11 +894,12 @@ export default function HoleritePage() {
         funcionarioNome: item.func.nome_completo,
         mesReferencia,
         enviadoPor: usuarioAtual,
-        sandbox: sandboxAssinatura
+        sandbox: sandboxAssinatura,
+        soDocumental: item.soDocumental
       });
       if (!res.ok) throw new Error(res.erro);
-      const anexosMsg = res.info?.anexados?.length ? `\n\nAnexado: resumo + ${res.info.anexados.join(' + ')}` : '\n\n(só o resumo — sem documentos da contabilidade neste mês)';
-      alert(`Holerite enviado para assinatura!${anexosMsg}${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`);
+      const anexosMsg = res.info?.anexados?.length ? `\n\nAnexado: ${item.soDocumental ? '' : 'resumo + '}${res.info.anexados.join(' + ')}` : (item.soDocumental ? '\n\n⚠ Nenhum documento da contabilidade encontrado para este funcionário.' : '\n\n(só o resumo — sem documentos da contabilidade neste mês)');
+      alert(`Enviado para assinatura!${anexosMsg}${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`);
       carregarLote(mesReferencia);
     } catch (e: any) {
       alert('Erro ao enviar para assinatura: ' + e.message);
@@ -1513,6 +1531,40 @@ export default function HoleritePage() {
                 </div>
               ) : (
                 lote.map(item => (
+                  item.soDocumental ? (
+                    // Contrato só documental: não tem holerite calculado.
+                    // Card simplificado com botão de enviar (junta anexos da contabilidade).
+                    <div key={item.func.nome_completo} className="w-full max-w-5xl print:hidden">
+                      <div className="bg-white border-2 border-dashed border-indigo-200 rounded-2xl p-5 flex flex-col sm:flex-row justify-between items-center gap-3">
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl">📄</span>
+                          <div>
+                            <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider">{item.func.nome_completo}</h3>
+                            <p className="text-[11px] text-gray-500 font-bold uppercase">{item.func.tipo_contrato} • só documental (sem cálculo) • envia holerites da contabilidade</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {item.statusAssinatura && (
+                            <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider ${
+                              item.statusAssinatura === 'ASSINADO' ? 'bg-green-100 text-green-700' :
+                              item.statusAssinatura === 'VISUALIZADO' ? 'bg-blue-100 text-blue-700' :
+                              item.statusAssinatura === 'REJEITADO' ? 'bg-red-100 text-red-700' :
+                              'bg-indigo-100 text-indigo-700'
+                            }`}>
+                              {item.statusAssinatura === 'ASSINADO' ? '✅ Assinado' :
+                               item.statusAssinatura === 'VISUALIZADO' ? '👁 Visualizado' :
+                               item.statusAssinatura === 'REJEITADO' ? '✖ Rejeitado' : '📤 Enviado'}
+                            </span>
+                          )}
+                          {item.statusAssinatura !== 'ASSINADO' && (
+                            <button onClick={() => enviarAssinatura(item)} disabled={enviandoAssinatura !== null} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-[10px] px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+                              {enviandoAssinatura === item.func.nome_completo ? '⏳ Enviando...' : item.statusAssinatura ? '↻ Reenviar' : '📤 Enviar p/ Assinatura'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
                   <div key={item.func.nome_completo} className="w-full max-w-5xl flex flex-col items-center">
                     <div className="w-full flex justify-between items-center mb-2 print:hidden">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -1554,6 +1606,7 @@ export default function HoleritePage() {
                       fechamento={item.fechamento}
                     />
                   </div>
+                  )
                 ))
               )}
             </div>

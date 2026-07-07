@@ -15,6 +15,25 @@ type Resultado = { ok: boolean; erro?: string; info?: any };
 
 const BUCKET_DOCS = 'documentos-folha';
 
+const slug = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+
+// Lista funcionários ativos (para o seletor do envio avulso)
+export async function listarFuncionariosAtivosAction(): Promise<Resultado> {
+  const db = supabaseAdmin();
+  try {
+    const { data, error } = await db
+      .from('folha_funcionarios')
+      .select('nome_completo, cpf, celular, email')
+      .eq('ativo', true)
+      .order('nome_completo');
+    if (error) throw new Error(error.message);
+    return { ok: true, info: { funcionarios: data || [] } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
 // Busca um anexo da contabilidade no Storage; retorna null se não existir.
 async function baixarAnexoContabil(
   db: ReturnType<typeof supabaseAdmin>,
@@ -47,6 +66,76 @@ function normalizarCelularBR(celular?: string | null): string | null {
 }
 
 // ============================================================================
+// ENVIO DE DOCUMENTO AVULSO (advertência, aviso, etc.)
+// Não depende de folha nem de mês — sobe um PDF qualquer para um funcionário.
+// ============================================================================
+export async function enviarDocumentoAvulsoAction(payload: {
+  funcionarioNome: string;
+  tituloDocumento: string;      // ex: "Advertência - atraso"
+  pdfBase64: string;
+  enviadoPor: string;
+  sandbox: boolean;
+}): Promise<Resultado> {
+  const db = supabaseAdmin();
+  const { funcionarioNome, tituloDocumento, pdfBase64, enviadoPor, sandbox } = payload;
+
+  if (!tituloDocumento?.trim()) return { ok: false, erro: 'Informe um título para o documento.' };
+  if (!pdfBase64) return { ok: false, erro: 'Nenhum arquivo enviado.' };
+
+  try {
+    const { data: func } = await db
+      .from('folha_funcionarios')
+      .select('cpf, celular, email')
+      .eq('nome_completo', funcionarioNome)
+      .maybeSingle();
+
+    const cpfLimpo = (func?.cpf || '').replace(/\D/g, '');
+    if (cpfLimpo.length !== 11) {
+      return { ok: false, erro: `CPF de ${funcionarioNome} ausente ou inválido. Preencha o CPF na ficha antes de enviar.` };
+    }
+    const celularE164 = normalizarCelularBR(func?.celular);
+    if (!celularE164 && !func?.email) {
+      return { ok: false, erro: `Informe celular ou e-mail de ${funcionarioNome} na ficha para enviar o link de assinatura.` };
+    }
+
+    const pdfBytes = new Uint8Array(Buffer.from(pdfBase64, 'base64'));
+    const doc = await autentiqueCriarDocumento({
+      nomeDocumento: `${tituloDocumento} — ${funcionarioNome}`,
+      signatarioNome: funcionarioNome,
+      signatarioCpf: cpfLimpo,
+      signatarioCelular: celularE164 || undefined,
+      signatarioEmail: func?.email || undefined,
+      pdfBuffer: pdfBytes,
+      pdfNomeArquivo: `${slug(tituloDocumento)}-${slug(funcionarioNome)}.pdf`,
+      sandbox
+    });
+
+    // Registra como avulso: mes_referencia recebe um marcador com timestamp
+    // para não colidir com o holerite mensal (que usa 'AAAA-MM').
+    const marcadorAvulso = `AVULSO-${Date.now()}`;
+    const { error } = await db.from('folha_holerite_assinaturas').upsert({
+      funcionario_nome: funcionarioNome,
+      mes_referencia: marcadorAvulso,
+      cpf: cpfLimpo,
+      autentique_doc_id: doc.docId,
+      public_id: doc.publicId,
+      link_assinatura: doc.linkAssinatura,
+      status: 'ENVIADO',
+      sandbox,
+      titulo_avulso: tituloDocumento,
+      enviado_por: enviadoPor || null,
+      enviado_em: new Date().toISOString(),
+      atualizado_em: new Date().toISOString()
+    }, { onConflict: 'funcionario_nome,mes_referencia' });
+    if (error) throw new Error(`Documento criado na Autentique (${doc.docId}), mas falha ao gravar o controle: ${error.message}`);
+
+    return { ok: true, info: { docId: doc.docId, link: doc.linkAssinatura, sandbox } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
 // ENVIAR HOLERITE PARA ASSINATURA (somente folha FECHADA)
 // ============================================================================
 export async function enviarHoleriteAssinaturaAction(payload: {
@@ -54,19 +143,21 @@ export async function enviarHoleriteAssinaturaAction(payload: {
   mesReferencia: string;
   enviadoPor: string;
   sandbox: boolean;
+  soDocumental?: boolean;
 }): Promise<Resultado> {
   const db = supabaseAdmin();
-  const { funcionarioNome, mesReferencia, enviadoPor, sandbox } = payload;
+  const { funcionarioNome, mesReferencia, enviadoPor, sandbox, soDocumental } = payload;
 
   try {
-    // 1) Só envia holerite de folha FECHADA — busca o snapshot congelado
+    // 1) Folha fechada: obrigatória para contratos com cálculo. Para contratos
+    // "só documentais", não há folha — envia apenas os anexos da contabilidade.
     const { data: fechamento } = await db
       .from('folha_holerites')
       .select('dados, fechado_em')
       .eq('funcionario_nome', funcionarioNome)
       .eq('mes_referencia', mesReferencia)
       .maybeSingle();
-    if (!fechamento?.dados) {
+    if (!soDocumental && !fechamento?.dados) {
       return { ok: false, erro: 'A folha deste mês não está fechada para este funcionário. Feche a folha antes de enviar para assinatura.' };
     }
 
@@ -97,24 +188,28 @@ export async function enviarHoleriteAssinaturaAction(payload: {
       return { ok: false, erro: 'Este holerite já foi assinado. Não é possível reenviar.' };
     }
 
-    // 4) Gera o PDF (nosso resumo) a partir do snapshot congelado
-    const resumoBytes = await gerarHoleritePdf({
+    // 4) Nosso resumo — só para contratos com cálculo (folha fechada).
+    const resumoBytes = (!soDocumental && fechamento?.dados) ? await gerarHoleritePdf({
       nome: funcionarioNome,
       cpf: func?.cpf || null,
       mesReferencia,
       dados: fechamento.dados,
-      fechadoEm: fechamento.fechado_em,
+      fechadoEm: fechamento?.fechado_em,
       empresaNome: 'RENTECH'
-    });
+    }) : null;
 
     // 4b) Anexa os documentos da contabilidade que existirem no Storage.
-    // Ordem: nosso resumo → adiantamento → holerite mensal.
-    // Se não houver anexo, envia só o resumo (comportamento padrão).
+    // Ordem: nosso resumo (se houver) → adiantamento → holerite mensal.
     const adiantamento = await baixarAnexoContabil(db, mesReferencia, 'ADIANTAMENTO', funcionarioNome);
     const holeriteMensal = await baixarAnexoContabil(db, mesReferencia, 'HOLERITE_MENSAL', funcionarioNome);
 
     const partes = [resumoBytes, adiantamento, holeriteMensal].filter((p): p is Uint8Array => !!p);
-    const pdfBytes = partes.length > 1 ? await mergePdfs(partes) : resumoBytes;
+    if (partes.length === 0) {
+      return { ok: false, erro: soDocumental
+        ? `Nenhum holerite da contabilidade encontrado para ${funcionarioNome} neste mês. Importe e separe os PDFs antes de enviar.`
+        : 'Nenhum documento disponível para envio.' };
+    }
+    const pdfBytes = partes.length > 1 ? await mergePdfs(partes) : partes[0];
     const anexados = [
       adiantamento ? 'adiantamento' : null,
       holeriteMensal ? 'holerite' : null
@@ -213,10 +308,11 @@ export async function enviarHoleritesLoteAction(payload: {
 export async function listarAssinaturasAction(payload: { mesReferencia: string }): Promise<Resultado> {
   const db = supabaseAdmin();
   try {
+    // Traz as assinaturas do mês + os documentos avulsos (mes_referencia começa com 'AVULSO-')
     const { data, error } = await db
       .from('folha_holerite_assinaturas')
       .select('*')
-      .eq('mes_referencia', payload.mesReferencia)
+      .or(`mes_referencia.eq.${payload.mesReferencia},mes_referencia.like.AVULSO-%`)
       .order('funcionario_nome');
     if (error) throw new Error(error.message);
     return { ok: true, info: { assinaturas: data || [] } };

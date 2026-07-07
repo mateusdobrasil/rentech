@@ -25,6 +25,7 @@ interface RegraRH {
   direito_vt: boolean;
   modalidade_beneficio: 'POR_DIA' | 'VALOR_FECHADO';
   recebe_holerite_contabilidade: boolean;
+  so_documental: boolean;
 }
 
 interface ItemCatalogo { id: number; nome: string; }
@@ -69,7 +70,8 @@ export default function ParametrosRH() {
     direito_vr: false,
     direito_vt: false,
     modalidade_beneficio: 'POR_DIA',
-    recebe_holerite_contabilidade: true
+    recebe_holerite_contabilidade: true,
+    so_documental: false
   };
   
   const [form, setForm] = useState<RegraRH>(formPadrao);
@@ -220,7 +222,8 @@ export default function ParametrosRH() {
         direito_vr: r.direito_vr ?? false,
         direito_vt: r.direito_vt ?? false,
         modalidade_beneficio: r.modalidade_beneficio || 'POR_DIA',
-        recebe_holerite_contabilidade: r.recebe_holerite_contabilidade ?? true
+        recebe_holerite_contabilidade: r.recebe_holerite_contabilidade ?? true,
+        so_documental: r.so_documental ?? false
       })));
     }
     setLoading(false);
@@ -538,6 +541,16 @@ export default function ParametrosRH() {
                   <input type="checkbox" checked={form.desconta_faltas} onChange={e => setForm({...form, desconta_faltas: e.target.checked})} className="w-4 h-4 accent-[#336699]" />
                   Habilitar Desconto de Faltas?
                 </label>
+              </div>
+
+              <div className={`border-2 p-4 rounded-xl ${form.so_documental ? 'border-indigo-300 bg-indigo-50' : 'border-gray-200 bg-gray-50/50'}`}>
+                <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
+                  <input type="checkbox" checked={form.so_documental} onChange={e => setForm({...form, so_documental: e.target.checked})} className="w-4 h-4 accent-indigo-600" />
+                  Contrato só documental (não gera cálculo)?
+                </label>
+                {form.so_documental
+                  ? <p className="text-[9px] font-bold text-indigo-600 mt-1 uppercase">Não entra na folha/cálculo. Serve só para guardar dados e enviar holerites da contabilidade para assinatura.</p>
+                  : <p className="text-[9px] font-bold text-gray-400 mt-1 uppercase">Marque para contratos que só recebem holerite da contabilidade, sem cálculo no sistema</p>}
               </div>
 
               <div className="border border-gray-200 p-4 rounded-xl bg-gray-50/50">

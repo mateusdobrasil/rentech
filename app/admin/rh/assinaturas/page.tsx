@@ -78,11 +78,6 @@ export default function AssinaturasPage() {
     try {
       const res = await consultarAssinaturaAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia });
       if (!res.ok) throw new Error(res.erro);
-      // DEBUG TEMPORÁRIO: mostra o que a Autentique devolveu nos eventos
-      if (res.info?.debug) {
-        console.log('Autentique — signature bruto:', res.info.debug);
-        alert(`Status: ${res.info.status}\n\nSignature bruto da Autentique:\n${JSON.stringify(res.info.debug.signatureBruto, null, 2)}`);
-      }
       carregar(mesReferencia);
     } catch (e: any) {
       alert('Erro ao atualizar status: ' + e.message);

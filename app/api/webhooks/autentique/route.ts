@@ -43,12 +43,15 @@ function extrairDeJson(body: any): Extraido {
   const data = body?.event?.data?.object || body?.event?.data || body?.data || body;
   const docId = data?.id || data?.uuid || body?.event?.data?.id || null;
 
-  // Pega a primeira assinatura com evento preenchido
-  const sigs = data?.signatures || [];
+  // Considera apenas os signatários (action SIGN) — a primeira signature é o
+  // autor do documento, que não assina. Fallback: todas, se action não vier.
+  const todas = data?.signatures || [];
+  const sigs = todas.filter((s: any) => s?.action?.name === 'SIGN');
+  const lista = sigs.length > 0 ? sigs : todas;
   let assinadoEm: string | null = null;
   let visualizadoEm: string | null = null;
   let rejeitadoEm: string | null = null;
-  for (const s of sigs) {
+  for (const s of lista) {
     if (!assinadoEm && (s?.signed?.created_at || s?.signed?.created)) assinadoEm = s.signed.created_at || s.signed.created;
     if (!visualizadoEm && (s?.viewed?.created_at || s?.viewed?.created)) visualizadoEm = s.viewed.created_at || s.viewed.created;
     if (!rejeitadoEm && (s?.rejected?.created_at || s?.rejected?.created)) rejeitadoEm = s.rejected.created_at || s.rejected.created;

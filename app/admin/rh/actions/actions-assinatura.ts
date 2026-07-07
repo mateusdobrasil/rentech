@@ -338,7 +338,10 @@ export async function consultarAssinaturaAction(payload: {
     if (!ctrl?.autentique_doc_id) return { ok: false, erro: 'Nenhum envio encontrado para este holerite.' };
 
     const doc = await autentiqueConsultarDocumento(ctrl.autentique_doc_id);
-    const assinatura = (doc?.signatures || [])[0];
+    // A primeira signature é o AUTOR (a Rentech, action: null), que nunca assina.
+    // O signatário de verdade é o que tem action.name === 'SIGN'.
+    const assinatura = (doc?.signatures || []).find((s: any) => s?.action?.name === 'SIGN')
+      || (doc?.signatures || [])[0];
 
     const assinou = !!assinatura?.signed?.created_at;
     const visualizou = !!assinatura?.viewed?.created_at;
@@ -354,19 +357,7 @@ export async function consultarAssinaturaAction(payload: {
       atualizado_em: new Date().toISOString()
     }).eq('autentique_doc_id', ctrl.autentique_doc_id);
 
-    // DEBUG TEMPORÁRIO: retorna o objeto signature BRUTO completo que a
-    // Autentique devolveu, para ver todos os campos preenchidos. Remover depois.
-    return {
-      ok: true,
-      info: {
-        status: novoStatus,
-        debug: {
-          signatureBruto: assinatura ?? null,
-          totalSignatures: doc?.signatures?.length ?? 0,
-          files: doc?.files ?? null
-        }
-      }
-    };
+    return { ok: true, info: { status: novoStatus } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

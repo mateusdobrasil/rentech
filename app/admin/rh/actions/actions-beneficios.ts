@@ -150,12 +150,16 @@ export async function gridBeneficiosAction(payload: { mesReferencia: string }): 
     itens.forEach(it => tiposSet.add(it.tipo));
     const colunas = Array.from(tiposSet).sort((a, b) => a.localeCompare(b));
 
-    // Linhas = funcionários, com o valor de cada tipo de benefício
+    // Linhas = funcionários, com o valor de cada tipo + detalhe compacto
+    // (para diária/dias fixos: "25,00×15" exibido em fonte pequena na célula)
     const porFunc: Record<string, any> = {};
     itens.forEach(it => {
-      (porFunc[it.funcionario_nome] ||= { funcionario_nome: it.funcionario_nome, valores: {}, total: 0 });
-      // Soma caso o funcionário tenha mais de um benefício do mesmo tipo (raro, mas seguro)
+      (porFunc[it.funcionario_nome] ||= { funcionario_nome: it.funcionario_nome, valores: {}, detalhes: {}, total: 0 });
       porFunc[it.funcionario_nome].valores[it.tipo] = (porFunc[it.funcionario_nome].valores[it.tipo] || 0) + it.valorMes;
+      if (it.modalidade === 'POR_DIARIA' || it.modalidade === 'DIAS_FIXOS') {
+        const dias = it.valorBase > 0 ? Math.round(it.valorMes / it.valorBase) : 0;
+        porFunc[it.funcionario_nome].detalhes[it.tipo] = `${it.valorBase.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}×${dias}`;
+      }
       porFunc[it.funcionario_nome].total += it.valorMes;
     });
 

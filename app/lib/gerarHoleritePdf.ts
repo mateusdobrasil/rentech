@@ -125,29 +125,38 @@ export async function gerarHoleritePdf(p: GerarPdfParams): Promise<Uint8Array> {
   y -= 20;
 
   // Linhas de crédito
+  // Parcela atual do desconto parcelado (igual à tela): meses desde o início + 1
+  const getParcelaAtual = (mesInicio: string, mesRef: string) => {
+    if (!mesInicio || !mesRef) return 1;
+    const [anoI, mesI] = mesInicio.split('-').map(Number);
+    const [anoR, mesR] = mesRef.split('-').map(Number);
+    return (anoR - anoI) * 12 + (mesR - mesI) + 1;
+  };
+
   const creditos: [string, string, number][] = [];
-  if (v.salarioBaseExibido > 0) creditos.push(['SALÁRIO BASE', '30', v.salarioBaseExibido]);
-  if (v.complementoContratoExibido > 0) creditos.push(['COMPLEMENTO ACORDO', '30', v.complementoContratoExibido]);
+  if (v.salarioBaseExibido > 0) creditos.push(['SALÁRIO BASE CONTRATUAL', '30', v.salarioBaseExibido]);
+  if (v.complementoContratoExibido > 0) creditos.push(['COMPLEMENTO DE ACORDO CLASSE', '30', v.complementoContratoExibido]);
   if (v.regra.tipo_pagamento_fds === 'HORA_PERCENTUAL') {
-    if (v.totalExtra60 > 0) creditos.push([`H. EXTRA ${v.regra.percentual_extra_semana}% (SEG-SÁB)`, hhmm(v.minutosExtras60), v.totalExtra60]);
-    if (v.totalExtra100 > 0) creditos.push([`H. EXTRA ${v.regra.percentual_extra_dom_fer}% (DOM/FER)`, hhmm(v.minutosExtras100), v.totalExtra100]);
+    if (v.totalExtra60 > 0) creditos.push([`HORA EXTRA ${v.regra.percentual_extra_semana}% (SEG A SÁB)`, hhmm(v.minutosExtras60), v.totalExtra60]);
+    if (v.totalExtra100 > 0) creditos.push([`HORA EXTRA ${v.regra.percentual_extra_dom_fer}% (DOM/FERIADO)`, hhmm(v.minutosExtras100), v.totalExtra100]);
   } else if (v.totalDiariasFdsFechada > 0) {
-    creditos.push(['DIÁRIAS FDS/APOIO', `${v.diasTrabalhadosFds}D`, v.totalDiariasFdsFechada]);
+    creditos.push(['DIÁRIAS DE FIM DE SEMANA / APOIO', `${v.diasTrabalhadosFds}D`, v.totalDiariasFdsFechada]);
   }
-  v.bonusAtivos.forEach(b => creditos.push([b.descricao.toUpperCase().slice(0, 26), b.recorrencia === 'MENSAL' ? 'FIXO' : 'PRÊMIO', b.valor]));
-  if (v.totalVr > 0) creditos.push([`VALE REFEIÇÃO (VR)`, `${v.qtdVr}× ${BRL(v.diariaVr)}`, v.totalVr]);
-  if (v.totalVt > 0) creditos.push([`VALE TRANSPORTE (VT)`, `${v.qtdVt}× ${BRL(v.diariaVt)}`, v.totalVt]);
+  v.bonusAtivos.forEach(b => creditos.push([b.descricao.toUpperCase().slice(0, 30), b.recorrencia === 'MENSAL' ? 'FIXO' : 'PRÊMIO', b.valor]));
+  if (v.totalVr > 0) creditos.push([`VALE REFEIÇÃO (VR)`, `${v.qtdVr} ${v.qtdVr === 1 ? 'DIA' : 'DIAS'}`, v.totalVr]);
+  if (v.totalVt > 0) creditos.push([`VALE TRANSPORTE (VT)`, `${v.qtdVt} ${v.qtdVt === 1 ? 'DIA' : 'DIAS'}`, v.totalVt]);
 
   // Linhas de débito
   const debitos: [string, string, number][] = [];
-  if (v.valorAdiantamento > 0) debitos.push(['ADIANTAMENTO', 'DIA 20', v.valorAdiantamento]);
+  if (v.valorAdiantamento > 0) debitos.push(['ADIANTAMENTO QUINZENAL', 'DIA 20', v.valorAdiantamento]);
   v.descontosAtivos.forEach(d => {
-    const ref = d.tipo === 'FIXO' ? 'FIXO' : `${d.parcelas}x`;
-    debitos.push([d.descricao.toUpperCase().slice(0, 26), ref, d.valor_parcela]);
+    // Igual à tela: parcelado mostra "atual/total" (ex: 3/12), fixo mostra FIXO
+    const ref = d.tipo === 'FIXO' ? 'FIXO' : `${getParcelaAtual(d.mes_inicio, p.mesReferencia)}/${d.parcelas}`;
+    debitos.push([d.descricao.toUpperCase().slice(0, 30), ref, d.valor_parcela]);
   });
-  if (v.regra.desconta_faltas && v.valorDescontoFaltas > 0) debitos.push([`FALTAS (${v.diasFaltas}D)`, `${v.diasFaltas}D`, v.valorDescontoFaltas]);
-  if (v.descontoVrFaltas > 0) debitos.push([`DESC. VR POR FALTA`, `${v.diasFaltas}× ${BRL(v.diariaVr)}`, v.descontoVrFaltas]);
-  if (v.descontoVtFaltas > 0) debitos.push([`DESC. VT POR FALTA`, `${v.diasFaltas}× ${BRL(v.diariaVt)}`, v.descontoVtFaltas]);
+  if (v.regra.desconta_faltas && v.valorDescontoFaltas > 0) debitos.push(['FALTAS (CONTRATO ÷ 30 POR DIA)', `${v.diasFaltas}D`, v.valorDescontoFaltas]);
+  if (v.descontoVrFaltas > 0) debitos.push([`DESC. VR POR FALTA`, `${v.diasFaltas} ${v.diasFaltas === 1 ? 'DIA' : 'DIAS'}`, v.descontoVrFaltas]);
+  if (v.descontoVtFaltas > 0) debitos.push([`DESC. VT POR FALTA`, `${v.diasFaltas} ${v.diasFaltas === 1 ? 'DIA' : 'DIAS'}`, v.descontoVtFaltas]);
 
   const linhaAltura = 15;
   const maxLinhas = Math.max(creditos.length, debitos.length, 4);

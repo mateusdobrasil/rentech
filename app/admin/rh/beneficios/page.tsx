@@ -218,7 +218,7 @@ export default function BeneficiosPage() {
 
       <div className="p-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full">
 
-        {/* KPIs
+        {/* KPIs 
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
           <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 text-center">
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Funcionários</p>
@@ -288,35 +288,61 @@ export default function BeneficiosPage() {
           ) : filtradas.length === 0 ? (
             <div className="p-16 text-center text-gray-400 font-bold uppercase tracking-wider">Nenhum funcionário neste filtro.</div>
           ) : (
-            <div className="divide-y divide-[#E2E8F0]">
-              {filtradas.map(l => (
-                <div key={l.nome} className={`p-4 ${l.semNenhum ? 'bg-amber-50/40' : ''}`}>
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                    <div className="min-w-[200px]">
-                      <span className="font-black text-[#0C1D4D] block">{l.nome}</span>
-                      <span className="text-[10px] text-gray-500 font-bold uppercase">{l.cargo || '—'} • {l.contrato}</span>
-                    </div>
-
-                    {/* Chips de benefícios (só fixos; VR/VT vive no holerite) */}
-                    <div className="flex flex-wrap gap-2 flex-1">
-                      {l.beneficiosFixos.map(b => (
-                        <span key={b.id} className="text-[10px] font-black bg-indigo-50 text-indigo-700 pl-2.5 pr-1.5 py-1 rounded-full uppercase inline-flex items-center gap-1.5">
-                          <button onClick={() => abrirEdicao(l.nome, b)} title="Editar" className="hover:underline">
-                            {b.tipo} {BRL(b.valor)}{b.modalidade === 'POR_DIARIA' ? '/dia' : b.modalidade === 'DIAS_FIXOS' ? `/dia×${b.qtdDias}` : ''} · {b.meio}
-                          </button>
-                          <button onClick={() => verHistorico(b.id)} title="Histórico" className="text-indigo-400 hover:text-indigo-700">🕐</button>
-                          <button onClick={() => removerBeneficio(b.id, b.tipo, l.nome)} title="Remover" className="text-indigo-400 hover:text-red-600">✕</button>
-                        </span>
-                      ))}
-                      {l.semNenhum && <span className="text-[10px] font-black text-amber-600 uppercase px-2 py-1">⚠ Sem benefícios</span>}
-                    </div>
-
-                    <button onClick={() => abrirNovo(l.nome)} className="text-[10px] font-black text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg uppercase tracking-wider whitespace-nowrap">
-                      + Benefício
-                    </button>
-                  </div>
-                </div>
-              ))}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-[#F8FAFC] border-b-2 border-[#E2E8F0]">
+                    <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px] tracking-wider">Funcionário</th>
+                    <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px] tracking-wider">Benefício</th>
+                    <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px] tracking-wider">Meio</th>
+                    <th className="p-3 text-right font-black text-[#0C1D4D] uppercase text-[10px] tracking-wider">Valor</th>
+                    <th className="p-3 text-center font-black text-[#0C1D4D] uppercase text-[10px] tracking-wider w-28">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtradas.map((l, idx) => {
+                    const linhas = l.beneficiosFixos.length || 1;
+                    const zebra = idx % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white';
+                    return l.beneficiosFixos.length === 0 ? (
+                      <tr key={l.nome} className={`${zebra} border-b border-[#E2E8F0]`}>
+                        <td className="p-3">
+                          <span className="font-black text-[#0C1D4D] block">{l.nome}</span>
+                          <span className="text-[10px] text-gray-400 font-bold uppercase">{l.cargo || '—'}</span>
+                        </td>
+                        <td className="p-3 text-[11px] font-black text-amber-500 uppercase" colSpan={3}>⚠ Sem benefícios</td>
+                        <td className="p-3 text-center">
+                          <button onClick={() => abrirNovo(l.nome)} className="text-[10px] font-black text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg uppercase">+ Add</button>
+                        </td>
+                      </tr>
+                    ) : (
+                      l.beneficiosFixos.map((b, bi) => (
+                        <tr key={`${l.nome}-${b.id}`} className={`${zebra} ${bi === linhas - 1 ? 'border-b border-[#E2E8F0]' : ''}`}>
+                          {bi === 0 && (
+                            <td className="p-3 align-top" rowSpan={linhas}>
+                              <span className="font-black text-[#0C1D4D] block">{l.nome}</span>
+                              <span className="text-[10px] text-gray-400 font-bold uppercase">{l.cargo || '—'}</span>
+                            </td>
+                          )}
+                          <td className="p-3 text-[11px] font-black text-indigo-700 uppercase whitespace-nowrap">{b.tipo}</td>
+                          <td className="p-3 text-[11px] font-bold text-gray-500 uppercase whitespace-nowrap">{b.meio}</td>
+                          <td className="p-3 text-right tabular-nums whitespace-nowrap">
+                            <span className="font-black text-[#0C1D4D]">{BRL(b.valor)}</span>
+                            <span className="text-[9px] text-gray-400 font-bold ml-1">
+                              {b.modalidade === 'POR_DIARIA' ? '/dia (úteis)' : b.modalidade === 'DIAS_FIXOS' ? `/dia ×${b.qtdDias}` : '/mês'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-center whitespace-nowrap">
+                            <button onClick={() => abrirEdicao(l.nome, b)} title="Editar" className="text-gray-400 hover:text-indigo-600 px-1">✏️</button>
+                            <button onClick={() => verHistorico(b.id)} title="Histórico" className="text-gray-400 hover:text-indigo-600 px-1">🕐</button>
+                            <button onClick={() => removerBeneficio(b.id, b.tipo, l.nome)} title="Remover" className="text-gray-400 hover:text-red-600 px-1">✕</button>
+                            {bi === 0 && <button onClick={() => abrirNovo(l.nome)} title="Adicionar" className="text-gray-400 hover:text-emerald-600 px-1 font-black">+</button>}
+                          </td>
+                        </tr>
+                      ))
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
@@ -364,8 +390,13 @@ export default function BeneficiosPage() {
                       <tr key={f.funcionario_nome} className={idx % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]'}>
                         <td className={`p-2.5 font-black text-[#0C1D4D] whitespace-nowrap sticky left-0 z-10 ${idx % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]'}`}>{f.funcionario_nome}</td>
                         {grid.colunas.map(c => (
-                          <td key={c} className="p-2.5 text-right tabular-nums text-gray-700">
-                            {f.valores[c] ? BRL(f.valores[c]) : <span className="text-gray-300">—</span>}
+                          <td key={c} className="p-2.5 text-right tabular-nums text-gray-700 whitespace-nowrap">
+                            {f.valores[c] ? (
+                              <>
+                                {f.detalhes?.[c] && <span className="text-[9px] text-gray-400 font-medium mr-1.5">{f.detalhes[c]}</span>}
+                                {BRL(f.valores[c])}
+                              </>
+                            ) : <span className="text-gray-300">—</span>}
                           </td>
                         ))}
                         <td className="p-2.5 text-right font-black text-indigo-700 tabular-nums whitespace-nowrap bg-indigo-50/50">{BRL(f.total)}</td>

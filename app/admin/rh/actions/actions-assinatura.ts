@@ -73,11 +73,12 @@ export async function enviarDocumentoAvulsoAction(payload: {
   funcionarioNome: string;
   tituloDocumento: string;      // ex: "Advertência - atraso"
   pdfBase64: string;
+  mesReferencia: string;        // mês selecionado na página de assinaturas
   enviadoPor: string;
   sandbox: boolean;
 }): Promise<Resultado> {
   const db = supabaseAdmin();
-  const { funcionarioNome, tituloDocumento, pdfBase64, enviadoPor, sandbox } = payload;
+  const { funcionarioNome, tituloDocumento, pdfBase64, mesReferencia, enviadoPor, sandbox } = payload;
 
   if (!tituloDocumento?.trim()) return { ok: false, erro: 'Informe um título para o documento.' };
   if (!pdfBase64) return { ok: false, erro: 'Nenhum arquivo enviado.' };
@@ -110,9 +111,10 @@ export async function enviarDocumentoAvulsoAction(payload: {
       sandbox
     });
 
-    // Registra como avulso: mes_referencia recebe um marcador com timestamp
-    // para não colidir com o holerite mensal (que usa 'AAAA-MM').
-    const marcadorAvulso = `AVULSO-${Date.now()}`;
+    // Registra como avulso vinculado ao mês selecionado: o marcador inclui o
+    // mês (para o avulso aparecer naquele mês) + timestamp (para não colidir
+    // com o holerite nem com outros avulsos, dada a unique func+mes).
+    const marcadorAvulso = `AVULSO-${mesReferencia}-${Date.now()}`;
     const { error } = await db.from('folha_holerite_assinaturas').upsert({
       funcionario_nome: funcionarioNome,
       mes_referencia: marcadorAvulso,
@@ -308,11 +310,11 @@ export async function enviarHoleritesLoteAction(payload: {
 export async function listarAssinaturasAction(payload: { mesReferencia: string }): Promise<Resultado> {
   const db = supabaseAdmin();
   try {
-    // Traz as assinaturas do mês + os documentos avulsos (mes_referencia começa com 'AVULSO-')
+    // Traz as assinaturas do mês + os avulsos DAQUELE mês (AVULSO-{mes}-...)
     const { data, error } = await db
       .from('folha_holerite_assinaturas')
       .select('*')
-      .or(`mes_referencia.eq.${payload.mesReferencia},mes_referencia.like.AVULSO-%`)
+      .or(`mes_referencia.eq.${payload.mesReferencia},mes_referencia.like.AVULSO-${payload.mesReferencia}-%`)
       .order('funcionario_nome');
     if (error) throw new Error(error.message);
     return { ok: true, info: { assinaturas: data || [] } };
@@ -333,7 +335,7 @@ export async function atualizarTodasAssinaturasAction(payload: {
     const { data: pendentes } = await db
       .from('folha_holerite_assinaturas')
       .select('funcionario_nome, mes_referencia, status')
-      .or(`mes_referencia.eq.${payload.mesReferencia},mes_referencia.like.AVULSO-%`)
+      .or(`mes_referencia.eq.${payload.mesReferencia},mes_referencia.like.AVULSO-${payload.mesReferencia}-%`)
       .not('status', 'in', '("ASSINADO","REJEITADO")');
 
     if (!pendentes?.length) {

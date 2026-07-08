@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import 
   { 
-    listarAssinaturasAction, consultarAssinaturaAction, enviarDocumentoAvulsoAction, listarFuncionariosAtivosAction, baixarAssinadoAction, atualizarTodasAssinaturasAction 
+    listarAssinaturasAction, consultarAssinaturaAction, enviarDocumentoAvulsoAction, 
+    listarFuncionariosAtivosAction, baixarAssinadoAction, atualizarTodasAssinaturasAction 
   } from '../actions/actions-assinatura';
 
 interface Assinatura {
@@ -158,7 +159,7 @@ export default function AssinaturasPage() {
       const pdfBase64 = await fileParaBase64(avulsoArquivo);
       const res = await enviarDocumentoAvulsoAction({
         funcionarioNome: avulsoFunc, tituloDocumento: avulsoTitulo, pdfBase64,
-        enviadoPor: '', sandbox: avulsoSandbox
+        mesReferencia, enviadoPor: '', sandbox: avulsoSandbox
       });
       if (!res.ok) throw new Error(res.erro);
       alert(`Documento enviado para assinatura!${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`);

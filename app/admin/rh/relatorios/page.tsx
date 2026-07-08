@@ -543,8 +543,13 @@ export default function RelatoriosRH() {
                         <tr key={f.funcionario_nome} className="hover:bg-[#F8FAFC] print:hover:bg-transparent">
                           <td className="p-3 font-black text-[#0C1D4D] whitespace-nowrap">{f.funcionario_nome}</td>
                           {beneficiosMes.colunas.map((c: string) => (
-                            <td key={c} className="p-3 text-right tabular-nums text-gray-700">
-                              {f.valores[c] ? formatCurrency(f.valores[c]) : <span className="text-gray-300">—</span>}
+                            <td key={c} className="p-3 text-right tabular-nums text-gray-700 whitespace-nowrap">
+                              {f.valores[c] ? (
+                                <>
+                                  {f.detalhes?.[c] && <span className="text-[9px] text-gray-400 font-medium mr-1.5">{f.detalhes[c]}</span>}
+                                  {formatCurrency(f.valores[c])}
+                                </>
+                              ) : <span className="text-gray-300">—</span>}
                             </td>
                           ))}
                           <td className="p-3 text-right font-black text-indigo-700 tabular-nums whitespace-nowrap">{formatCurrency(f.total)}</td>

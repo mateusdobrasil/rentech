@@ -450,8 +450,8 @@ const HoleriteDoc = ({ nome, dados, mesRef, fechamento }: {
                 </tr>
               ))}
 
-              {v.totalVr > 0 && <tr><td className="p-1">VALE REFEIÇÃO (VR)</td><td className="p-1 border-x border-gray-300 text-center text-[10px] font-black">{v.qtdVr}× {formatCurrency(v.diariaVr)}</td><td className="p-1 text-right">{formatCurrency(v.totalVr)}</td></tr>}
-              {v.totalVt > 0 && <tr><td className="p-1">VALE TRANSPORTE (VT)</td><td className="p-1 border-x border-gray-300 text-center text-[10px] font-black">{v.qtdVt}× {formatCurrency(v.diariaVt)}</td><td className="p-1 text-right">{formatCurrency(v.totalVt)}</td></tr>}
+              {v.totalVr > 0 && <tr><td className="p-1">VALE REFEIÇÃO (VR)</td><td className="p-1 border-x border-gray-300 text-center text-[10px] font-black">{v.qtdVr} {v.qtdVr === 1 ? 'DIA' : 'DIAS'}</td><td className="p-1 text-right">{formatCurrency(v.totalVr)}</td></tr>}
+              {v.totalVt > 0 && <tr><td className="p-1">VALE TRANSPORTE (VT)</td><td className="p-1 border-x border-gray-300 text-center text-[10px] font-black">{v.qtdVt} {v.qtdVt === 1 ? 'DIA' : 'DIAS'}</td><td className="p-1 text-right">{formatCurrency(v.totalVt)}</td></tr>}
 
               {Array.from({ length: Math.max(0, 3 - v.bonusAtivos.length) }).map((_, i) => <tr key={`esp-cred-${i}`}><td className="p-1 text-transparent">_</td><td className="border-x border-gray-300"></td><td></td></tr>)}
             </tbody>
@@ -495,8 +495,8 @@ const HoleriteDoc = ({ nome, dados, mesRef, fechamento }: {
                 )
               )}
 
-              {v.descontoVrFaltas > 0 && <tr><td className="p-1">DESC. VR POR FALTA</td><td className="p-1 border-x border-gray-300 text-center text-[10px] font-black">{v.diasFaltas}× {formatCurrency(v.diariaVr)}</td><td className="p-1 text-right">{formatCurrency(v.descontoVrFaltas)}</td></tr>}
-              {v.descontoVtFaltas > 0 && <tr><td className="p-1">DESC. VT POR FALTA</td><td className="p-1 border-x border-gray-300 text-center text-[10px] font-black">{v.diasFaltas}× {formatCurrency(v.diariaVt)}</td><td className="p-1 text-right">{formatCurrency(v.descontoVtFaltas)}</td></tr>}
+              {v.descontoVrFaltas > 0 && <tr><td className="p-1">DESC. VR POR FALTA</td><td className="p-1 border-x border-gray-300 text-center text-[10px] font-black">{v.diasFaltas} {v.diasFaltas === 1 ? 'DIA' : 'DIAS'}</td><td className="p-1 text-right">{formatCurrency(v.descontoVrFaltas)}</td></tr>}
+              {v.descontoVtFaltas > 0 && <tr><td className="p-1">DESC. VT POR FALTA</td><td className="p-1 border-x border-gray-300 text-center text-[10px] font-black">{v.diasFaltas} {v.diasFaltas === 1 ? 'DIA' : 'DIAS'}</td><td className="p-1 text-right">{formatCurrency(v.descontoVtFaltas)}</td></tr>}
 
               {Array.from({ length: Math.max(0, 4 - v.descontosAtivos.length) }).map((_, i) => <tr key={`esp-deb-${i}`}><td className="p-1 text-transparent">_</td><td className="border-x border-gray-300"></td><td></td></tr>)}
             </tbody>

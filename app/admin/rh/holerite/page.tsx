@@ -1,10 +1,10 @@
 "use client";
 
+import { Analytics } from "@vercel/analytics/next";
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
-import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
 import { salvarColaboradorAction, fecharFolhaLoteAction, reabrirFolhaAction } from '../actions/actions-folha';
 import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction, previaDocumentoAssinaturaAction } from '../actions/actions-assinatura';

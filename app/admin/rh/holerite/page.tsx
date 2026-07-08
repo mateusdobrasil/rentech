@@ -1505,24 +1505,36 @@ export default function HoleritePage() {
             <div className="flex flex-col items-center pb-10">
               <div className="w-full max-w-5xl bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-3 mb-6 print:hidden">
                 <div>
-                  <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Folha do Mês — Todos os Funcionários</h2>
-                  <p className="text-sm text-[#64748B]">
-                    Competência: {formatarMesAnoBR(mesReferencia)} • {lote.length} funcionário(s) ativo(s) • {totalFechados} fechado(s)
-                  </p>
+                  <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Folha do Mês - Geral</h2>
+                  <p className="text-sm text-[#64748B]"> Competência: {formatarMesAnoBR(mesReferencia)} </p>
+                  <p className="text-sm text-[#64748B]">{lote.length} funcionário(s) ativo(s)</p>
+                  <p className="text-sm text-[#64748B]">{totalFechados} fechado(s)</p>
                 </div>
                 <div className="flex items-center gap-3 flex-wrap justify-center">
-                  <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
-                  <button onClick={fecharFolhaTodos} disabled={loadingLote || lote.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">
-                    🔒 Fechar Folha do Mês (Todos)
-                  </button>
-                  {totalFechados > 0 && (
-                    <button onClick={reabrirFolhaTodos} disabled={loadingLote} className="bg-white border-2 border-red-300 text-red-600 font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl hover:bg-red-50 transition-all disabled:opacity-50">
-                      🔓 Reabrir Todos ({totalFechados})
-                    </button>
-                  )}
-                  <button onClick={() => window.print()} disabled={lote.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
-                    🖨️ Imprimir Todos ({lote.length} páginas)
-                  </button>
+                  <table className="table-auto border-separate border-spacing-2">
+                    <tr>
+                      <td>
+                        <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+                      </td>
+                      <td>
+                        <button onClick={fecharFolhaTodos} disabled={loadingLote || lote.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">
+                          🔒 Fechar Folha
+                        </button>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <button onClick={() => window.print()} disabled={lote.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
+                          🖨️ Imprimir ({lote.length} pág)
+                        </button>
+                      </td>
+                      <td>
+                        <button onClick={reabrirFolhaTodos} disabled={loadingLote} className="bg-white border-2 border-red-300 text-red-600 font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl hover:bg-red-50 transition-all disabled:opacity-50">
+                          🔓 Reabrir ({totalFechados})
+                        </button>
+                      </td>
+                    </tr>
+                  </table>
                 </div>
               </div>
 
@@ -1542,7 +1554,7 @@ export default function HoleritePage() {
                       <span className={sandboxAssinatura ? 'text-amber-600' : 'text-red-600'}>{sandboxAssinatura ? '🧪 Modo Teste' : '⚠ Modo Real'}</span>
                     </label>
                     <button onClick={enviarAssinaturaTodos} disabled={enviandoAssinatura !== null} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50">
-                      {enviandoAssinatura === 'LOTE' ? '⏳ Enviando...' : '📤 Enviar Todos p/ Assinatura'}
+                      {enviandoAssinatura === 'LOTE' ? '⏳ Enviando...' : '📤 Enviar p/ Assinatura'}
                     </button>
                     <button onClick={() => router.push('/admin/rh/assinaturas')} className="bg-white border-2 border-indigo-300 text-indigo-700 font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl hover:bg-indigo-50 transition-all">
                       📋 Acompanhar

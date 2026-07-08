@@ -1507,6 +1507,7 @@ export default function HoleritePage() {
                 <div>
                   <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Folha do Mês - Geral</h2>
                   <p className="text-sm text-[#64748B]"> Competência: {formatarMesAnoBR(mesReferencia)} </p>
+                  <p className="text-sm text-[#64748B]"> Pagamento: {competenciaParaPagamento(mesReferencia)} </p>
                   <p className="text-sm text-[#64748B]">{lote.length} funcionário(s) ativo(s)</p>
                   <p className="text-sm text-[#64748B]">{totalFechados} fechado(s)</p>
                 </div>

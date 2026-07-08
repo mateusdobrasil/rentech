@@ -121,7 +121,7 @@ export async function gerarHoleritePdf(p: GerarPdfParams): Promise<Uint8Array> {
   box(xCred, y - 14, colW, 16, azul);
   box(xDeb, y - 14, colW, 16, azul);
   txt('CRÉDITOS', xCred + colW / 2 - 22, y - 10, 9, bold, rgb(1, 1, 1));
-  txt('DÉBITOS', xDeb + colW / 2 - 20, y - 10, 9, bold, rgb(1, 1, 1));
+  txt('DÉBITOS', xDeb + colW / 2 - 22, y - 10, 9, bold, rgb(1, 1, 1));
   y -= 20;
 
   // Linhas de crédito
@@ -148,7 +148,7 @@ export async function gerarHoleritePdf(p: GerarPdfParams): Promise<Uint8Array> {
 
   // Linhas de débito
   const debitos: [string, string, number][] = [];
-  if (v.valorAdiantamento > 0) debitos.push(['ADIANTAMENTO QUINZENAL', 'DIA 20', v.valorAdiantamento]);
+  if (v.valorAdiantamento > 0) debitos.push(['ADIANTAMENTO', 'DIA 20', v.valorAdiantamento]);
   v.descontosAtivos.forEach(d => {
     // Igual à tela: parcelado mostra "atual/total" (ex: 3/12), fixo mostra FIXO
     const ref = d.tipo === 'FIXO' ? 'FIXO' : `${getParcelaAtual(d.mes_inicio, p.mesReferencia)}/${d.parcelas}`;

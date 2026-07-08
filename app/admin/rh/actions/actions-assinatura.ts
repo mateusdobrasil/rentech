@@ -324,6 +324,76 @@ export async function listarAssinaturasAction(payload: { mesReferencia: string }
 }
 
 // ============================================================================
+// PRÉVIA DO DOCUMENTO DE ASSINATURA (para testes/conferência)
+// Gera EXATAMENTE o mesmo PDF que seria enviado à Autentique (resumo + anexos
+// da contabilidade, com merge), mas devolve em base64 para abrir no navegador.
+// Não cria nada na Autentique nem gasta documentos do plano.
+// ============================================================================
+export async function previaDocumentoAssinaturaAction(payload: {
+  funcionarioNome: string;
+  mesReferencia: string;
+  soDocumental?: boolean;
+  dadosAoVivo?: any; // se a folha não está fechada, a tela pode mandar o cálculo ao vivo
+}): Promise<Resultado> {
+  const db = supabaseAdmin();
+  const { funcionarioNome, mesReferencia, soDocumental, dadosAoVivo } = payload;
+
+  try {
+    // Snapshot congelado (se fechado) ou dados ao vivo (prévia de folha aberta)
+    const { data: fechamento } = await db
+      .from('folha_holerites')
+      .select('dados, fechado_em')
+      .eq('funcionario_nome', funcionarioNome)
+      .eq('mes_referencia', mesReferencia)
+      .maybeSingle();
+
+    const dados = fechamento?.dados || dadosAoVivo;
+    if (!soDocumental && !dados) {
+      return { ok: false, erro: 'Sem dados para gerar a prévia: feche a folha ou envie o cálculo ao vivo.' };
+    }
+
+    const { data: func } = await db
+      .from('folha_funcionarios')
+      .select('cpf')
+      .eq('nome_completo', funcionarioNome)
+      .maybeSingle();
+
+    const resumoBytes = (!soDocumental && dados) ? await gerarHoleritePdf({
+      nome: funcionarioNome,
+      cpf: func?.cpf || null,
+      mesReferencia,
+      dados,
+      fechadoEm: fechamento?.fechado_em,
+      empresaNome: 'RENTECH'
+    }) : null;
+
+    const adiantamento = await baixarAnexoContabil(db, mesReferencia, 'ADIANTAMENTO', funcionarioNome);
+    const holeriteMensal = await baixarAnexoContabil(db, mesReferencia, 'HOLERITE_MENSAL', funcionarioNome);
+
+    const partes = [resumoBytes, adiantamento, holeriteMensal].filter((p): p is Uint8Array => !!p);
+    if (partes.length === 0) return { ok: false, erro: 'Nenhum documento disponível para a prévia.' };
+    const pdfBytes = partes.length > 1 ? await mergePdfs(partes) : partes[0];
+
+    const anexados = [
+      resumoBytes ? 'resumo' : null,
+      adiantamento ? 'adiantamento' : null,
+      holeriteMensal ? 'holerite' : null
+    ].filter(Boolean);
+
+    return {
+      ok: true,
+      info: {
+        pdfBase64: Buffer.from(pdfBytes).toString('base64'),
+        anexados,
+        fonte: fechamento?.dados ? 'FOLHA FECHADA (snapshot)' : 'CÁLCULO AO VIVO (folha aberta)'
+      }
+    };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
 // ATUALIZAR TODAS AS ASSINATURAS NÃO FINALIZADAS (de um mês + avulsos)
 // Consulta a Autentique para cada uma que ainda não está ASSINADA/REJEITADA.
 // ============================================================================

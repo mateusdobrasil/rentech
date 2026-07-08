@@ -7,7 +7,7 @@ import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
 import { salvarColaboradorAction, fecharFolhaLoteAction, reabrirFolhaAction } from '../actions/actions-folha';
-import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction } from '../actions/actions-assinatura';
+import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction, previaDocumentoAssinaturaAction } from '../actions/actions-assinatura';
 import logoColorido from '../../../../app/imgs/logo.png';
 
 // Utilitários
@@ -540,6 +540,34 @@ export default function HoleritePage() {
   // Lote: holerites de TODOS os funcionários ativos do mês (aba Espelho)
   const [lote, setLote] = useState<ItemLote[]>([]);
   const [enviandoAssinatura, setEnviandoAssinatura] = useState<string | null>(null); // nome em envio, ou 'LOTE'
+  const [gerandoPrevia, setGerandoPrevia] = useState<string | null>(null);
+
+  // Prévia do PDF exatamente como seria enviado (mesmo código do servidor,
+  // incluindo merge com anexos da contabilidade). Não cria nada na Autentique.
+  const previaPdf = async (item: ItemLote) => {
+    setGerandoPrevia(item.func.nome_completo);
+    try {
+      const res = await previaDocumentoAssinaturaAction({
+        funcionarioNome: item.func.nome_completo,
+        mesReferencia,
+        soDocumental: item.soDocumental,
+        // Folha aberta: manda o cálculo ao vivo para a prévia
+        dadosAoVivo: item.fechamento ? undefined : item.dados
+      });
+      if (!res.ok) throw new Error(res.erro);
+      // base64 → blob → nova aba
+      const bin = atob(res.info.pdfBase64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+      window.open(url, '_blank', 'noopener,noreferrer');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e: any) {
+      alert('Erro ao gerar a prévia: ' + e.message);
+    } finally {
+      setGerandoPrevia(null);
+    }
+  };
   const [sandboxAssinatura, setSandboxAssinatura] = useState(true); // começa em teste por segurança
 
   // Fechamento do funcionário selecionado (aviso na aba de parâmetros)
@@ -1546,6 +1574,9 @@ export default function HoleritePage() {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
+                          <button onClick={() => previaPdf(item)} disabled={gerandoPrevia !== null} className="text-[10px] font-black text-gray-500 uppercase tracking-wider hover:bg-gray-100 px-3 py-2 rounded-lg disabled:opacity-50 border border-gray-200">
+                            {gerandoPrevia === item.func.nome_completo ? '⏳' : '👁 Prévia'}
+                          </button>
                           {item.statusAssinatura && (
                             <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider ${
                               item.statusAssinatura === 'ASSINADO' ? 'bg-green-100 text-green-700' :
@@ -1589,6 +1620,9 @@ export default function HoleritePage() {
                         )}
                       </div>
                       <div className="flex items-center gap-1">
+                        <button onClick={() => previaPdf(item)} disabled={gerandoPrevia !== null} className="text-[10px] font-black text-gray-500 uppercase tracking-wider hover:bg-gray-100 px-3 py-1 rounded disabled:opacity-50 border border-gray-200">
+                          {gerandoPrevia === item.func.nome_completo ? '⏳' : '👁 Prévia PDF'}
+                        </button>
                         {item.fechamento && item.statusAssinatura !== 'ASSINADO' && (
                           <button onClick={() => enviarAssinatura(item)} disabled={enviandoAssinatura !== null} className="text-[10px] font-black text-indigo-600 uppercase tracking-wider hover:bg-indigo-50 px-3 py-1 rounded disabled:opacity-50 border border-indigo-200">
                             {enviandoAssinatura === item.func.nome_completo ? '⏳ Enviando...' : item.statusAssinatura ? '↻ Reenviar' : '📤 Assinatura'}

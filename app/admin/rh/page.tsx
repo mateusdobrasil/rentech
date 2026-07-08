@@ -71,6 +71,13 @@ export default function RhHub() {
       cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
     },
     {
+      titulo: 'Gestão de Documentos',
+      descricao: 'Gestão de RG, CPF, CTPS, comprovante de residência, contrato, ASO admissional/periódico, CNH, certificados, advertência e outros',
+      icone: '🎁', link: '/admin/rh/documentos',
+      permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO', 'ADMINISTRATIVO'],
+      cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
+    },
+    {
       titulo: 'Parâmetros de Contrato',
       descricao: 'Motor de regras de cálculo (CLT, PJ, Temporário, etc).',
       icone: '⚙️', link: '/admin/rh/parametros',

@@ -134,6 +134,7 @@ export default function BeneficiosPage() {
   const totais = useMemo(() => ({
     total: linhas.length,
     sem: linhas.filter(l => l.semNenhum).length,
+    com: linhas.length - linhas.filter(l => l.semNenhum).length,
     somaFixos: linhas.reduce((s, l) => s + l.totalFixos, 0)
   }), [linhas]);
 
@@ -275,8 +276,8 @@ export default function BeneficiosPage() {
             <p className={`text-2xl font-black ${totais.sem > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{totais.sem}</p>
           </div>
           <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 text-center">
-            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Soma benefícios fixos/mês</p>
-            <p className="text-2xl font-black text-[#336699]">{BRL(totais.somaFixos)}</p>
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Com benefício</p>
+            <p className={`text-2xl font-black ${totais.com > 0 ? 'text-emerald-600' : 'text-amber-600'}`}>{totais.com}</p>
           </div>
         </div>
 

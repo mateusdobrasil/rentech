@@ -1503,7 +1503,7 @@ export default function HoleritePage() {
           {/* ================== ABA FOLHA DO MÊS (TODOS) ================== */}
           {activeTab === 'impressao' && (
             <div className="flex flex-col items-center pb-10">
-              <div className="w-full max-w-5xl bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-3 mb-6 print:hidden">
+              <div className="w-full bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-6 print:hidden">
                 <div>
                   <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Folha do Mês - Geral</h2>
                   <p className="text-sm text-[#64748B]"> Competência: {formatarMesAnoBR(mesReferencia)} </p>
@@ -1511,54 +1511,43 @@ export default function HoleritePage() {
                   <p className="text-sm text-[#64748B]">{lote.length} funcionário(s) ativo(s)</p>
                   <p className="text-sm text-[#64748B]">{totalFechados} fechado(s)</p>
                 </div>
-                <div className="flex items-center gap-3 flex-wrap justify-center">
-                  <table className="table-auto border-separate border-spacing-2">
-                    <tr>
-                      <td>
-                        <p className="text-sm text-[#64748B]">Mês de Competência</p>
-                          <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
-                      </td>
-                      <td>
-                        <button onClick={fecharFolhaTodos} disabled={loadingLote || lote.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">
-                          🔒 Fechar Folha
-                        </button>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>
-                        <button onClick={() => window.print()} disabled={lote.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
-                          🖨️ Imprimir ({lote.length} pág)
-                        </button>
-                      </td>
-                      <td>
-                        <button onClick={reabrirFolhaTodos} disabled={loadingLote} className="bg-white border-2 border-red-300 text-red-600 font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl hover:bg-red-50 transition-all disabled:opacity-50">
-                          🔓 Reabrir ({totalFechados})
-                        </button>
-                      </td>
-                    </tr>
-                  </table>
+                {/* Grid moderno para botões de controle */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full md:w-auto items-end">
+                  <div className="flex flex-col w-full">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1">Mês de Competência</label>
+                    <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC] w-full outline-none focus:border-[#336699]" />
+                  </div>
+                  <button onClick={fecharFolhaTodos} disabled={loadingLote || lote.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3.5 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50 h-[44px] w-full">
+                    🔒 Fechar Folha
+                  </button>
+                  <button onClick={() => window.print()} disabled={lote.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3.5 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50 h-[44px] w-full">
+                    🖨️ Imprimir ({lote.length} pág)
+                  </button>
+                  <button onClick={reabrirFolhaTodos} disabled={loadingLote} className="bg-white border-2 border-red-300 text-red-600 font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl hover:bg-red-50 transition-all disabled:opacity-50 h-[44px] w-full">
+                    🔓 Reabrir ({totalFechados})
+                  </button>
                 </div>
               </div>
 
               {/* Barra de ASSINATURA DIGITAL */}
               {totalFechados > 0 && (
-                <div className="w-full max-w-5xl bg-indigo-50 border border-indigo-200 p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-3 mb-6 print:hidden">
+                <div className="w-full bg-indigo-50 border border-indigo-200 p-5 rounded-2xl flex flex-col lg:flex-row justify-between items-center gap-4 mb-6 print:hidden shadow-sm">
                   <div className="flex items-center gap-3">
-                    <span className="text-lg">✍️</span>
+                    <span className="text-2xl">✍️</span>
                     <div>
                       <h3 className="text-sm font-black text-indigo-900 uppercase tracking-wider">Assinatura Digital (Autentique)</h3>
-                      <p className="text-[11px] text-indigo-700 font-bold">Envia os holerites fechados para assinatura com validação por CPF.</p>
+                      <p className="text-[11px] text-indigo-700 font-bold">Envia os holerites fechados para assinatura eletrônica com validação por CPF.</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 flex-wrap justify-center">
-                    <label className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider cursor-pointer bg-white px-3 py-2 rounded-lg border border-indigo-200">
-                      <input type="checkbox" checked={sandboxAssinatura} onChange={e => setSandboxAssinatura(e.target.checked)} />
+                  <div className="flex items-center gap-3 flex-wrap justify-center w-full lg:w-auto">
+                    <label className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider cursor-pointer bg-white px-4 py-2.5 rounded-xl border border-indigo-200 select-none shadow-sm">
+                      <input type="checkbox" checked={sandboxAssinatura} onChange={e => setSandboxAssinatura(e.target.checked)} className="accent-indigo-600" />
                       <span className={sandboxAssinatura ? 'text-amber-600' : 'text-red-600'}>{sandboxAssinatura ? '🧪 Modo Teste' : '⚠ Modo Real'}</span>
                     </label>
-                    <button onClick={enviarAssinaturaTodos} disabled={enviandoAssinatura !== null} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50">
+                    <button onClick={enviarAssinaturaTodos} disabled={enviandoAssinatura !== null} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50 h-[42px]">
                       {enviandoAssinatura === 'LOTE' ? '⏳ Enviando...' : '📤 Enviar p/ Assinatura'}
                     </button>
-                    <button onClick={() => router.push('/admin/rh/assinaturas')} className="bg-white border-2 border-indigo-300 text-indigo-700 font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl hover:bg-indigo-50 transition-all">
+                    <button onClick={() => router.push('/admin/rh/assinaturas')} className="bg-white border-2 border-indigo-300 text-indigo-700 font-black uppercase tracking-widest text-xs px-5 py-2.5 rounded-xl hover:bg-indigo-50 transition-all h-[42px]">
                       📋 Acompanhar
                     </button>
                   </div>

@@ -6,7 +6,7 @@ import { Analytics } from "@vercel/analytics/next";
 import {
   listarCatalogosBeneficioAction, criarTipoBeneficioAction, criarMeioBeneficioAction,
   salvarBeneficioAction, alternarBeneficioAction, historicoBeneficioAction, painelBeneficiosAction,
-  gridBeneficiosAction
+  gridBeneficiosAction, gerarFlashAction
 } from '../actions/actions-beneficios';
 
 const BRL = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
@@ -28,6 +28,8 @@ export default function BeneficiosPage() {
   const [usuarioAtual, setUsuarioAtual] = useState('');
   const [busca, setBusca] = useState('');
   const [filtro, setFiltro] = useState<'TODOS' | 'COM' | 'SEM'>('TODOS');
+  const [filtroMeio, setFiltroMeio] = useState('TODOS');       // filtro da aba
+  const [gridFiltroMeio, setGridFiltroMeio] = useState('TODOS'); // filtro do grid
 
   // Modal de concessão/edição
   const [modalFunc, setModalFunc] = useState<string | null>(null);
@@ -48,6 +50,41 @@ export default function BeneficiosPage() {
   });
   const [grid, setGrid] = useState<{ diasUteis: number; colunas: string[]; funcionarios: any[]; totaisColuna: Record<string, number>; totalGeral: number } | null>(null);
   const [carregandoGrid, setCarregandoGrid] = useState(false);
+  const [gerandoFlash, setGerandoFlash] = useState(false);
+
+  // Gera o arquivo Flash (CSV) com as colunas exatas da planilha de pedido
+  const gerarFlash = async () => {
+    setGerandoFlash(true);
+    try {
+      const res = await gerarFlashAction({ mesReferencia: gridMes });
+      if (!res.ok) throw new Error(res.erro);
+      const linhas = res.info.linhas as any[];
+      if (linhas.length === 0) {
+        alert('Nenhum funcionário com benefício no Cartão Flash neste mês.');
+        return;
+      }
+
+      // Cabeçalhos idênticos à planilha modelo
+      const cab = ['CNPJ', 'NOME COMPLETO', 'CPF', 'MOBILIDADE (R$)', 'REFEICAO (R$)', 'ALIMENTACAO (R$)', 'PREMIACAO NO CARTAO (R$)', 'REFEICAO E ALIMENTACAO (R$)', 'PREMIACAO VIRTUAL (R$)'];
+      const num = (v: number) => v.toFixed(2).replace('.', ',');
+      const linhasCsv = linhas.map(l => [
+        l.cnpj, `"${l.nome}"`, l.cpf,
+        num(l.mobilidade), num(l.refeicao), num(l.alimentacao),
+        num(l.premiacaoCartao), num(l.refeicaoEAlimentacao), num(l.premiacaoVirtual)
+      ].join(';'));
+
+      const csv = '\uFEFF' + [cab.join(';'), ...linhasCsv].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `pedido-flash-${gridMes}.csv`; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert('Erro ao gerar o arquivo Flash: ' + e.message);
+    } finally {
+      setGerandoFlash(false);
+    }
+  };
 
   // Histórico
   const [histAberto, setHistAberto] = useState<number | null>(null);
@@ -80,14 +117,23 @@ export default function BeneficiosPage() {
   };
 
   const filtradas = useMemo(() => linhas
+    .map(l => {
+      // Quando um meio é selecionado, mostra só os benefícios daquele meio
+      if (filtroMeio === 'TODOS') return l;
+      const fixos = l.beneficiosFixos.filter(b => String(b.meioId) === filtroMeio);
+      return { ...l, beneficiosFixos: fixos, semNenhum: fixos.length === 0 };
+    })
     .filter(l => l.nome.toLowerCase().includes(busca.toLowerCase()))
-    .filter(l => filtro === 'TODOS' || (filtro === 'SEM' ? l.semNenhum : !l.semNenhum)),
-    [linhas, busca, filtro]);
+    .filter(l => {
+      // Com filtro de meio ativo, esconde quem ficou sem benefício naquele meio
+      if (filtroMeio !== 'TODOS') return l.beneficiosFixos.length > 0;
+      return filtro === 'TODOS' || (filtro === 'SEM' ? l.semNenhum : !l.semNenhum);
+    }),
+    [linhas, busca, filtro, filtroMeio]);
 
   const totais = useMemo(() => ({
     total: linhas.length,
     sem: linhas.filter(l => l.semNenhum).length,
-    com: linhas.length - linhas.filter(l => l.semNenhum).length,
     somaFixos: linhas.reduce((s, l) => s + l.totalFixos, 0)
   }), [linhas]);
 
@@ -133,7 +179,7 @@ export default function BeneficiosPage() {
   const gerarGrid = async () => {
     setMostrarGrid(true); setCarregandoGrid(true);
     try {
-      const res = await gridBeneficiosAction({ mesReferencia: gridMes });
+      const res = await gridBeneficiosAction({ mesReferencia: gridMes, meioId: gridFiltroMeio === 'TODOS' ? null : Number(gridFiltroMeio) });
       if (res.ok) setGrid(res.info);
     } catch (e: any) {
       alert('Erro ao gerar grid: ' + e.message);
@@ -218,7 +264,7 @@ export default function BeneficiosPage() {
 
       <div className="p-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full">
 
-        {/* KPIs 
+        {/* KPIs */}
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
           <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 text-center">
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Funcionários</p>
@@ -233,7 +279,6 @@ export default function BeneficiosPage() {
             <p className="text-2xl font-black text-[#336699]">{BRL(totais.somaFixos)}</p>
           </div>
         </div>
-        */}
 
         {/* Barra de controles */}
         <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-3 mb-4">
@@ -242,16 +287,24 @@ export default function BeneficiosPage() {
             <div className="flex bg-gray-100 p-1 rounded-xl">
               {(['TODOS', 'COM', 'SEM'] as const).map(f => (
                 <button key={f} onClick={() => setFiltro(f)} className={`px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${filtro === f ? 'bg-[#0C1D4D] text-white' : 'text-gray-500'}`}>
-                  {f === 'TODOS' ? `Todos (${totais.total})` : f === 'COM' ? `Com benefício (${totais.com})` : `Sem benefício (${totais.sem})`}
+                  {f === 'TODOS' ? 'Todos' : f === 'COM' ? 'Com benefício' : 'Sem benefício'}
                 </button>
               ))}
             </div>
+            <select value={filtroMeio} onChange={e => setFiltroMeio(e.target.value)} className="p-2.5 border border-gray-300 rounded-lg text-[11px] font-black uppercase text-gray-600 bg-[#F8FAFC]">
+              <option value="TODOS">Todos os meios</option>
+              {meios.map(m => <option key={m.id} value={m.id}>{m.nome}</option>)}
+            </select>
           </div>
           <button onClick={() => setMostrarCatalogos(!mostrarCatalogos)} className="text-[10px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-4 py-2.5 rounded-lg uppercase tracking-wider">
             ⚙ Tipos e Meios
           </button>
+          <input type="month" value={gridMes} onChange={e => setGridMes(e.target.value)} title="Mês de referência para Grid e Flash" className="text-[10px] font-bold p-2.5 border border-gray-300 rounded-lg bg-[#F8FAFC]" />
           <button onClick={gerarGrid} className="text-[10px] font-black bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-4 py-2.5 rounded-lg uppercase tracking-wider">
             📊 Gerar Grid
+          </button>
+          <button onClick={gerarFlash} disabled={gerandoFlash} className="text-[10px] font-black bg-[#FF6B35] hover:bg-[#E85A28] text-white px-4 py-2.5 rounded-lg uppercase tracking-wider disabled:opacity-50">
+            {gerandoFlash ? '⏳' : '⚡ Gerar Flash'}
           </button>
         </div>
 
@@ -363,6 +416,10 @@ export default function BeneficiosPage() {
               </div>
               <div className="flex items-center gap-2">
                 <input type="month" value={gridMes} onChange={e => setGridMes(e.target.value)} className="p-2 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+                <select value={gridFiltroMeio} onChange={e => setGridFiltroMeio(e.target.value)} className="p-2 border border-gray-300 rounded-lg text-[11px] font-black uppercase text-gray-600 bg-[#F8FAFC]">
+                  <option value="TODOS">Todos os meios</option>
+                  {meios.map(m => <option key={m.id} value={m.id}>{m.nome}</option>)}
+                </select>
                 <button onClick={gerarGrid} className="text-[10px] font-black bg-[#336699] text-white px-3 py-2 rounded-lg uppercase">Atualizar</button>
                 <button onClick={exportarCSV} disabled={!grid} className="text-[10px] font-black bg-emerald-600 text-white px-3 py-2 rounded-lg uppercase disabled:opacity-50">⬇ CSV</button>
                 <button onClick={() => setMostrarGrid(false)} className="text-[10px] font-black bg-gray-100 px-3 py-2 rounded-lg uppercase">Fechar</button>

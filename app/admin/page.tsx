@@ -70,7 +70,7 @@ const MODULOS_SISTEMA = [
     descricao: 'Importe os registros do relógio, calcule horas extras e gere espelhos de jornada.',
     icone: '🫀​',
     link: '/admin/rh',
-    permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
+    permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO', 'ADMINISTRATIVO'],
     cor: 'border-rose-500/50 hover:border-rose-500',
     bgIcon: 'bg-rose-50 text-rose-600'
   },

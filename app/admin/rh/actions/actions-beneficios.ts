@@ -137,23 +137,89 @@ async function calcularBeneficiosMes(db: ReturnType<typeof supabaseAdmin>, mesAn
 const BRLnum = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // ============================================================================
+// ARQUIVO FLASH: linhas do pedido de benefícios para o cartão Flash.
+// Só funcionários com benefício de meio "CARTÃO FLASH". Mapeia por nome do tipo:
+//   TRANSPORTE/MOBILIDADE → Mobilidade | ALIMENTA/REFEI → Refeição e Alimentação
+//   demais → Premiação no cartão. Valores do mês (diária × dias úteis).
+// ============================================================================
+export async function gerarFlashAction(payload: { mesReferencia: string }): Promise<Resultado> {
+  const db = supabaseAdmin();
+  const CNPJ_RENTECH = '22618891000187';
+
+  try {
+    // Reutiliza o núcleo de cálculo do mês (já aplica proporcionalidade)
+    const { itens } = await calcularBeneficiosMes(db, payload.mesReferencia);
+
+    // CPFs dos funcionários
+    const { data: funcs } = await db.from('folha_funcionarios').select('nome_completo, cpf');
+    const cpfPorNome: Record<string, string> = {};
+    (funcs || []).forEach(f => { cpfPorNome[f.nome_completo] = f.cpf || ''; });
+
+    const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+
+    // Só benefícios com meio CARTÃO FLASH
+    const flashItens = itens.filter(it => norm(it.meio).includes('FLASH'));
+
+    // Agrupa por funcionário, distribuindo nos campos da Flash
+    const porFunc: Record<string, { mobilidade: number; refAlim: number; premiacao: number }> = {};
+    flashItens.forEach(it => {
+      const tipo = norm(it.tipo);
+      (porFunc[it.funcionario_nome] ||= { mobilidade: 0, refAlim: 0, premiacao: 0 });
+      if (tipo.includes('TRANSPORTE') || tipo.includes('MOBILIDADE')) {
+        porFunc[it.funcionario_nome].mobilidade += it.valorMes;
+      } else if (tipo.includes('ALIMENTA') || tipo.includes('REFEI')) {
+        porFunc[it.funcionario_nome].refAlim += it.valorMes;
+      } else {
+        porFunc[it.funcionario_nome].premiacao += it.valorMes;
+      }
+    });
+
+    // Monta as linhas na ordem das colunas da planilha
+    const linhas = Object.entries(porFunc)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([nome, v]) => ({
+        cnpj: CNPJ_RENTECH,
+        nome,
+        cpf: cpfPorNome[nome] || '',
+        mobilidade: v.mobilidade,
+        refeicao: 0,
+        alimentacao: 0,
+        premiacaoCartao: v.premiacao,
+        refeicaoEAlimentacao: v.refAlim,
+        premiacaoVirtual: 0
+      }));
+
+    return { ok: true, info: { linhas } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
 // GRID CONSOLIDADO DE BENEFÍCIOS (para a aba e o financeiro)
 // Retorna: por funcionário (itens + total) E por meio de pagamento + total geral.
 // ============================================================================
-export async function gridBeneficiosAction(payload: { mesReferencia: string }): Promise<Resultado> {
+export async function gridBeneficiosAction(payload: { mesReferencia: string; meioId?: number | null }): Promise<Resultado> {
   const db = supabaseAdmin();
   try {
     const { diasUteisMes, itens } = await calcularBeneficiosMes(db, payload.mesReferencia);
 
+    // Filtro opcional por meio de pagamento
+    let filtrados = itens;
+    if (payload.meioId) {
+      const { data: meios } = await db.from('folha_beneficio_meios').select('id, nome');
+      const nomeMeioAlvo = meios?.find(m => m.id === payload.meioId)?.nome;
+      if (nomeMeioAlvo) filtrados = itens.filter(it => it.meio === nomeMeioAlvo);
+    }
+
     // Colunas = tipos de benefício que aparecem (ordenados alfabeticamente)
     const tiposSet = new Set<string>();
-    itens.forEach(it => tiposSet.add(it.tipo));
+    filtrados.forEach(it => tiposSet.add(it.tipo));
     const colunas = Array.from(tiposSet).sort((a, b) => a.localeCompare(b));
 
     // Linhas = funcionários, com o valor de cada tipo + detalhe compacto
-    // (para diária/dias fixos: "25,00×15" exibido em fonte pequena na célula)
     const porFunc: Record<string, any> = {};
-    itens.forEach(it => {
+    filtrados.forEach(it => {
       (porFunc[it.funcionario_nome] ||= { funcionario_nome: it.funcionario_nome, valores: {}, detalhes: {}, total: 0 });
       porFunc[it.funcionario_nome].valores[it.tipo] = (porFunc[it.funcionario_nome].valores[it.tipo] || 0) + it.valorMes;
       if (it.modalidade === 'POR_DIARIA' || it.modalidade === 'DIAS_FIXOS') {

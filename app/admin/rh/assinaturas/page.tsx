@@ -215,7 +215,7 @@ export default function AssinaturasPage() {
             <button onClick={abrirUpload} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all">
               📎 Enviar Documento
             </button>
-            <button onClick={() => router.push('/admin/rh/holerites')} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all">
+            <button onClick={() => router.push('/admin/rh/holerite')} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all">
               Ir para Holerites
             </button>
           </div>

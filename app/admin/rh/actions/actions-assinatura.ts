@@ -263,13 +263,51 @@ export async function enviarHoleritesLoteAction(payload: {
   const { mesReferencia, enviadoPor, sandbox } = payload;
 
   try {
-    // Todos os funcionários com folha fechada no mês
+    // 1) Funcionários com folha FECHADA no mês (contratos com cálculo)
     const { data: fechados } = await db
       .from('folha_holerites')
       .select('funcionario_nome')
       .eq('mes_referencia', mesReferencia);
-    if (!fechados?.length) {
-      return { ok: false, erro: 'Nenhuma folha fechada neste mês. Feche a folha antes de enviar para assinatura.' };
+
+    // 2) Funcionários de contrato SÓ DOCUMENTAL (sem folha), que têm anexos da
+    //    contabilidade neste mês — também vão para assinatura.
+    const { data: regras } = await db
+      .from('folha_parametros')
+      .select('nome_regra, so_documental');
+    const contratosDocumentais = new Set(
+      (regras || []).filter(r => r.so_documental === true).map(r => r.nome_regra)
+    );
+
+    let documentais: string[] = [];
+    if (contratosDocumentais.size > 0) {
+      const { data: funcsDoc } = await db
+        .from('folha_funcionarios')
+        .select('nome_completo, tipo_contrato')
+        .eq('ativo', true);
+      const candidatos = (funcsDoc || [])
+        .filter(f => contratosDocumentais.has(f.tipo_contrato))
+        .map(f => f.nome_completo);
+
+      // Só inclui documentais que realmente têm algum documento da contabilidade
+      if (candidatos.length > 0) {
+        const { data: comDocs } = await db
+          .from('folha_documentos_contabeis')
+          .select('funcionario_nome')
+          .eq('mes_referencia', mesReferencia)
+          .in('funcionario_nome', candidatos);
+        documentais = Array.from(new Set((comDocs || []).map(d => d.funcionario_nome)));
+      }
+    }
+
+    // Marca quem é documental para o envio saber pular o resumo
+    const nomeDocumentais = new Set(documentais);
+    const todosNomes = Array.from(new Set([
+      ...(fechados || []).map(f => f.funcionario_nome),
+      ...documentais
+    ]));
+
+    if (todosNomes.length === 0) {
+      return { ok: false, erro: 'Nenhuma folha fechada nem documento documental neste mês. Feche a folha ou separe os holerites da contabilidade antes de enviar.' };
     }
 
     // Já assinados/enviados: não reenviar
@@ -281,14 +319,17 @@ export async function enviarHoleritesLoteAction(payload: {
       .filter(a => a.status === 'ASSINADO' || a.status === 'ENVIADO' || a.status === 'VISUALIZADO')
       .map(a => a.funcionario_nome));
 
-    const alvos = fechados.map(f => f.funcionario_nome).filter(n => !bloqueados.has(n));
+    const alvos = todosNomes.filter(n => !bloqueados.has(n));
     if (alvos.length === 0) {
-      return { ok: false, erro: 'Todos os holerites fechados deste mês já foram enviados ou assinados.' };
+      return { ok: false, erro: 'Todos os documentos deste mês já foram enviados ou assinados.' };
     }
 
     const resultados: { nome: string; ok: boolean; erro?: string }[] = [];
     for (const nome of alvos) {
-      const r = await enviarHoleriteAssinaturaAction({ funcionarioNome: nome, mesReferencia, enviadoPor, sandbox });
+      const r = await enviarHoleriteAssinaturaAction({
+        funcionarioNome: nome, mesReferencia, enviadoPor, sandbox,
+        soDocumental: nomeDocumentais.has(nome)
+      });
       resultados.push({ nome, ok: r.ok, erro: r.erro });
     }
 
@@ -297,7 +338,7 @@ export async function enviarHoleritesLoteAction(payload: {
 
     return {
       ok: enviados > 0,
-      info: { enviados, total: alvos.length, falhas: falhas.map(f => `${f.nome}: ${f.erro}`) }
+      info: { enviados, total: alvos.length, documentais: documentais.length, falhas: falhas.map(f => `${f.nome}: ${f.erro}`) }
     };
   } catch (e: any) {
     return { ok: false, erro: e.message };

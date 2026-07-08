@@ -22,6 +22,9 @@ export async function salvarColaboradorAction(payload: {
 
   if (!form?.nome_completo) return { ok: false, erro: 'O Nome Completo é obrigatório.' };
 
+  // Nome sempre em MAIÚSCULO no banco (padroniza a chave usada em todas as tabelas)
+  form.nome_completo = String(form.nome_completo).trim().toUpperCase();
+
   try {
     const { error: upsertError } = await db
       .from('folha_funcionarios')

@@ -3,8 +3,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../../lib/supabase';
+import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
 import { salvarColaboradorAction, fecharFolhaLoteAction, reabrirFolhaAction } from '../actions/actions-folha';
 import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction, previaDocumentoAssinaturaAction } from '../actions/actions-assinatura';
@@ -124,6 +124,8 @@ interface FuncionarioFin {
   valor_diaria: number; valor_adiantamento: number;
   data_admissao: string | null; data_desligamento: string | null;
   data_nascimento: string | null; cpf: string | null; celular: string | null; email: string | null;
+  banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null;
+  pix_tipo: string | null; pix_chave: string | null;
 }
 
 interface Desconto { id?: string; funcionario_nome?: string; descricao: string; tipo: 'FIXO' | 'PARCELADO'; parcelas: number; mes_inicio: string; mes_fim: string; valor_parcela: number; }
@@ -134,7 +136,7 @@ interface DadosHolerite {
   minutosExtras60: number; minutosExtras100: number; diasTrabalhadosFds: number;
   totalExtra60: number; totalExtra100: number; totalDiariasFdsFechada: number;
   diasFaltas: number; valorDescontoFaltas: number;
-  salarioBaseExibido: number; complementoContratoExibido: number;
+  salarioBaseExibido: number; complementoContratoExibido: number; avosSalario: number;
   bonusAtivos: Bonus[]; descontosAtivos: Desconto[];
   valorAdiantamento: number;
   qtdVr: number; qtdVt: number; diariaVr: number; diariaVt: number;
@@ -284,8 +286,27 @@ const montarDadosHolerite = (
     }
   }
 
-  const salarioBaseExibido = regra.paga_salario_base ? func.salario_folha : 0;
-  const complementoContratoExibido = regra.paga_salario_base ? Math.max(0, func.salario_contrato - func.salario_folha) : 0;
+  // ── Proporcionalidade por admissão/desligamento no mês ──────────────────
+  // Dias corridos trabalhados dentro do mês, limitado a 30 avos (padrão CLT).
+  // Admitido 10/07 → dias 10 a 31 = 22 dias; salário = base ÷ 30 × 22.
+  const [anoRef, mesRefNum] = mesRef.split('-').map(Number);
+  const ultimoDiaMes = new Date(anoRef, mesRefNum, 0).getDate();
+  let primeiroDiaTrab = 1;
+  let ultimoDiaTrab = ultimoDiaMes;
+  if (func.data_admissao && func.data_admissao.slice(0, 7) === mesRef) {
+    primeiroDiaTrab = Number(func.data_admissao.slice(8, 10));
+  }
+  if (func.data_desligamento && func.data_desligamento.slice(0, 7) === mesRef) {
+    ultimoDiaTrab = Number(func.data_desligamento.slice(8, 10));
+  }
+  const diasCorridosTrab = Math.max(0, ultimoDiaTrab - primeiroDiaTrab + 1);
+  // Trabalhou o mês inteiro → 30 avos; parcial → dias corridos (teto 30)
+  const trabalhouMesInteiro = primeiroDiaTrab === 1 && ultimoDiaTrab === ultimoDiaMes;
+  const avosSalario = trabalhouMesInteiro ? 30 : Math.min(30, diasCorridosTrab);
+  const fatorProporcional = avosSalario / 30;
+
+  const salarioBaseExibido = regra.paga_salario_base ? func.salario_folha * fatorProporcional : 0;
+  const complementoContratoExibido = regra.paga_salario_base ? Math.max(0, func.salario_contrato - func.salario_folha) * fatorProporcional : 0;
 
   const descontosAtivos = descontosFunc.filter(d => {
     if (mesRef < d.mes_inicio) return false;
@@ -344,7 +365,7 @@ const montarDadosHolerite = (
     minutosExtras60: apuracao.mins60, minutosExtras100: apuracao.mins100, diasTrabalhadosFds: apuracao.diasFds,
     totalExtra60, totalExtra100, totalDiariasFdsFechada,
     diasFaltas, valorDescontoFaltas,
-    salarioBaseExibido, complementoContratoExibido,
+    salarioBaseExibido, complementoContratoExibido, avosSalario,
     bonusAtivos, descontosAtivos,
     valorAdiantamento: func.valor_adiantamento,
     // Benefícios por evento (crédito) e acerto por falta (débito)
@@ -412,8 +433,8 @@ const HoleriteDoc = ({ nome, dados, mesRef, fechamento }: {
               </tr>
             </thead>
             <tbody className="font-semibold text-gray-800">
-              {v.salarioBaseExibido > 0 && <tr><td className="p-1">SALÁRIO BASE CONTRATUAL</td><td className="p-1 text-center border-x border-gray-300">30</td><td className="p-1 text-right">{formatCurrency(v.salarioBaseExibido)}</td></tr>}
-              {v.complementoContratoExibido > 0 && <tr><td className="p-1">COMPLEMENTO DE ACORDO CLASSE</td><td className="p-1 text-center border-x border-gray-300">30</td><td className="p-1 text-right">{formatCurrency(v.complementoContratoExibido)}</td></tr>}
+              {v.salarioBaseExibido > 0 && <tr><td className="p-1">SALÁRIO BASE CONTRATUAL{v.avosSalario < 30 ? ' (PROPORCIONAL)' : ''}</td><td className="p-1 text-center border-x border-gray-300">{v.avosSalario}</td><td className="p-1 text-right">{formatCurrency(v.salarioBaseExibido)}</td></tr>}
+              {v.complementoContratoExibido > 0 && <tr><td className="p-1">COMPLEMENTO DE ACORDO CLASSE</td><td className="p-1 text-center border-x border-gray-300">{v.avosSalario}</td><td className="p-1 text-right">{formatCurrency(v.complementoContratoExibido)}</td></tr>}
 
               {v.regra.tipo_pagamento_fds === 'HORA_PERCENTUAL' ? (
                 <>
@@ -585,7 +606,9 @@ export default function HoleritePage() {
     recebe_transporte: false, valor_transporte: 0, recebe_refeicao: false, valor_refeicao: 0,
     salario_folha: 0, salario_contrato: 0, valor_diaria: 0, valor_adiantamento: 0,
     data_admissao: null, data_desligamento: null,
-    data_nascimento: null, cpf: null, celular: null, email: null
+    data_nascimento: null, cpf: null, celular: null, email: null,
+    banco_codigo: null, banco_agencia: null, banco_conta: null, banco_tipo: null,
+    pix_tipo: null, pix_chave: null
   };
   
   const [form, setForm] = useState<FuncionarioFin>(defaultForm);
@@ -953,7 +976,8 @@ export default function HoleritePage() {
     try {
       const res = await enviarHoleritesLoteAction({ mesReferencia, enviadoPor: usuarioAtual, sandbox: sandboxAssinatura });
       const falhasMsg = res.info?.falhas?.length ? `\n\nFalhas:\n${res.info.falhas.join('\n')}` : '';
-      alert(`${res.info?.enviados || 0} de ${res.info?.total || 0} holerite(s) enviado(s).${falhasMsg}`);
+      const docMsg = res.info?.documentais ? `\n(inclui ${res.info.documentais} ficha(s) documental(is))` : '';
+      alert(`${res.info?.enviados || 0} de ${res.info?.total || 0} documento(s) enviado(s).${docMsg}${falhasMsg}`);
       carregarLote(mesReferencia);
     } catch (e: any) {
       alert('Erro no envio em lote: ' + e.message);
@@ -1297,7 +1321,7 @@ export default function HoleritePage() {
                       
                       {fichaExpandida && (
                       <div className="grid grid-cols-2 gap-4">
-                        <div className="col-span-2"><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Nome Completo</label><input type="text" value={form.nome_completo} onChange={e => setForm({...form, nome_completo: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-gray-50 uppercase" /></div>
+                        <div className="col-span-2"><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Nome Completo</label><input type="text" value={form.nome_completo} onChange={e => setForm({...form, nome_completo: e.target.value.toUpperCase()})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-gray-50 uppercase" /></div>
 
                         <div className="col-span-2 grid grid-cols-2 gap-4 bg-indigo-50/50 p-3 rounded-lg border border-indigo-100">
                           <div className="col-span-2 text-[10px] font-black text-indigo-600 uppercase tracking-wider">Dados Pessoais (para assinatura digital)</div>
@@ -1305,6 +1329,35 @@ export default function HoleritePage() {
                           <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Data de Nascimento</label><input type="date" value={form.data_nascimento || ''} onChange={e => setForm({...form, data_nascimento: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
                           <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Celular (WhatsApp)</label><input type="tel" value={form.celular || ''} onChange={e => setForm({...form, celular: e.target.value || null})} placeholder="(11) 90000-0000" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
                           <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">E-mail</label><input type="email" value={form.email || ''} onChange={e => setForm({...form, email: e.target.value || null})} placeholder="nome@email.com" className="w-full p-2 border border-gray-300 rounded text-sm lowercase" /></div>
+
+                          <div className="col-span-2 text-[10px] font-black text-indigo-600 uppercase tracking-wider mt-2">Dados Bancários (para pagamento)</div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Chave PIX</label>
+                            <div className="flex gap-1">
+                              <select value={form.pix_tipo || ''} onChange={e => setForm({...form, pix_tipo: e.target.value || null})} className="p-2 border border-gray-300 rounded text-xs font-bold bg-white">
+                                <option value="">Tipo</option>
+                                <option value="CPF">CPF</option>
+                                <option value="EMAIL">E-mail</option>
+                                <option value="TELEFONE">Telefone</option>
+                                <option value="ALEATORIA">Aleatória</option>
+                              </select>
+                              <input type="text" value={form.pix_chave || ''} onChange={e => setForm({...form, pix_chave: e.target.value || null})} placeholder="chave pix" className="flex-1 min-w-0 p-2 border border-gray-300 rounded text-sm" />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Tipo de conta</label>
+                            <select value={form.banco_tipo || ''} onChange={e => setForm({...form, banco_tipo: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white">
+                              <option value="">— Selecione —</option>
+                              <option value="CORRENTE">Corrente</option>
+                              <option value="POUPANCA">Poupança</option>
+                            </select>
+                          </div>
+                          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Banco (código)</label><input type="text" value={form.banco_codigo || ''} onChange={e => setForm({...form, banco_codigo: e.target.value || null})} placeholder="341" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Agência</label><input type="text" value={form.banco_agencia || ''} onChange={e => setForm({...form, banco_agencia: e.target.value || null})} placeholder="0000" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+                            <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Conta</label><input type="text" value={form.banco_conta || ''} onChange={e => setForm({...form, banco_conta: e.target.value || null})} placeholder="00000-0" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+                          </div>
+                          <div className="col-span-2 text-[10px] text-gray-400 font-medium">💡 PIX tem prioridade no pagamento. Se não houver PIX, usa a conta bancária.</div>
                         </div>
 
                         <div>
@@ -1503,13 +1556,15 @@ export default function HoleritePage() {
           {/* ================== ABA FOLHA DO MÊS (TODOS) ================== */}
           {activeTab === 'impressao' && (
             <div className="flex flex-col items-center pb-10">
-              <div className="w-full bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-6 print:hidden">
-                <div>
-                  <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Folha do Mês - Geral</h2>
-                  <p className="text-sm text-[#64748B]"> Competência: {formatarMesAnoBR(mesReferencia)} </p>
-                  <p className="text-sm text-[#64748B]"> Pagamento: {competenciaParaPagamento(mesReferencia)} </p>
-                  <p className="text-sm text-[#64748B]">{lote.length} funcionário(s) ativo(s)</p>
-                  <p className="text-sm text-[#64748B]">{totalFechados} fechado(s)</p>
+              <div className="w-full max-w-5xl bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-3 mb-6 print:hidden">
+                <div className="space-y-1">
+                  <h2 className="text-xl font-black text-[#0C1D4D] uppercase tracking-wider">Folha do Mês - Geral</h2>
+                  <div className="grid grid-cols-2 gap-x-4 text-sm text-[#64748B] font-medium">
+                    <p>Competência: <span className="font-bold text-[#0C1D4D]">{formatarMesAnoBR(mesReferencia)}</span></p>
+                    <p>Pagamento: <span className="font-bold text-emerald-700">{competenciaParaPagamento(mesReferencia)}</span></p>
+                    <p>Funcionários: <span className="font-bold text-[#0C1D4D]">{lote.length} ativos</span></p>
+                    <p>Fechados: <span className="font-bold text-[#0C1D4D]">{totalFechados} holerites</span></p>
+                  </div>
                 </div>
                 {/* Grid moderno para botões de controle */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full md:w-auto items-end">
@@ -1531,23 +1586,23 @@ export default function HoleritePage() {
 
               {/* Barra de ASSINATURA DIGITAL */}
               {totalFechados > 0 && (
-                <div className="w-full bg-indigo-50 border border-indigo-200 p-5 rounded-2xl flex flex-col lg:flex-row justify-between items-center gap-4 mb-6 print:hidden shadow-sm">
+                <div className="w-full max-w-5xl bg-indigo-50 border border-indigo-200 p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-3 mb-6 print:hidden">
                   <div className="flex items-center gap-3">
-                    <span className="text-2xl">✍️</span>
+                    <span className="text-lg">✍️</span>
                     <div>
                       <h3 className="text-sm font-black text-indigo-900 uppercase tracking-wider">Assinatura Digital (Autentique)</h3>
-                      <p className="text-[11px] text-indigo-700 font-bold">Envia os holerites fechados para assinatura eletrônica com validação por CPF.</p>
+                      <p className="text-[11px] text-indigo-700 font-bold">Envia os holerites fechados para assinatura com validação por CPF.</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 flex-wrap justify-center w-full lg:w-auto">
-                    <label className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider cursor-pointer bg-white px-4 py-2.5 rounded-xl border border-indigo-200 select-none shadow-sm">
-                      <input type="checkbox" checked={sandboxAssinatura} onChange={e => setSandboxAssinatura(e.target.checked)} className="accent-indigo-600" />
+                  <div className="flex items-center gap-3 flex-wrap justify-center">
+                    <label className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider cursor-pointer bg-white px-3 py-2 rounded-lg border border-indigo-200">
+                      <input type="checkbox" checked={sandboxAssinatura} onChange={e => setSandboxAssinatura(e.target.checked)} />
                       <span className={sandboxAssinatura ? 'text-amber-600' : 'text-red-600'}>{sandboxAssinatura ? '🧪 Modo Teste' : '⚠ Modo Real'}</span>
                     </label>
-                    <button onClick={enviarAssinaturaTodos} disabled={enviandoAssinatura !== null} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50 h-[42px]">
-                      {enviandoAssinatura === 'LOTE' ? '⏳ Enviando...' : '📤 Enviar p/ Assinatura'}
+                    <button onClick={enviarAssinaturaTodos} disabled={enviandoAssinatura !== null} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50">
+                      {enviandoAssinatura === 'LOTE' ? '⏳ Enviando...' : '📤 Enviar Todos p/ Assinatura'}
                     </button>
-                    <button onClick={() => router.push('/admin/rh/assinaturas')} className="bg-white border-2 border-indigo-300 text-indigo-700 font-black uppercase tracking-widest text-xs px-5 py-2.5 rounded-xl hover:bg-indigo-50 transition-all h-[42px]">
+                    <button onClick={() => router.push('/admin/rh/assinaturas')} className="bg-white border-2 border-indigo-300 text-indigo-700 font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl hover:bg-indigo-50 transition-all">
                       📋 Acompanhar
                     </button>
                   </div>

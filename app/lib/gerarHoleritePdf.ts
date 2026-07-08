@@ -11,7 +11,7 @@ export interface DadosHoleritePdf {
   totalExtra60: number; totalExtra100: number; totalDiariasFdsFechada: number;
   diasTrabalhadosFds: number;
   diasFaltas: number; valorDescontoFaltas: number;
-  salarioBaseExibido: number; complementoContratoExibido: number;
+  salarioBaseExibido: number; complementoContratoExibido: number; avosSalario?: number;
   bonusAtivos: { descricao: string; recorrencia: string; valor: number }[];
   descontosAtivos: { descricao: string; tipo: string; parcelas: number; mes_inicio: string; valor_parcela: number }[];
   valorAdiantamento: number;
@@ -134,8 +134,8 @@ export async function gerarHoleritePdf(p: GerarPdfParams): Promise<Uint8Array> {
   };
 
   const creditos: [string, string, number][] = [];
-  if (v.salarioBaseExibido > 0) creditos.push(['SALÁRIO BASE CONTRATUAL', '30', v.salarioBaseExibido]);
-  if (v.complementoContratoExibido > 0) creditos.push(['COMPLEMENTO DE ACORDO CLASSE', '30', v.complementoContratoExibido]);
+  if (v.salarioBaseExibido > 0) creditos.push(['SALÁRIO BASE CONTRATUAL', String(v.avosSalario ?? 30), v.salarioBaseExibido]);
+  if (v.complementoContratoExibido > 0) creditos.push(['COMPLEMENTO DE ACORDO CLASSE', String(v.avosSalario ?? 30), v.complementoContratoExibido]);
   if (v.regra.tipo_pagamento_fds === 'HORA_PERCENTUAL') {
     if (v.totalExtra60 > 0) creditos.push([`HORA EXTRA ${v.regra.percentual_extra_semana}% (SEG A SÁB)`, hhmm(v.minutosExtras60), v.totalExtra60]);
     if (v.totalExtra100 > 0) creditos.push([`HORA EXTRA ${v.regra.percentual_extra_dom_fer}% (DOM/FERIADO)`, hhmm(v.minutosExtras100), v.totalExtra100]);
@@ -148,7 +148,7 @@ export async function gerarHoleritePdf(p: GerarPdfParams): Promise<Uint8Array> {
 
   // Linhas de débito
   const debitos: [string, string, number][] = [];
-  if (v.valorAdiantamento > 0) debitos.push(['ADIANTAMENTO', 'DIA 20', v.valorAdiantamento]);
+  if (v.valorAdiantamento > 0) debitos.push(['ADIANTAMENTO QUINZENAL', 'DIA 20', v.valorAdiantamento]);
   v.descontosAtivos.forEach(d => {
     // Igual à tela: parcelado mostra "atual/total" (ex: 3/12), fixo mostra FIXO
     const ref = d.tipo === 'FIXO' ? 'FIXO' : `${getParcelaAtual(d.mes_inicio, p.mesReferencia)}/${d.parcelas}`;
@@ -163,16 +163,16 @@ export async function gerarHoleritePdf(p: GerarPdfParams): Promise<Uint8Array> {
   const yLinhas = y;
 
   for (let i = 0; i < maxLinhas; i++) {
-    const yy = yLinhas - i * linhaAltura - 5;
+    const yy = yLinhas - i * linhaAltura;
     if (i % 2 === 1) { box(xCred, yy - 3, colW, linhaAltura, rgb(0.97, 0.98, 0.99)); box(xDeb, yy - 3, colW, linhaAltura, rgb(0.97, 0.98, 0.99)); }
     if (creditos[i]) {
       txt(creditos[i][0], xCred + 6, yy, 8);
-      txt(creditos[i][1], xCred + colW - 85, yy, 7, font, cinza);
+      txt(creditos[i][1], xCred + colW - 90, yy, 7, font, cinza);
       txtRight(BRL(creditos[i][2]), xCred + colW - 6, yy, 8);
     }
     if (debitos[i]) {
       txt(debitos[i][0], xDeb + 6, yy, 8);
-      txt(debitos[i][1], xDeb + colW - 90, yy, 7, font, cinza);
+      txt(debitos[i][1], xDeb + colW - 70, yy, 7, font, cinza);
       txtRight(BRL(debitos[i][2]), xDeb + colW - 6, yy, 8);
     }
   }

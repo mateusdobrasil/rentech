@@ -43,13 +43,6 @@ export default function RhHub() {
   // Lista de todos os módulos e quem pode aceder a eles
   const modulosRh = [
     {
-      titulo: 'Controle de Ponto',
-      descricao: 'Importação de registros, cálculo de horas extras e espelhos.',
-      icone: '⏱️', link: '/admin/rh/ponto',
-      permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
-      cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
-    },
-    {
       titulo: 'Gestão de Holerites',
       descricao: 'Configuração de salários, descontos, bônus e emissão.',
       icone: '💰', link: '/admin/rh/holerite',
@@ -78,6 +71,20 @@ export default function RhHub() {
       cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
     },
     {
+      titulo: 'Controle de Ponto',
+      descricao: 'Importação de registros, cálculo de horas extras e espelhos.',
+      icone: '⏱️', link: '/admin/rh/ponto',
+      permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
+      cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
+    },
+    {
+      titulo: 'Relatórios e Dashboards',
+      descricao: 'Relatórios financeiros e analíticos.',
+      icone: '📊', link: '/admin/rh/relatorios',
+      permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
+      cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
+    },
+    {
       titulo: 'Parâmetros de Contrato',
       descricao: 'Motor de regras de cálculo (CLT, PJ, Temporário, etc).',
       icone: '⚙️', link: '/admin/rh/parametros',
@@ -85,9 +92,9 @@ export default function RhHub() {
       cor: 'bg-purple-50 border-purple-200 text-purple-700', hover: 'hover:border-purple-500'
     },
     {
-      titulo: 'Relatórios e Dashboards',
-      descricao: 'Relatórios financeiros e analíticos.',
-      icone: '📊', link: '/admin/rh/relatorios',
+      titulo: 'APIs e Integrações',
+      descricao: 'Integração com sistemas externos e geração de APIs.',
+      icone: '🔌', link: '/admin/rh/integracao',
       permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
       cor: 'bg-purple-50 border-purple-200 text-purple-700', hover: 'hover:border-purple-500'
     }

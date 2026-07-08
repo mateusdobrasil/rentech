@@ -87,6 +87,7 @@ export default function BeneficiosPage() {
   const totais = useMemo(() => ({
     total: linhas.length,
     sem: linhas.filter(l => l.semNenhum).length,
+    com: linhas.length - linhas.filter(l => l.semNenhum).length,
     somaFixos: linhas.reduce((s, l) => s + l.totalFixos, 0)
   }), [linhas]);
 
@@ -217,7 +218,7 @@ export default function BeneficiosPage() {
 
       <div className="p-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full">
 
-        {/* KPIs */}
+        {/* KPIs
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
           <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 text-center">
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Funcionários</p>
@@ -232,6 +233,7 @@ export default function BeneficiosPage() {
             <p className="text-2xl font-black text-[#336699]">{BRL(totais.somaFixos)}</p>
           </div>
         </div>
+        */}
 
         {/* Barra de controles */}
         <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-3 mb-4">
@@ -240,7 +242,7 @@ export default function BeneficiosPage() {
             <div className="flex bg-gray-100 p-1 rounded-xl">
               {(['TODOS', 'COM', 'SEM'] as const).map(f => (
                 <button key={f} onClick={() => setFiltro(f)} className={`px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${filtro === f ? 'bg-[#0C1D4D] text-white' : 'text-gray-500'}`}>
-                  {f === 'TODOS' ? 'Todos' : f === 'COM' ? 'Com benefício' : 'Sem benefício'}
+                  {f === 'TODOS' ? `Todos (${totais.total})` : f === 'COM' ? `Com benefício (${totais.com})` : `Sem benefício (${totais.sem})`}
                 </button>
               ))}
             </div>

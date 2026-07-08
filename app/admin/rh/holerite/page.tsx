@@ -1515,7 +1515,8 @@ export default function HoleritePage() {
                   <table className="table-auto border-separate border-spacing-2">
                     <tr>
                       <td>
-                        <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+                        <p className="text-sm text-[#64748B]">Mês de Competência</p>
+                          <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
                       </td>
                       <td>
                         <button onClick={fecharFolhaTodos} disabled={loadingLote || lote.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">

@@ -126,6 +126,7 @@ interface FuncionarioFin {
   data_nascimento: string | null; cpf: string | null; celular: string | null; email: string | null;
   banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null;
   pix_tipo: string | null; pix_chave: string | null;
+  recebe_fechamento: boolean | null; recebe_holerite: boolean | null;
 }
 
 interface Desconto { id?: string; funcionario_nome?: string; descricao: string; tipo: 'FIXO' | 'PARCELADO'; parcelas: number; mes_inicio: string; mes_fim: string; valor_parcela: number; }
@@ -608,7 +609,8 @@ export default function HoleritePage() {
     data_admissao: null, data_desligamento: null,
     data_nascimento: null, cpf: null, celular: null, email: null,
     banco_codigo: null, banco_agencia: null, banco_conta: null, banco_tipo: null,
-    pix_tipo: null, pix_chave: null
+    pix_tipo: null, pix_chave: null,
+    recebe_fechamento: null, recebe_holerite: null
   };
   
   const [form, setForm] = useState<FuncionarioFin>(defaultForm);
@@ -1358,6 +1360,29 @@ export default function HoleritePage() {
                             <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Conta</label><input type="text" value={form.banco_conta || ''} onChange={e => setForm({...form, banco_conta: e.target.value || null})} placeholder="00000-0" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
                           </div>
                           <div className="col-span-2 text-[10px] text-gray-400 font-medium">💡 PIX tem prioridade no pagamento. Se não houver PIX, usa a conta bancária.</div>
+
+                          <div className="col-span-2 text-[10px] font-black text-indigo-600 uppercase tracking-wider mt-2">O que este funcionário recebe</div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Recebe fechamento (nossa folha)</label>
+                            <select value={form.recebe_fechamento === null ? 'HERDA' : form.recebe_fechamento ? 'SIM' : 'NAO'}
+                              onChange={e => setForm({...form, recebe_fechamento: e.target.value === 'HERDA' ? null : e.target.value === 'SIM'})}
+                              className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white">
+                              <option value="HERDA">↑ Herda (cargo/contrato)</option>
+                              <option value="SIM">✓ Sim, recebe</option>
+                              <option value="NAO">✕ Não recebe</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Recebe holerite (contabilidade)</label>
+                            <select value={form.recebe_holerite === null ? 'HERDA' : form.recebe_holerite ? 'SIM' : 'NAO'}
+                              onChange={e => setForm({...form, recebe_holerite: e.target.value === 'HERDA' ? null : e.target.value === 'SIM'})}
+                              className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white">
+                              <option value="HERDA">↑ Herda (cargo/contrato)</option>
+                              <option value="SIM">✓ Sim, recebe</option>
+                              <option value="NAO">✕ Não recebe</option>
+                            </select>
+                          </div>
+                          <div className="col-span-2 text-[10px] text-gray-400 font-medium">💡 "Herda" segue a regra do cargo, e se o cargo não definir, a do contrato. Marque Sim/Não só para exceções deste funcionário.</div>
                         </div>
 
                         <div>
@@ -1557,29 +1582,24 @@ export default function HoleritePage() {
           {activeTab === 'impressao' && (
             <div className="flex flex-col items-center pb-10">
               <div className="w-full max-w-5xl bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-3 mb-6 print:hidden">
-                <div className="space-y-1">
-                  <h2 className="text-xl font-black text-[#0C1D4D] uppercase tracking-wider">Folha do Mês - Geral</h2>
-                  <div className="grid grid-cols-2 gap-x-4 text-sm text-[#64748B] font-medium">
-                    <p>Competência: <span className="font-bold text-[#0C1D4D]">{formatarMesAnoBR(mesReferencia)}</span></p>
-                    <p>Pagamento: <span className="font-bold text-emerald-700">{competenciaParaPagamento(mesReferencia)}</span></p>
-                    <p>Funcionários: <span className="font-bold text-[#0C1D4D]">{lote.length} ativos</span></p>
-                    <p>Fechados: <span className="font-bold text-[#0C1D4D]">{totalFechados} holerites</span></p>
-                  </div>
+                <div>
+                  <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Folha do Mês — Todos os Funcionários</h2>
+                  <p className="text-sm text-[#64748B]">
+                    Competência: {formatarMesAnoBR(mesReferencia)} • {lote.length} funcionário(s) ativo(s) • {totalFechados} fechado(s)
+                  </p>
                 </div>
-                {/* Grid moderno para botões de controle */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full md:w-auto items-end">
-                  <div className="flex flex-col w-full">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1">Mês de Competência</label>
-                    <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC] w-full outline-none focus:border-[#336699]" />
-                  </div>
-                  <button onClick={fecharFolhaTodos} disabled={loadingLote || lote.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3.5 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50 h-[44px] w-full">
-                    🔒 Fechar Folha
+                <div className="flex items-center gap-3 flex-wrap justify-center">
+                  <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+                  <button onClick={fecharFolhaTodos} disabled={loadingLote || lote.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">
+                    🔒 Fechar Folha do Mês (Todos)
                   </button>
-                  <button onClick={() => window.print()} disabled={lote.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3.5 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50 h-[44px] w-full">
-                    🖨️ Imprimir ({lote.length} pág)
-                  </button>
-                  <button onClick={reabrirFolhaTodos} disabled={loadingLote} className="bg-white border-2 border-red-300 text-red-600 font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl hover:bg-red-50 transition-all disabled:opacity-50 h-[44px] w-full">
-                    🔓 Reabrir ({totalFechados})
+                  {totalFechados > 0 && (
+                    <button onClick={reabrirFolhaTodos} disabled={loadingLote} className="bg-white border-2 border-red-300 text-red-600 font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl hover:bg-red-50 transition-all disabled:opacity-50">
+                      🔓 Reabrir Todos ({totalFechados})
+                    </button>
+                  )}
+                  <button onClick={() => window.print()} disabled={lote.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
+                    🖨️ Imprimir Todos ({lote.length} páginas)
                   </button>
                 </div>
               </div>

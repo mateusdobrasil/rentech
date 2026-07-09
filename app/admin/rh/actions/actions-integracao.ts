@@ -7,6 +7,7 @@
 // variáveis de ambiente e homologação, que entram numa fase posterior.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { calcularBeneficiosMes } from './actions-beneficios';
+import { resolverFontesPagamento } from './actions-fontes-pagamento';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -76,6 +77,18 @@ export async function montarLoteSalariosAction(payload: {
       });
     }
 
+    // ADIANTAMENTO DA FICHA — valor fixo cadastrado em folha_funcionarios.
+    // É a 1ª prioridade da fonte ADIANTAMENTO (antes do OCR da contabilidade).
+    const adiantFichaPorNome: Record<string, number> = {};
+    if (fontes.includes('ADIANTAMENTO')) {
+      const { data: fichas } = await db.from('folha_funcionarios')
+        .select('nome_completo, valor_adiantamento').eq('ativo', true);
+      (fichas || []).forEach(f => {
+        const v = Number(f.valor_adiantamento || 0);
+        if (v > 0) adiantFichaPorNome[f.nome_completo] = v;
+      });
+    }
+
     // CONTABILIDADE — quem tem cada tipo cadastrado no mês
     const temAdiantamento = new Set<string>();
     const temPagamento = new Set<string>();
@@ -103,16 +116,24 @@ export async function montarLoteSalariosAction(payload: {
     // União dos nomes de todas as fontes selecionadas
     const nomes = new Set<string>();
     if (fontes.includes('FOLHA')) Object.keys(folhaPorNome).forEach(n => nomes.add(n));
-    if (fontes.includes('ADIANTAMENTO')) temAdiantamento.forEach(n => nomes.add(n));
+    if (fontes.includes('ADIANTAMENTO')) {
+      temAdiantamento.forEach(n => nomes.add(n));
+      Object.keys(adiantFichaPorNome).forEach(n => nomes.add(n)); // quem tem adiant na ficha
+    }
     if (fontes.includes('PAGAMENTO')) temPagamento.forEach(n => nomes.add(n));
     if (fontes.includes('BENEFICIOS')) Object.keys(beneficiosPorNome).forEach(n => nomes.add(n));
 
-    // Dados bancários
+    // Dados bancários + valor de adiantamento da ficha
     const { data: funcs } = await db.from('folha_funcionarios')
-      .select('nome_completo, cpf, banco_codigo, banco_agencia, banco_conta, banco_tipo, pix_tipo, pix_chave')
-      .eq('ativo', true).in('nome_completo', Array.from(nomes));
+      .select('nome_completo, cpf, valor_adiantamento, banco_codigo, banco_agencia, banco_conta, banco_tipo, pix_tipo, pix_chave')
+      .in('nome_completo', Array.from(nomes));
     const bancoPorNome: Record<string, any> = {};
     (funcs || []).forEach(f => { bancoPorNome[f.nome_completo] = f; });
+
+    // Resolve, por hierarquia (Contrato → Cargo → Ficha), o que cada um recebe.
+    // FOLHA respeita "recebe fechamento"; ADIANTAMENTO/PAGAMENTO respeitam
+    // "recebe holerite". Benefícios são independentes desta regra.
+    const fontesResolvidas = await resolverFontesPagamento(db, Array.from(nomes));
 
     const rotuloFonte: Record<FonteLote, string> = {
       FOLHA: 'Nossa folha', ADIANTAMENTO: 'Adiantamento',
@@ -133,15 +154,26 @@ export async function montarLoteSalariosAction(payload: {
         banco_conta: b.banco_conta || null, banco_tipo: b.banco_tipo || null
       };
 
+      // Resolução das fontes deste funcionário (padrão: recebe ambos)
+      const resolvido = fontesResolvidas[nome] || { recebeFechamento: true, recebeHolerite: true };
+
       // Uma entrada por fonte selecionada, quando fizer sentido
-      const entradas: { fonte: FonteLote; valor: number; temDoc?: boolean }[] = [];
-      if (fontes.includes('FOLHA') && folhaPorNome[nome] !== undefined) {
+      const entradas: { fonte: FonteLote; valor: number; temDoc?: boolean; origem?: string }[] = [];
+      // FOLHA só entra se o funcionário recebe fechamento
+      if (fontes.includes('FOLHA') && resolvido.recebeFechamento && folhaPorNome[nome] !== undefined) {
         entradas.push({ fonte: 'FOLHA', valor: folhaPorNome[nome] });
       }
-      if (fontes.includes('ADIANTAMENTO') && temAdiantamento.has(nome)) {
-        entradas.push({ fonte: 'ADIANTAMENTO', valor: valoresAdiant[nome] || 0, temDoc: true });
+      // ADIANTAMENTO e PAGAMENTO só entram se o funcionário recebe holerite
+      if (fontes.includes('ADIANTAMENTO') && resolvido.recebeHolerite) {
+        // Prioridade: 1) valor da ficha  2) OCR da contabilidade  3) nada
+        const daFicha = adiantFichaPorNome[nome];
+        if (daFicha !== undefined && daFicha > 0) {
+          entradas.push({ fonte: 'ADIANTAMENTO', valor: daFicha, temDoc: false, origem: 'FICHA' });
+        } else if (temAdiantamento.has(nome)) {
+          entradas.push({ fonte: 'ADIANTAMENTO', valor: valoresAdiant[nome] || 0, temDoc: true, origem: 'OCR' });
+        }
       }
-      if (fontes.includes('PAGAMENTO') && temPagamento.has(nome)) {
+      if (fontes.includes('PAGAMENTO') && resolvido.recebeHolerite && temPagamento.has(nome)) {
         entradas.push({ fonte: 'PAGAMENTO', valor: valoresPagto[nome] || 0, temDoc: true });
       }
       if (fontes.includes('BENEFICIOS') && beneficiosPorNome[nome] !== undefined) {
@@ -154,6 +186,7 @@ export async function montarLoteSalariosAction(payload: {
           fonte: e.fonte,
           fonte_rotulo: rotuloFonte[e.fonte],
           temDoc: e.temDoc || false, // marca se depende de OCR
+          origem: e.origem || null,  // 'FICHA' | 'OCR' (só para adiantamento)
           valor: e.valor,
           ...bancoInfo,
           pronto: (temPix || temConta) && e.valor > 0

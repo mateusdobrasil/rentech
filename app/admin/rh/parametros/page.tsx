@@ -6,7 +6,7 @@ import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import {
   salvarFeriadoAction, excluirFeriadoAction,
-  adicionarCatalogoAction, removerCatalogoAction,
+  adicionarCatalogoAction, removerCatalogoAction, atualizarFontesCargoAction,
   salvarRegraAction, excluirRegraAction
 } from '../actions/actions-parametros';
 
@@ -26,9 +26,11 @@ interface RegraRH {
   modalidade_beneficio: 'POR_DIA' | 'VALOR_FECHADO';
   recebe_holerite_contabilidade: boolean;
   so_documental: boolean;
+  recebe_fechamento: boolean;
+  recebe_holerite: boolean;
 }
 
-interface ItemCatalogo { id: number; nome: string; }
+interface ItemCatalogo { id: number; nome: string; recebe_fechamento?: boolean | null; recebe_holerite?: boolean | null; }
 interface Feriado { id: number; data_feriado: string; descricao: string | null; }
 
 export default function ParametrosRH() {
@@ -71,7 +73,9 @@ export default function ParametrosRH() {
     direito_vt: false,
     modalidade_beneficio: 'POR_DIA',
     recebe_holerite_contabilidade: true,
-    so_documental: false
+    so_documental: false,
+    recebe_fechamento: true,
+    recebe_holerite: true
   };
   
   const [form, setForm] = useState<RegraRH>(formPadrao);
@@ -171,6 +175,23 @@ export default function ParametrosRH() {
   // ==========================================================================
   // CATÁLOGOS DE PADRONIZAÇÃO: cargos e tipos de contrato
   // ==========================================================================
+  // Atualiza os interruptores de fontes (3 estados) de um cargo, otimista na UI
+  const atualizarFontesCargo = async (cargo: ItemCatalogo, campo: 'fechamento' | 'holerite', valor: string) => {
+    const novoValor = valor === 'HERDA' ? null : valor === 'SIM';
+    const atualizado = {
+      ...cargo,
+      recebe_fechamento: campo === 'fechamento' ? novoValor : (cargo.recebe_fechamento ?? null),
+      recebe_holerite: campo === 'holerite' ? novoValor : (cargo.recebe_holerite ?? null)
+    };
+    setCargos(prev => prev.map(c => c.id === cargo.id ? atualizado : c));
+    const res = await atualizarFontesCargoAction({
+      cargoId: cargo.id,
+      recebeFechamento: atualizado.recebe_fechamento ?? null,
+      recebeHolerite: atualizado.recebe_holerite ?? null
+    });
+    if (!res.ok) { alert('Erro ao salvar: ' + res.erro); carregarCatalogos(); }
+  };
+
   const adicionarCatalogo = async (tabela: 'folha_cargo' | 'folha_tipocontrato', nome: string) => {
     const nomeNormalizado = nome.toUpperCase().trim();
     if (!nomeNormalizado) return alert('Digite um nome antes de adicionar.');
@@ -223,7 +244,9 @@ export default function ParametrosRH() {
         direito_vt: r.direito_vt ?? false,
         modalidade_beneficio: r.modalidade_beneficio || 'POR_DIA',
         recebe_holerite_contabilidade: r.recebe_holerite_contabilidade ?? true,
-        so_documental: r.so_documental ?? false
+        so_documental: r.so_documental ?? false,
+        recebe_fechamento: r.recebe_fechamento ?? true,
+        recebe_holerite: r.recebe_holerite ?? true
       })));
     }
     setLoading(false);
@@ -433,9 +456,35 @@ export default function ParametrosRH() {
               {cargos.length === 0 ? (
                 <p className="p-6 text-center text-xs text-gray-400 font-bold uppercase">Nenhum cargo cadastrado</p>
               ) : cargos.map(c => (
-                <div key={c.id} className="p-3 border-b border-[#E2E8F0] flex justify-between items-center hover:bg-gray-50 transition-colors">
-                  <span className="font-black text-[#0C1D4D] text-sm uppercase">{c.nome}</span>
-                  <button onClick={() => removerCatalogo('folha_cargo', c)} disabled={salvandoCatalogo} className="text-red-500 font-bold text-xs hover:bg-red-50 px-2 py-1 rounded disabled:opacity-40">X</button>
+                <div key={c.id} className="p-3 border-b border-[#E2E8F0] hover:bg-gray-50 transition-colors">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="font-black text-[#0C1D4D] text-sm uppercase">{c.nome}</span>
+                    <button onClick={() => removerCatalogo('folha_cargo', c)} disabled={salvandoCatalogo} className="text-red-500 font-bold text-xs hover:bg-red-50 px-2 py-1 rounded disabled:opacity-40">X</button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-0.5">Fechamento</label>
+                      <select
+                        value={c.recebe_fechamento === null || c.recebe_fechamento === undefined ? 'HERDA' : c.recebe_fechamento ? 'SIM' : 'NAO'}
+                        onChange={e => atualizarFontesCargo(c, 'fechamento', e.target.value)}
+                        className="w-full p-1.5 border border-gray-300 rounded text-[11px] font-bold bg-white">
+                        <option value="HERDA">↑ Herda contrato</option>
+                        <option value="SIM">✓ Recebe</option>
+                        <option value="NAO">✕ Não recebe</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-0.5">Holerite</label>
+                      <select
+                        value={c.recebe_holerite === null || c.recebe_holerite === undefined ? 'HERDA' : c.recebe_holerite ? 'SIM' : 'NAO'}
+                        onChange={e => atualizarFontesCargo(c, 'holerite', e.target.value)}
+                        className="w-full p-1.5 border border-gray-300 rounded text-[11px] font-bold bg-white">
+                        <option value="HERDA">↑ Herda contrato</option>
+                        <option value="SIM">✓ Recebe</option>
+                        <option value="NAO">✕ Não recebe</option>
+                      </select>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
@@ -541,6 +590,21 @@ export default function ParametrosRH() {
                   <input type="checkbox" checked={form.desconta_faltas} onChange={e => setForm({...form, desconta_faltas: e.target.checked})} className="w-4 h-4 accent-[#336699]" />
                   Habilitar Desconto de Faltas?
                 </label>
+              </div>
+
+              <div className="border-2 border-blue-200 p-4 rounded-xl bg-blue-50/40">
+                <p className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider mb-3">O que este contrato recebe (padrão)</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="flex items-center gap-2 font-bold text-sm text-[#0C1D4D] cursor-pointer bg-white p-2.5 rounded-lg border border-gray-200">
+                    <input type="checkbox" checked={form.recebe_fechamento} onChange={e => setForm({...form, recebe_fechamento: e.target.checked})} className="w-4 h-4 accent-[#336699]" />
+                    Recebe fechamento (nossa folha)
+                  </label>
+                  <label className="flex items-center gap-2 font-bold text-sm text-[#0C1D4D] cursor-pointer bg-white p-2.5 rounded-lg border border-gray-200">
+                    <input type="checkbox" checked={form.recebe_holerite} onChange={e => setForm({...form, recebe_holerite: e.target.checked})} className="w-4 h-4 accent-indigo-600" />
+                    Recebe holerite (contabilidade)
+                  </label>
+                </div>
+                <p className="text-[9px] font-bold text-gray-400 mt-2 uppercase">Padrão do contrato para pagamentos. O cargo e a ficha do funcionário podem sobrescrever isso.</p>
               </div>
 
               <div className={`border-2 p-4 rounded-xl ${form.so_documental ? 'border-indigo-300 bg-indigo-50' : 'border-gray-200 bg-gray-50/50'}`}>

@@ -150,3 +150,23 @@ export async function excluirRegraAction(nome: string): Promise<Resultado> {
     return { ok: false, erro: e.message };
   }
 }
+
+// Atualiza os interruptores de fontes de pagamento de um cargo (3 estados:
+// true/false/null). Usado na hierarquia Contrato → Cargo → Ficha.
+export async function atualizarFontesCargoAction(payload: {
+  cargoId: number;
+  recebeFechamento: boolean | null;
+  recebeHolerite: boolean | null;
+}): Promise<{ ok: boolean; erro?: string }> {
+  const db = supabaseAdmin();
+  try {
+    const { error } = await db.from('folha_cargo').update({
+      recebe_fechamento: payload.recebeFechamento,
+      recebe_holerite: payload.recebeHolerite
+    }).eq('id', payload.cargoId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}

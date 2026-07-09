@@ -369,6 +369,123 @@ export default function IntegracaoPage() {
     URL.revokeObjectURL(url);
   };
 
+  const exportarCnabItauPix = () => {
+    // Filtra apenas pagamentos prontos e que sejam do método PIX.
+    // O manual do Itaú exige que lotes de PIX sejam enviados em arquivo separado.
+    const pagamentosPix = prontos.filter(i => i.metodo === 'PIX');
+    
+    if (pagamentosPix.length === 0) {
+      alert('Nenhum pagamento via PIX pronto para exportar.');
+      return;
+    }
+
+    // --- FUNÇÕES DE FORMATAÇÃO CNAB ---
+    const padR = (str: string, len: number, char = ' ') => String(str || '').substring(0, len).padEnd(len, char);
+    const padL = (str: string | number, len: number, char = '0') => String(str || '').substring(0, len).padStart(len, char);
+    const limpaNum = (str: string) => String(str || '').replace(/\D/g, '');
+    const formataTexto = (str: string) => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9 ]/g, "");
+    
+    // Dados da sua empresa (estes campos idealmente viriam do banco/configurações reais)
+    // Usaremos os campos de edição ou valores genéricos para não quebrar o layout
+    const cnpjEmpresa = padL(limpaNum('22.618.891/0001-87'), 14); // Substitua pelo CNPJ real
+    const nomeEmpresa = padR(formataTexto('RENTECH-L E A INFORMATICA LTDA'), 30); // Substitua pelo Nome real
+    const agencia = padL(limpaNum(edAgencia || '7480  '), 5);
+    const conta = padL(limpaNum(edConta || '09312'), 12);
+    const dac = padL('4', 1); // Substitua pelo Dígito da Conta
+    
+    const hoje = new Date();
+    const dataGeracao = padL(hoje.getDate(), 2) + padL(hoje.getMonth() + 1, 2) + hoje.getFullYear();
+    const horaGeracao = padL(hoje.getHours(), 2) + padL(hoje.getMinutes(), 2) + padL(hoje.getSeconds(), 2);
+
+    let sequencialRegistro = 1;
+    let linhasCnab: string[] = [];
+
+    // --- REGISTRO 0: HEADER DE ARQUIVO ---
+    const headerArq = 
+      '341' + '0000' + '0' + padR('', 6) + '080' + '2' + cnpjEmpresa + 
+      padR('', 20) + agencia + ' ' + conta + ' ' + dac + nomeEmpresa + 
+      padR('BANCO ITAU', 30) + padR('', 10) + '1' + dataGeracao + horaGeracao + 
+      padL('', 9) + '00000' + padR('', 69);
+    linhasCnab.push(headerArq);
+
+    // --- REGISTRO 1: HEADER DE LOTE ---
+    // Forma '45' = PIX Transferência | Tipo '30' = Salários
+    const headerLote = 
+      '341' + '0001' + '1' + 'C' + '30' + '45' + '040' + ' ' + '2' + cnpjEmpresa + 
+      padR('1707', 4) + padR('', 16) + agencia + ' ' + conta + ' ' + dac + nomeEmpresa + 
+      padR('', 30) + padR('', 10) + padR('', 30) + padL('', 5) + padR('', 15) + 
+      padR('', 20) + padL('', 8) + padR('', 2) + padR('', 8) + padR('', 10);
+    linhasCnab.push(headerLote);
+
+    let somaValores = 0;
+
+    // --- REGISTROS 3: DETALHES (SEGMENTOS A e B) ---
+    pagamentosPix.forEach((item, index) => {
+      const valorCentavos = Math.round(item.valor * 100);
+      somaValores += valorCentavos;
+      
+      const numDocStr = padL(limpaNum(item.cpf), 14);
+      const nomeFuncionario = padR(formataTexto(item.funcionario_nome), 30);
+      const idPagamento = padR(`PGTO${index + 1}`, 20);
+      const valorStr = padL(valorCentavos, 15);
+
+      sequencialRegistro++;
+      
+      // Segmento A (Obrigatório)
+      const segA = 
+        '341' + '0001' + '3' + padL(sequencialRegistro, 5) + 'A' + '000' + 
+        '009' + '000' + padL('', 20) + nomeFuncionario + idPagamento + 
+        dataGeracao + '009' + padL('', 8) + '04' + padL('', 5) + valorStr + 
+        padR('', 15) + padR('', 5) + padL('', 8) + padL('', 15) + padR('HP01', 20) + 
+        padL('', 6) + numDocStr + padR('', 2) + padR('', 5) + padR('', 5) + '0' + padR('', 10);
+      linhasCnab.push(segA);
+
+      sequencialRegistro++;
+
+      // Mapeamento do Tipo de Chave PIX (01 a 04)
+      const tp = (item.pix_tipo || '').toUpperCase();
+      let tipoChavePix = '04'; // Aleatória
+      if (tp.includes('TEL') || tp.includes('CEL')) tipoChavePix = '01';
+      else if (tp.includes('MAIL')) tipoChavePix = '02';
+      else if (tp.includes('CPF') || tp.includes('CNPJ')) tipoChavePix = '03';
+
+      const chavePix = padR(item.pix_chave || '', 100);
+
+      // Segmento B (Obrigatório para modelo Chave PIX)
+      const segB = 
+        '341' + '0001' + '3' + padL(sequencialRegistro, 5) + 'B' + tipoChavePix + ' ' + 
+        '1' + numDocStr + padR('', 30) + padL('', 65) + chavePix + 
+        padR('', 3) + padR('', 10);
+      linhasCnab.push(segB);
+    });
+
+    // --- REGISTRO 5: TRAILER DE LOTE ---
+    // Registros no lote: 1 Header + (N pagamentos * 2 segmentos) + 1 Trailer
+    const qtdRegistrosLote = padL(2 + (pagamentosPix.length * 2), 6);
+    const trailerLote = 
+      '341' + '0001' + '5' + padR('', 9) + qtdRegistrosLote + 
+      padL(somaValores, 18) + padL('', 18) + padR('', 171) + padR('', 10);
+    linhasCnab.push(trailerLote);
+
+    // --- REGISTRO 9: TRAILER DE ARQUIVO ---
+    // Registros totais: 1 Header Arq + Lote inteiro + 1 Trailer Arq
+    const qtdRegistrosArq = padL(4 + (pagamentosPix.length * 2), 6);
+    const trailerArq = 
+      '341' + '9999' + '9' + padR('', 9) + '000001' + 
+      qtdRegistrosArq + padR('', 211);
+    linhasCnab.push(trailerArq);
+
+    // --- DOWNLOAD DO ARQUIVO ---
+    const txtFinal = linhasCnab.join('\r\n');
+    const blob = new Blob([txtFinal], { type: 'text/plain;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; 
+    a.download = `SISPAG_PIX_${mesReferencia.replace('-', '')}.txt`; 
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const enviarLote = async (loteId: number) => {
     const res = await enviarLoteAoBancoAction({ loteId });
     // Nesta versão o envio direto ainda não está ativo — mostra a orientação
@@ -503,6 +620,9 @@ export default function IntegracaoPage() {
                   )}
                   <div className="flex-1" />
                   <button onClick={exportarLoteCSV} className="text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg uppercase tracking-wider">⬇ Exportar CSV</button>
+                  <button onClick={exportarCnabItauPix} className="text-xs font-black bg-[#ec7000] hover:bg-[#c95f00] text-white px-4 py-2 rounded-lg uppercase tracking-wider">
+                    📄 Gerar SISPAG Itaú (PIX)
+                  </button>
                   <button onClick={gerarLote} disabled={salvandoLote} className="text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
                     {salvandoLote ? '⏳' : '✓ Gerar Lote'}
                   </button>

@@ -110,7 +110,7 @@ export async function montarLoteSalariosAction(payload: {
     // Dados bancários
     const { data: funcs } = await db.from('folha_funcionarios')
       .select('nome_completo, cpf, banco_codigo, banco_agencia, banco_conta, banco_tipo, pix_tipo, pix_chave')
-      .in('nome_completo', Array.from(nomes));
+      .eq('ativo', true).in('nome_completo', Array.from(nomes));
     const bancoPorNome: Record<string, any> = {};
     (funcs || []).forEach(f => { bancoPorNome[f.nome_completo] = f; });
 

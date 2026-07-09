@@ -64,7 +64,7 @@ export async function beneficiosDoMesAction(payload: { mesReferencia: string }):
 // NÚCLEO: calcula os benefícios de um mês, com proporcionalidade por
 // admissão/desligamento. Reutilizado pelo relatório e pelo grid.
 // ============================================================================
-async function calcularBeneficiosMes(db: ReturnType<typeof supabaseAdmin>, mesAno: string) {
+export async function calcularBeneficiosMes(db: ReturnType<typeof supabaseAdmin>, mesAno: string) {
   const [ano, mes] = mesAno.split('-').map(Number);
   const primeiroDoMes = `${ano}-${String(mes).padStart(2, '0')}-01`;
   const ultimoNum = new Date(ano, mes, 0).getDate();

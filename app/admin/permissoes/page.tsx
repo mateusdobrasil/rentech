@@ -18,16 +18,14 @@ const normalizarPermissao = (permissaoBruta: string): string => {
   return 'USUARIO'; 
 };
 
-type NivelPermissao = 'ADMINISTRADOR' | 'ADMINISTRATIVO' | 'FINANCEIRO' | 'ESTOQUE' | 'OPERACIONAL' | 'RH';
+// Setores de permissão: antes era uma lista fixa aqui no código, agora vem
+// do banco (tabela setores_permissao) e pode ser gerida na aba "Setores".
+type NivelPermissao = string;
 
-const LISTA_PERMISSOES: NivelPermissao[] = [
-  'ADMINISTRADOR',
-  'ADMINISTRATIVO',
-  'FINANCEIRO',
-  'ESTOQUE',
-  'OPERACIONAL',
-  'RH'
-];
+interface Setor {
+  id: number;
+  nome: string;
+}
 
 interface UsuarioAuth {
   id: string;
@@ -55,20 +53,25 @@ export default function GestaoPermissoes() {
   const [usuarioNome, setUsuarioNome] = useState('Usuário');
 
   const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [abaAtiva, setAbaAtiva] = useState<'usuarios' | 'paginas'>('usuarios');
+  const [abaAtiva, setAbaAtiva] = useState<'usuarios' | 'paginas' | 'setores'>('usuarios');
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
   const [buscaPagina, setBuscaPagina] = useState('');
-  
+
   // Estados da aba de Usuários
   const [usuarios, setUsuarios] = useState<UsuarioAuth[]>([]);
   const [modalEdicao, setModalEdicao] = useState<{ open: boolean; user: UsuarioAuth | null }>({ open: false, user: null });
-  
+
   // Estados da aba de Páginas
   const [paginas, setPaginas] = useState<PaginaPermissao[]>([]);
   const formPaginaPadrao: PaginaPermissao = { nome_pagina: '', endereco_route: '', permissoes_permitidas: [] };
   const [formPagina, setFormPagina] = useState<PaginaPermissao>(formPaginaPadrao);
   const [editandoPaginaId, setEditandoPaginaId] = useState<number | null>(null);
+
+  // Estados da aba de Setores
+  const [setores, setSetores] = useState<Setor[]>([]);
+  const [novoSetor, setNovoSetor] = useState('');
+  const [salvandoSetor, setSalvandoSetor] = useState(false);
 
   const [feedback, setFeedback] = useState<{ show: boolean; msg: string; type: 'success' | 'error' }>({ show: false, msg: '', type: 'success' });
 
@@ -120,6 +123,7 @@ export default function GestaoPermissoes() {
       setAuthLoading(false);
       carregarUsuarios();
       carregarPaginas();
+      carregarSetores();
     }
     
     checkAuth();
@@ -270,6 +274,78 @@ export default function GestaoPermissoes() {
   };
 
   // ============================================================================
+  // OPERAÇÕES: SETORES DE PERMISSÃO
+  // ============================================================================
+  const carregarSetores = async () => {
+    try {
+      const { data, error } = await supabase.from('setores_permissao').select('*').order('nome');
+      if (error) throw error;
+      if (data) setSetores(data as Setor[]);
+    } catch (error) {
+      console.error(error);
+      mostrarFeedback('Erro ao carregar setores de permissão.', 'error');
+    }
+  };
+
+  const adicionarSetor = async () => {
+    const nome = novoSetor.toUpperCase().trim();
+    if (!nome) return;
+
+    setSalvandoSetor(true);
+    try {
+      const { error } = await supabase.from('setores_permissao').insert([{ nome }]);
+      if (error) {
+        if (error.code === '23505') throw new Error('Esse setor já está cadastrado.');
+        throw error;
+      }
+
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: 'CADASTROU SETOR DE PERMISSÃO',
+        setor: 'PERMISSÕES',
+        equipamento_nome: nome,
+      });
+
+      setNovoSetor('');
+      mostrarFeedback('Setor cadastrado com sucesso!', 'success');
+      carregarSetores();
+    } catch (error: any) {
+      mostrarFeedback(error.message || 'Erro ao cadastrar setor.', 'error');
+    } finally {
+      setSalvandoSetor(false);
+    }
+  };
+
+  const removerSetor = async (setor: Setor) => {
+    const paginasComUso = paginas.filter(p => p.permissoes_permitidas.includes(setor.nome)).length;
+    const usuariosComUso = usuarios.filter(u => u.permissao === setor.nome).length;
+
+    const aviso = (paginasComUso > 0 || usuariosComUso > 0)
+      ? ` Atenção: este setor está em uso em ${paginasComUso} página(s) e ${usuariosComUso} colaborador(es) — eles não serão alterados, mas o setor deixará de aparecer nas opções.`
+      : '';
+
+    if (!confirm(`Remover o setor "${setor.nome}"?${aviso}`)) return;
+
+    try {
+      const { error } = await supabase.from('setores_permissao').delete().eq('id', setor.id);
+      if (error) throw error;
+
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: 'REMOVEU SETOR DE PERMISSÃO',
+        setor: 'PERMISSÕES',
+        equipamento_nome: setor.nome,
+      });
+
+      mostrarFeedback('Setor removido.', 'success');
+      carregarSetores();
+    } catch (error) {
+      console.error(error);
+      mostrarFeedback('Erro ao remover setor.', 'error');
+    }
+  };
+
+  // ============================================================================
   // FILTROS E AUXILIARES
   // ============================================================================
   const mostrarFeedback = (msg: string, type: 'success' | 'error') => {
@@ -349,6 +425,9 @@ export default function GestaoPermissoes() {
           </button>
           <button onClick={() => setAbaAtiva('paginas')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'paginas' ? 'bg-[#336699] text-white shadow-sm' : 'text-[#64748B] hover:text-[#336699]'}`}>
             🖥️ Páginas do Sistema
+          </button>
+          <button onClick={() => setAbaAtiva('setores')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'setores' ? 'bg-amber-600 text-white shadow-sm' : 'text-[#64748B] hover:text-amber-600'}`}>
+            🏷️ Setores de Permissão
           </button>
         </div>
       </div>
@@ -458,17 +537,20 @@ export default function GestaoPermissoes() {
               <div>
                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-2">Setores com Acesso Permitido</label>
                 <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2 max-h-[220px] overflow-y-auto shadow-inner">
-                  {LISTA_PERMISSOES.map(perm => {
-                    const incluso = formPagina.permissoes_permitidas.includes(perm);
+                  {setores.length === 0 && (
+                    <p className="text-[10px] text-gray-400 font-bold uppercase">Nenhum setor cadastrado. Crie um na aba "Setores de Permissão".</p>
+                  )}
+                  {setores.map(s => {
+                    const incluso = formPagina.permissoes_permitidas.includes(s.nome);
                     return (
-                      <label key={perm} className="flex items-center gap-3 font-bold text-xs text-[#0C1D4D] cursor-pointer hover:bg-gray-200/50 p-1 rounded transition-colors select-none">
-                        <input 
-                          type="checkbox" 
-                          checked={incluso} 
-                          onChange={e => handleCheckboxPage(perm, e.target.checked)} 
-                          className="w-4 h-4 accent-[#336699]" 
+                      <label key={s.id} className="flex items-center gap-3 font-bold text-xs text-[#0C1D4D] cursor-pointer hover:bg-gray-200/50 p-1 rounded transition-colors select-none">
+                        <input
+                          type="checkbox"
+                          checked={incluso}
+                          onChange={e => handleCheckboxPage(s.nome, e.target.checked)}
+                          className="w-4 h-4 accent-[#336699]"
                         />
-                        {perm}
+                        {s.nome}
                       </label>
                     );
                   })}
@@ -553,6 +635,87 @@ export default function GestaoPermissoes() {
         </div>
       )}
 
+      {/* ==================================================================== */}
+      {/* MÓDULO 3: SETORES DE PERMISSÃO */}
+      {/* ==================================================================== */}
+      {abaAtiva === 'setores' && (
+        <div className="px-4 md:px-8 pb-8 flex-grow flex flex-col lg:flex-row gap-6 overflow-hidden">
+
+          {/* Form de cadastro de novo setor */}
+          <div className="w-full lg:w-[400px] bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0] h-fit space-y-4">
+            <div className="border-b border-gray-100 pb-2">
+              <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider">Novo Setor de Permissão</h2>
+              <p className="text-[11px] text-gray-400 font-bold uppercase mt-0.5">Setores aparecem como opção ao configurar colaboradores e páginas</p>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Nome do Setor</label>
+                <input
+                  type="text"
+                  placeholder="Ex: LOGÍSTICA"
+                  value={novoSetor}
+                  onChange={e => setNovoSetor(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && adicionarSetor()}
+                  className="w-full p-2 border border-gray-300 rounded-lg text-xs font-bold uppercase bg-gray-50 text-[#0C1D4D] outline-none focus:border-amber-500"
+                />
+              </div>
+              <button
+                onClick={adicionarSetor}
+                disabled={salvandoSetor || !novoSetor.trim()}
+                className="w-full bg-amber-600 text-white font-black uppercase tracking-widest text-xs py-3 rounded-xl hover:bg-amber-700 transition-all shadow-md disabled:opacity-50"
+              >
+                {salvandoSetor ? '...' : '➕ Cadastrar Setor'}
+              </button>
+            </div>
+          </div>
+
+          {/* Lista de setores cadastrados */}
+          <div className="flex-grow bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col h-full">
+            <div className="overflow-auto flex-grow">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-[#F8FAFC] border-b border-[#E2E8F0] sticky top-0 text-[10px] font-black uppercase text-gray-400 tracking-wider">
+                  <tr>
+                    <th className="p-4">Setor</th>
+                    <th className="p-4">Em uso</th>
+                    <th className="p-4 text-center w-32">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#E2E8F0] text-sm font-medium">
+                  {setores.map(s => {
+                    const paginasComUso = paginas.filter(p => p.permissoes_permitidas.includes(s.nome)).length;
+                    const usuariosComUso = usuarios.filter(u => u.permissao === s.nome).length;
+                    return (
+                      <tr key={s.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="p-4">
+                          <span className={`px-3 py-1 border rounded-full text-[10px] font-black tracking-widest ${getBadgeColor(s.nome)}`}>
+                            {s.nome}
+                          </span>
+                        </td>
+                        <td className="p-4 text-xs text-gray-500 font-semibold">
+                          {paginasComUso} página(s) · {usuariosComUso} colaborador(es)
+                        </td>
+                        <td className="p-4 text-center">
+                          <button onClick={() => removerSetor(s)} className="bg-red-50 border border-red-200 text-red-600 font-bold text-[10px] uppercase px-3 py-1.5 rounded-md hover:bg-red-100 transition-colors">
+                            Excluir
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {setores.length === 0 && (
+                    <tr>
+                      <td colSpan={3} className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider text-xs">Nenhum setor cadastrado.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      )}
+
       {/* MODAL EXISTENTE DE EDIÇÃO DE ACESSO DO COLABORADOR */}
       {modalEdicao.open && modalEdicao.user && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
@@ -578,7 +741,7 @@ export default function GestaoPermissoes() {
                   value={modalEdicao.user.permissao}
                   onChange={(e) => setModalEdicao({ ...modalEdicao, user: { ...modalEdicao.user!, permissao: e.target.value as NivelPermissao } })}
                 >
-                  {LISTA_PERMISSOES.map(perm => <option key={perm} value={perm}>{perm}</option>)}
+                  {setores.map(s => <option key={s.id} value={s.nome}>{s.nome}</option>)}
                 </select>
                 <p className="text-[10px] text-[#94A3B8] font-bold uppercase mt-2 leading-tight">Este papel definirá quais painéis, simuladores e botões o usuário poderá visualizar.</p>
               </div>

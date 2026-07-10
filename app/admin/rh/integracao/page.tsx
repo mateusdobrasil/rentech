@@ -227,6 +227,19 @@ export default function IntegracaoPage() {
         totalItens: res.info.totalItens,
         totaisPorFonte: res.info.totaisPorFonte
       });
+      // Se nada apareceu, mostra o diagnóstico para entender o porquê
+      if (res.info.itens.length === 0 && res.info._debug) {
+        const d = res.info._debug;
+        console.log('DIAGNÓSTICO MONTAR LOTE:', d);
+        alert(
+          `Nenhum funcionário no grid.\n\n` +
+          `Fontes: ${d.fontesSelecionadas.join(', ')}\n` +
+          `Com adiantamento na ficha: ${d.qtdComAdiantFicha}\n` +
+          `Com PDF de adiantamento: ${d.qtdComAdiantOcr}\n` +
+          `Total de nomes reunidos: ${d.qtdNomesTotal}\n` +
+          (d.exemplosAdiantFicha.length ? `Exemplos ficha: ${JSON.stringify(d.exemplosAdiantFicha)}` : 'Nenhum exemplo de ficha encontrado')
+        );
+      }
     } catch (e: any) { alert(e.message); }
     finally { setMontando(false); }
   };

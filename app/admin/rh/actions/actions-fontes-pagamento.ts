@@ -37,29 +37,44 @@ export async function resolverFontesPagamento(
 ): Promise<Record<string, FontesResolvidas>> {
   if (nomes.length === 0) return {};
 
+  // Helper: tenta a query com as colunas da hierarquia; se elas ainda não
+  // existirem no banco, refaz sem elas (as regras caem no padrão "recebe tudo").
+  const buscarComFallback = async (
+    tabela: string, colBase: string, extras: string
+  ): Promise<any[]> => {
+    const full = await db.from(tabela).select(`${colBase}, ${extras}`);
+    if (!full.error) return full.data || [];
+    const basic = await db.from(tabela).select(colBase);
+    return basic.data || [];
+  };
+
   // Fichas dos funcionários (com cargo, contrato e overrides da ficha)
-  const { data: funcs } = await db.from('folha_funcionarios')
+  const funcsRes = await db.from('folha_funcionarios')
     .select('nome_completo, cargo, tipo_contrato, recebe_fechamento, recebe_holerite')
     .in('nome_completo', nomes);
+  const funcs: any[] = funcsRes.error
+    ? ((await db.from('folha_funcionarios').select('nome_completo, cargo, tipo_contrato').in('nome_completo', nomes)).data || [])
+    : (funcsRes.data || []);
 
   // Cargos (catálogo folha_cargo) e contratos (folha_parametros)
-  const { data: cargos } = await db.from('folha_cargo')
-    .select('nome, recebe_fechamento, recebe_holerite');
-  const { data: contratos } = await db.from('folha_parametros')
-    .select('nome_regra, recebe_fechamento, recebe_holerite');
+  const cargos = await buscarComFallback('folha_cargo', 'nome', 'recebe_fechamento, recebe_holerite');
+  const contratos = await buscarComFallback('folha_parametros', 'nome_regra', 'recebe_fechamento, recebe_holerite');
 
   const cargoPorNome: Record<string, any> = {};
-  (cargos || []).forEach(c => { cargoPorNome[c.nome] = c; });
+  (cargos || []).forEach((c: any) => { cargoPorNome[c.nome] = c; });
   const contratoPorNome: Record<string, any> = {};
-  (contratos || []).forEach(c => { contratoPorNome[c.nome_regra] = c; });
+  (contratos || []).forEach((c: any) => { contratoPorNome[c.nome_regra] = c; });
 
   const resultado: Record<string, FontesResolvidas> = {};
-  (funcs || []).forEach(f => {
+  (funcs || []).forEach((f: any) => {
     const cargo = cargoPorNome[f.cargo] || {};
     const contrato = contratoPorNome[f.tipo_contrato] || {};
 
-    const fech = resolverInterruptor(f.recebe_fechamento, cargo.recebe_fechamento, contrato.recebe_fechamento);
-    const hol = resolverInterruptor(f.recebe_holerite, cargo.recebe_holerite, contrato.recebe_holerite);
+    // Colunas da hierarquia podem não existir (fallback) → tratadas como null
+    const fFech = f.recebe_fechamento ?? null;
+    const fHol = f.recebe_holerite ?? null;
+    const fech = resolverInterruptor(fFech, cargo.recebe_fechamento, contrato.recebe_fechamento);
+    const hol = resolverInterruptor(fHol, cargo.recebe_holerite, contrato.recebe_holerite);
 
     resultado[f.nome_completo] = {
       recebeFechamento: fech.valor,
@@ -78,10 +93,10 @@ export async function listarResolucaoFontesAction(): Promise<Resultado> {
   try {
     const { data: funcs } = await db.from('folha_funcionarios')
       .select('nome_completo, cargo, tipo_contrato').eq('ativo', true).order('nome_completo');
-    const nomes = (funcs || []).map(f => f.nome_completo);
+    const nomes = (funcs || []).map((f: any) => f.nome_completo);
     const resolucao = await resolverFontesPagamento(db, nomes);
 
-    const linhas = (funcs || []).map(f => ({
+    const linhas = (funcs || []).map((f: any) => ({
       nome: f.nome_completo, cargo: f.cargo, contrato: f.tipo_contrato,
       ...resolucao[f.nome_completo]
     }));

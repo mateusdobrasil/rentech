@@ -131,9 +131,17 @@ export async function montarLoteSalariosAction(payload: {
     (funcs || []).forEach(f => { bancoPorNome[f.nome_completo] = f; });
 
     // Resolve, por hierarquia (Contrato → Cargo → Ficha), o que cada um recebe.
-    // FOLHA respeita "recebe fechamento"; ADIANTAMENTO/PAGAMENTO respeitam
-    // "recebe holerite". Benefícios são independentes desta regra.
-    const fontesResolvidas = await resolverFontesPagamento(db, Array.from(nomes));
+    // FOLHA respeita "recebe fechamento"; PAGAMENTO respeita "recebe holerite".
+    // ADIANTAMENTO tem lógica própria e NÃO depende disso.
+    // Blindagem: se a resolução falhar (ex: colunas da hierarquia ainda não
+    // criadas no banco), assume o padrão (recebe tudo) em vez de derrubar o
+    // lote inteiro — assim o adiantamento funciona mesmo sem o SQL aplicado.
+    let fontesResolvidas: Record<string, { recebeFechamento: boolean; recebeHolerite: boolean }> = {};
+    try {
+      fontesResolvidas = await resolverFontesPagamento(db, Array.from(nomes));
+    } catch (e) {
+      fontesResolvidas = {}; // cada funcionário cairá no padrão abaixo
+    }
 
     const rotuloFonte: Record<FonteLote, string> = {
       FOLHA: 'Nossa folha', ADIANTAMENTO: 'Adiantamento',
@@ -163,16 +171,21 @@ export async function montarLoteSalariosAction(payload: {
       if (fontes.includes('FOLHA') && resolvido.recebeFechamento && folhaPorNome[nome] !== undefined) {
         entradas.push({ fonte: 'FOLHA', valor: folhaPorNome[nome] });
       }
-      // ADIANTAMENTO e PAGAMENTO só entram se o funcionário recebe holerite
-      if (fontes.includes('ADIANTAMENTO') && resolvido.recebeHolerite) {
-        // Prioridade: 1) valor da ficha  2) OCR da contabilidade  3) nada
+      // ADIANTAMENTO: lógica própria (ficha → OCR → nada), independente da
+      // hierarquia "recebe holerite". Inclui todos os funcionários, até os só
+      // documentais — basta ter valor na ficha ou PDF de adiantamento.
+      if (fontes.includes('ADIANTAMENTO')) {
         const daFicha = adiantFichaPorNome[nome];
         if (daFicha !== undefined && daFicha > 0) {
+          // 1ª prioridade: valor fixo da ficha
           entradas.push({ fonte: 'ADIANTAMENTO', valor: daFicha, temDoc: false, origem: 'FICHA' });
         } else if (temAdiantamento.has(nome)) {
+          // 2ª: holerite de adiantamento da contabilidade (OCR)
           entradas.push({ fonte: 'ADIANTAMENTO', valor: valoresAdiant[nome] || 0, temDoc: true, origem: 'OCR' });
         }
+        // 3ª: sem nenhum dos dois → não entra no grid
       }
+      // PAGAMENTO respeita a hierarquia "recebe holerite"
       if (fontes.includes('PAGAMENTO') && resolvido.recebeHolerite && temPagamento.has(nome)) {
         entradas.push({ fonte: 'PAGAMENTO', valor: valoresPagto[nome] || 0, temDoc: true });
       }
@@ -202,6 +215,14 @@ export async function montarLoteSalariosAction(payload: {
       ok: true,
       info: {
         itens, semDados, semOcr, valorTotal, totalItens: itens.length,
+        // Diagnóstico: quantos nomes entraram em cada etapa (ajuda a depurar)
+        _debug: {
+          fontesSelecionadas: fontes,
+          qtdComAdiantFicha: Object.keys(adiantFichaPorNome).length,
+          qtdComAdiantOcr: temAdiantamento.size,
+          qtdNomesTotal: nomes.size,
+          exemplosAdiantFicha: Object.entries(adiantFichaPorNome).slice(0, 3)
+        },
         totaisPorFonte: {
           FOLHA: itens.filter(i => i.fonte === 'FOLHA').reduce((s, i) => s + i.valor, 0),
           ADIANTAMENTO: itens.filter(i => i.fonte === 'ADIANTAMENTO').reduce((s, i) => s + i.valor, 0),

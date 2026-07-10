@@ -43,8 +43,15 @@ export default function RhHub() {
   // Lista de todos os módulos e quem pode aceder a eles
   const modulosRh = [
     {
+      titulo: 'Gestão de Funcionários',
+      descricao: 'Gestão de cadastro e gerenciamento dos os funcionários.',
+      icone: '🧑', link: '/admin/rh/funcionario',
+      permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
+      cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
+    },
+    {
       titulo: 'Gestão de Holerites',
-      descricao: 'Configuração de salários, descontos, bônus e emissão.',
+      descricao: 'Visualizaçao de holerites, fechamentos e envio de assinaturas.',
       icone: '💰', link: '/admin/rh/holerite',
       permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
       cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'

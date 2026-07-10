@@ -1125,7 +1125,7 @@ export default function HoleritePage() {
       
       <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex-shrink-0 flex justify-between items-center shadow-sm print:hidden">
         <p className="text-[#0369A1] font-medium text-sm">
-          💰 <strong>Holerites Dinâmicos</strong>. Feriados e Multiplicadores lidos automaticamente do Motor de Regras.
+          🧑 <strong>Dados dos Funcionários.</strong> Todas as informações base dos funcionários são inseridas nessa página..
         </p>
         <button onClick={() => router.push('/admin/rh')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
           ⬅ VOLTAR AO RH
@@ -1184,13 +1184,14 @@ export default function HoleritePage() {
               >
                 👤 Ficha Individual
               </button>
-              <button
-                onClick={() => setActiveTab('impressao')}
-                className={`flex-1 sm:flex-initial px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${activeTab === 'impressao' ? 'bg-[#336699] text-white shadow-sm' : 'text-[#64748B] hover:text-[#336699]'}`}
-              >
-                📄 Folha do Mês (Todos)
-              </button>
+              
             </div>
+            <button
+              onClick={prepararNovo}
+              className="w-full sm:w-auto sm:ml-auto bg-blue-500 hover:bg-blue-400 text-white font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl transition-all shadow-sm"
+            >
+              + Novo Colaborador
+            </button>
           </div>
 
           {/* ================== ABA PARÂMETROS (INDIVIDUAL) ================== */}
@@ -1201,208 +1202,164 @@ export default function HoleritePage() {
               </div>
             ) : (
               <>
-                <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col md:flex-row justify-between items-center gap-4 print:hidden">
-                  <div className="flex gap-4 items-center">
-                    <div className="w-12 h-12 bg-blue-100 text-[#336699] rounded-full flex items-center justify-center font-black text-xl">
-                      {form.nome_completo ? form.nome_completo.charAt(0) : '?'}
-                    </div>
-                    <div>
-                      <h2 className="font-black text-[#0C1D4D] uppercase text-lg">{form.nome_completo || 'NOVO CADASTRO'}</h2>
-                      <span className="text-xs text-gray-500 font-bold">{form.cargo}</span>
-                    </div>
-                    {fechamentoSelecionado && (
-                      <span className="bg-emerald-100 text-emerald-700 text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider">
-                        🔒 Folha Fechada
-                      </span>
-                    )}
-                    {temAlteracoesNaoSalvas && (
-                      <span className="bg-amber-100 text-amber-700 text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider animate-pulse">
-                        ● Alterações não salvas
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <div className="flex flex-col">
-                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-0.5">Competência (mês trabalhado)</label>
-                      <div className="flex items-center gap-2">
-                        <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
-                        <div className="flex flex-col items-start bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1">
-                          <span className="text-[8px] font-black text-emerald-600 uppercase tracking-wider leading-none">Pagamento</span>
-                          <span className="text-sm font-black text-emerald-700 leading-tight">{competenciaParaPagamento(mesReferencia)}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <button onClick={salvarColaborador} disabled={loading} className={`font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md transition-all active:scale-[0.98] disabled:opacity-50 self-end ${temAlteracoesNaoSalvas ? 'bg-[#16A34A] hover:bg-[#15803D] text-white animate-pulse' : 'bg-[#0C1D4D] hover:bg-[#284B8C] text-white'}`}>
-                      {loading ? '⏳ Gravando...' : '💾 Gravar'}
-                    </button>
-                  </div>
-                </div>
-
                 <div className="flex flex-col gap-6 print:hidden pb-20">
-                  {/* PAINEL DE DIAGNÓSTICO: mostra o que o ponto apurou e a regra em vigor */}
-                  {funcionarioSelecionado !== 'NOVO' && (
-                    <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 grid grid-cols-2 md:grid-cols-6 gap-4 text-center">
-                      <div>
-                        <p className="text-[9px] font-black text-gray-400 uppercase tracking-wider">Extras Seg-Sáb ({regraAtiva.percentual_extra_semana}%)</p>
-                        <p className="text-lg font-black text-[#336699]">{formatTimeStr(apuracaoSelecionado.mins60)}</p>
-                        <p className="text-[10px] font-bold text-gray-500">{formatCurrency(dadosSelecionado.totalExtra60)}</p>
+                  <div className="grid grid-cols-1 xl:grid-cols-1 gap-6">
+                   <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] space-y-4 h-fit">
+                      <div className="flex justify-between items-center border-b border-[#E2E8F0] pb-2">
+                        <button onClick={() => setFichaExpandida(!fichaExpandida)} className="flex items-center gap-2 text-left group">
+                          <span className="text-[#336699] font-black text-lg transition-transform" style={{ transform: fichaExpandida ? 'rotate(90deg)' : 'none' }}>▸</span>
+                          <div>
+                            <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider group-hover:text-[#336699] transition-colors">{form.nome_completo || 'Novo Colaborador'}</h3>
+                            {!fichaExpandida && <span className="text-[10px] text-gray-400 font-bold uppercase">{form.cargo || 'sem cargo'} • {form.tipo_contrato} • clique para editar dados</span>}
+                          </div>
+                        </button>
+                        <button onClick={alternarStatusAtivo} className={`text-[10px] px-3 py-1 rounded font-black uppercase tracking-wider transition-colors flex-shrink-0 ${form.ativo ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-green-50 text-green-600 hover:bg-green-100'}`}>
+                          {form.ativo ? 'SUSPENDER' : 'REATIVAR'}
+                        </button>
                       </div>
-                      <div>
-                        <p className="text-[9px] font-black text-gray-400 uppercase tracking-wider">Extras Dom/Fer ({regraAtiva.percentual_extra_dom_fer}%)</p>
-                        <p className="text-lg font-black text-red-600">{formatTimeStr(apuracaoSelecionado.mins100)}</p>
-                        <p className="text-[10px] font-bold text-gray-500">{formatCurrency(dadosSelecionado.totalExtra100)}</p>
-                      </div>
-                      <div>
-                        <p className="text-[9px] font-black text-gray-400 uppercase tracking-wider">Faltas (Dias Úteis)</p>
-                        <p className={`text-lg font-black ${apuracaoSelecionado.faltas > 0 ? 'text-red-600' : 'text-emerald-600'}`}>{apuracaoSelecionado.faltas}</p>
-                        <p className="text-[10px] font-bold text-gray-500">
-                          {regraAtiva.desconta_faltas
-                            ? `- ${formatCurrency(dadosSelecionado.valorDescontoFaltas)}`
-                            : 'regra não desconta'}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[9px] font-black text-gray-400 uppercase tracking-wider">VR / VT (eventos)</p>
-                        {(regraAtiva.direito_vr || regraAtiva.direito_vt) ? (
-                          <>
-                            <p className="text-lg font-black text-teal-600">{dadosSelecionado.qtdVr}vr · {dadosSelecionado.qtdVt}vt</p>
-                            <p className="text-[10px] font-bold text-gray-500">+{formatCurrency(dadosSelecionado.totalVr + dadosSelecionado.totalVt)}</p>
-                            {dadosSelecionado.totalDescontoBeneficios > 0 && (
-                              <p className="text-[10px] font-bold text-red-500">-{formatCurrency(dadosSelecionado.totalDescontoBeneficios)} ({dadosSelecionado.diasFaltas}f)</p>
-                            )}
-                          </>
-                        ) : (
-                          <p className="text-[10px] font-bold text-gray-400 mt-2">sem direito</p>
-                        )}
-                      </div>
-                      <div>
-                        <p className="text-[9px] font-black text-gray-400 uppercase tracking-wider">Hora Base</p>
-                        <p className="text-lg font-black text-[#0C1D4D]">{formatCurrency(valorHoraBase)}</p>
-                        <p className="text-[10px] font-bold text-gray-500">{salarioBaseCalculo > 0 ? `base ${formatCurrency(salarioBaseCalculo)} ÷ 220` : '⚠ salários zerados'}</p>
-                      </div>
-                      <div>
-                        <p className="text-[9px] font-black text-gray-400 uppercase tracking-wider">Regra Aplicada</p>
-                        <p className="text-xs font-black text-[#0C1D4D] uppercase mt-1">{regraAtiva.nome_regra}</p>
-                        {!regraAtiva.calcula_extras_padrao && <p className="text-[9px] font-black text-red-600 uppercase">⚠ Sem extras (contrato fechado)</p>}
-                        {regraAtiva.calcula_extras_padrao && regraAtiva.tipo_pagamento_fds === 'VALOR_DIARIA' && <p className="text-[9px] font-black text-amber-600 uppercase">⚠ Modelo por diária: sem hora extra</p>}
-                        {regraAtiva.calcula_extras_padrao && regraAtiva.tipo_pagamento_fds === 'HORA_PERCENTUAL' && <p className="text-[9px] font-black text-emerald-600 uppercase">✔ Extras por percentual</p>}
-                      </div>
-                    </div>
-                  )}
-
-                  {fechamentoSelecionado && (
-                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-sm text-emerald-800 font-bold">
-                      🔒 A folha de {formatarMesAnoBR(mesReferencia)} deste colaborador está fechada
-                      (por {fechamentoSelecionado.fechado_por || 'usuário não identificado'} em {new Date(fechamentoSelecionado.fechado_em).toLocaleString('pt-BR')}).
-                      Alterações feitas aqui valerão apenas para meses em aberto — o holerite fechado não muda.
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                      <div className="bg-white p-5 rounded-2xl shadow-sm border border-green-200">
-                        <div className="flex justify-between items-center border-b border-green-100 pb-2 mb-4">
-                          <h3 className="font-black text-[#16A34A] uppercase tracking-wider">Bônus e Prêmios</h3>
-                          <button onClick={addBonus} className="text-[10px] bg-green-100 text-green-700 font-black px-3 py-1.5 rounded uppercase tracking-wider">+ ADICIONAR</button>
+                      
+                      {fichaExpandida && (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="col-span-2">
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Nome Completo</label>
+                            <input type="text" value={form.nome_completo} onChange={e => setForm({...form, nome_completo: e.target.value.toUpperCase()})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-gray-50 uppercase" />
                         </div>
-                        <p className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-3 uppercase">ℹ️ As datas são a COMPETÊNCIA (mês trabalhado). O pagamento sai sempre no mês seguinte.</p>
-                        <div className="space-y-3">
-                          {bonusComIndice
-                            .filter(({ encerrado }) => mostrarBonusEncerrados || !encerrado)
-                            .map(({ b, idx, encerrado }) => (
-                            <div key={idx} className={`p-3 border rounded-lg grid grid-cols-2 gap-2 relative group ${encerrado ? 'bg-gray-100 border-gray-200' : 'bg-green-50/30 border-green-100'}`}>
-                              {!encerrado && <button onClick={() => removeBonus(idx)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 font-bold opacity-0 group-hover:opacity-100">X</button>}
-                              <div className="col-span-2 flex items-center justify-between gap-2">
-                                <input type="text" placeholder="Descrição" value={b.descricao} disabled={encerrado} onChange={e => { const n = [...bonus]; n[idx].descricao = e.target.value; setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs uppercase disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" />
-                                {encerrado && <span className="text-[9px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded font-black uppercase whitespace-nowrap">🔒 Pago</span>}
-                              </div>
-                              <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Valor R$</label><input type="number" step="0.01" value={b.valor} disabled={encerrado} onChange={e => { const n = [...bonus]; n[idx].valor = Number(e.target.value); setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs text-[#16A34A] font-bold disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
-                              <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Recorrência</label><select value={b.recorrencia} disabled={encerrado} onChange={e => { const n = [...bonus]; n[idx].recorrencia = e.target.value as 'MENSAL'|'UNICO'; setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed"><option value="UNICO">Única Vez</option><option value="MENSAL">Fixo (Mensal)</option></select></div>
-                              {b.recorrencia === 'UNICO' && <div className="col-span-2"><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Competência do Bônus</label><input type="month" value={b.mes_referencia} disabled={encerrado} onChange={e => { const n = [...bonus]; n[idx].mes_referencia = e.target.value; setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" />{b.mes_referencia && <p className="text-[9px] font-bold text-emerald-600 mt-0.5 uppercase">💵 Sai no pagamento de {competenciaParaPagamento(b.mes_referencia)}</p>}</div>}
+
+                        <div className="col-span-2 grid grid-cols-2 gap-4 bg-indigo-50/50 p-3 rounded-lg border border-indigo-100">
+                          <div className="col-span-2 text-[10px] font-black text-indigo-600 uppercase tracking-wider">Dados Pessoais (para assinatura digital)</div>
+                          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">CPF</label><input type="text" value={form.cpf || ''} onChange={e => setForm({...form, cpf: e.target.value || null})} placeholder="000.000.000-00" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+                          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Data de Nascimento</label><input type="date" value={form.data_nascimento || ''} onChange={e => setForm({...form, data_nascimento: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+                          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Celular (WhatsApp)</label><input type="tel" value={form.celular || ''} onChange={e => setForm({...form, celular: e.target.value || null})} placeholder="(11) 90000-0000" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+                          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">E-mail</label><input type="email" value={form.email || ''} onChange={e => setForm({...form, email: e.target.value || null})} placeholder="nome@email.com" className="w-full p-2 border border-gray-300 rounded text-sm lowercase" /></div>
+
+                          <div className="col-span-2 text-[10px] font-black text-indigo-600 uppercase tracking-wider mt-2">Dados Bancários (para pagamento)</div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Chave PIX</label>
+                            <div className="flex gap-1">
+                              <select value={form.pix_tipo || ''} onChange={e => setForm({...form, pix_tipo: e.target.value || null})} className="p-2 border border-gray-300 rounded text-xs font-bold bg-white">
+                                <option value="">Tipo</option>
+                                <option value="CPF">CPF</option>
+                                <option value="EMAIL">E-mail</option>
+                                <option value="TELEFONE">Telefone</option>
+                                <option value="ALEATORIA">Aleatória</option>
+                              </select>
+                              <input type="text" value={form.pix_chave || ''} onChange={e => setForm({...form, pix_chave: e.target.value || null})} placeholder="chave pix" className="flex-1 min-w-0 p-2 border border-gray-300 rounded text-sm" />
                             </div>
-                          ))}
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Tipo de conta</label>
+                            <select value={form.banco_tipo || ''} onChange={e => setForm({...form, banco_tipo: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white">
+                              <option value="">— Selecione —</option>
+                              <option value="CORRENTE">Corrente</option>
+                              <option value="POUPANCA">Poupança</option>
+                            </select>
+                          </div>
+                          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Banco (código)</label><input type="text" value={form.banco_codigo || ''} onChange={e => setForm({...form, banco_codigo: e.target.value || null})} placeholder="341" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Agência</label><input type="text" value={form.banco_agencia || ''} onChange={e => setForm({...form, banco_agencia: e.target.value || null})} placeholder="0000" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+                            <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Conta</label><input type="text" value={form.banco_conta || ''} onChange={e => setForm({...form, banco_conta: e.target.value || null})} placeholder="00000-0" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+                          </div>
+                          <div className="col-span-2 text-[10px] text-gray-400 font-medium">💡 PIX tem prioridade no pagamento. Se não houver PIX, usa a conta bancária.</div>
 
-                          {bonus.length === 0 && (
-                            <p className="text-[11px] text-gray-400 font-medium text-center py-2 uppercase">Nenhum bônus lançado</p>
-                          )}
+                          <div className="col-span-2 text-[10px] font-black text-indigo-600 uppercase tracking-wider mt-2">O que este funcionário recebe</div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Recebe fechamento (nossa folha)</label>
+                            <select value={form.recebe_fechamento === null ? 'HERDA' : form.recebe_fechamento ? 'SIM' : 'NAO'}
+                              onChange={e => setForm({...form, recebe_fechamento: e.target.value === 'HERDA' ? null : e.target.value === 'SIM'})}
+                              className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white">
+                              <option value="HERDA">↑ Herda (cargo/contrato)</option>
+                              <option value="SIM">✓ Sim, recebe</option>
+                              <option value="NAO">✕ Não recebe</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Recebe holerite (contabilidade)</label>
+                            <select value={form.recebe_holerite === null ? 'HERDA' : form.recebe_holerite ? 'SIM' : 'NAO'}
+                              onChange={e => setForm({...form, recebe_holerite: e.target.value === 'HERDA' ? null : e.target.value === 'SIM'})}
+                              className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white">
+                              <option value="HERDA">↑ Herda (cargo/contrato)</option>
+                              <option value="SIM">✓ Sim, recebe</option>
+                              <option value="NAO">✕ Não recebe</option>
+                            </select>
+                          </div>
+                          <div className="col-span-2 text-[10px] text-gray-400 font-medium">💡 "Herda" segue a regra do cargo, e se o cargo não definir, a do contrato. Marque Sim/Não só para exceções deste funcionário.</div>
                         </div>
 
-                        {qtdBonusEncerrados > 0 && (
-                          <button
-                            onClick={() => setMostrarBonusEncerrados(!mostrarBonusEncerrados)}
-                            className="w-full mt-3 text-[10px] font-black uppercase tracking-wider text-gray-500 hover:text-[#0C1D4D] bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg py-2 transition-colors"
-                          >
-                            {mostrarBonusEncerrados
-                              ? `▲ Ocultar ${qtdBonusEncerrados} bônus já pago(s)`
-                              : `▼ Ver ${qtdBonusEncerrados} bônus já pago(s)`}
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="bg-white p-5 rounded-2xl shadow-sm border border-red-200">
-                        <div className="flex justify-between items-center border-b border-red-100 pb-2 mb-4">
-                          <h3 className="font-black text-red-600 uppercase tracking-wider">Débitos e Descontos</h3>
-                          <button onClick={addDesconto} className="text-[10px] bg-red-100 text-red-700 font-black px-3 py-1.5 rounded uppercase tracking-wider">+ ADICIONAR</button>
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Cargo</label>
+                          <select value={form.cargo} onChange={e => setForm({...form, cargo: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white uppercase text-[#0C1D4D]">
+                            <option value="">— Selecione —</option>
+                            {/* Mantém o cargo atual visível mesmo se tiver sido removido do catálogo */}
+                            {form.cargo && !cargosCatalogo.includes(form.cargo) && <option value={form.cargo}>{form.cargo} (fora do catálogo)</option>}
+                            {cargosCatalogo.map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
                         </div>
-                        <p className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-3 uppercase">ℹ️ A "Competência 1ª Parcela" é o mês trabalhado. O desconto sai no pagamento do mês seguinte.</p>
-                        <div className="space-y-3">
-                          {descontosComIndice
-                            .filter(({ quitado }) => mostrarQuitados || !quitado)
-                            .map(({ d, idx, quitado }) => {
-                            return (
-                            <div key={idx} className={`p-3 border rounded-lg grid grid-cols-2 gap-2 relative group ${quitado ? 'bg-gray-100 border-gray-200' : 'bg-red-50/30 border-red-100'}`}>
-                              {!quitado && <button onClick={() => removeDesconto(idx)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 font-bold opacity-0 group-hover:opacity-100">X</button>}
-                              <div className="col-span-2 flex items-center justify-between gap-2">
-                                <input type="text" placeholder="Descrição do Desconto" value={d.descricao} disabled={quitado} onChange={e => handleDescontoChange(idx, 'descricao', e.target.value)} className="w-full p-1.5 border border-gray-200 rounded text-xs uppercase disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" />
-                                {quitado && <span className="text-[9px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded font-black uppercase whitespace-nowrap">🔒 Quitado</span>}
-                              </div>
-                              <div><input type="number" step="0.01" placeholder="Valor R$" value={d.valor_parcela} disabled={quitado} onChange={e => handleDescontoChange(idx, 'valor_parcela', Number(e.target.value))} className="w-full p-1.5 border border-gray-200 rounded text-xs text-red-600 font-bold disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
-                              <div>
-                                <select value={d.tipo} disabled={quitado} onChange={e => handleDescontoChange(idx, 'tipo', e.target.value as Desconto['tipo'])} className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed">
-                                  <option value="PARCELADO">Parcelado</option>
-                                  <option value="FIXO">Fixo (Mensal)</option>
-                                </select>
-                              </div>
-                              <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Competência 1ª Parcela</label><input type="month" value={d.mes_inicio} disabled={quitado} onChange={e => handleDescontoChange(idx, 'mes_inicio', e.target.value)} className="w-full p-1.5 border border-gray-200 rounded text-xs disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
-                              
-                              {d.tipo === 'PARCELADO' ? (
-                                <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Qtd Parcelas</label><input type="number" placeholder="Qtd Parc." value={d.parcelas} disabled={quitado} onChange={e => handleDescontoChange(idx, 'parcelas', Number(e.target.value))} className="w-full p-1.5 border border-gray-200 rounded text-xs disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
-                              ) : (
-                                <div className="flex items-end"><div className="w-full p-1.5 bg-gray-100 text-gray-500 rounded text-[10px] text-center font-bold">FIXO CONTÍNUO</div></div>
+                        
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Tipo de Regra de Contrato</label>
+                          <select value={form.tipo_contrato} onChange={e => setForm({...form, tipo_contrato: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white uppercase text-[#0C1D4D]">
+                            {Object.keys(regrasContrato).map(k => <option key={k} value={k}>{k}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="col-span-2 grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Data de Admissão</label>
+                            <input type="date" value={form.data_admissao || ''} onChange={e => setForm({...form, data_admissao: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold" />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Data de Desligamento</label>
+                            <input type="date" value={form.data_desligamento || ''} onChange={e => setForm({...form, data_desligamento: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-red-600" />
+                            {form.data_desligamento && <p className="text-[9px] font-bold text-red-500 mt-0.5 uppercase">Faltas não contam após esta data</p>}
+                          </div>
+                        </div>
+                        
+                        <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Salário Folha</label><input type="number" step="0.01" value={form.salario_folha} onChange={e => setForm({...form, salario_folha: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-[#0C1D4D]" /></div>
+                        <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Salário Contrato Total</label><input type="number" step="0.01" value={form.salario_contrato} onChange={e => setForm({...form, salario_contrato: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-[#16A34A]" /></div>
+                        
+                        {(regraAtiva.direito_vr || regraAtiva.direito_vt) ? (
+                          <div className="col-span-2 bg-blue-50/50 p-3 rounded-lg border border-blue-100">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[10px] font-black text-[#336699] uppercase tracking-wider">Benefícios (VR / VT)</span>
+                              <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-700">
+                                {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' ? 'Valor Fechado (÷30)' : 'Por Dia'}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                              {regraAtiva.direito_vr && (
+                                <div>
+                                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">
+                                    {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' ? 'VR — Valor do Mês' : 'VR — Diária'}
+                                  </label>
+                                  <input type="number" step="0.01" value={form.valor_refeicao} onChange={e => setForm({...form, valor_refeicao: Number(e.target.value)})} className="w-full p-2 border border-blue-200 rounded text-sm" />
+                                  {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' && form.valor_refeicao > 0 && (
+                                    <p className="text-[9px] font-bold text-blue-600 mt-0.5 uppercase">Diária: {formatCurrency(form.valor_refeicao / 30)}</p>
+                                  )}
+                                </div>
                               )}
-
-                              {d.tipo === 'PARCELADO' && d.mes_inicio && (
-                                <div className="col-span-2 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1.5">
-                                  <p className="text-[9px] font-black text-emerald-700 uppercase leading-tight">
-                                    💵 1ª parcela paga em {competenciaParaPagamento(d.mes_inicio)}
-                                    {d.mes_fim && ` • última em ${competenciaParaPagamento(d.mes_fim)}`}
-                                  </p>
-                                  {quitado && <p className="text-[9px] font-bold text-gray-500 uppercase mt-0.5">Encerrada, bloqueada para edição</p>}
+                              {regraAtiva.direito_vt && (
+                                <div>
+                                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">
+                                    {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' ? 'VT — Valor do Mês' : 'VT — Diária'}
+                                  </label>
+                                  <input type="number" step="0.01" value={form.valor_transporte} onChange={e => setForm({...form, valor_transporte: Number(e.target.value)})} className="w-full p-2 border border-blue-200 rounded text-sm" />
+                                  {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' && form.valor_transporte > 0 && (
+                                    <p className="text-[9px] font-bold text-blue-600 mt-0.5 uppercase">Diária: {formatCurrency(form.valor_transporte / 30)}</p>
+                                  )}
                                 </div>
                               )}
                             </div>
-                            );
-                          })}
-
-                          {descontos.length === 0 && (
-                            <p className="text-[11px] text-gray-400 font-medium text-center py-2 uppercase">Nenhum desconto lançado</p>
-                          )}
-                          {descontos.length > 0 && qtdQuitados === descontos.length && !mostrarQuitados && (
-                            <p className="text-[11px] text-gray-400 font-medium text-center py-2 uppercase">Todos os descontos deste colaborador já estão quitados</p>
-                          )}
-                        </div>
-
-                        {qtdQuitados > 0 && (
-                          <button
-                            onClick={() => setMostrarQuitados(!mostrarQuitados)}
-                            className="w-full mt-3 text-[10px] font-black uppercase tracking-wider text-gray-500 hover:text-[#0C1D4D] bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg py-2 transition-colors"
-                          >
-                            {mostrarQuitados
-                              ? `▲ Ocultar ${qtdQuitados} desconto(s) quitado(s)`
-                              : `▼ Ver ${qtdQuitados} desconto(s) quitado(s)`}
-                          </button>
+                            <p className="text-[9px] text-blue-500 font-medium mt-2 uppercase">Os valores são gerados por dia trabalhado conforme a jornada. Configure o direito e a modalidade no Motor de Regras.</p>
+                          </div>
+                        ) : (
+                          <div className="col-span-2 bg-gray-50 p-3 rounded-lg border border-gray-200 text-[10px] font-bold text-gray-400 uppercase text-center">
+                            Este contrato ({form.tipo_contrato}) não dá direito a VR/VT. Ajuste no Motor de Regras se necessário.
+                          </div>
                         )}
+                        <div className="col-span-2"><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Adiantamento (Dia 20)</label><input type="number" step="0.01" value={form.valor_adiantamento} onChange={e => setForm({...form, valor_adiantamento: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-red-600" /></div>
                       </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="w-full mt-4">
@@ -1414,154 +1371,7 @@ export default function HoleritePage() {
               </>
             )
           )}
-
-          {/* ================== ABA FOLHA DO MÊS (TODOS) ================== */}
-          {activeTab === 'impressao' && (
-            <div className="flex flex-col items-center pb-10">
-              <div className="w-full max-w-5xl bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-3 mb-6 print:hidden">
-                <div>
-                  <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Folha do Mês — Todos os Funcionários</h2>
-                  <p className="text-sm text-[#64748B]">
-                    Competência: {formatarMesAnoBR(mesReferencia)} • {lote.length} funcionário(s) ativo(s) • {totalFechados} fechado(s)
-                  </p>
-                </div>
-                <div className="flex items-center gap-3 flex-wrap justify-center">
-                  <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
-                  <button onClick={fecharFolhaTodos} disabled={loadingLote || lote.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">
-                    🔒 Fechar Folha do Mês (Todos)
-                  </button>
-                  {totalFechados > 0 && (
-                    <button onClick={reabrirFolhaTodos} disabled={loadingLote} className="bg-white border-2 border-red-300 text-red-600 font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl hover:bg-red-50 transition-all disabled:opacity-50">
-                      🔓 Reabrir Todos ({totalFechados})
-                    </button>
-                  )}
-                  <button onClick={() => window.print()} disabled={lote.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
-                    🖨️ Imprimir Todos ({lote.length} páginas)
-                  </button>
-                </div>
-              </div>
-
-              {/* Barra de ASSINATURA DIGITAL */}
-              {totalFechados > 0 && (
-                <div className="w-full max-w-5xl bg-indigo-50 border border-indigo-200 p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-3 mb-6 print:hidden">
-                  <div className="flex items-center gap-3">
-                    <span className="text-lg">✍️</span>
-                    <div>
-                      <h3 className="text-sm font-black text-indigo-900 uppercase tracking-wider">Assinatura Digital (Autentique)</h3>
-                      <p className="text-[11px] text-indigo-700 font-bold">Envia os holerites fechados para assinatura com validação por CPF.</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 flex-wrap justify-center">
-                    <label className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider cursor-pointer bg-white px-3 py-2 rounded-lg border border-indigo-200">
-                      <input type="checkbox" checked={sandboxAssinatura} onChange={e => setSandboxAssinatura(e.target.checked)} />
-                      <span className={sandboxAssinatura ? 'text-amber-600' : 'text-red-600'}>{sandboxAssinatura ? '🧪 Modo Teste' : '⚠ Modo Real'}</span>
-                    </label>
-                    <button onClick={enviarAssinaturaTodos} disabled={enviandoAssinatura !== null} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50">
-                      {enviandoAssinatura === 'LOTE' ? '⏳ Enviando...' : '📤 Enviar Todos p/ Assinatura'}
-                    </button>
-                    <button onClick={() => router.push('/admin/rh/assinaturas')} className="bg-white border-2 border-indigo-300 text-indigo-700 font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl hover:bg-indigo-50 transition-all">
-                      📋 Acompanhar
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {loadingLote ? (
-                <div className="w-full max-w-5xl bg-white border-2 border-dashed border-gray-300 rounded-2xl p-16 text-center text-gray-400 font-bold uppercase tracking-wider print:hidden">
-                  Montando os holerites do mês...
-                </div>
-              ) : lote.length === 0 ? (
-                <div className="w-full max-w-5xl bg-white border-2 border-dashed border-gray-300 rounded-2xl p-16 text-center text-gray-400 font-bold uppercase tracking-wider print:hidden">
-                  Nenhum funcionário ativo encontrado.
-                </div>
-              ) : (
-                lote.map(item => (
-                  item.soDocumental ? (
-                    // Contrato só documental: não tem holerite calculado.
-                    // Card simplificado com botão de enviar (junta anexos da contabilidade).
-                    <div key={item.func.nome_completo} className="w-full max-w-5xl print:hidden">
-                      <div className="bg-white border-2 border-dashed border-indigo-200 rounded-2xl p-5 flex flex-col sm:flex-row justify-between items-center gap-3">
-                        <div className="flex items-center gap-3">
-                          <span className="text-2xl">📄</span>
-                          <div>
-                            <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider">{item.func.nome_completo}</h3>
-                            <p className="text-[11px] text-gray-500 font-bold uppercase">{item.func.tipo_contrato} • só documental (sem cálculo) • envia holerites da contabilidade</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button onClick={() => previaPdf(item)} disabled={gerandoPrevia !== null} className="text-[10px] font-black text-gray-500 uppercase tracking-wider hover:bg-gray-100 px-3 py-2 rounded-lg disabled:opacity-50 border border-gray-200">
-                            {gerandoPrevia === item.func.nome_completo ? '⏳' : '👁 Prévia'}
-                          </button>
-                          {item.statusAssinatura && (
-                            <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider ${
-                              item.statusAssinatura === 'ASSINADO' ? 'bg-green-100 text-green-700' :
-                              item.statusAssinatura === 'VISUALIZADO' ? 'bg-blue-100 text-blue-700' :
-                              item.statusAssinatura === 'REJEITADO' ? 'bg-red-100 text-red-700' :
-                              'bg-indigo-100 text-indigo-700'
-                            }`}>
-                              {item.statusAssinatura === 'ASSINADO' ? '✅ Assinado' :
-                               item.statusAssinatura === 'VISUALIZADO' ? '👁 Visualizado' :
-                               item.statusAssinatura === 'REJEITADO' ? '✖ Rejeitado' : '📤 Enviado'}
-                            </span>
-                          )}
-                          {item.statusAssinatura !== 'ASSINADO' && (
-                            <button onClick={() => enviarAssinatura(item)} disabled={enviandoAssinatura !== null} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-[10px] px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
-                              {enviandoAssinatura === item.func.nome_completo ? '⏳ Enviando...' : item.statusAssinatura ? '↻ Reenviar' : '📤 Enviar p/ Assinatura'}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                  <div key={item.func.nome_completo} className="w-full max-w-5xl flex flex-col items-center">
-                    <div className="w-full flex justify-between items-center mb-2 print:hidden">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider ${item.fechamento ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                          {item.fechamento
-                            ? `🔒 Fechada em ${new Date(item.fechamento.fechado_em).toLocaleDateString('pt-BR')} por ${item.fechamento.fechado_por || '—'}`
-                            : '⚠ Em aberto — valores podem mudar com o ponto'}
-                        </span>
-                        {item.statusAssinatura && (
-                          <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider ${
-                            item.statusAssinatura === 'ASSINADO' ? 'bg-green-100 text-green-700' :
-                            item.statusAssinatura === 'VISUALIZADO' ? 'bg-blue-100 text-blue-700' :
-                            item.statusAssinatura === 'REJEITADO' ? 'bg-red-100 text-red-700' :
-                            'bg-indigo-100 text-indigo-700'
-                          }`}>
-                            {item.statusAssinatura === 'ASSINADO' ? '✅ Assinado' :
-                             item.statusAssinatura === 'VISUALIZADO' ? '👁 Visualizado' :
-                             item.statusAssinatura === 'REJEITADO' ? '✖ Rejeitado' : '📤 Enviado'}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button onClick={() => previaPdf(item)} disabled={gerandoPrevia !== null} className="text-[10px] font-black text-gray-500 uppercase tracking-wider hover:bg-gray-100 px-3 py-1 rounded disabled:opacity-50 border border-gray-200">
-                          {gerandoPrevia === item.func.nome_completo ? '⏳' : '👁 Prévia PDF'}
-                        </button>
-                        {item.fechamento && item.statusAssinatura !== 'ASSINADO' && (
-                          <button onClick={() => enviarAssinatura(item)} disabled={enviandoAssinatura !== null} className="text-[10px] font-black text-indigo-600 uppercase tracking-wider hover:bg-indigo-50 px-3 py-1 rounded disabled:opacity-50 border border-indigo-200">
-                            {enviandoAssinatura === item.func.nome_completo ? '⏳ Enviando...' : item.statusAssinatura ? '↻ Reenviar' : '📤 Assinatura'}
-                          </button>
-                        )}
-                        {item.fechamento && (
-                          <button onClick={() => reabrirFolhaDe(item.fechamento!)} disabled={loadingLote} className="text-[10px] font-black text-red-600 uppercase tracking-wider hover:bg-red-50 px-3 py-1 rounded disabled:opacity-50">
-                            🔓 Reabrir
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <HoleriteDoc
-                      nome={item.func.nome_completo}
-                      dados={item.fechamento ? item.fechamento.dados : item.dados}
-                      mesRef={mesReferencia}
-                      fechamento={item.fechamento}
-                    />
-                  </div>
-                  )
-                ))
-              )}
-            </div>
-          )}
+          
         </main>
       </div>
     </div>

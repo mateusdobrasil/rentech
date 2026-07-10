@@ -163,7 +163,7 @@ export async function gerarHoleritePdf(p: GerarPdfParams): Promise<Uint8Array> {
   const yLinhas = y;
 
   for (let i = 0; i < maxLinhas; i++) {
-    const yy = yLinhas - i * linhaAltura;
+    const yy = yLinhas - i * linhaAltura - 4;
     if (i % 2 === 1) { box(xCred, yy - 3, colW, linhaAltura, rgb(0.97, 0.98, 0.99)); box(xDeb, yy - 3, colW, linhaAltura, rgb(0.97, 0.98, 0.99)); }
     if (creditos[i]) {
       txt(creditos[i][0], xCred + 6, yy, 8);
@@ -172,7 +172,7 @@ export async function gerarHoleritePdf(p: GerarPdfParams): Promise<Uint8Array> {
     }
     if (debitos[i]) {
       txt(debitos[i][0], xDeb + 6, yy, 8);
-      txt(debitos[i][1], xDeb + colW - 70, yy, 7, font, cinza);
+      txt(debitos[i][1], xDeb + colW - 90, yy, 7, font, cinza);
       txtRight(BRL(debitos[i][2]), xDeb + colW - 6, yy, 8);
     }
   }

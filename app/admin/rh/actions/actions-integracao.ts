@@ -8,8 +8,15 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { calcularBeneficiosMes } from './actions-beneficios';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
+import { TextractClient, DetectDocumentTextCommand } from "@aws-sdk/client-textract";
 
-type Resultado = { ok: boolean; erro?: string; info?: any };
+type Resultado = { 
+  ok: boolean; 
+  erro?: string; 
+  info?: any;
+  valor?: number;       // Adicionado para o retorno do OCR da AWS
+  _textoLido?: string;  // Adicionado para diagnóstico do OCR
+};
 
 // ============================================================================
 // PARCEIROS / INTEGRAÇÕES
@@ -43,14 +50,7 @@ export async function salvarIntegracaoAction(payload: {
 }
 
 // ============================================================================
-// MONTAR LOTE DE PAGAMENTO — 4 fontes selecionáveis por funcionário:
-//   1) Nossa folha (líquido a receber, se houver folha fechada)
-//   2) Adiantamento da contabilidade (via OCR do PDF)
-//   3) Pagamento da contabilidade (via OCR do PDF)
-//   4) Benefícios (soma dos benefícios do mês)
-// Cada fonte marcada vira uma linha independente no lote. Um funcionário com
-// duas fontes marcadas aparece em duas linhas, com valores separados que serão
-// enviados como pagamentos independentes ao banco.
+// MONTAR LOTE DE PAGAMENTO — 4 fontes selecionáveis por funcionário
 // ============================================================================
 export type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS';
 
@@ -77,8 +77,7 @@ export async function montarLoteSalariosAction(payload: {
       });
     }
 
-    // ADIANTAMENTO DA FICHA — valor fixo cadastrado em folha_funcionarios.
-    // É a 1ª prioridade da fonte ADIANTAMENTO (antes do OCR da contabilidade).
+    // ADIANTAMENTO DA FICHA
     const adiantFichaPorNome: Record<string, number> = {};
     if (fontes.includes('ADIANTAMENTO')) {
       const { data: fichas } = await db.from('folha_funcionarios')
@@ -101,7 +100,7 @@ export async function montarLoteSalariosAction(payload: {
       });
     }
 
-    // BENEFÍCIOS — soma do mês por funcionário
+    // BENEFÍCIOS
     const beneficiosPorNome: Record<string, number> = {};
     if (fontes.includes('BENEFICIOS')) {
       const { itens: itensBenef } = await calcularBeneficiosMes(db, mesReferencia);
@@ -118,7 +117,7 @@ export async function montarLoteSalariosAction(payload: {
     if (fontes.includes('FOLHA')) Object.keys(folhaPorNome).forEach(n => nomes.add(n));
     if (fontes.includes('ADIANTAMENTO')) {
       temAdiantamento.forEach(n => nomes.add(n));
-      Object.keys(adiantFichaPorNome).forEach(n => nomes.add(n)); // quem tem adiant na ficha
+      Object.keys(adiantFichaPorNome).forEach(n => nomes.add(n)); 
     }
     if (fontes.includes('PAGAMENTO')) temPagamento.forEach(n => nomes.add(n));
     if (fontes.includes('BENEFICIOS')) Object.keys(beneficiosPorNome).forEach(n => nomes.add(n));
@@ -130,17 +129,11 @@ export async function montarLoteSalariosAction(payload: {
     const bancoPorNome: Record<string, any> = {};
     (funcs || []).forEach(f => { bancoPorNome[f.nome_completo] = f; });
 
-    // Resolve, por hierarquia (Contrato → Cargo → Ficha), o que cada um recebe.
-    // FOLHA respeita "recebe fechamento"; PAGAMENTO respeita "recebe holerite".
-    // ADIANTAMENTO tem lógica própria e NÃO depende disso.
-    // Blindagem: se a resolução falhar (ex: colunas da hierarquia ainda não
-    // criadas no banco), assume o padrão (recebe tudo) em vez de derrubar o
-    // lote inteiro — assim o adiantamento funciona mesmo sem o SQL aplicado.
     let fontesResolvidas: Record<string, { recebeFechamento: boolean; recebeHolerite: boolean }> = {};
     try {
       fontesResolvidas = await resolverFontesPagamento(db, Array.from(nomes));
     } catch (e) {
-      fontesResolvidas = {}; // cada funcionário cairá no padrão abaixo
+      fontesResolvidas = {}; 
     }
 
     const rotuloFonte: Record<FonteLote, string> = {
@@ -148,7 +141,6 @@ export async function montarLoteSalariosAction(payload: {
       PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios'
     };
 
-    // Uma linha por (funcionário × fonte com valor > 0 OU com documento cadastrado)
     const itens: any[] = [];
     Array.from(nomes).sort((a, b) => a.localeCompare(b)).forEach(nome => {
       const b = bancoPorNome[nome] || {};
@@ -162,30 +154,22 @@ export async function montarLoteSalariosAction(payload: {
         banco_conta: b.banco_conta || null, banco_tipo: b.banco_tipo || null
       };
 
-      // Resolução das fontes deste funcionário (padrão: recebe ambos)
       const resolvido = fontesResolvidas[nome] || { recebeFechamento: true, recebeHolerite: true };
-
-      // Uma entrada por fonte selecionada, quando fizer sentido
       const entradas: { fonte: FonteLote; valor: number; temDoc?: boolean; origem?: string }[] = [];
-      // FOLHA só entra se o funcionário recebe fechamento
+      
       if (fontes.includes('FOLHA') && resolvido.recebeFechamento && folhaPorNome[nome] !== undefined) {
         entradas.push({ fonte: 'FOLHA', valor: folhaPorNome[nome] });
       }
-      // ADIANTAMENTO: lógica própria (ficha → OCR → nada), independente da
-      // hierarquia "recebe holerite". Inclui todos os funcionários, até os só
-      // documentais — basta ter valor na ficha ou PDF de adiantamento.
+      
       if (fontes.includes('ADIANTAMENTO')) {
         const daFicha = adiantFichaPorNome[nome];
         if (daFicha !== undefined && daFicha > 0) {
-          // 1ª prioridade: valor fixo da ficha
           entradas.push({ fonte: 'ADIANTAMENTO', valor: daFicha, temDoc: false, origem: 'FICHA' });
         } else if (temAdiantamento.has(nome)) {
-          // 2ª: holerite de adiantamento da contabilidade (OCR)
           entradas.push({ fonte: 'ADIANTAMENTO', valor: valoresAdiant[nome] || 0, temDoc: true, origem: 'OCR' });
         }
-        // 3ª: sem nenhum dos dois → não entra no grid
       }
-      // PAGAMENTO respeita a hierarquia "recebe holerite"
+      
       if (fontes.includes('PAGAMENTO') && resolvido.recebeHolerite && temPagamento.has(nome)) {
         entradas.push({ fonte: 'PAGAMENTO', valor: valoresPagto[nome] || 0, temDoc: true });
       }
@@ -198,8 +182,8 @@ export async function montarLoteSalariosAction(payload: {
           funcionario_nome: nome,
           fonte: e.fonte,
           fonte_rotulo: rotuloFonte[e.fonte],
-          temDoc: e.temDoc || false, // marca se depende de OCR
-          origem: e.origem || null,  // 'FICHA' | 'OCR' (só para adiantamento)
+          temDoc: e.temDoc || false, 
+          origem: e.origem || null,  
           valor: e.valor,
           ...bancoInfo,
           pronto: (temPix || temConta) && e.valor > 0
@@ -215,7 +199,6 @@ export async function montarLoteSalariosAction(payload: {
       ok: true,
       info: {
         itens, semDados, semOcr, valorTotal, totalItens: itens.length,
-        // Diagnóstico: quantos nomes entraram em cada etapa (ajuda a depurar)
         _debug: {
           fontesSelecionadas: fontes,
           qtdComAdiantFicha: Object.keys(adiantFichaPorNome).length,
@@ -237,9 +220,62 @@ export async function montarLoteSalariosAction(payload: {
 }
 
 // ============================================================================
-// PDFs DA CONTABILIDADE — devolve as páginas dos holerites em base64 para o
-// cliente rodar OCR (tesseract.js). Filtra pelo tipo: ADIANTAMENTO ou
-// HOLERITE_MENSAL (a página chama de "Pagamento").
+// OCR AWS TEXTRACT (SERVER-SIDE)
+// Envia o PDF digitalizado diretamente para a AWS para leitura limpa e precisa.
+// ============================================================================
+const textractClient = new TextractClient({ 
+  region: process.env.AWS_REGION || "us-east-1" 
+});
+
+export async function processarOcrAwsAction(pdfBase64: string, tipo: string): Promise<Resultado> {
+  try {
+    const documentBytes = Buffer.from(pdfBase64, 'base64');
+
+    const command = new DetectDocumentTextCommand({
+      Document: {
+        Bytes: documentBytes,
+      },
+    });
+
+    const response = await textractClient.send(command);
+
+    if (!response.Blocks) {
+      return { ok: false, erro: 'Nenhum texto detectado pela AWS.' };
+    }
+
+    const linhas = response.Blocks
+      .filter(block => block.BlockType === 'LINE' && block.Text)
+      .map(block => block.Text)
+      .join('\n');
+
+    const t = linhas.toUpperCase().replace(/\s+/g, ' ');
+    const rx = /VALOR\s*L[IÍ]QUIDO[^\d,]{0,30}(\d{1,3}(?:\.\d{3})*,\d{2})/;
+    const m = t.match(rx);
+
+    if (m && m[1]) {
+      const numero = m[1].replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
+      return { 
+        ok: true, 
+        valor: Number(numero),
+        _textoLido: linhas.substring(0, 500) 
+      };
+    }
+
+    return { 
+      ok: false, 
+      erro: 'Texto legível, mas o rótulo "Valor Líquido" não foi encontrado.',
+      _textoLido: linhas.substring(0, 500)
+    };
+
+  } catch (error: any) {
+    console.error("Erro na API da AWS:", error);
+    return { ok: false, erro: 'Falha na comunicação com a AWS: ' + error.message };
+  }
+}
+
+// ============================================================================
+// PDFs DA CONTABILIDADE
+// Devolve as páginas dos holerites em base64 para o backend despachar pra AWS
 // ============================================================================
 export async function listarPdfsContabilidadeAction(payload: {
   mesReferencia: string;
@@ -319,10 +355,6 @@ export async function listarLotesAction(payload: { mesReferencia?: string }): Pr
 
 // ============================================================================
 // ENVIAR LOTE AO BANCO — PONTO DE PLUGAGEM (stub).
-// A integração real com a API do Itaú exige: certificado digital (mTLS),
-// OAuth com client_id/secret, e homologação. Essas credenciais vivem em
-// variáveis de ambiente no servidor, nunca no cliente. Enquanto não houver
-// acesso homologado, esta função apenas registra a intenção e orienta.
 // ============================================================================
 export async function enviarLoteAoBancoAction(payload: { loteId: number }): Promise<Resultado> {
   const db = supabaseAdmin();
@@ -331,7 +363,6 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number }): Prom
       .select('parceiro, status').eq('id', payload.loteId).maybeSingle();
     if (!lote) return { ok: false, erro: 'Lote não encontrado.' };
 
-    // Verifica se a integração está configurada e ativa
     const { data: integ } = await db.from('folha_integracoes')
       .select('ativo, ambiente').eq('parceiro', lote.parceiro).maybeSingle();
 
@@ -342,9 +373,6 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number }): Prom
       };
     }
 
-    // TODO (fase de integração real): autenticar via mTLS/OAuth com o Itaú,
-    // montar o payload da API de pagamentos em lote, enviar e tratar retorno.
-    // Requer AMBIENTE de produção homologado.
     return {
       ok: false,
       erro: 'Envio direto à API do banco ainda não implementado nesta versão. Use a exportação do lote (CNAB/planilha) para processar no internet banking, ou aguarde a ativação da API homologada.'

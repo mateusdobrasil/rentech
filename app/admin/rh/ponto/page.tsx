@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
@@ -10,49 +10,20 @@ import { importarPontoAction, importarAbonosAction } from '../actions/actions-po
 import SepararHolerites from './SepararHolerites';
 import logoColorido from '../../../../app/imgs/logo.png';
 
-// Estados de Autenticação
-    const router = useRouter();
-    const [usuarioAtual, setUsuarioAtual] = useState('');
-    const [emailUsuario, setEmailUsuario] = useState(''); 
-    const [authLoading, setAuthLoading] = useState(true);
+// ============================================================================
+// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
+// ============================================================================
+const normalizarPermissao = (permissaoBruta: string): string => {
+  const p = (permissaoBruta || '').toUpperCase().trim();
+  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
+  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
+  if (p.includes('FINAN')) return 'FINANCEIRO';
+  if (p.includes('OPER')) return 'OPERACIONAL';
+  if (p.includes('ESTOQ')) return 'ESTOQUE';
+  if (p.includes('EDIT')) return 'EDITOR';
+  return 'USUARIO';
+};
 
-// 1. Validar a Sessão e Puxar Dados do Usuário Logado
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) {
-        router.push('/login');
-        return;
-      }
-
-      const { data: perfil } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-
-      if (perfil) {
-        setUsuarioAtual(perfil.nome || 'Equipe RH');
-        setEmailUsuario(perfil.email || session.user.email || ''); 
-        
-        const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
-        const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
-        
-        if (!cargosAltaGestao.includes(permissaoBanco)) {
-          router.push('/admin');
-          return;
-        }
-      } else {
-        setUsuarioAtual('Equipe RH');
-      }
-      
-      setAuthLoading(false);
-    }
-    
-    checkAuth();
-  }, [router]);
-  
 interface RegistroDiario {
   id?: string;
   funcionario_nome: string;
@@ -77,6 +48,64 @@ interface Abono {
 
 export default function GestaoDePonto() {
   const router = useRouter();
+  const pathname = usePathname();
+  const [usuarioAtual, setUsuarioAtual] = useState('');
+  const [emailUsuario, setEmailUsuario] = useState('');
+  const [authLoading, setAuthLoading] = useState(true);
+  const [acessoNegado, setAcessoNegado] = useState(false);
+
+  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
+  useEffect(() => {
+    async function checkAuth() {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session) {
+        router.push('/login');
+        return;
+      }
+
+      const { data: perfil, error: perfilError } = await supabase
+        .from('perfis_usuarios')
+        .select('*')
+        .eq('id', session.user.id)
+        .single();
+
+      if (perfilError || !perfil) {
+        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
+        router.push('/login');
+        return;
+      }
+
+      // Consulta no banco de dados quem pode aceder a esta rota
+      const { data: rotaPermissao, error: rotaError } = await supabase
+        .from('folha_paginas_permissoes')
+        .select('permissoes_permitidas')
+        .eq('endereco_route', pathname)
+        .single();
+
+      if (rotaError && rotaError.code !== 'PGRST116') {
+        console.error("Erro ao buscar permissão da rota:", rotaError);
+      }
+
+      // Normaliza o perfil logado e verifica contra o banco
+      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
+      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
+
+      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
+        setAcessoNegado(true);
+        setAuthLoading(false);
+        return;
+      }
+
+      // Aprovado
+      setUsuarioAtual(perfil.nome || 'Equipe RH');
+      setEmailUsuario(perfil.email || session.user.email || '');
+      setAuthLoading(false);
+    }
+
+    checkAuth();
+  }, [router, pathname]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abonoFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -85,7 +114,6 @@ export default function GestaoDePonto() {
   const [feriadosGlobais, setFeriadosGlobais] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [usuarioAtual, setUsuarioAtual] = useState('');
 
   const [viewMode, setViewMode] = useState<'resumo' | 'espelho' | 'espelho_todos' | 'abonos' | 'separar_holerites'>('resumo');
   const [funcionarioSelecionado, setFuncionarioSelecionado] = useState('');
@@ -100,16 +128,11 @@ export default function GestaoDePonto() {
   });
 
   useEffect(() => {
-    carregarAcessoEDados();
-  }, [mesAnoSelecionado]);
+    if (!authLoading && !acessoNegado) carregarAcessoEDados();
+  }, [mesAnoSelecionado, authLoading, acessoNegado]);
 
   const carregarAcessoEDados = async (mesAnoAlvo?: string) => {
     setLoading(true);
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session) {
-      const { data: perfil } = await supabase.from('perfis_usuarios').select('nome').eq('id', session.user.id).single();
-      if (perfil) setUsuarioAtual(perfil.nome);
-    }
 
     // Busca Feriados Dinâmicos do Banco
     const { data: fData } = await supabase.from('folha_feriados').select('data_feriado');
@@ -628,6 +651,29 @@ export default function GestaoDePonto() {
       </main>
     );
   };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center pt-16">
+        <div className="w-10 h-10 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin shadow-sm"></div>
+      </div>
+    );
+  }
+
+  if (acessoNegado) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200">
+          <div className="text-5xl mb-4">⛔</div>
+          <h2 className="text-xl font-black text-red-600 uppercase tracking-wider mb-2">Acesso Restrito</h2>
+          <p className="text-sm text-gray-500 mb-6">Você não possui permissão para acessar o Controle de Ponto.</p>
+          <button onClick={() => router.push('/admin')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
+            Voltar ao Menu Principal
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">

@@ -144,7 +144,7 @@ export default function OpHub() {
       <div className="max-w-6xl mx-auto">
         <div className="mb-10">
           <h1 className="text-3xl font-black text-[#0C1D4D] uppercase tracking-tight">Setor de OPs</h1>
-          <p className="text-[#64748B] font-medium">Gestão de jornada, folha financeira e regras operacionais.</p>
+          <p className="text-[#64748B] font-medium">Gestão de Ordens de Pagamentos, solicitações e análises.</p>
         </div>
         
         {/* Renderiza APENAS a variável modulosAutorizados */}

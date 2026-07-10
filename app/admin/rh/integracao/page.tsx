@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../../lib/supabase';
 import {
@@ -9,6 +9,20 @@ import {
   montarLoteSalariosAction, salvarLoteAction, listarLotesAction, enviarLoteAoBancoAction,
   listarPdfsContabilidadeAction, processarOcrAwsAction
 } from '../actions/actions-integracao';
+
+// ============================================================================
+// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
+// ============================================================================
+const normalizarPermissao = (permissaoBruta: string): string => {
+  const p = (permissaoBruta || '').toUpperCase().trim();
+  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
+  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
+  if (p.includes('FINAN')) return 'FINANCEIRO';
+  if (p.includes('OPER')) return 'OPERACIONAL';
+  if (p.includes('ESTOQ')) return 'ESTOQUE';
+  if (p.includes('EDIT')) return 'EDITOR';
+  return 'USUARIO';
+};
 
 const BRL = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtDataHora = (d: string) => new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -39,8 +53,12 @@ const ICONE_TIPO: Record<string, string> = { BANCO: '🏦', BENEFICIO: '🎁', A
 
 export default function IntegracaoPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const [aba, setAba] = useState<'PARCEIROS' | 'PAGAMENTOS'>('PARCEIROS');
   const [usuarioAtual, setUsuarioAtual] = useState('');
+  const [emailUsuario, setEmailUsuario] = useState('');
+  const [authLoading, setAuthLoading] = useState(true);
+  const [acessoNegado, setAcessoNegado] = useState(false);
 
   const [integracoes, setIntegracoes] = useState<Integracao[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,51 +90,57 @@ export default function IntegracaoPage() {
   const [salvandoLote, setSalvandoLote] = useState(false);
   const [lotes, setLotes] = useState<Lote[]>([]);
 
-  // Estados de Autenticação
-    const [emailUsuario, setEmailUsuario] = useState(''); 
-    const [authLoading, setAuthLoading] = useState(true);
-
-// 1. Validar a Sessão e Puxar Dados do Usuário Logado
+  // Valida a sessão e a permissão (dinâmica, via banco) antes de liberar a página
   useEffect(() => {
     async function checkAuth() {
       const { data: { session } } = await supabase.auth.getSession();
-      
+
       if (!session) {
         router.push('/login');
         return;
       }
 
-      const { data: perfil } = await supabase
+      const { data: perfil, error: perfilError } = await supabase
         .from('perfis_usuarios')
         .select('*')
         .eq('id', session.user.id)
         .single();
 
-      if (perfil) {
-        setUsuarioAtual(perfil.nome || 'Equipe RH');
-        setEmailUsuario(perfil.email || session.user.email || ''); 
-        
-        const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
-        const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
-        
-        if (!cargosAltaGestao.includes(permissaoBanco)) {
-          router.push('/admin');
-          return;
-        }
-      } else {
-        setUsuarioAtual('Equipe RH');
+      if (perfilError || !perfil) {
+        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
+        router.push('/login');
+        return;
       }
-      
-      setAuthLoading(false);
-    }
-    
-    checkAuth();
-  }, [router]);
 
-  useEffect(() => {
-    try { const raw = localStorage.getItem('rh_usuario'); if (raw) setUsuarioAtual(JSON.parse(raw)?.nome || ''); } catch {}
-    carregar();
-  }, []);
+      // Consulta no banco de dados quem pode aceder a esta rota
+      const { data: rotaPermissao, error: rotaError } = await supabase
+        .from('folha_paginas_permissoes')
+        .select('permissoes_permitidas')
+        .eq('endereco_route', pathname)
+        .single();
+
+      if (rotaError && rotaError.code !== 'PGRST116') {
+        console.error("Erro ao buscar permissão da rota:", rotaError);
+      }
+
+      // Normaliza o perfil logado e verifica contra o banco
+      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
+      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
+
+      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
+        setAcessoNegado(true);
+        setAuthLoading(false);
+        return;
+      }
+
+      // Aprovado
+      setUsuarioAtual(perfil.nome || 'Equipe RH');
+      setEmailUsuario(perfil.email || session.user.email || '');
+      setAuthLoading(false);
+      carregar();
+    }
+    checkAuth();
+  }, [router, pathname]);
 
   const carregar = async () => {
     setLoading(true);
@@ -314,6 +338,31 @@ export default function IntegracaoPage() {
     };
     return <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${mapa[s] || 'bg-gray-100 text-gray-500'}`}>{s}</span>;
   };
+
+  // Enquanto valida a sessão, mostra um estado de carregamento (evita piscar a
+  // página antes da checagem de permissão)
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center">
+        <p className="text-[#64748B] font-bold text-sm uppercase tracking-wider">Validando acesso...</p>
+      </div>
+    );
+  }
+
+  if (acessoNegado) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200">
+          <div className="text-5xl mb-4">⛔</div>
+          <h2 className="text-xl font-black text-red-600 uppercase tracking-wider mb-2">Acesso Restrito</h2>
+          <p className="text-sm text-gray-500 mb-6">Você não possui permissão para acessar as Integrações e Pagamentos.</p>
+          <button onClick={() => router.push('/admin')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
+            Voltar ao Menu Principal
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">

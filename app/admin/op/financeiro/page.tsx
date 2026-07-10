@@ -1,13 +1,27 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import Image from 'next/image';
 import { listarOPs, atualizarStatus, dispararEmailOP } from '../actions';
 import { registrarLogAuditoria } from '../../../actions';
 import { supabase } from '../../../lib/supabase'; 
 import { Analytics } from "@vercel/analytics/next";
 import logoColorido from '../../../../app/imgs/logo.png';
+
+// ============================================================================
+// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
+// ============================================================================
+const normalizarPermissao = (permissaoBruta: string): string => {
+  const p = (permissaoBruta || '').toUpperCase().trim();
+  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
+  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
+  if (p.includes('FINAN')) return 'FINANCEIRO';
+  if (p.includes('OPER')) return 'OPERACIONAL';
+  if (p.includes('ESTOQ')) return 'ESTOQUE';
+  if (p.includes('EDIT')) return 'EDITOR';
+  return 'USUARIO'; 
+};
 
 interface ItemOP {
   descricao: string;
@@ -41,11 +55,16 @@ interface OP {
 
 export default function PainelFinanceiro() {
   const router = useRouter();
+  const pathname = usePathname();
+
+  // Estados de Segurança e Autenticação
+  const [authLoading, setAuthLoading] = useState(true);
+  const [acessoNegado, setAcessoNegado] = useState(false);
+  const [usuarioNome, setUsuarioNome] = useState('Usuário');
   
   // Estados de Autenticação
   const [usuarioAtual, setUsuarioAtual] = useState('');
   const [emailUsuario, setEmailUsuario] = useState(''); 
-  const [authLoading, setAuthLoading] = useState(true);
 
   // Estados de Dados
   const [ops, setOps] = useState<OP[]>([]);
@@ -65,42 +84,59 @@ export default function PainelFinanceiro() {
     open: false, type: 'loading', title: '', msg: '' 
   });
 
-  // 1. Validar a Sessão e Puxar Dados do Usuário Logado
+  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
   useEffect(() => {
     async function checkAuth() {
       const { data: { session } } = await supabase.auth.getSession();
       
-      if (!session) {
-        router.push('/login');
-        return;
+      if (!session) { 
+        router.push('/login'); 
+        return; 
       }
 
-      const { data: perfil } = await supabase
+      const { data: perfil, error: perfilError } = await supabase
         .from('perfis_usuarios')
         .select('*')
         .eq('id', session.user.id)
         .single();
-
-      if (perfil) {
-        setUsuarioAtual(perfil.nome || 'Equipe Financeira');
-        setEmailUsuario(perfil.email || session.user.email || ''); 
-        
-        const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
-        const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
-        
-        if (!cargosAltaGestao.includes(permissaoBanco)) {
-          router.push('/admin');
-          return;
-        }
-      } else {
-        setUsuarioAtual('Equipe Financeira');
-      }
       
+      if (perfilError || !perfil) {
+        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
+        router.push('/login');
+        return;
+      }
+
+      // Consulta no banco de dados quem pode aceder a esta rota
+      const { data: rotaPermissao, error: rotaError } = await supabase
+        .from('folha_paginas_permissoes')
+        .select('permissoes_permitidas')
+        .eq('endereco_route', pathname)
+        .single();
+
+      if (rotaError && rotaError.code !== 'PGRST116') {
+        console.error("Erro ao buscar permissão da rota:", rotaError);
+      }
+
+      // Normaliza o perfil logado e verifica contra o banco
+      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
+      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
+
+      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
+        setAcessoNegado(true);
+        setAuthLoading(false);
+        return;
+      }
+
+      // Aprovado
+      setUsuarioNome(perfil.nome || 'Usuário');
+      setUsuarioAtual(perfil.nome || 'Equipe Financeira');
+      setEmailUsuario(perfil.email || session.user.email || '');
       setAuthLoading(false);
+      carregarDados();
     }
     
     checkAuth();
-  }, [router]);
+  }, [router, pathname]);
 
   // 2. Busca os dados iniciais do banco
   const carregarDados = async () => {
@@ -128,12 +164,6 @@ export default function PainelFinanceiro() {
     }
     setLoading(false);
   };
-
-  useEffect(() => {
-    if (!authLoading) {
-      carregarDados();
-    }
-  }, [authLoading]);
 
   const responsaveisUnicos = useMemo(() => {
     const nomes = ops.map(op => (op.responsavel_nome || '').toUpperCase().trim()).filter(Boolean);
@@ -266,6 +296,21 @@ export default function PainelFinanceiro() {
     );
   }
 
+  if (acessoNegado) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200">
+          <div className="text-5xl mb-4">⛔</div>
+          <h2 className="text-xl font-black text-red-600 uppercase tracking-wider mb-2">Acesso Restrito</h2>
+          <p className="text-sm text-gray-500 mb-6">Você não possui permissão para acessar o Painel Financeiro de OPs.</p>
+          <button onClick={() => router.push('/admin')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
+            Voltar ao Menu Principal
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const anoAtual = new Date().getFullYear();
   const anosDisponiveis = [anoAtual - 1, anoAtual, anoAtual + 1, anoAtual + 2];
 
@@ -345,8 +390,8 @@ export default function PainelFinanceiro() {
           <p className="text-[#0369A1] font-medium text-sm">
             💳 <strong>Olá, {usuarioAtual}</strong>. Bem-vindo ao painel financeiro de aprovação de OPs.
           </p>
-          <button onClick={() => router.push('/admin')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
-            ⬅ VOLTAR AO HUB
+          <button onClick={() => router.push('/admin/op')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
+            ⬅ VOLTAR AO OP
           </button>
         </div>
 

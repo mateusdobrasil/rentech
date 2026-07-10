@@ -1,11 +1,25 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { listarOPs, atualizarOP, dispararEmailOP } from '../actions';
 import { registrarLogAuditoria } from '../../../actions';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next"
+
+// ============================================================================
+// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
+// ============================================================================
+const normalizarPermissao = (permissaoBruta: string): string => {
+  const p = (permissaoBruta || '').toUpperCase().trim();
+  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
+  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
+  if (p.includes('FINAN')) return 'FINANCEIRO';
+  if (p.includes('OPER')) return 'OPERACIONAL';
+  if (p.includes('ESTOQ')) return 'ESTOQUE';
+  if (p.includes('EDIT')) return 'EDITOR';
+  return 'USUARIO'; 
+};
 
 interface ItemOP {
   descricao: string;
@@ -40,12 +54,17 @@ interface OP {
 
 export default function PainelResponsavel() {
   const router = useRouter();
+  const pathname = usePathname();
+
+  // Estados de Segurança e Autenticação
+  const [authLoading, setAuthLoading] = useState(true);
+  const [acessoNegado, setAcessoNegado] = useState(false);
+  const [usuarioNome, setUsuarioNome] = useState('Usuário');
 
   // Estados de Autenticação
   const [usuarioAtual, setUsuarioAtual] = useState('');
   const [usuarioEmail, setUsuarioEmail] = useState('');
   const [nivelAcesso, setNivelAcesso] = useState<'DIR' | 'USU'>('USU');
-  const [authLoading, setAuthLoading] = useState(true);
 
   // Estados Principais
   const [ops, setOps] = useState<OP[]>([]);
@@ -60,6 +79,59 @@ export default function PainelResponsavel() {
   const [modalDetalhes, setModalDetalhes] = useState<{ open: boolean; op: OP | null }>({ open: false, op: null });
   const [modalEdit, setModalEdit] = useState<{ open: boolean; op: Partial<OP> | null }>({ open: false, op: null });
   const [dialog, setDialog] = useState<{ open: boolean; type: 'loading' | 'confirm' | 'success' | 'error'; title: string; msg: string; onConfirm?: () => void }>({ open: false, type: 'loading', title: '', msg: '' });
+
+  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
+  useEffect(() => {
+    async function checkAuth() {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) { 
+        router.push('/login'); 
+        return; 
+      }
+
+      const { data: perfil, error: perfilError } = await supabase
+        .from('perfis_usuarios')
+        .select('*')
+        .eq('id', session.user.id)
+        .single();
+      
+      if (perfilError || !perfil) {
+        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
+        router.push('/login');
+        return;
+      }
+
+      // Consulta no banco de dados quem pode aceder a esta rota
+      const { data: rotaPermissao, error: rotaError } = await supabase
+        .from('folha_paginas_permissoes')
+        .select('permissoes_permitidas')
+        .eq('endereco_route', pathname)
+        .single();
+
+      if (rotaError && rotaError.code !== 'PGRST116') {
+        console.error("Erro ao buscar permissão da rota:", rotaError);
+      }
+
+      // Normaliza o perfil logado e verifica contra o banco
+      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
+      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
+      
+      
+      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
+        setAcessoNegado(true);
+        setAuthLoading(false);
+        return;
+      }
+
+      // Aprovado
+      setUsuarioNome(perfil.nome || 'Usuário');
+      setAuthLoading(false);
+      carregarDados();
+    }
+    
+    checkAuth();
+  }, [router, pathname]);
 
   // 1. Autenticação
   useEffect(() => {
@@ -266,10 +338,10 @@ export default function PainelResponsavel() {
             : 'Estas são as solicitações sob sua responsabilidade.'}
         </p>
         <button
-          onClick={() => router.push('/admin')}
+          onClick={() => router.push('/admin/op')}
           className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase"
         >
-          ⬅ VOLTAR AO HUB
+          ⬅ VOLTAR AO OP
         </button>
       </div>
 

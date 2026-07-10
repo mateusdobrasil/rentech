@@ -1,10 +1,24 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { registrarLogAuditoria } from '../../actions';
 import { Analytics } from "@vercel/analytics/next";
+
+// ============================================================================
+// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
+// ============================================================================
+const normalizarPermissao = (permissaoBruta: string): string => {
+  const p = (permissaoBruta || '').toUpperCase().trim();
+  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
+  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
+  if (p.includes('FINAN')) return 'FINANCEIRO';
+  if (p.includes('OPER')) return 'OPERACIONAL';
+  if (p.includes('ESTOQ')) return 'ESTOQUE';
+  if (p.includes('EDIT')) return 'EDITOR';
+  return 'USUARIO'; 
+};
 
 // Interface para os dados do site incluindo as URLs das imagens
 interface SiteConfig {
@@ -37,8 +51,11 @@ interface SiteConfig {
 
 export default function GestaoConteudo() {
   const router = useRouter();
+  const pathname = usePathname(); // <- Usado para capturar a rota atual
+  
   const [usuarioAtual, setUsuarioAtual] = useState('');
   const [authLoading, setAuthLoading] = useState(true);
+  const [acessoNegado, setAcessoNegado] = useState(false); // <- Estado de Segurança
   const [loading, setLoading] = useState(false);
   const [uploadingField, setUploadingField] = useState<string | null>(null);
 
@@ -73,30 +90,60 @@ export default function GestaoConteudo() {
 
   const [dialog, setDialog] = useState({ open: false, msg: '', title: '', isError: false });
 
-  // 1. Validar Sessão (Diretoria, Administrador e Editor liberados)
+  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
   useEffect(() => {
     async function checkAuth() {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.push('/login'); return; }
-
-      const { data: perfil } = await supabase.from('perfis_usuarios').select('*').eq('id', session.user.id).single();
       
-      if (perfil) {
-        setUsuarioAtual(perfil.nome || 'Gestor');
-        const permissao = String(perfil.permissao || perfil.nivel || '').toUpperCase();
-        
-        // ADICIONADO: 'EDITOR' e 'ADMINISTRATIVO' incluídos na validação de acesso do card
-        if (!['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'EDITOR', 'ADMINISTRATIVO'].includes(permissao)) {
-          router.push('/admin');
-          return;
-        }
+      if (!session) { 
+        console.warn("Sem sessão ativa. Redirecionando para login.");
+        router.push('/login'); 
+        return; 
       }
+
+      // CORREÇÃO AQUI: Voltamos ao select('*') para evitar quebra caso uma coluna não exista
+      const { data: perfil, error: perfilError } = await supabase
+        .from('perfis_usuarios')
+        .select('*')
+        .eq('id', session.user.id)
+        .single();
+      
+      if (perfilError || !perfil) {
+        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
+        router.push('/login');
+        return;
+      }
+
+      // Consulta no banco de dados quem pode aceder a esta rota
+      const { data: rotaPermissao, error: rotaError } = await supabase
+        .from('folha_paginas_permissoes')
+        .select('permissoes_permitidas')
+        .eq('endereco_route', pathname)
+        .single();
+
+      if (rotaError && rotaError.code !== 'PGRST116') {
+        console.error("Erro ao buscar permissão da rota:", rotaError);
+      }
+
+      // Normaliza o perfil logado e verifica contra o banco
+      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
+      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
+
+      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
+        setAcessoNegado(true);
+        setAuthLoading(false);
+        return;
+      }
+
+      // Aprovado
+      setUsuarioAtual(perfil.nome || 'Gestor');
       setAuthLoading(false);
       carregarConfiguracoes();
     }
+    
     checkAuth();
-  }, [router]);
-
+  }, [router, pathname]);
+  
   // 2. Carregar dados do banco
   const carregarConfiguracoes = async () => {
     const { data, error } = await supabase.from('site_config').select('*').eq('id', 1).single();
@@ -164,10 +211,29 @@ export default function GestaoConteudo() {
     
     setLoading(false);
   };
+
+  // ============================================================================
+  // BARREIRAS DE ACESSO VISUAIS
+  // ============================================================================
   if (authLoading) {
     return (
       <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center pt-16">
         <div className="w-10 h-10 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin shadow-sm"></div>
+      </div>
+    );
+  }
+
+  if (acessoNegado) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200">
+          <div className="text-5xl mb-4">⛔</div>
+          <h2 className="text-xl font-black text-red-600 uppercase tracking-wider mb-2">Acesso Restrito</h2>
+          <p className="text-sm text-gray-500 mb-6">Você não possui permissão para editar o site institucional.</p>
+          <button onClick={() => router.push('/admin')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
+            Voltar ao Menu Principal
+          </button>
+        </div>
       </div>
     );
   }

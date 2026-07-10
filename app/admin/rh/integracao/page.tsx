@@ -10,49 +10,6 @@ import {
   listarPdfsContabilidadeAction, processarOcrAwsAction
 } from '../actions/actions-integracao';
 
-// Estados de Autenticação
-    const router = useRouter();
-    const [usuarioAtual, setUsuarioAtual] = useState('');
-    const [emailUsuario, setEmailUsuario] = useState(''); 
-    const [authLoading, setAuthLoading] = useState(true);
-
-// 1. Validar a Sessão e Puxar Dados do Usuário Logado
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) {
-        router.push('/login');
-        return;
-      }
-
-      const { data: perfil } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-
-      if (perfil) {
-        setUsuarioAtual(perfil.nome || 'Equipe RH');
-        setEmailUsuario(perfil.email || session.user.email || ''); 
-        
-        const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
-        const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
-        
-        if (!cargosAltaGestao.includes(permissaoBanco)) {
-          router.push('/admin');
-          return;
-        }
-      } else {
-        setUsuarioAtual('Equipe RH');
-      }
-      
-      setAuthLoading(false);
-    }
-    
-    checkAuth();
-  }, [router]);
-
 const BRL = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtDataHora = (d: string) => new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 const fmtMesBR = (m: string) => { const [a, mm] = m.split('-'); return `${mm}/${a}`; };
@@ -114,6 +71,47 @@ export default function IntegracaoPage() {
   const [montando, setMontando] = useState(false);
   const [salvandoLote, setSalvandoLote] = useState(false);
   const [lotes, setLotes] = useState<Lote[]>([]);
+
+  // Estados de Autenticação
+    const [emailUsuario, setEmailUsuario] = useState(''); 
+    const [authLoading, setAuthLoading] = useState(true);
+
+// 1. Validar a Sessão e Puxar Dados do Usuário Logado
+  useEffect(() => {
+    async function checkAuth() {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        router.push('/login');
+        return;
+      }
+
+      const { data: perfil } = await supabase
+        .from('perfis_usuarios')
+        .select('*')
+        .eq('id', session.user.id)
+        .single();
+
+      if (perfil) {
+        setUsuarioAtual(perfil.nome || 'Equipe RH');
+        setEmailUsuario(perfil.email || session.user.email || ''); 
+        
+        const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
+        const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
+        
+        if (!cargosAltaGestao.includes(permissaoBanco)) {
+          router.push('/admin');
+          return;
+        }
+      } else {
+        setUsuarioAtual('Equipe RH');
+      }
+      
+      setAuthLoading(false);
+    }
+    
+    checkAuth();
+  }, [router]);
 
   useEffect(() => {
     try { const raw = localStorage.getItem('rh_usuario'); if (raw) setUsuarioAtual(JSON.parse(raw)?.nome || ''); } catch {}

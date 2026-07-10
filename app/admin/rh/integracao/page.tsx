@@ -24,6 +24,13 @@ const normalizarPermissao = (permissaoBruta: string): string => {
   return 'USUARIO';
 };
 
+// Contas bancárias no sistema são salvas como "12345-6" (número-DAC). O CNAB
+// exige o dígito verificador em campo separado do número da conta.
+const separarContaDac = (contaComDac: string | null | undefined): { conta: string; dac: string } => {
+  const [conta, dac] = String(contaComDac || '').split('-');
+  return { conta: conta || '', dac: dac || '' };
+};
+
 const BRL = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtDataHora = (d: string) => new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 const fmtMesBR = (m: string) => { const [a, mm] = m.split('-'); return `${mm}/${a}`; };
@@ -68,6 +75,12 @@ export default function IntegracaoPage() {
   const [edAmbiente, setEdAmbiente] = useState<'SANDBOX' | 'PRODUCAO'>('SANDBOX');
   const [edAgencia, setEdAgencia] = useState('');
   const [edConta, setEdConta] = useState('');
+  const [edCnpj, setEdCnpj] = useState('');
+  const [edRazaoSocial, setEdRazaoSocial] = useState('');
+
+  // Data em que o lote deve ser efetivamente pago (usada no CNAB, separada da
+  // data de geração do arquivo — permite gerar o arquivo com antecedência).
+  const [dataPagamento, setDataPagamento] = useState(() => new Date().toISOString().slice(0, 10));
 
   const [mesReferencia, setMesReferencia] = useState(() => {
     const h = new Date(); const c = new Date(h.getFullYear(), h.getMonth() - 1, 1);
@@ -154,13 +167,17 @@ export default function IntegracaoPage() {
   const abrirConfig = (i: Integracao) => {
     setEditParceiro(i); setEdAtivo(i.ativo); setEdAmbiente(i.ambiente as any);
     setEdAgencia(i.config?.agencia_debito || ''); setEdConta(i.config?.conta_debito || '');
+    setEdCnpj(i.config?.cnpj || ''); setEdRazaoSocial(i.config?.razao_social || '');
   };
 
   const salvarConfig = async () => {
     if (!editParceiro) return;
     const res = await salvarIntegracaoAction({
       parceiro: editParceiro.parceiro, ativo: edAtivo, ambiente: edAmbiente,
-      config: { ...editParceiro.config, agencia_debito: edAgencia, conta_debito: edConta }
+      config: {
+        ...editParceiro.config, agencia_debito: edAgencia, conta_debito: edConta,
+        cnpj: edCnpj, razao_social: edRazaoSocial
+      }
     });
     if (!res.ok) { alert(res.erro); return; }
     setEditParceiro(null);
@@ -323,6 +340,270 @@ export default function IntegracaoPage() {
     URL.revokeObjectURL(url);
   };
 
+  const exportarCnabItauPix = () => {
+    const pagamentosPix = prontos.filter(i => i.metodo === 'PIX');
+
+    if (pagamentosPix.length === 0) {
+      alert('Nenhum pagamento via PIX pronto para exportar.');
+      return;
+    }
+
+    // Dados da empresa/conta v\u00eam da configura\u00e7\u00e3o salva do parceiro ITAU
+    // (aba Parceiros \u2192 \u2699 Configurar). Sem fallback silencioso: se algo
+    // essencial n\u00e3o estiver configurado, o arquivo n\u00e3o \u00e9 gerado.
+    const itauIntegracao = integracoes.find(i => i.parceiro === 'ITAU');
+    const cfg = itauIntegracao?.config || {};
+    const camposFaltando = (['cnpj', 'razao_social', 'agencia_debito', 'conta_debito'] as const)
+      .filter(campo => !String(cfg[campo] || '').trim());
+
+    if (camposFaltando.length > 0) {
+      alert(`Configure primeiro (aba Parceiros \u2192 \u2699 Configurar Ita\u00fa): ${camposFaltando.join(', ')}.`);
+      return;
+    }
+
+    const padR = (str: string, len: number, char = ' ') => String(str || '').substring(0, len).padEnd(len, char);
+    const padL = (str: string | number, len: number, char = '0') => String(str || '').substring(0, len).padStart(len, char);
+    const limpaNum = (str: string) => String(str || '').replace(/\D/g, '');
+    const formataTexto = (str: string) => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9 ]/g, "");
+
+    const cnpjEmpresa = padL(limpaNum(cfg.cnpj), 14);
+    const nomeEmpresa = padR(formataTexto(cfg.razao_social), 30);
+    const agencia = padL(limpaNum(cfg.agencia_debito), 5);
+    const contaDebitoSep = separarContaDac(cfg.conta_debito);
+    const conta = padL(limpaNum(contaDebitoSep.conta), 12);
+    const dac = padL(limpaNum(contaDebitoSep.dac) || '0', 1);
+
+    const hoje = new Date();
+    const dataGeracao = padL(hoje.getDate(), 2) + padL(hoje.getMonth() + 1, 2) + hoje.getFullYear();
+    const horaGeracao = padL(hoje.getHours(), 2) + padL(hoje.getMinutes(), 2) + padL(hoje.getSeconds(), 2);
+
+    // Data de pagamento \u00e9 escolhida pelo usu\u00e1rio (pode ser diferente do dia
+    // de gera\u00e7\u00e3o do arquivo, ex.: gerar hoje para pagar daqui a alguns dias).
+    const [anoPag, mesPag, diaPag] = dataPagamento.split('-').map(Number);
+    const dataPagamentoStr = padL(diaPag, 2) + padL(mesPag, 2) + String(anoPag);
+
+    let sequencialRegistro = 1;
+    let linhasCnab: string[] = [];
+
+    // Header de Arquivo: posi\u00e7\u00f5es 15-17 ("080") s\u00e3o o N\u00ba da Vers\u00e3o do Layout
+    // do Arquivo exigido pelo manual SISPAG \u2014 n\u00e3o s\u00e3o espa\u00e7o em branco.
+    const headerArq =
+      '341' + '0000' + '0' + padR('', 6) + '080' + '2' + cnpjEmpresa +
+      padR('', 20) + agencia + ' ' + conta + ' ' + dac + nomeEmpresa +
+      padR('BANCO ITAU', 30) + padR('', 10) + '1' + dataGeracao + horaGeracao +
+      padL('', 9) + '00000' + padR('', 69);
+    linhasCnab.push(headerArq);
+
+    // Header de Lote: posi\u00e7\u00f5es 33-36 ("1707") ativam o "hist\u00f3rico vari\u00e1vel"
+    // (Nota 13 do manual) \u2014 sem esse c\u00f3digo o extrato do favorecido mostra
+    // apenas "REMUNERA\u00c7\u00c3O/SAL\u00c1RIO" em vez do c\u00f3digo informado no Segmento A.
+    const headerLote =
+      '341' + '0001' + '1' + 'C' + '30' + '45' + '040' + ' ' + '2' + cnpjEmpresa +
+      padR('1707', 4) + padR('', 16) + agencia + ' ' + conta + ' ' + dac + nomeEmpresa +
+      padR('', 30) + padR('', 10) + padR('', 30) + padL('', 5) + padR('', 15) +
+      padR('', 20) + padL('', 8) + padR('', 2) + padR('', 8) + padR('', 10);
+    linhasCnab.push(headerLote);
+
+    let somaValores = 0;
+
+    pagamentosPix.forEach((item, index) => {
+      const valorCentavos = Math.round(item.valor * 100);
+      somaValores += valorCentavos;
+
+      const numDocStr = padL(limpaNum(item.cpf), 14);
+      const nomeFuncionario = padR(formataTexto(item.funcionario_nome), 30);
+      const idPagamento = padR(`PGTO${index + 1}`, 20);
+      const valorStr = padL(valorCentavos, 15);
+
+      sequencialRegistro++;
+
+      // Segmento A: posi\u00e7\u00e3o 113-114 ("04") = Identifica\u00e7\u00e3o do Tipo de
+      // Transfer\u00eancia = Chave de Endere\u00e7amento (Nota 36) \u2014 \u00e9 o que diz ao
+      // Ita\u00fa para rotear o PIX pela chave informada no Segmento B. Posi\u00e7\u00e3o
+      // 178-181 ("HP01") = c\u00f3digo de Hist\u00f3rico Vari\u00e1vel "PAGTO SAL\u00c1RIO"
+      // (Nota 13), s\u00f3 tem efeito documentado com o "1707" do Header de Lote.
+      const segA =
+        '341' + '0001' + '3' + padL(sequencialRegistro, 5) + 'A' + '000' +
+        '009' + '000' + padL('', 20) + nomeFuncionario + idPagamento +
+        dataPagamentoStr + '009' + padL('', 8) + '04' + padL('', 5) + valorStr +
+        padR('', 15) + padR('', 5) + padL('', 8) + padL('', 15) + padR('HP01', 20) +
+        padL('', 6) + numDocStr + padR('', 2) + padR('', 5) + padR('', 5) + '0' + padR('', 10);
+      linhasCnab.push(segA);
+
+      sequencialRegistro++;
+
+      const tp = (item.pix_tipo || '').toUpperCase();
+      let tipoChavePix = '04';
+      if (tp.includes('TEL') || tp.includes('CEL')) tipoChavePix = '01';
+      else if (tp.includes('MAIL')) tipoChavePix = '02';
+      else if (tp.includes('CPF') || tp.includes('CNPJ')) tipoChavePix = '03';
+
+      const chavePix = padR(item.pix_chave || '', 100);
+
+      const segB = 
+        '341' + '0001' + '3' + padL(sequencialRegistro, 5) + 'B' + tipoChavePix + ' ' + 
+        '1' + numDocStr + padR('', 30) + padL('', 65) + chavePix + 
+        padR('', 3) + padR('', 10);
+      linhasCnab.push(segB);
+    });
+
+    const qtdRegistrosLote = padL(2 + (pagamentosPix.length * 2), 6);
+    const trailerLote = 
+      '341' + '0001' + '5' + padR('', 9) + qtdRegistrosLote + 
+      padL(somaValores, 18) + padL('', 18) + padR('', 171) + padR('', 10);
+    linhasCnab.push(trailerLote);
+
+    const qtdRegistrosArq = padL(4 + (pagamentosPix.length * 2), 6);
+    const trailerArq = 
+      '341' + '9999' + '9' + padR('', 9) + '000001' + 
+      qtdRegistrosArq + padR('', 211);
+    linhasCnab.push(trailerArq);
+
+    const txtFinal = linhasCnab.join('\r\n');
+    const blob = new Blob([txtFinal], { type: 'text/plain;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `SISPAG_PIX_${mesReferencia.replace('-', '')}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Gera o SISPAG de quem tem conta bancária cadastrada (em vez de chave PIX).
+  // O Itaú exige que PIX venha em arquivo separado das demais formas, por
+  // isso este é um arquivo distinto do exportarCnabItauPix. Dentro dele, cada
+  // forma de pagamento vai em um lote próprio: lote 1 = crédito em conta
+  // corrente no próprio Itaú (forma 01), lote 2 = TED para outro titular em
+  // outro banco (forma 41) — a Nota 5 do manual exige negociação prévia com o
+  // Itaú para liberar TED de salário; sem isso o lote 2 será rejeitado.
+  const exportarCnabContaCorrenteTed = () => {
+    const pagamentosConta = prontos.filter(i => i.metodo === 'TED');
+
+    if (pagamentosConta.length === 0) {
+      alert('Nenhum pagamento via conta bancária pronto para exportar.');
+      return;
+    }
+
+    const itauIntegracao = integracoes.find(i => i.parceiro === 'ITAU');
+    const cfg = itauIntegracao?.config || {};
+    const camposFaltando = (['cnpj', 'razao_social', 'agencia_debito', 'conta_debito'] as const)
+      .filter(campo => !String(cfg[campo] || '').trim());
+
+    if (camposFaltando.length > 0) {
+      alert(`Configure primeiro (aba Parceiros → ⚙ Configurar Itaú): ${camposFaltando.join(', ')}.`);
+      return;
+    }
+
+    const padR = (str: string, len: number, char = ' ') => String(str || '').substring(0, len).padEnd(len, char);
+    const padL = (str: string | number, len: number, char = '0') => String(str || '').substring(0, len).padStart(len, char);
+    const limpaNum = (str: string) => String(str || '').replace(/\D/g, '');
+    const formataTexto = (str: string) => str.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[^A-Z0-9 ]/g, "");
+
+    const cnpjEmpresa = padL(limpaNum(cfg.cnpj), 14);
+    const nomeEmpresa = padR(formataTexto(cfg.razao_social), 30);
+    const agenciaDebito = padL(limpaNum(cfg.agencia_debito), 5);
+    const contaDebitoSep = separarContaDac(cfg.conta_debito);
+    const contaDebito = padL(limpaNum(contaDebitoSep.conta), 12);
+    const dacDebito = padL(limpaNum(contaDebitoSep.dac) || '0', 1);
+
+    const hoje = new Date();
+    const dataGeracao = padL(hoje.getDate(), 2) + padL(hoje.getMonth() + 1, 2) + hoje.getFullYear();
+    const horaGeracao = padL(hoje.getHours(), 2) + padL(hoje.getMinutes(), 2) + padL(hoje.getSeconds(), 2);
+    const [anoPag, mesPag, diaPag] = dataPagamento.split('-').map(Number);
+    const dataPagamentoStr = padL(diaPag, 2) + padL(mesPag, 2) + String(anoPag);
+
+    const itensItau = pagamentosConta.filter(i => limpaNum(i.banco_codigo || '') === '341');
+    const itensOutrosBancos = pagamentosConta.filter(i => limpaNum(i.banco_codigo || '') !== '341');
+
+    const linhasCnab: string[] = [];
+    let numeroLote = 0;
+    let totalRegistrosArquivo = 2; // header + trailer de arquivo
+
+    const headerArq =
+      '341' + '0000' + '0' + padR('', 6) + '080' + '2' + cnpjEmpresa +
+      padR('', 20) + agenciaDebito + ' ' + contaDebito + ' ' + dacDebito + nomeEmpresa +
+      padR('BANCO ITAU', 30) + padR('', 10) + '1' + dataGeracao + horaGeracao +
+      padL('', 9) + '00000' + padR('', 69);
+    linhasCnab.push(headerArq);
+
+    // usaHistoricoVariavel: a Nota 13 só documenta o código "1707"/"HP01"
+    // para as formas 01 e 60 — por isso só aplicamos no lote da conta Itaú.
+    const montarLote = (formaPagamento: string, itens: typeof pagamentosConta, usaHistoricoVariavel: boolean) => {
+      if (itens.length === 0) return;
+      numeroLote++;
+      const codLote = padL(numeroLote, 4);
+
+      const headerLote =
+        '341' + codLote + '1' + 'C' + '30' + formaPagamento + '040' + ' ' + '2' + cnpjEmpresa +
+        (usaHistoricoVariavel ? padR('1707', 4) : padR('', 4)) + padR('', 16) +
+        agenciaDebito + ' ' + contaDebito + ' ' + dacDebito + nomeEmpresa +
+        padR('', 30) + padR('', 10) + padR('', 30) + padL('', 5) + padR('', 15) +
+        padR('', 20) + padL('', 8) + padR('', 2) + padR('', 8) + padR('', 10);
+      linhasCnab.push(headerLote);
+
+      let somaValores = 0;
+      let seq = 0;
+
+      itens.forEach((item, index) => {
+        const valorCentavos = Math.round(item.valor * 100);
+        somaValores += valorCentavos;
+
+        const numDocStr = padL(limpaNum(item.cpf), 14);
+        const nomeFuncionario = padR(formataTexto(item.funcionario_nome), 30);
+        const idPagamento = padR(`PGTO${index + 1}`, 20);
+        const valorStr = padL(valorCentavos, 15);
+        const bancoFavorecido = padL(limpaNum(item.banco_codigo || ''), 3);
+        const contaFavorecidoSep = separarContaDac(item.banco_conta);
+
+        // Nota 11 do manual: para favorecido no próprio Itaú (341) a conta
+        // usa 6 dígitos; para outros bancos, 12 dígitos — layouts diferentes.
+        const ehFavorecidoItau = limpaNum(item.banco_codigo || '') === '341';
+        const agenciaContaFavorecido = ehFavorecidoItau
+          ? '0' + padL(limpaNum(item.banco_agencia || ''), 4) + ' ' +
+            padL('', 6) + padL(limpaNum(contaFavorecidoSep.conta), 6) + ' ' +
+            padL(limpaNum(contaFavorecidoSep.dac) || '0', 1)
+          : padL(limpaNum(item.banco_agencia || ''), 5) + ' ' +
+            padL(limpaNum(contaFavorecidoSep.conta), 12) + ' ' +
+            padL(limpaNum(contaFavorecidoSep.dac) || '0', 1);
+
+        seq++;
+        const segA =
+          '341' + codLote + '3' + padL(seq, 5) + 'A' + '000' +
+          '000' + bancoFavorecido + agenciaContaFavorecido + nomeFuncionario + idPagamento +
+          dataPagamentoStr + '009' + padL('', 8) + padL('', 2) + padL('', 5) + valorStr +
+          padR('', 15) + padR('', 5) + padL('', 8) + padL('', 15) +
+          (usaHistoricoVariavel ? padR('HP01', 20) : padR('', 20)) +
+          padL('', 6) + numDocStr + padR('', 2) + padR('', 5) + padR('', 5) + '0' + padR('', 10);
+        linhasCnab.push(segA);
+      });
+
+      const qtdRegistrosLote = padL(2 + itens.length, 6);
+      const trailerLote =
+        '341' + codLote + '5' + padR('', 9) + qtdRegistrosLote +
+        padL(somaValores, 18) + padL('', 18) + padR('', 171) + padR('', 10);
+      linhasCnab.push(trailerLote);
+
+      totalRegistrosArquivo += 2 + itens.length;
+    };
+
+    montarLote('01', itensItau, true);
+    montarLote('41', itensOutrosBancos, false);
+
+    const trailerArq =
+      '341' + '9999' + '9' + padR('', 9) + padL(numeroLote, 6) +
+      padL(totalRegistrosArquivo, 6) + padR('', 211);
+    linhasCnab.push(trailerArq);
+
+    const txtFinal = linhasCnab.join('\r\n');
+    const blob = new Blob([txtFinal], { type: 'text/plain;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `SISPAG_CC_TED_${mesReferencia.replace('-', '')}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const enviarLote = async (loteId: number) => {
     const res = await enviarLoteAoBancoAction({ loteId });
     alert(res.erro || (res.ok ? 'Enviado.' : 'Não foi possível enviar.'));
@@ -451,22 +732,40 @@ export default function IntegracaoPage() {
               </div>
 
               {itens.length > 0 && (
-                <div className="flex flex-wrap gap-2 pt-3 border-t border-gray-100">
-                  {fontesSel.includes('ADIANTAMENTO') && (
-                    <button onClick={() => rodarOcrTipo('ADIANTAMENTO', 'Adiantamento')} disabled={ocrRodando} className="text-[10px] font-black bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
-                      🔍 OCR Adiantamento
-                    </button>
+                <div className="pt-3 border-t border-gray-100 space-y-4">
+                  {(fontesSel.includes('ADIANTAMENTO') || fontesSel.includes('PAGAMENTO')) && (
+                    <div className="flex flex-wrap gap-2">
+                      {fontesSel.includes('ADIANTAMENTO') && (
+                        <button onClick={() => rodarOcrTipo('ADIANTAMENTO', 'Adiantamento')} disabled={ocrRodando} className="text-[10px] font-black bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
+                          🔍 OCR Adiantamento
+                        </button>
+                      )}
+                      {fontesSel.includes('PAGAMENTO') && (
+                        <button onClick={() => rodarOcrTipo('HOLERITE_MENSAL', 'Pagamento')} disabled={ocrRodando} className="text-[10px] font-black bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
+                          🔍 OCR Pagamento
+                        </button>
+                      )}
+                    </div>
                   )}
-                  {fontesSel.includes('PAGAMENTO') && (
-                    <button onClick={() => rodarOcrTipo('HOLERITE_MENSAL', 'Pagamento')} disabled={ocrRodando} className="text-[10px] font-black bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
-                      🔍 OCR Pagamento
-                    </button>
-                  )}
-                  <div className="flex-1" />
-                  <button onClick={exportarLoteCSV} className="text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg uppercase tracking-wider">⬇ Exportar CSV</button>
-                  <button onClick={gerarLote} disabled={salvandoLote} className="text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
-                    {salvandoLote ? '⏳' : '✓ Gerar Lote'}
-                  </button>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Data de pagamento</label>
+                      <input type="date" value={dataPagamento} onChange={e => setDataPagamento(e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg text-xs font-bold bg-[#F8FAFC]" />
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <button onClick={exportarLoteCSV} className="text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg uppercase tracking-wider">⬇ Exportar CSV</button>
+                      <button onClick={gerarLote} disabled={salvandoLote} className="text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-lg uppercase tracking-wider disabled:opacity-50">
+                        {salvandoLote ? '⏳ Gerando...' : '✓ Gerar Lote'}
+                      </button>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <button onClick={exportarCnabItauPix} className="text-xs font-black bg-[#ec7000] hover:bg-[#c95f00] text-white px-4 py-2.5 rounded-lg uppercase tracking-wider">📄 SISPAG Itaú (PIX)</button>
+                      <button onClick={exportarCnabContaCorrenteTed} className="text-xs font-black bg-[#0369A1] hover:bg-[#025688] text-white px-4 py-2.5 rounded-lg uppercase tracking-wider">📄 SISPAG Itaú (Conta/TED)</button>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -662,15 +961,28 @@ export default function IntegracaoPage() {
               </div>
 
               {editParceiro.tipo === 'BANCO' && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Agência débito</label>
-                    <input type="text" value={edAgencia} onChange={e => setEdAgencia(e.target.value)} placeholder="0000" className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold" />
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Agência débito</label>
+                      <input type="text" value={edAgencia} onChange={e => setEdAgencia(e.target.value)} placeholder="0000" className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Conta débito</label>
+                      <input type="text" value={edConta} onChange={e => setEdConta(e.target.value)} placeholder="00000-0" className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold" />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Conta débito</label>
-                    <input type="text" value={edConta} onChange={e => setEdConta(e.target.value)} placeholder="00000-0" className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold" />
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">CNPJ da empresa</label>
+                      <input type="text" value={edCnpj} onChange={e => setEdCnpj(e.target.value)} placeholder="00.000.000/0000-00" className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Razão social</label>
+                      <input type="text" value={edRazaoSocial} onChange={e => setEdRazaoSocial(e.target.value)} placeholder="Razão social" className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold" />
+                    </div>
                   </div>
+                  <p className="text-[10px] text-gray-400 font-semibold leading-snug">Esses dados são usados para montar os arquivos SISPAG (CNAB240) do Itaú. Sem eles, os botões "Gerar SISPAG Itaú" ficam bloqueados. A conta débito deve ser informada como "número-dígito" (ex: 09312-4).</p>
                 </div>
               )}
             </div>

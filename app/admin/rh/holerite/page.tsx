@@ -11,10 +11,10 @@ import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction, previaDocume
 import logoColorido from '../../../../app/imgs/logo.png';
 
 // Estados de Autenticação
-    const router = useRouter();
-    const [usuarioAtual, setUsuarioAtual] = useState('');
-    const [emailUsuario, setEmailUsuario] = useState(''); 
-    const [authLoading, setAuthLoading] = useState(true);
+  const router = useRouter();
+  const [usuarioAtual, setUsuarioAtual] = useState('');
+  const [emailUsuario, setEmailUsuario] = useState(''); 
+  const [authLoading, setAuthLoading] = useState(true);
 
 // 1. Validar a Sessão e Puxar Dados do Usuário Logado
   useEffect(() => {
@@ -588,7 +588,6 @@ const HoleriteDoc = ({ nome, dados, mesRef, fechamento }: {
 };
 
 export default function HoleritePage() {
-  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [loadingLote, setLoadingLote] = useState(false);
   const [usuarioAtual, setUsuarioAtual] = useState('');

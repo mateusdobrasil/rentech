@@ -66,11 +66,15 @@ const pdfParaCanvas = async (pdfBase64: string): Promise<HTMLCanvasElement> => {
 // NÃO usa "maior valor" — isso pegava o salário base por engano.
 const extrairValorLiquido = (texto: string): number | null => {
   const t = texto.toUpperCase().replace(/\s+/g, ' ');
+  // Formato do holerite: "Valor líquido →/>/» 1.760,60" (com ou sem R$).
+  // Entre o rótulo e o número há uma seta que o OCR pode ler como qualquer
+  // símbolo. O padrão [^\d,]{0,30} pula tudo que não seja dígito até o valor,
+  // e o valor tem que terminar em ",dd" (evita capturar dígitos soltos da seta).
   const chaves = [
-    /L[IÍ]QUIDO\s+A\s+RECEBER[^\d]{0,40}([\d.,]+)/,
-    /TOTAL\s+L[IÍ]QUIDO[^\d]{0,40}([\d.,]+)/,
-    /VALOR\s+L[IÍ]QUIDO[^\d]{0,40}([\d.,]+)/,
-    /L[IÍ]QUIDO[^\d]{0,20}([\d.,]+)/
+    /VALOR\s+L[IÍ]QUIDO[^\d,]{0,30}(\d{1,3}(?:\.\d{3})*,\d{2})/,
+    /L[IÍ]QUIDO\s+A\s+RECEBER[^\d,]{0,30}(\d{1,3}(?:\.\d{3})*,\d{2})/,
+    /TOTAL\s+L[IÍ]QUIDO[^\d,]{0,30}(\d{1,3}(?:\.\d{3})*,\d{2})/,
+    /L[IÍ]QUIDO[^\d,]{0,20}(\d{1,3}(?:\.\d{3})*,\d{2})/
   ];
   for (const rx of chaves) {
     const m = t.match(rx);
@@ -262,10 +266,14 @@ export default function IntegracaoPage() {
           try {
             const canvas = await pdfParaCanvas(pdfBase64);
             const { data } = await worker.recognize(canvas, {}, { blocks: true });
-            if (i === 0) primeiroTexto = data.text || '';
-            // Usa a POSIÇÃO das palavras: o líquido fica no canto inferior direito
-            const valor = extrairValorPorPosicao(data, canvas.width, canvas.height)
-                       ?? extrairValorLiquido(data.text); // fallback por palavra-chave
+            // Rótulo "Valor líquido" é confiável → tenta por texto primeiro.
+            // Só cai para posição (mais frágil) se o texto não achar.
+            const valor = extrairValorLiquido(data.text)
+                       ?? extrairValorPorPosicao(data, canvas.width, canvas.height);
+            // Diagnóstico do 1º PDF: mostra o texto lido e o valor capturado
+            if (i === 0) {
+              primeiroTexto = `[VALOR CAPTURADO: ${valor ?? 'nenhum'}]\n\n${data.text || ''}`;
+            }
             if (valor !== null) novos[funcionario_nome] = valor;
             else falhas.push(`${funcionario_nome} (${rotulo})`);
           } catch (errPdf: any) {
@@ -279,11 +287,8 @@ export default function IntegracaoPage() {
       if (tipo === 'ADIANTAMENTO') setValoresAdiant(novos); else setValoresPagto(novos);
       setOcrFalhas(prev => [...prev, ...falhas]);
 
-      // Se TUDO falhou, guarda o texto do 1º PDF para diagnóstico do usuário
-      const lidos = Object.keys(novos).length - Object.keys(anteriores).length;
-      if (lidos === 0 && primeiroTexto) {
-        setOcrDebug(primeiroTexto.slice(0, 800));
-      }
+      // Sempre mostra o texto do 1º PDF para conferência (mesmo se leu um valor)
+      if (primeiroTexto) setOcrDebug(primeiroTexto.slice(0, 1000));
 
       // Remonta o lote com os novos valores
       const res2 = await montarLoteSalariosAction({

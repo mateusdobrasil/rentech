@@ -3,11 +3,55 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
+import { supabase } from '../../../lib/supabase';
 import {
   listarIntegracoesAction, salvarIntegracaoAction,
   montarLoteSalariosAction, salvarLoteAction, listarLotesAction, enviarLoteAoBancoAction,
   listarPdfsContabilidadeAction, processarOcrAwsAction
 } from '../actions/actions-integracao';
+
+// Estados de Autenticação
+    const router = useRouter();
+    const [usuarioAtual, setUsuarioAtual] = useState('');
+    const [emailUsuario, setEmailUsuario] = useState(''); 
+    const [authLoading, setAuthLoading] = useState(true);
+
+// 1. Validar a Sessão e Puxar Dados do Usuário Logado
+  useEffect(() => {
+    async function checkAuth() {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        router.push('/login');
+        return;
+      }
+
+      const { data: perfil } = await supabase
+        .from('perfis_usuarios')
+        .select('*')
+        .eq('id', session.user.id)
+        .single();
+
+      if (perfil) {
+        setUsuarioAtual(perfil.nome || 'Equipe RH');
+        setEmailUsuario(perfil.email || session.user.email || ''); 
+        
+        const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
+        const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
+        
+        if (!cargosAltaGestao.includes(permissaoBanco)) {
+          router.push('/admin');
+          return;
+        }
+      } else {
+        setUsuarioAtual('Equipe RH');
+      }
+      
+      setAuthLoading(false);
+    }
+    
+    checkAuth();
+  }, [router]);
 
 const BRL = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtDataHora = (d: string) => new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });

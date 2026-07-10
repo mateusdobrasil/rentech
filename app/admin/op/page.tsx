@@ -1,22 +1,75 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { Analytics } from "@vercel/analytics/next";
+import { supabase } from '../../lib/supabase';
 import Image from 'next/image';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { supabase } from '../../lib/supabase';
 import logoColorido from '../../../app/imgs/logo.png';
-import { Analytics } from "@vercel/analytics/next"
 
-export default function HubOrdensPagamento() {
+// Tipagem do Perfil
+interface PerfilUsuario {
+  nome: string;
+  email: string;
+  permissao: string;
+  permissaoNormalizada?: string;
+}
+
+// ============================================================================
+// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
+// ============================================================================
+const normalizarPermissao = (permissaoBruta: string): string => {
+  const p = (permissaoBruta || '').toUpperCase().trim();
+
+  // 1. ADMINISTRATIVO deve vir ANTES de ADMIN para evitar a colisão de texto
+  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
+  
+  // 2. ALTA GESTÃO (Acesso Total)
+  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
+  
+  // 3. DEMAIS DEPARTAMENTOS
+  if (p.includes('FINAN')) return 'FINANCEIRO';
+  if (p.includes('OPER')) return 'OPERACIONAL';
+  if (p.includes('ESTOQ')) return 'ESTOQUE';
+  if (p.includes('EDIT')) return 'EDITOR';
+  
+  // PADRÃO
+  return 'USUARIO'; 
+};
+
+export default function OpHub() {
   const router = useRouter();
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [nivelAcesso, setNivelAcesso] = useState<'DIR' | 'USU'>('USU');
-  const [authLoading, setAuthLoading] = useState(true);
+  const [perfil, setPerfil] = useState<PerfilUsuario | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  // 1. Validar a Sessão e Nível de Acesso
+  // Lista de todos os módulos e quem pode aceder a eles
+  const modulosOp = [
+    {
+      titulo: 'Solicitar Nova OP',
+      descricao: 'Preencha o formulário para enviar um pagamento para análise da diretoria.',
+      icone: '➕', link: '/admin/op/nova',
+      permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO', 'ADMINISTRATIVO', 'OPERACIONAL', 'ESTOQUE', 'USUARIO'],
+      cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
+    },
+    {
+      titulo: 'Minhas OPs',
+      descricao: 'Acompanhe o status ou edite as Ordens de Pagamento solicitadas por você.',
+      icone: '📋', link: '/admin/op/responsavel',
+      permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO', 'ADMINISTRATIVO', 'OPERACIONAL', 'ESTOQUE', 'USUARIO'],
+      cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
+    },
+    {
+      titulo: 'Financeiro (OP)',
+      descricao: 'Painel geral para aprovação, baixa e conferência de todas as Ordens de Pagamento.',
+      icone: '💰', link: '/admin/op/financeiro',
+      permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
+      cor: 'bg-purple-50 border-purple-200 text-purple-700', hover: 'hover:border-purple-500'
+    }
+  ];
+
   useEffect(() => {
-    async function checkAuth() {
+    const carregarAcesso = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       
       if (!session) {
@@ -24,107 +77,97 @@ export default function HubOrdensPagamento() {
         return;
       }
 
-      const { data: perfil } = await supabase
+      const { data: userProfile, error } = await supabase
         .from('perfis_usuarios')
-        .select('*')
+        .select('nome, email, permissao')
         .eq('id', session.user.id)
         .single();
 
-      if (perfil) {
-        setUsuarioAtual(perfil.nome || 'Equipe');
-        
-        const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
-        const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
-        
-        if (cargosAltaGestao.includes(permissaoBanco)) {
-          setNivelAcesso('DIR');
-        } else {
-          setNivelAcesso('USU');
-        }
+      if (userProfile && !error) {
+        setPerfil({
+          ...userProfile,
+          permissaoNormalizada: normalizarPermissao(userProfile.permissao)
+        });
+      } else {
+        console.error("Perfil não encontrado no banco de dados.");
       }
-      
-      setAuthLoading(false);
-    }
-    
-    checkAuth();
+      setLoading(false);
+    };
+
+    carregarAcesso();
   }, [router]);
 
-  if (authLoading) {
+  const handleSair = async () => {
+    await supabase.auth.signOut();
+    document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+    router.push('/login');
+  };
+
+  // Ecrã de Loading
+  if (loading) {
     return (
-      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center pt-16">
-        <div className="w-10 h-10 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin shadow-sm"></div>
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center pt-24">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-[#0C1D4D] border-t-[#336699] rounded-full animate-spin mx-auto mb-4"></div>
+          <h2 className="text-[#0C1D4D] font-black uppercase tracking-widest text-sm">Carregando módulos...</h2>
+        </div>
       </div>
     );
   }
 
-  return (
-    <div className="min-h-screen bg-[#F0F4F8] flex flex-col pt-4 font-sans">
-      <Analytics/>
-      
-      {/* HEADER TÉCNICO ALINHADO AO NAVBAR GLOBAL */}
-      <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex justify-between items-center shadow-sm">
-        <p className="text-[#0369A1] font-medium text-sm">
-          💳 <strong>Olá, {usuarioAtual}</strong>. Módulo de Ordens de Pagamento (OP).
-        </p>
-        <button 
-          onClick={() => router.push('/admin')} 
-          className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase"
-        >
-          ⬅ VOLTAR AO HUB CENTRAL
-        </button>
-      </div>
-
-      <div className="flex-grow flex flex-col items-center p-4 py-12">
-        <div className="mb-10 text-center">
-          
-          <h1 className="text-2xl md:text-3xl font-black text-[#0C1D4D] uppercase tracking-wide">Portal de Pagamentos</h1>
-          <p className="text-[#64748B] font-medium mt-2 max-w-lg mx-auto">
-            Selecione abaixo a operação desejada. O acesso é restrito conforme suas permissões no sistema.
-          </p>
+  // Tratamento se o Perfil não existir
+  if (!perfil) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4 pt-24">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-[#BAE6FD]">
+          <div className="text-5xl mb-4">⚠️</div>
+          <h2 className="text-xl font-black text-[#0C1D4D] uppercase tracking-wider mb-2">Perfil não localizado</h2>
+          <p className="text-[#64748B] text-sm mb-6">A sua conta de autenticação existe, mas o seu perfil de permissões não foi encontrado no banco de dados. Contate o Administrador.</p>
+          <button onClick={handleSair} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs tracking-wider hover:bg-[#284B8C] transition-colors w-full">
+            Voltar para Login
+          </button>
         </div>
+      </div>
+    );
+  }
 
-        {/* GRID DE CARDS DE NAVEGAÇÃO */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-4xl px-4">
-          
-          {/* CARD: NOVA OP (Todos veem) */}
-          <Link href="/admin/op/nova" className="group bg-white p-6 md:p-8 rounded-2xl shadow-sm hover:shadow-xl border-t-4 border-t-[#16A34A] border-transparent hover:border-[#16A34A] transition-all transform hover:-translate-y-1">
-            <div className="w-14 h-14 bg-green-50 rounded-xl flex items-center justify-center text-3xl mb-4 group-hover:scale-110 transition-transform">
-              ➕
+  // ==========================================================================
+  // FILTRO DE SEGURANÇA APLICADO
+  // ==========================================================================
+  const modulosAutorizados = modulosOp.filter(modulo => 
+    modulo.permissoes_permitidas.includes(perfil.permissaoNormalizada!)
+  );
+
+  return (
+    <div className="min-h-screen bg-[#F0F4F8] font-sans pt-12 px-4">
+      <Analytics />
+      <div className="max-w-6xl mx-auto">
+        <div className="mb-10">
+          <h1 className="text-3xl font-black text-[#0C1D4D] uppercase tracking-tight">Setor de OPs</h1>
+          <p className="text-[#64748B] font-medium">Gestão de jornada, folha financeira e regras operacionais.</p>
+        </div>
+        
+        {/* Renderiza APENAS a variável modulosAutorizados */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {modulosAutorizados.length === 0 ? (
+            <div className="col-span-full p-8 text-center text-gray-500 font-bold uppercase border-2 border-dashed border-gray-300 rounded-xl">
+              Você não tem permissão para aceder a nenhum módulo desta área.
             </div>
-            <h2 className="text-xl font-black text-[#0A2A4A] uppercase tracking-wider mb-2">Solicitar Nova OP</h2>
-            <p className="text-[#64748B] text-sm font-medium leading-relaxed">
-              Preencha o formulário para enviar um pagamento para análise e aprovação da diretoria.
-            </p>
-          </Link>
-
-          {/* CARD: MINHAS OPs (Todos veem) */}
-          <Link href="/admin/op/responsavel" className="group bg-white p-6 md:p-8 rounded-2xl shadow-sm hover:shadow-xl border-t-4 border-t-[#336699] border-transparent hover:border-[#336699] transition-all transform hover:-translate-y-1">
-            <div className="w-14 h-14 bg-blue-50 rounded-xl flex items-center justify-center text-3xl mb-4 group-hover:scale-110 transition-transform">
-              📋
-            </div>
-            <h2 className="text-xl font-black text-[#0A2A4A] uppercase tracking-wider mb-2">Minhas OPs</h2>
-            <p className="text-[#64748B] text-sm font-medium leading-relaxed">
-              Acompanhe o status de aprovação ou edite as Ordens de Pagamento solicitadas por você.
-            </p>
-          </Link>
-
-          {/* CARD: FINANCEIRO (Apenas Alta Gestão/Financeiro vê) */}
-          {nivelAcesso === 'DIR' && (
-            <Link href="/admin/op/financeiro" className="group bg-white p-6 md:p-8 rounded-2xl shadow-sm hover:shadow-xl border-t-4 border-t-amber-500 border-transparent hover:border-amber-500 transition-all transform hover:-translate-y-1 md:col-span-2 lg:col-span-2 lg:w-1/2 lg:mx-auto">
-              <div className="flex flex-col md:flex-row items-start md:items-center gap-6">
-                <div className="w-16 h-16 bg-amber-50 rounded-xl flex items-center justify-center text-4xl group-hover:scale-110 transition-transform flex-shrink-0 border border-amber-100">
-                  👑
-                </div>
-                <div>
-                  <h2 className="text-xl font-black text-[#0A2A4A] uppercase tracking-wider mb-1">Painel Financeiro</h2>
-                  <p className="text-[#64748B] text-sm font-medium leading-relaxed">
-                    Acesso exclusivo. Analise, aprove ou efetue as baixas de todas as OPs do sistema Rentech.
-                  </p>
-                </div>
-              </div>
-            </Link>
+          ) : (
+            modulosAutorizados.map((m) => (
+              <button key={m.titulo} onClick={() => router.push(m.link)} className={`text-left p-6 rounded-2xl border-2 transition-all shadow-sm ${m.cor} ${m.hover} group`}>
+                <div className="text-4xl mb-4 group-hover:scale-110 transition-transform duration-300">{m.icone}</div>
+                <h2 className="text-lg font-black uppercase tracking-wider mb-2">{m.titulo}</h2>
+                <p className="text-xs font-medium opacity-80">{m.descricao}</p>
+              </button>
+            ))
           )}
-
+        </div>
+        
+        <div className="mt-12 text-center pb-12">
+          <button onClick={() => router.push('/admin')} className="text-[#64748B] font-bold text-sm hover:text-[#0C1D4D] transition-colors">
+            ⬅ Voltar ao Painel Administrativo Geral
+          </button>
         </div>
       </div>
     </div>

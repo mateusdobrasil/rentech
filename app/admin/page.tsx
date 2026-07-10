@@ -39,33 +39,14 @@ const normalizarPermissao = (permissaoBruta: string): string => {
 // Estrutura inteligente dos módulos do sistema
 const MODULOS_SISTEMA = [
   {
-    titulo: 'Solicitar Nova OP',
-    descricao: 'Preencha o formulário para enviar um pagamento para análise da diretoria.',
-    icone: '➕',
-    link: '/admin/op/nova',
-    permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO', 'ADMINISTRATIVO', 'OPERACIONAL', 'ESTOQUE', 'USUARIO'],
-    cor: 'border-[#336699]/50 hover:border-[#336699]',
-    bgIcon: 'bg-blue-50 text-[#336699]'
-  },
-  {
-    titulo: 'Minhas OPs',
+    titulo: 'Ordens de Pagamentos',
     descricao: 'Acompanhe o status ou edite as Ordens de Pagamento solicitadas por você.',
     icone: '📋',
-    link: '/admin/op/responsavel',
+    link: '/admin/op',
     permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO', 'ADMINISTRATIVO', 'OPERACIONAL', 'ESTOQUE', 'USUARIO'],
     cor: 'border-[#336699]/50 hover:border-[#336699]',
     bgIcon: 'bg-blue-50 text-[#336699]'
-  },
-  {
-    titulo: 'Financeiro (OP)',
-    descricao: 'Painel geral para aprovação, baixa e conferência de todas as Ordens de Pagamento.',
-    icone: '💰',
-    link: '/admin/op/financeiro',
-    permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
-    cor: 'border-green-500/50 hover:border-green-500',
-    bgIcon: 'bg-green-50 text-green-600'
-  },
-  {
+  },  {
     titulo: 'RH',
     descricao: 'Importe os registros do relógio, calcule horas extras e gere espelhos de jornada.',
     icone: '🫀​',

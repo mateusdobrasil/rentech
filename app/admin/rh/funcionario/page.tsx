@@ -39,6 +39,48 @@ const trioParaExtenso = (n: number): string => {
   }
   return partes.join(' E ');
 };
+ // Estados de Autenticação
+    const router = useRouter();
+    const [usuarioAtual, setUsuarioAtual] = useState('');
+    const [emailUsuario, setEmailUsuario] = useState(''); 
+    const [authLoading, setAuthLoading] = useState(true);
+
+// 1. Validar a Sessão e Puxar Dados do Usuário Logado
+  useEffect(() => {
+    async function checkAuth() {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        router.push('/login');
+        return;
+      }
+
+      const { data: perfil } = await supabase
+        .from('perfis_usuarios')
+        .select('*')
+        .eq('id', session.user.id)
+        .single();
+
+      if (perfil) {
+        setUsuarioAtual(perfil.nome || 'Equipe RH');
+        setEmailUsuario(perfil.email || session.user.email || ''); 
+        
+        const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
+        const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
+        
+        if (!cargosAltaGestao.includes(permissaoBanco)) {
+          router.push('/admin');
+          return;
+        }
+      } else {
+        setUsuarioAtual('Equipe RH');
+      }
+      
+      setAuthLoading(false);
+    }
+    
+    checkAuth();
+  }, [router]);
 
 const numeroParaExtenso = (valor: number): string => {
   const negativo = valor < 0;

@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
+import { supabase } from '../../../lib/supabase'; 
 import {
   listarCategoriasDocAction, criarCategoriaDocAction, uploadDocumentoAction,
   listarDocumentosAction, urlDocumentoAction, excluirDocumentoAction, painelDocumentosAction
@@ -33,7 +34,6 @@ export default function DocumentosPage() {
   const [linhas, setLinhas] = useState<LinhaPainel[]>([]);
   const [totais, setTotais] = useState({ funcionarios: 0, semDocumentos: 0, totalDocs: 0, vencidos: 0, vencendo: 0 });
   const [categorias, setCategorias] = useState<Categoria[]>([]);
-  const [usuarioAtual, setUsuarioAtual] = useState('');
   const [busca, setBusca] = useState('');
   const [filtro, setFiltro] = useState<'TODOS' | 'SEM' | 'PENDENCIAS'>('TODOS');
 
@@ -51,6 +51,48 @@ export default function DocumentosPage() {
   const [upObs, setUpObs] = useState('');
   const [enviando, setEnviando] = useState(false);
   const upRef = useRef<HTMLInputElement>(null);
+
+  // Estados de Autenticação
+    const [usuarioAtual, setUsuarioAtual] = useState('');
+    const [emailUsuario, setEmailUsuario] = useState(''); 
+    const [authLoading, setAuthLoading] = useState(true);
+  
+    // 1. Validar a Sessão e Puxar Dados do Usuário Logado
+      useEffect(() => {
+        async function checkAuth() {
+          const { data: { session } } = await supabase.auth.getSession();
+          
+          if (!session) {
+            router.push('/login');
+            return;
+          }
+    
+          const { data: perfil } = await supabase
+            .from('perfis_usuarios')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+    
+          if (perfil) {
+            setUsuarioAtual(perfil.nome || 'Equipe RH');
+            setEmailUsuario(perfil.email || session.user.email || ''); 
+            
+            const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
+            const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO', 'ADMINISTRATIVO'];
+            
+            if (!cargosAltaGestao.includes(permissaoBanco)) {
+              router.push('/admin');
+              return;
+            }
+          } else {
+            setUsuarioAtual('Equipe RH');
+          }
+          
+          setAuthLoading(false);
+        }
+        
+        checkAuth();
+      }, [router]);
 
   // Preview
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);

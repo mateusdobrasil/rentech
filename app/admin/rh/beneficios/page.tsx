@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
+import { supabase } from '../../../lib/supabase'; 
 import {
   listarCatalogosBeneficioAction, criarTipoBeneficioAction, criarMeioBeneficioAction,
   salvarBeneficioAction, alternarBeneficioAction, historicoBeneficioAction, painelBeneficiosAction,
@@ -25,7 +26,6 @@ export default function BeneficiosPage() {
   const [linhas, setLinhas] = useState<LinhaFunc[]>([]);
   const [tipos, setTipos] = useState<{ id: number; nome: string }[]>([]);
   const [meios, setMeios] = useState<{ id: number; nome: string }[]>([]);
-  const [usuarioAtual, setUsuarioAtual] = useState('');
   const [busca, setBusca] = useState('');
   const [filtro, setFiltro] = useState<'TODOS' | 'COM' | 'SEM'>('TODOS');
   const [filtroMeio, setFiltroMeio] = useState('TODOS');       // filtro da aba
@@ -41,6 +41,48 @@ export default function BeneficiosPage() {
   const [formQtdDias, setFormQtdDias] = useState('');
   const [formObs, setFormObs] = useState('');
   const [salvando, setSalvando] = useState(false);
+
+  // Estados de Autenticação
+    const [usuarioAtual, setUsuarioAtual] = useState('');
+    const [emailUsuario, setEmailUsuario] = useState(''); 
+    const [authLoading, setAuthLoading] = useState(true);
+  
+    // 1. Validar a Sessão e Puxar Dados do Usuário Logado
+      useEffect(() => {
+        async function checkAuth() {
+          const { data: { session } } = await supabase.auth.getSession();
+          
+          if (!session) {
+            router.push('/login');
+            return;
+          }
+    
+          const { data: perfil } = await supabase
+            .from('perfis_usuarios')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+    
+          if (perfil) {
+            setUsuarioAtual(perfil.nome || 'Equipe RH');
+            setEmailUsuario(perfil.email || session.user.email || ''); 
+            
+            const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
+            const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
+            
+            if (!cargosAltaGestao.includes(permissaoBanco)) {
+              router.push('/admin');
+              return;
+            }
+          } else {
+            setUsuarioAtual('Equipe RH');
+          }
+          
+          setAuthLoading(false);
+        }
+        
+        checkAuth();
+      }, [router]);
 
   // Grid consolidado (mês)
   const [mostrarGrid, setMostrarGrid] = useState(false);

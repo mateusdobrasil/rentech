@@ -2,12 +2,15 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { Analytics } from "@vercel/analytics/next";
+import { supabase } from '../../../lib/supabase'; 
 import 
   { 
     listarAssinaturasAction, consultarAssinaturaAction, enviarDocumentoAvulsoAction, 
     listarFuncionariosAtivosAction, baixarAssinadoAction, atualizarTodasAssinaturasAction 
   } from '../actions/actions-assinatura';
+import logoColorido from '../../../../app/imgs/logo.png';
 
 interface Assinatura {
   id: number;
@@ -46,7 +49,7 @@ export default function AssinaturasPage() {
   const [atualizandoTodas, setAtualizandoTodas] = useState(false);
   const [filtro, setFiltro] = useState<'TODOS' | 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO'>('TODOS');
 
-  // Upload avulso (advertências, avisos, etc.)
+  // Upload avulso
   const [mostrarUpload, setMostrarUpload] = useState(false);
   const [funcionarios, setFuncionarios] = useState<{ nome_completo: string; cpf: string | null }[]>([]);
   const [avulsoFunc, setAvulsoFunc] = useState('');
@@ -56,8 +59,49 @@ export default function AssinaturasPage() {
   const [enviandoAvulso, setEnviandoAvulso] = useState(false);
   const avulsoFileRef = useRef<HTMLInputElement>(null);
 
+  // Estados de Autenticação
+  const [usuarioAtual, setUsuarioAtual] = useState('');
+  const [emailUsuario, setEmailUsuario] = useState(''); 
+  const [authLoading, setAuthLoading] = useState(true);
+
+  // 1. Validar a Sessão e Puxar Dados do Usuário Logado
+    useEffect(() => {
+      async function checkAuth() {
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (!session) {
+          router.push('/login');
+          return;
+        }
+  
+        const { data: perfil } = await supabase
+          .from('perfis_usuarios')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+  
+        if (perfil) {
+          setUsuarioAtual(perfil.nome || 'Equipe RH');
+          setEmailUsuario(perfil.email || session.user.email || ''); 
+          
+          const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
+          const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
+          
+          if (!cargosAltaGestao.includes(permissaoBanco)) {
+            router.push('/admin');
+            return;
+          }
+        } else {
+          setUsuarioAtual('Equipe RH');
+        }
+        
+        setAuthLoading(false);
+      }
+      
+      checkAuth();
+    }, [router]);
+
   const [mesReferencia, setMesReferencia] = useState(() => {
-    // Competência = mês anterior ao corrente (o mês corrente é o de pagamento)
     const h = new Date();
     const comp = new Date(h.getFullYear(), h.getMonth() - 1, 1);
     return `${comp.getFullYear()}-${String(comp.getMonth() + 1).padStart(2, '0')}`;
@@ -78,7 +122,6 @@ export default function AssinaturasPage() {
     }
   };
 
-  // Atualiza o status de uma assinatura consultando a Autentique (fallback do webhook)
   const atualizarStatus = async (a: Assinatura) => {
     setAtualizando(a.funcionario_nome);
     try {
@@ -112,8 +155,6 @@ export default function AssinaturasPage() {
     }
   };
 
-  // Baixa o PDF assinado via servidor (o link da Autentique exige o token da
-  // API — clicar direto no navegador retorna "documento não existe").
   const abrirAssinado = async (a: Assinatura) => {
     setBaixandoAssinado(a.funcionario_nome);
     try {
@@ -127,7 +168,6 @@ export default function AssinaturasPage() {
     }
   };
 
-  // Carrega funcionários quando o painel de upload abre
   const abrirUpload = async () => {
     setMostrarUpload(true);
     if (funcionarios.length === 0) {
@@ -162,7 +202,8 @@ export default function AssinaturasPage() {
         mesReferencia, enviadoPor: '', sandbox: avulsoSandbox
       });
       if (!res.ok) throw new Error(res.erro);
-      alert(`Documento enviado para assinatura!${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`);
+      const anexosMsg = res.info?.anexados?.length ? `\n\nAnexado: resumo + ${res.info.anexados.join(' + ')}` : '';
+      alert(`Documento enviado para assinatura!${anexosMsg}${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`);
       setAvulsoFunc(''); setAvulsoTitulo(''); setAvulsoArquivo(null);
       if (avulsoFileRef.current) avulsoFileRef.current.value = '';
       setMostrarUpload(false);
@@ -190,7 +231,7 @@ export default function AssinaturasPage() {
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">
       <Analytics />
 
-      <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex justify-between items-center shadow-sm">
+      <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex flex-col sm:flex-row justify-between items-center gap-3 shadow-sm print:hidden">
         <p className="text-[#0369A1] font-medium text-sm">
           ✍️ <strong>Assinaturas de Holerites</strong>. Acompanhe o status de envio e assinatura via Autentique.
         </p>
@@ -199,40 +240,40 @@ export default function AssinaturasPage() {
         </button>
       </div>
 
-      <div className="p-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full">
+      <div className="p-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full space-y-6">
 
-        {/* Cabeçalho + seletor de mês */}
-        <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-4 mb-6">
+        {/* Painel Superior de Ações */}
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
           <div>
-            <h1 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Assinaturas — {formatarMesAnoBR(mesReferencia)}</h1>
-            <p className="text-sm text-[#64748B]">{contagem.total} holerite(s) enviado(s) • {pctAssinado}% assinado(s)</p>
+            <h1 className="text-xl font-black text-[#0C1D4D] uppercase tracking-wider">Assinaturas — {formatarMesAnoBR(mesReferencia)}</h1>
+            <p className="text-sm text-[#64748B] font-medium mt-1">{contagem.total} holerite(s) enviado(s) • {pctAssinado}% assinado(s)</p>
           </div>
-          <div className="flex items-center gap-3">
-            <input type="month" value={mesReferencia} onChange={e => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
-            <button onClick={atualizarTodas} disabled={atualizandoTodas} className="bg-[#336699] text-white font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
+          <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+            <input type="month" value={mesReferencia} onChange={e => setMesReferencia(e.target.value)} className="p-2.5 border border-[#CBD5E1] rounded-xl text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]" />
+            <button onClick={atualizarTodas} disabled={atualizandoTodas} className="flex-grow sm:flex-initial bg-[#336699] text-white font-black uppercase tracking-widest text-xs px-5 py-3.5 rounded-xl shadow-sm hover:bg-[#284B8C] transition-all disabled:opacity-50 text-center">
               {atualizandoTodas ? '⏳ Atualizando...' : '↻ Atualizar Todas'}
             </button>
-            <button onClick={abrirUpload} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all">
+            <button onClick={abrirUpload} className="flex-grow sm:flex-initial bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-5 py-3.5 rounded-xl shadow-sm hover:bg-indigo-700 transition-all text-center">
               📎 Enviar Documento
             </button>
-            <button onClick={() => router.push('/admin/rh/holerite')} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all">
+            <button onClick={() => router.push('/admin/rh/holerite')} className="flex-grow sm:flex-initial bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-5 py-3.5 rounded-xl shadow-sm hover:bg-[#284B8C] transition-all text-center">
               Ir para Holerites
             </button>
           </div>
         </div>
 
-        {/* Painel de upload avulso */}
+        {/* Componente Modular de Upload Avulso */}
         {mostrarUpload && (
-          <div className="bg-white p-5 rounded-2xl shadow-sm border-2 border-indigo-200 mb-6">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider">📎 Enviar Documento Avulso para Assinatura</h2>
-              <button onClick={() => setMostrarUpload(false)} className="text-[10px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg uppercase">Fechar</button>
+          <div className="bg-white p-6 rounded-2xl shadow-sm border-2 border-indigo-200 transition-all">
+            <div className="flex justify-between items-center border-b border-gray-100 pb-3 mb-4">
+              <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider flex items-center gap-2">📎 Enviar Documento Avulso para Assinatura</h2>
+              <button onClick={() => setMostrarUpload(false)} className="text-[10px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg uppercase tracking-wider">Fechar</button>
             </div>
-            <p className="text-xs text-gray-500 mb-4">Para advertências, avisos, comunicados — qualquer PDF que o funcionário precise assinar. A validação por CPF e o envio por WhatsApp seguem o mesmo padrão dos holerites.</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <p className="text-xs text-gray-500 font-medium mb-4">Utilize para advertências, comunicados ou contratos avulsos. A validação por CPF e o envio via canais digitais seguem o mesmo ecossistema integrado dos holerites.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
               <div>
                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Funcionário</label>
-                <select value={avulsoFunc} onChange={e => setAvulsoFunc(e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-white">
+                <select value={avulsoFunc} onChange={e => setAvulsoFunc(e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-xl text-sm font-bold bg-white outline-none cursor-pointer">
                   <option value="">— Selecione —</option>
                   {funcionarios.map(f => (
                     <option key={f.nome_completo} value={f.nome_completo}>{f.nome_completo}{!f.cpf ? ' (sem CPF ⚠)' : ''}</option>
@@ -241,67 +282,70 @@ export default function AssinaturasPage() {
               </div>
               <div>
                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Título do documento</label>
-                <input type="text" value={avulsoTitulo} onChange={e => setAvulsoTitulo(e.target.value)} placeholder="Ex: Advertência - atraso reincidente" className="w-full p-2.5 border border-gray-300 rounded-lg text-sm" />
+                <input type="text" value={avulsoTitulo} onChange={e => setAvulsoTitulo(e.target.value)} placeholder="Ex: Advertência por atraso" className="w-full p-2.5 border border-gray-300 rounded-xl text-sm font-medium outline-none focus:border-indigo-500 bg-white" />
               </div>
               <div>
                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Arquivo PDF</label>
-                <input ref={avulsoFileRef} type="file" accept="application/pdf" onChange={e => setAvulsoArquivo(e.target.files?.[0] || null)} className="w-full text-sm file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-[#0C1D4D] file:text-white file:font-bold file:text-xs file:uppercase" />
+                <input ref={avulsoFileRef} type="file" accept="application/pdf" onChange={e => setAvulsoArquivo(e.target.files?.[0] || null)} className="w-full text-sm file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-[#0C1D4D] file:text-white file:font-bold file:text-[10px] file:uppercase cursor-pointer border border-gray-300 rounded-xl p-1 bg-gray-50" />
               </div>
-              <div className="flex items-end gap-3">
-                <label className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider cursor-pointer bg-gray-50 px-3 py-2.5 rounded-lg border border-gray-200">
-                  <input type="checkbox" checked={avulsoSandbox} onChange={e => setAvulsoSandbox(e.target.checked)} />
+              <div className="flex gap-2 w-full">
+                <label className="flex items-center justify-center gap-2 text-[10px] font-black uppercase tracking-wider cursor-pointer bg-gray-50 px-3 h-[42px] rounded-xl border border-gray-200 select-none min-w-[90px]">
+                  <input type="checkbox" checked={avulsoSandbox} onChange={e => setAvulsoSandbox(e.target.checked)} className="accent-amber-600" />
                   <span className={avulsoSandbox ? 'text-amber-600' : 'text-red-600'}>{avulsoSandbox ? '🧪 Teste' : '⚠ Real'}</span>
                 </label>
-                <button onClick={enviarAvulso} disabled={enviandoAvulso} className="flex-1 bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50">
-                  {enviandoAvulso ? '⏳ Enviando...' : '📤 Enviar para Assinatura'}
+                <button onClick={enviarAvulso} disabled={enviandoAvulso} className="flex-grow bg-indigo-600 text-white font-black uppercase tracking-widest text-xs py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50 h-[42px]">
+                  {enviandoAvulso ? '⏳ ...' : '📤 Enviar'}
                 </button>
               </div>
             </div>
           </div>
         )}
 
-        {/* KPIs por status */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
+        {/* Grelha de Indicadores Operacionais */}
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
           {[
-            { k: 'total', lbl: 'Total Enviados', val: contagem.total, cor: '#0C1D4D' },
-            { k: 'ENVIADO', lbl: 'Aguardando', val: contagem.ENVIADO, cor: '#4F46E5' },
-            { k: 'VISUALIZADO', lbl: 'Visualizados', val: contagem.VISUALIZADO, cor: '#2563EB' },
-            { k: 'ASSINADO', lbl: 'Assinados', val: contagem.ASSINADO, cor: '#16A34A' },
-            { k: 'REJEITADO', lbl: 'Rejeitados', val: contagem.REJEITADO, cor: '#DC2626' },
+            { k: 'total', lbl: 'Total Enviados', val: contagem.total, cor: '#0C1D4D', bg: 'border-t-[#0C1D4D]' },
+            { k: 'ENVIADO', lbl: 'Aguardando', val: contagem.ENVIADO, cor: '#4F46E5', bg: 'border-t-[#4F46E5]' },
+            { k: 'VISUALIZADO', lbl: 'Visualizados', val: contagem.VISUALIZADO, cor: '#2563EB', bg: 'border-t-[#2563EB]' },
+            { k: 'ASSINADO', lbl: 'Assinados', val: contagem.ASSINADO, cor: '#16A34A', bg: 'border-t-[#16A34A]' },
+            { k: 'REJEITADO', lbl: 'Rejeitados', val: contagem.REJEITADO, cor: '#DC2626', bg: 'border-t-[#DC2626]' },
           ].map(c => (
-            <div key={c.k} className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 text-center">
+            <div key={c.k} className={`bg-white rounded-2xl shadow-sm border border-[#E2E8F0] border-t-4 ${c.bg} p-4 text-center`}>
               <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">{c.lbl}</p>
-              <p className="text-2xl font-black" style={{ color: c.cor }}>{c.val}</p>
+              <p className="text-3xl font-black" style={{ color: c.cor }}>{c.val}</p>
             </div>
           ))}
         </div>
 
-        {/* Barra de progresso de assinatura */}
+        {/* Progresso de Assinatura */}
         {contagem.total > 0 && (
-          <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 mb-6">
+          <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-5">
             <div className="flex justify-between items-center mb-2">
               <span className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider">Progresso de Assinaturas</span>
-              <span className="text-xs font-black text-[#16A34A]">{pctAssinado}%</span>
+              <span className="text-xs font-black text-[#16A34A] bg-[#F0FDF4] px-2 py-0.5 rounded-md">{pctAssinado}% concluído</span>
             </div>
-            <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
-              <div className="h-full bg-[#16A34A] rounded-full transition-all" style={{ width: `${pctAssinado}%` }} />
+            <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden shadow-inner">
+              <div className="h-full bg-[#16A34A] rounded-full transition-all duration-500 ease-out" style={{ width: `${pctAssinado}%` }} />
             </div>
           </div>
         )}
 
-        {/* Filtros */}
-        <div className="flex bg-white p-1 rounded-xl border border-[#E2E8F0] w-fit shadow-sm mb-4 flex-wrap">
+        {/* Barra de Seleção de Filtros */}
+        <div className="flex bg-white p-1 rounded-xl border border-[#E2E8F0] w-fit shadow-sm gap-1 flex-wrap">
           {(['TODOS', 'ENVIADO', 'VISUALIZADO', 'ASSINADO', 'REJEITADO'] as const).map(f => (
-            <button key={f} onClick={() => setFiltro(f)} className={`px-4 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${filtro === f ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>
+            <button key={f} onClick={() => setFiltro(f)} className={`px-4 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${filtro === f ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D] hover:bg-gray-50'}`}>
               {f === 'TODOS' ? 'Todos' : STATUS_INFO[f].label}
             </button>
           ))}
         </div>
 
-        {/* Tabela */}
+        {/* Tabela de Dados Concretos */}
         <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden">
           {loading ? (
-            <div className="p-16 text-center text-gray-400 font-bold uppercase tracking-wider">Carregando assinaturas...</div>
+            <div className="p-16 text-center text-gray-400 font-bold uppercase tracking-wider flex flex-col items-center justify-center gap-3">
+              <div className="w-8 h-8 border-4 border-[#0C1D4D] border-t-transparent rounded-full animate-spin"></div>
+              Buscando registros técnicos...
+            </div>
           ) : filtradas.length === 0 ? (
             <div className="p-16 text-center text-gray-400 font-bold uppercase tracking-wider">
               {assinaturas.length === 0
@@ -312,52 +356,52 @@ export default function AssinaturasPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm text-left border-collapse">
                 <thead className="bg-[#F8FAFC] border-b-2 border-[#E2E8F0]">
-                  <tr className="text-[9px] uppercase font-black tracking-widest text-[#64748B]">
-                    <th className="p-3">Colaborador</th>
-                    <th className="p-3 text-center">Status</th>
-                    <th className="p-3">Enviado</th>
-                    <th className="p-3">Visualizado</th>
-                    <th className="p-3">Assinado</th>
-                    <th className="p-3 text-center">Ações</th>
+                  <tr className="text-[10px] uppercase font-black tracking-widest text-[#64748B]">
+                    <th className="p-4">Colaborador / Tipo</th>
+                    <th className="p-4 text-center w-36">Status</th>
+                    <th className="p-4">Enviado em</th>
+                    <th className="p-4">Visualizado em</th>
+                    <th className="p-4">Assinado em</th>
+                    <th className="p-4 text-center w-40">Ações Mecânicas</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#E2E8F0]">
+                <tbody className="divide-y divide-[#E2E8F0] font-medium">
                   {filtradas.map(a => {
                     const info = STATUS_INFO[a.status] || STATUS_INFO.PENDENTE;
                     return (
                       <tr key={a.id} className="hover:bg-[#F8FAFC] transition-colors">
-                        <td className="p-3">
-                          <span className="font-black text-[#0C1D4D] block">{a.funcionario_nome}</span>
+                        <td className="p-4">
+                          <span className="font-black text-[#0C1D4D] text-sm block">{a.funcionario_nome}</span>
                           {a.titulo_avulso
-                            ? <span className="text-[10px] text-indigo-600 font-black block">📎 {a.titulo_avulso}</span>
-                            : <span className="text-[10px] text-gray-400 font-bold block uppercase">Holerite</span>}
-                          <span className="text-[10px] text-gray-500 font-medium">
-                            CPF {a.cpf || '—'}{a.sandbox && <span className="ml-1 text-amber-600 font-black">🧪 TESTE</span>}
+                            ? <span className="text-[10px] text-indigo-600 font-black block mt-0.5">📎 {a.titulo_avulso}</span>
+                            : <span className="text-[10px] text-gray-400 font-bold block uppercase mt-0.5">Holerite Consolidado</span>}
+                          <span className="text-[10px] text-gray-500 font-medium block mt-0.5">
+                            CPF {a.cpf || '—'}{a.sandbox && <span className="ml-1.5 text-amber-600 font-black bg-amber-50 px-1.5 py-0.5 rounded text-[8px]">AMB. TESTE</span>}
                           </span>
                         </td>
-                        <td className="p-3 text-center">
-                          <span className="text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider" style={{ color: info.cor, background: info.bg }}>
+                        <td className="p-4 text-center">
+                          <span className="text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-wider inline-flex items-center gap-1" style={{ color: info.cor, background: info.bg }}>
                             {info.icone} {info.label}
                           </span>
                         </td>
-                        <td className="p-3 text-[11px] text-gray-600 font-medium">{dataHora(a.enviado_em)}</td>
-                        <td className="p-3 text-[11px] text-gray-600 font-medium">{dataHora(a.visualizado_em)}</td>
-                        <td className="p-3 text-[11px] text-gray-600 font-medium">{dataHora(a.assinado_em)}</td>
-                        <td className="p-3">
-                          <div className="flex items-center justify-center gap-1 flex-wrap">
+                        <td className="p-4 text-[11px] text-gray-600">{dataHora(a.enviado_em)}</td>
+                        <td className="p-4 text-[11px] text-gray-600">{dataHora(a.visualizado_em)}</td>
+                        <td className="p-4 text-[11px] text-gray-600">{dataHora(a.assinado_em)}</td>
+                        <td className="p-4 text-center">
+                          <div className="flex items-center justify-center gap-1.5 flex-wrap">
                             {a.status !== 'ASSINADO' && a.status !== 'REJEITADO' && (
-                              <button onClick={() => atualizarStatus(a)} disabled={atualizando !== null} className="text-[10px] font-black text-[#336699] uppercase tracking-wider hover:bg-blue-50 px-2 py-1 rounded disabled:opacity-50 border border-blue-200">
-                                {atualizando === a.funcionario_nome ? '⏳' : '↻ Atualizar'}
+                              <button onClick={() => atualizarStatus(a)} disabled={atualizando !== null} className="text-[10px] font-black text-[#336699] uppercase tracking-wider hover:bg-blue-50 px-2.5 py-1.5 rounded-lg disabled:opacity-50 border border-blue-200 bg-white transition-colors">
+                                {atualizando === a.funcionario_nome ? '...' : '↻ Consultar'}
                               </button>
                             )}
                             {a.link_assinatura && a.status !== 'ASSINADO' && (
-                              <a href={a.link_assinatura} target="_blank" rel="noopener noreferrer" className="text-[10px] font-black text-indigo-600 uppercase tracking-wider hover:bg-indigo-50 px-2 py-1 rounded border border-indigo-200">
+                              <a href={a.link_assinatura} target="_blank" rel="noopener noreferrer" className="text-[10px] font-black text-indigo-600 uppercase tracking-wider hover:bg-indigo-50 px-2.5 py-1.5 rounded-lg border border-indigo-200 bg-white transition-colors inline-block">
                                 🔗 Link
                               </a>
                             )}
                             {a.status === 'ASSINADO' && (
-                              <button onClick={() => abrirAssinado(a)} disabled={baixandoAssinado !== null} className="text-[10px] font-black text-green-700 uppercase tracking-wider hover:bg-green-50 px-2 py-1 rounded border border-green-200 disabled:opacity-50">
-                                {baixandoAssinado === a.funcionario_nome ? '⏳' : '⬇ Assinado'}
+                              <button onClick={() => abrirAssinado(a)} disabled={baixandoAssinado !== null} className="text-[10px] font-black text-green-700 uppercase tracking-wider hover:bg-green-50 px-2.5 py-1.5 rounded-lg border border-green-200 disabled:opacity-50 bg-white transition-colors">
+                                {baixandoAssinado === a.funcionario_nome ? '...' : '⬇ Obter PDF'}
                               </button>
                             )}
                           </div>
@@ -371,8 +415,8 @@ export default function AssinaturasPage() {
           )}
         </div>
 
-        <p className="text-[10px] text-gray-400 font-medium mt-4 text-center">
-          O status atualiza automaticamente via webhook da Autentique. Use "↻ Atualizar" para forçar uma consulta manual.
+        <p className="text-[10px] text-gray-400 font-bold tracking-wide mt-2 text-center uppercase">
+          A atualização sincroniza nativamente através dos webhooks da infraestrutura da Autentique. Use "↻ Consultar" se precisar forçar uma varredura manual.
         </p>
       </div>
     </div>

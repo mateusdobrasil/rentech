@@ -10,48 +10,6 @@ import { salvarColaboradorAction, fecharFolhaLoteAction, reabrirFolhaAction } fr
 import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction, previaDocumentoAssinaturaAction } from '../actions/actions-assinatura';
 import logoColorido from '../../../../app/imgs/logo.png';
 
-// Estados de Autenticação
-  const router = useRouter();
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [emailUsuario, setEmailUsuario] = useState(''); 
-  const [authLoading, setAuthLoading] = useState(true);
-
-// 1. Validar a Sessão e Puxar Dados do Usuário Logado
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) {
-        router.push('/login');
-        return;
-      }
-
-      const { data: perfil } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-
-      if (perfil) {
-        setUsuarioAtual(perfil.nome || 'Equipe RH');
-        setEmailUsuario(perfil.email || session.user.email || ''); 
-        
-        const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
-        const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
-        
-        if (!cargosAltaGestao.includes(permissaoBanco)) {
-          router.push('/admin');
-          return;
-        }
-      } else {
-        setUsuarioAtual('Equipe RH');
-      }
-      
-      setAuthLoading(false);
-    }
-    
-    checkAuth();
-  }, [router]);
 
 // Utilitários
 const formatCurrency = (value: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
@@ -588,9 +546,51 @@ const HoleriteDoc = ({ nome, dados, mesRef, fechamento }: {
 };
 
 export default function HoleritePage() {
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [loadingLote, setLoadingLote] = useState(false);
   const [usuarioAtual, setUsuarioAtual] = useState('');
+
+  // Estados de Autenticação
+    const [emailUsuario, setEmailUsuario] = useState(''); 
+    const [authLoading, setAuthLoading] = useState(true);
+
+// 1. Validar a Sessão e Puxar Dados do Usuário Logado
+  useEffect(() => {
+    async function checkAuth() {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        router.push('/login');
+        return;
+      }
+
+      const { data: perfil } = await supabase
+        .from('perfis_usuarios')
+        .select('*')
+        .eq('id', session.user.id)
+        .single();
+
+      if (perfil) {
+        setUsuarioAtual(perfil.nome || 'Equipe RH');
+        setEmailUsuario(perfil.email || session.user.email || ''); 
+        
+        const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
+        const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
+        
+        if (!cargosAltaGestao.includes(permissaoBanco)) {
+          router.push('/admin');
+          return;
+        }
+      } else {
+        setUsuarioAtual('Equipe RH');
+      }
+      
+      setAuthLoading(false);
+    }
+    
+    checkAuth();
+  }, [router]);
   
   const [listaFuncionarios, setListaFuncionarios] = useState<FuncionarioFin[]>([]);
   const [regrasContrato, setRegrasContrato] = useState<Record<string, RegraContrato>>({});

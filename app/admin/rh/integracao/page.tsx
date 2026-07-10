@@ -728,9 +728,18 @@ export default function IntegracaoPage() {
                     </div>
                   )}
 
+                  {i.parceiro === 'ITAU' && (
+                    <div className="mb-3 pb-3 border-b border-gray-100">
+                      <span className="inline-block text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-blue-100 text-blue-700">📄 Arquivo manual (SISPAG)</span>
+                      <p className="text-[10px] text-gray-400 font-semibold mt-1.5 leading-snug">
+                        Hoje: geração de arquivos SISPAG (CNAB240) na aba "Pagamentos" — PIX e Conta/TED, envio manual pelo Itaú Empresas. API própria está planejada para o futuro.
+                      </p>
+                    </div>
+                  )}
+
                   <div className="flex items-center justify-between">
                     <span className={`text-[10px] font-black uppercase ${i.ambiente === 'PRODUCAO' ? 'text-[#0C1D4D]' : 'text-amber-600'}`}>
-                      {i.ambiente === 'PRODUCAO' ? '● Produção' : '🟡 Sandbox'}
+                      {i.ambiente === 'PRODUCAO' ? '🟢 Produção' : '🟡 Sandbox'}
                     </span>
                     <button onClick={() => abrirConfig(i)} className="text-[10px] font-black text-[#0C1D4D] bg-white border border-[#0C1D4D] hover:bg-[#0C1D4D] hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors">⚙ Configurar</button>
                   </div>
@@ -998,7 +1007,7 @@ export default function IntegracaoPage() {
                 <div className="grid grid-cols-2 gap-2">
                   {(['SANDBOX', 'PRODUCAO'] as const).map(amb => (
                     <button key={amb} onClick={() => setEdAmbiente(amb)} className={`p-2.5 rounded-lg text-[11px] font-black uppercase border-2 ${edAmbiente === amb ? (amb === 'PRODUCAO' ? 'border-slate-400 bg-slate-50 text-slate-600' : 'border-amber-400 bg-amber-50 text-amber-600') : 'border-gray-200 text-gray-400'}`}>
-                      {amb === 'SANDBOX' ? '🟡 Sandbox' : '● Produção'}
+                      {amb === 'SANDBOX' ? '🟡 Sandbox' : '🟢 Produção'}
                     </button>
                   ))}
                 </div>
@@ -1069,6 +1078,15 @@ export default function IntegracaoPage() {
 
               {editParceiro.tipo === 'BANCO' && (
                 <div className="space-y-3">
+                  {editParceiro.parceiro === 'ITAU' && (
+                    <div className="p-3 bg-blue-50 rounded-xl space-y-1">
+                      <span className="inline-block text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-blue-100 text-blue-700">📄 Arquivo manual (SISPAG)</span>
+                      <p className="text-[10px] text-blue-800 font-semibold leading-snug">
+                        Modo atual: geração de arquivo SISPAG (CNAB240) na aba "Pagamentos", com envio manual pelo
+                        Itaú Empresas. Integração via API está planejada para uma fase futura.
+                      </p>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Agência débito</label>

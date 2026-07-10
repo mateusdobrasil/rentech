@@ -970,49 +970,67 @@ export default function HoleritePage() {
 
       <div className="p-4 md:px-8 pt-6 flex-grow flex flex-col max-w-[1500px] mx-auto w-full">
         <div className="flex flex-col items-center pb-10">
-          <div className="w-full max-w-5xl bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-3 mb-6 print:hidden">
-            <div>
+          <div className="w-full max-w-5xl bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] mb-6 print:hidden">
+            <div className="mb-4">
               <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Folha do Mês — Todos os Funcionários</h2>
               <p className="text-sm text-[#64748B]">
                 Competência: {formatarMesAnoBR(mesReferencia)} • {lote.length} funcionário(s) ativo(s) • {totalFechados} fechado(s)
               </p>
             </div>
-            <div className="flex items-center gap-3 flex-wrap justify-center">
-              <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
-              <button onClick={fecharFolhaTodos} disabled={loadingLote || lote.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">
-                🔒 Fechar Folha do Mês (Todos)
-              </button>
-              {totalFechados > 0 && (
-                <button onClick={reabrirFolhaTodos} disabled={loadingLote} className="bg-white border-2 border-red-300 text-red-600 font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl hover:bg-red-50 transition-all disabled:opacity-50">
-                  🔓 Reabrir Todos ({totalFechados})
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-gray-100">
+              <div>
+                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Competência</label>
+                <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <button onClick={fecharFolhaTodos} disabled={loadingLote || lote.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">
+                  🔒 Fechar Folha do Mês (Todos)
                 </button>
-              )}
-              <button onClick={() => window.print()} disabled={lote.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
-                🖨️ Imprimir Todos ({lote.length} páginas)
-              </button>
+                {totalFechados > 0 && (
+                  <button onClick={reabrirFolhaTodos} disabled={loadingLote} className="bg-white border-2 border-red-300 text-red-600 font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl hover:bg-red-50 transition-all disabled:opacity-50">
+                    🔓 Reabrir Todos ({totalFechados})
+                  </button>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <button onClick={() => window.print()} disabled={lote.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
+                  🖨️ Imprimir Todos ({lote.length} páginas)
+                </button>
+              </div>
             </div>
           </div>
 
           {totalFechados > 0 && (
-            <div className="w-full max-w-5xl bg-indigo-50 border border-indigo-200 p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-3 mb-6 print:hidden">
-              <div className="flex items-center gap-3">
+            <div className="w-full max-w-5xl bg-indigo-50 border border-indigo-200 p-4 rounded-2xl mb-6 print:hidden">
+              <div className="flex items-center gap-3 mb-4">
                 <span className="text-lg">✍️</span>
                 <div>
                   <h3 className="text-sm font-black text-indigo-900 uppercase tracking-wider">Assinatura Digital (Autentique)</h3>
                   <p className="text-[11px] text-indigo-700 font-bold">Envia os holerites fechados para assinatura com validação por CPF.</p>
                 </div>
               </div>
-              <div className="flex items-center gap-3 flex-wrap justify-center">
-                <label className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider cursor-pointer bg-white px-3 py-2 rounded-lg border border-indigo-200">
-                  <input type="checkbox" checked={sandboxAssinatura} onChange={e => setSandboxAssinatura(e.target.checked)} />
-                  <span className={sandboxAssinatura ? 'text-amber-600' : 'text-red-600'}>{sandboxAssinatura ? '🧪 Modo Teste' : '⚠ Modo Real'}</span>
-                </label>
-                <button onClick={enviarAssinaturaTodos} disabled={enviandoAssinatura !== null} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50">
-                  {enviandoAssinatura === 'LOTE' ? '⏳ Enviando...' : '📤 Enviar Todos p/ Assinatura'}
-                </button>
-                <button onClick={() => router.push('/admin/rh/assinaturas')} className="bg-white border-2 border-indigo-300 text-indigo-700 font-black uppercase tracking-widest text-xs px-5 py-3 rounded-xl hover:bg-indigo-50 transition-all">
-                  📋 Acompanhar
-                </button>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-indigo-100">
+                <div>
+                  <label className="block text-[10px] font-black text-indigo-400 uppercase mb-1">Ambiente</label>
+                  <label className="w-full flex items-center gap-2 text-[11px] font-black uppercase tracking-wider cursor-pointer bg-white px-3 py-2.5 rounded-lg border border-indigo-200">
+                    <input type="checkbox" checked={sandboxAssinatura} onChange={e => setSandboxAssinatura(e.target.checked)} />
+                    <span className={sandboxAssinatura ? 'text-amber-600' : 'text-red-600'}>{sandboxAssinatura ? '🧪 Modo Teste' : '⚠ Modo Real'}</span>
+                  </label>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <button onClick={enviarAssinaturaTodos} disabled={enviandoAssinatura !== null} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50">
+                    {enviandoAssinatura === 'LOTE' ? '⏳ Enviando...' : '📤 Enviar Todos p/ Assinatura'}
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <button onClick={() => router.push('/admin/rh/assinaturas')} className="bg-white border-2 border-indigo-300 text-indigo-700 font-black uppercase tracking-widest text-xs px-5 py-2.5 rounded-xl hover:bg-indigo-50 transition-all">
+                    📋 Acompanhar
+                  </button>
+                </div>
               </div>
             </div>
           )}

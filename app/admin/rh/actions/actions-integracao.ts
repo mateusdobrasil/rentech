@@ -32,6 +32,43 @@ export async function listarIntegracoesAction(): Promise<Resultado> {
   }
 }
 
+// Confirma (sem nunca expor o valor) se o token da Autentique está definido
+// no ambiente do servidor. O token nunca é lido/gravado via cliente do banco.
+export async function statusTokenAutentiqueAction(): Promise<Resultado> {
+  return { ok: true, info: { configurado: !!process.env.AUTENTIQUE_API_TOKEN } };
+}
+
+// Estatísticas de uso da integração com a Autentique, para exibir no card e
+// no modal de configuração (aba Parceiros).
+export async function estatisticasAutentiqueAction(): Promise<Resultado> {
+  const db = supabaseAdmin();
+  try {
+    const { data, error } = await db
+      .from('folha_holerite_assinaturas')
+      .select('status, sandbox, enviado_em')
+      .order('enviado_em', { ascending: false });
+    if (error) throw new Error(error.message);
+
+    const rows = data || [];
+    const total = rows.length;
+    const assinados = rows.filter(r => r.status === 'ASSINADO').length;
+    const rejeitados = rows.filter(r => r.status === 'REJEITADO').length;
+    const pendentes = total - assinados - rejeitados;
+    const producao = rows.filter(r => !r.sandbox).length;
+
+    return {
+      ok: true,
+      info: {
+        total, assinados, rejeitados, pendentes,
+        producao, sandbox: total - producao,
+        ultimoEnvio: rows[0]?.enviado_em || null
+      }
+    };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
 // Salva metadados de configuração (NÃO segredos) e status de uma integração
 export async function salvarIntegracaoAction(payload: {
   parceiro: string; ativo: boolean; ambiente: 'SANDBOX' | 'PRODUCAO'; config: any;

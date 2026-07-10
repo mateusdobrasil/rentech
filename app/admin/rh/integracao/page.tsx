@@ -7,7 +7,8 @@ import { supabase } from '../../../lib/supabase';
 import {
   listarIntegracoesAction, salvarIntegracaoAction,
   montarLoteSalariosAction, salvarLoteAction, listarLotesAction, enviarLoteAoBancoAction,
-  listarPdfsContabilidadeAction, processarOcrAwsAction
+  listarPdfsContabilidadeAction, processarOcrAwsAction,
+  statusTokenAutentiqueAction, estatisticasAutentiqueAction
 } from '../actions/actions-integracao';
 
 // ============================================================================
@@ -55,6 +56,10 @@ interface Lote {
   nome_lote: string | null;
   qtd_pagamentos: number; valor_total: number; status: string; criado_por: string | null; criado_em: string;
 }
+interface EstatisticasAutentique {
+  total: number; assinados: number; rejeitados: number; pendentes: number;
+  producao: number; sandbox: number; ultimoEnvio: string | null;
+}
 
 const ICONE_TIPO: Record<string, string> = { BANCO: '🏦', BENEFICIO: '🎁', ASSINATURA: '✍️' };
 
@@ -69,6 +74,9 @@ export default function IntegracaoPage() {
 
   const [integracoes, setIntegracoes] = useState<Integracao[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const [tokenAutentiqueOk, setTokenAutentiqueOk] = useState<boolean | null>(null);
+  const [statsAutentique, setStatsAutentique] = useState<EstatisticasAutentique | null>(null);
 
   const [editParceiro, setEditParceiro] = useState<Integracao | null>(null);
   const [edAtivo, setEdAtivo] = useState(false);
@@ -158,9 +166,14 @@ export default function IntegracaoPage() {
   const carregar = async () => {
     setLoading(true);
     try {
-      const [integ, lotesRes] = await Promise.all([listarIntegracoesAction(), listarLotesAction({})]);
+      const [integ, lotesRes, tokenRes, statsRes] = await Promise.all([
+        listarIntegracoesAction(), listarLotesAction({}),
+        statusTokenAutentiqueAction(), estatisticasAutentiqueAction()
+      ]);
       if (integ.ok) setIntegracoes(integ.info.integracoes);
       if (lotesRes.ok) setLotes(lotesRes.info.lotes);
+      if (tokenRes.ok) setTokenAutentiqueOk(tokenRes.info.configurado);
+      if (statsRes.ok) setStatsAutentique(statsRes.info);
     } finally { setLoading(false); }
   };
 
@@ -684,6 +697,37 @@ export default function IntegracaoPage() {
                       {i.ativo ? '● Ativo' : '○ Inativo'}
                     </span>
                   </div>
+
+                  {i.parceiro === 'AUTENTIQUE' && (
+                    <div className="mb-3 pb-3 border-b border-gray-100 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-gray-500 font-bold uppercase">Token no servidor</span>
+                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${tokenAutentiqueOk ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                          {tokenAutentiqueOk === null ? '…' : tokenAutentiqueOk ? '✓ Configurado' : '✕ Ausente'}
+                        </span>
+                      </div>
+                      {statsAutentique && (
+                        <div className="flex flex-wrap gap-1.5">
+                          <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-gray-100 text-gray-600">{statsAutentique.total} enviados</span>
+                          <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-green-100 text-green-700">{statsAutentique.assinados} assinados</span>
+                          <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-amber-100 text-amber-700">{statsAutentique.pendentes} pendentes</span>
+                          {statsAutentique.rejeitados > 0 && (
+                            <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-red-100 text-red-600">{statsAutentique.rejeitados} rejeitados</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {i.parceiro === 'FLASH' && (
+                    <div className="mb-3 pb-3 border-b border-gray-100">
+                      <span className="inline-block text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-orange-100 text-orange-700">📄 Arquivo manual (CSV)</span>
+                      <p className="text-[10px] text-gray-400 font-semibold mt-1.5 leading-snug">
+                        Sem API — gere o CSV em RH → Grid de Benefícios ("⚡ Gerar Flash") e suba manualmente na plataforma Flash.
+                      </p>
+                    </div>
+                  )}
+
                   <div className="flex items-center justify-between">
                     <span className={`text-[10px] font-black uppercase ${i.ambiente === 'PRODUCAO' ? 'text-[#0C1D4D]' : 'text-amber-600'}`}>
                       {i.ambiente === 'PRODUCAO' ? '● Produção' : '🟡 Sandbox'}
@@ -959,6 +1003,69 @@ export default function IntegracaoPage() {
                   ))}
                 </div>
               </div>
+
+              {editParceiro.parceiro === 'AUTENTIQUE' && (
+                <div className="space-y-3">
+                  <div className="p-3 bg-[#F8FAFC] rounded-xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-gray-500 uppercase">Token da API</span>
+                      <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${tokenAutentiqueOk ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                        {tokenAutentiqueOk === null ? '…' : tokenAutentiqueOk ? '✓ Configurado' : '✕ Ausente'}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-gray-400 font-semibold leading-snug">
+                      O token (AUTENTIQUE_API_TOKEN) vive só no ambiente do servidor — nunca é lido, gravado ou exibido aqui.
+                    </p>
+                  </div>
+
+                  {statsAutentique && (
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-500 uppercase mb-2">Uso da integração</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="p-3 bg-gray-50 rounded-xl text-center">
+                          <p className="text-xl font-black text-[#0C1D4D]">{statsAutentique.total}</p>
+                          <p className="text-[9px] font-black text-gray-400 uppercase">Enviados</p>
+                        </div>
+                        <div className="p-3 bg-green-50 rounded-xl text-center">
+                          <p className="text-xl font-black text-green-700">{statsAutentique.assinados}</p>
+                          <p className="text-[9px] font-black text-green-500 uppercase">Assinados</p>
+                        </div>
+                        <div className="p-3 bg-amber-50 rounded-xl text-center">
+                          <p className="text-xl font-black text-amber-700">{statsAutentique.pendentes}</p>
+                          <p className="text-[9px] font-black text-amber-500 uppercase">Pendentes</p>
+                        </div>
+                        <div className="p-3 bg-red-50 rounded-xl text-center">
+                          <p className="text-xl font-black text-red-700">{statsAutentique.rejeitados}</p>
+                          <p className="text-[9px] font-black text-red-400 uppercase">Rejeitados</p>
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-gray-400 font-semibold mt-2">
+                        {statsAutentique.producao} em produção · {statsAutentique.sandbox} em teste
+                        {statsAutentique.ultimoEnvio && <> · último envio em {fmtDataHora(statsAutentique.ultimoEnvio)}</>}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {editParceiro.parceiro === 'FLASH' && (
+                <div className="space-y-3">
+                  <div className="p-3 bg-orange-50 rounded-xl space-y-1.5">
+                    <span className="inline-block text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-orange-100 text-orange-700">📄 Arquivo manual (CSV)</span>
+                    <p className="text-[10px] text-orange-800 font-semibold leading-snug">
+                      A Flash não tem API integrada aqui. O pedido de benefícios é gerado na tela "Grid de Benefícios"
+                      (botão "⚡ Gerar Flash"), já no formato de colunas que a plataforma da Flash espera
+                      (Mobilidade / Refeição e Alimentação / Premiação), e enviado manualmente lá.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => router.push('/admin/rh/beneficios')}
+                    className="w-full bg-orange-500 hover:bg-orange-600 text-white font-black uppercase tracking-widest text-[11px] py-3 rounded-xl transition-all"
+                  >
+                    🎁 Ir para Grid de Benefícios
+                  </button>
+                </div>
+              )}
 
               {editParceiro.tipo === 'BANCO' && (
                 <div className="space-y-3">

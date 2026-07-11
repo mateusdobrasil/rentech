@@ -36,22 +36,23 @@ const normalizarPermissao = (permissaoBruta: string): string => {
   return 'USUARIO'; 
 };
 
-// Estrutura inteligente dos módulos do sistema
+// Estrutura dos módulos do sistema. As permissões de cada um NÃO ficam mais
+// aqui — vêm da tabela folha_paginas_permissoes (gerida em /admin/permissoes),
+// buscadas pelo campo "link" (= endereco_route). Isso mantém o hub sempre em
+// sincronia com o que a própria página de destino já exige para entrar.
 const MODULOS_SISTEMA = [
   {
     titulo: 'Ordens de Pagamentos',
     descricao: 'Acompanhe o status ou edite as Ordens de Pagamento solicitadas por você.',
     icone: '📋',
     link: '/admin/op',
-    permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO', 'ADMINISTRATIVO', 'OPERACIONAL', 'ESTOQUE', 'USUARIO'],
     cor: 'border-[#336699]/50 hover:border-[#336699]',
     bgIcon: 'bg-blue-50 text-[#336699]'
-  },  {
+  }, {
     titulo: 'RH',
     descricao: 'Importe os registros do relógio, calcule horas extras e gere espelhos de jornada.',
     icone: '🫀​',
     link: '/admin/rh',
-    permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO', 'ADMINISTRATIVO'],
     cor: 'border-rose-500/50 hover:border-rose-500',
     bgIcon: 'bg-rose-50 text-rose-600'
   },
@@ -60,7 +61,6 @@ const MODULOS_SISTEMA = [
     descricao: 'Faça upload e gerencie os arquivos, softwares e manuais públicos da Rentech.',
     icone: '📁',
     link: '/admin/downloads',
-    permissoes_permitidas: ['ADMINISTRADOR','OPERACIONAL'],
     cor: 'border-cyan-500/50 hover:border-cyan-500',
     bgIcon: 'bg-cyan-50 text-cyan-600'
   },
@@ -69,7 +69,6 @@ const MODULOS_SISTEMA = [
     descricao: 'Gerencie os textos principais, vídeos e canais de contato da página inicial em tempo real.',
     icone: '🌐',
     link: '/admin/conteudo',
-    permissoes_permitidas: ['ADMINISTRADOR', 'EDITOR'],
     cor: 'border-[#336699]/50 hover:border-[#336699]',
     bgIcon: 'bg-blue-50 text-[#336699]'
   },
@@ -78,7 +77,6 @@ const MODULOS_SISTEMA = [
     descricao: 'Gestão de entrada, saída e manutenção de equipamentos cadastrados.',
     icone: '📦',
     link: '/admin/estoque',
-    permissoes_permitidas: ['ADMINISTRADOR', 'ESTOQUE'],
     cor: 'border-amber-500/50 hover:border-amber-500',
     bgIcon: 'bg-amber-50 text-amber-600'
   },
@@ -87,7 +85,6 @@ const MODULOS_SISTEMA = [
     descricao: 'Acesso à lista de colaboradores Freelance, especialidades e chaves PIX.',
     icone: '👷',
     link: '/admin/freelance',
-    permissoes_permitidas: ['ADMINISTRADOR', 'OPERACIONAL', 'FINANCEIRO', 'ADMINISTRATIVO'],
     cor: 'border-blue-500/50 hover:border-blue-500',
     bgIcon: 'bg-blue-50 text-blue-600'
   },
@@ -96,7 +93,14 @@ const MODULOS_SISTEMA = [
     descricao: 'Controle de usuários, blocks e alteração de níveis de permissão da equipe.',
     icone: '🔐',
     link: '/admin/permissoes',
-    permissoes_permitidas: ['ADMINISTRADOR'],
+    cor: 'border-purple-500/50 hover:border-purple-500',
+    bgIcon: 'bg-purple-50 text-purple-600'
+  },
+  {
+    titulo: 'Gestão de Agendamentos',
+    descricao: 'Gestão de agendas, lembretes e rotinas diárias para os colaboradores.',
+    icone: '⏰',
+    link: '/admin/agendamentos',
     cor: 'border-purple-500/50 hover:border-purple-500',
     bgIcon: 'bg-purple-50 text-purple-600'
   },
@@ -105,7 +109,6 @@ const MODULOS_SISTEMA = [
     descricao: 'Histórico completo de todas as ações realizadas no sistema: acessos, edições e alterações.',
     icone: '🔍',
     link: '/admin/log',
-    permissoes_permitidas: ['ADMINISTRADOR'],
     cor: 'border-slate-500/50 hover:border-slate-500',
     bgIcon: 'bg-slate-50 text-slate-600'
   }
@@ -114,27 +117,35 @@ const MODULOS_SISTEMA = [
 export default function HubAdministrativo() {
   const router = useRouter();
   const [perfil, setPerfil] = useState<PerfilUsuario | null>(null);
+  const [mapaPermissoes, setMapaPermissoes] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const carregarAcesso = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      
+
       if (!session) {
         router.push('/login');
         return;
       }
 
-      const { data: userProfile, error } = await supabase
-        .from('perfis_usuarios')
-        .select('nome, email, permissao')
-        .eq('id', session.user.id)
-        .single();
+      const [perfilRes, permissoesRes] = await Promise.all([
+        supabase.from('perfis_usuarios').select('nome, email, permissao').eq('id', session.user.id).single(),
+        supabase.from('folha_paginas_permissoes').select('endereco_route, permissoes_permitidas')
+          .in('endereco_route', MODULOS_SISTEMA.map(m => m.link))
+      ]);
 
-      if (userProfile && !error) {
+      if (permissoesRes.error) {
+        console.error("Erro ao buscar permissões das rotas:", permissoesRes.error);
+      }
+      const mapa: Record<string, string[]> = {};
+      (permissoesRes.data || []).forEach(r => { mapa[r.endereco_route] = r.permissoes_permitidas || []; });
+      setMapaPermissoes(mapa);
+
+      if (perfilRes.data && !perfilRes.error) {
         setPerfil({
-          ...userProfile,
-          permissaoNormalizada: normalizarPermissao(userProfile.permissao)
+          ...perfilRes.data,
+          permissaoNormalizada: normalizarPermissao(perfilRes.data.permissao)
         });
       } else {
         console.error("Perfil não encontrado no banco de dados.");
@@ -177,8 +188,10 @@ export default function HubAdministrativo() {
     );
   }
 
-  const modulosAutorizados = MODULOS_SISTEMA.filter(modulo => 
-    modulo.permissoes_permitidas.includes(perfil.permissaoNormalizada!)
+  // Permissões vêm do banco (folha_paginas_permissoes), não mais de um array
+  // fixo no código. Rota sem linha na tabela = ninguém acessa.
+  const modulosAutorizados = MODULOS_SISTEMA.filter(modulo =>
+    (mapaPermissoes[modulo.link] || []).includes(perfil.permissaoNormalizada!)
   );
 
   return (

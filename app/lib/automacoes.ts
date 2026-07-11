@@ -11,7 +11,10 @@ interface ResultadoDisparoAutomacao {
   erros: string[];
 }
 
-export async function dispararAutomacaoWhatsApp(chave: string, mensagem: string): Promise<ResultadoDisparoAutomacao> {
+type FuncionarioDestinatario = { nome_completo: string; celular: string };
+type MensagemAutomacao = string | ((funcionario: FuncionarioDestinatario) => string);
+
+export async function dispararAutomacaoWhatsApp(chave: string, mensagem: MensagemAutomacao): Promise<ResultadoDisparoAutomacao> {
   const db = supabaseAdmin();
 
   const { data: automacao } = await db
@@ -39,8 +42,9 @@ export async function dispararAutomacaoWhatsApp(chave: string, mensagem: string)
 
   let disparos = 0;
   const erros: string[] = [];
-  for (const f of funcionarios || []) {
-    const res = await enviarWhatsApp(f.celular as string, mensagem);
+  for (const f of (funcionarios || []) as FuncionarioDestinatario[]) {
+    const texto = typeof mensagem === 'function' ? mensagem(f) : mensagem;
+    const res = await enviarWhatsApp(f.celular, texto);
     if (res.ok) disparos++; else erros.push(f.nome_completo);
     await new Promise(resolve => setTimeout(resolve, 1000));
   }

@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/lembrete-ponto",
       "schedule": "0 11 * * 1-5"
+    },
+    {
+      "path": "/api/cron/lembrete-ponto2",
+      "schedule": "0 22 * * 1-5"
     }
   ]
 }

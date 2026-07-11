@@ -35,97 +35,99 @@ const normalizarPermissao = (permissaoBruta: string): string => {
   return 'USUARIO'; 
 };
 
+// Lista de módulos do hub. As permissões de cada um NÃO ficam mais aqui —
+// vêm da tabela folha_paginas_permissoes (gerida em /admin/permissoes),
+// buscadas pelo campo "link" (= endereco_route). Isso mantém o hub sempre
+// em sincronia com o que a própria página de destino já exige para entrar.
+const modulosRh = [
+  {
+    titulo: 'Gestão de Funcionários',
+    descricao: 'Gestão de cadastro e gerenciamento dos os funcionários.',
+    icone: '🧑', link: '/admin/rh/funcionario',
+    cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
+  },
+  {
+    titulo: 'Gestão de Holerites',
+    descricao: 'Visualizaçao de holerites, fechamentos e envio de assinaturas.',
+    icone: '💰', link: '/admin/rh/holerite',
+    cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
+  },
+  {
+    titulo: 'Gestão de Assinaturas',
+    descricao: 'Gestão de Assinaturas de contratos e documentos.',
+    icone: '📃', link: '/admin/rh/assinaturas',
+    cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
+  },
+  {
+    titulo: 'Gestão de Benefícios',
+    descricao: 'Transporte, refeição, alimentação e outros benefícios.',
+    icone: '🎁', link: '/admin/rh/beneficios',
+    cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
+  },
+  {
+    titulo: 'Gestão de Documentos',
+    descricao: 'Gestão de RG, CPF, CTPS, comprovante de residência, contrato, ASO admissional/periódico, CNH, certificados, advertência e outros',
+    icone: '📁', link: '/admin/rh/documentos',
+    cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
+  },
+  {
+    titulo: 'Controle de Ponto',
+    descricao: 'Importação de registros, cálculo de horas extras e espelhos.',
+    icone: '⏱️', link: '/admin/rh/ponto',
+    cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
+  },
+  {
+    titulo: 'Relatórios e Dashboards',
+    descricao: 'Relatórios financeiros e analíticos.',
+    icone: '📊', link: '/admin/rh/relatorios',
+    cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
+  },
+  {
+    titulo: 'Parâmetros de Contrato',
+    descricao: 'Motor de regras de cálculo (CLT, PJ, Temporário, etc).',
+    icone: '⚙️', link: '/admin/rh/parametros',
+    cor: 'bg-purple-50 border-purple-200 text-purple-700', hover: 'hover:border-purple-500'
+  },
+  {
+    titulo: 'APIs e Integrações',
+    descricao: 'Integração com sistemas externos e geração de APIs.',
+    icone: '🔌', link: '/admin/rh/integracao',
+    cor: 'bg-purple-50 border-purple-200 text-purple-700', hover: 'hover:border-purple-500'
+  }
+];
+
 export default function RhHub() {
   const router = useRouter();
   const [perfil, setPerfil] = useState<PerfilUsuario | null>(null);
+  const [mapaPermissoes, setMapaPermissoes] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
-
-  // Lista de todos os módulos e quem pode aceder a eles
-  const modulosRh = [
-    {
-      titulo: 'Gestão de Funcionários',
-      descricao: 'Gestão de cadastro e gerenciamento dos os funcionários.',
-      icone: '🧑', link: '/admin/rh/funcionario',
-      permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
-      cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
-    },
-    {
-      titulo: 'Gestão de Holerites',
-      descricao: 'Visualizaçao de holerites, fechamentos e envio de assinaturas.',
-      icone: '💰', link: '/admin/rh/holerite',
-      permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
-      cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
-    },
-    {
-      titulo: 'Gestão de Assinaturas',
-      descricao: 'Gestão de Assinaturas de contratos e documentos.',
-      icone: '📃', link: '/admin/rh/assinaturas',
-      permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
-      cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
-    },
-    {
-      titulo: 'Gestão de Benefícios',
-      descricao: 'Transporte, refeição, alimentação e outros benefícios.',
-      icone: '🎁', link: '/admin/rh/beneficios',
-      permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
-      cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
-    },
-    {
-      titulo: 'Gestão de Documentos',
-      descricao: 'Gestão de RG, CPF, CTPS, comprovante de residência, contrato, ASO admissional/periódico, CNH, certificados, advertência e outros',
-      icone: '📁', link: '/admin/rh/documentos',
-      permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO', 'ADMINISTRATIVO'],
-      cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
-    },
-    {
-      titulo: 'Controle de Ponto',
-      descricao: 'Importação de registros, cálculo de horas extras e espelhos.',
-      icone: '⏱️', link: '/admin/rh/ponto',
-      permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
-      cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
-    },
-    {
-      titulo: 'Relatórios e Dashboards',
-      descricao: 'Relatórios financeiros e analíticos.',
-      icone: '📊', link: '/admin/rh/relatorios',
-      permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
-      cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
-    },
-    {
-      titulo: 'Parâmetros de Contrato',
-      descricao: 'Motor de regras de cálculo (CLT, PJ, Temporário, etc).',
-      icone: '⚙️', link: '/admin/rh/parametros',
-      permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
-      cor: 'bg-purple-50 border-purple-200 text-purple-700', hover: 'hover:border-purple-500'
-    },
-    {
-      titulo: 'APIs e Integrações',
-      descricao: 'Integração com sistemas externos e geração de APIs.',
-      icone: '🔌', link: '/admin/rh/integracao',
-      permissoes_permitidas: ['ADMINISTRADOR', 'FINANCEIRO'],
-      cor: 'bg-purple-50 border-purple-200 text-purple-700', hover: 'hover:border-purple-500'
-    }
-  ];
 
   useEffect(() => {
     const carregarAcesso = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      
+
       if (!session) {
         router.push('/login');
         return;
       }
 
-      const { data: userProfile, error } = await supabase
-        .from('perfis_usuarios')
-        .select('nome, email, permissao')
-        .eq('id', session.user.id)
-        .single();
+      const [perfilRes, permissoesRes] = await Promise.all([
+        supabase.from('perfis_usuarios').select('nome, email, permissao').eq('id', session.user.id).single(),
+        supabase.from('folha_paginas_permissoes').select('endereco_route, permissoes_permitidas')
+          .in('endereco_route', modulosRh.map(m => m.link))
+      ]);
 
-      if (userProfile && !error) {
+      if (permissoesRes.error) {
+        console.error("Erro ao buscar permissões das rotas:", permissoesRes.error);
+      }
+      const mapa: Record<string, string[]> = {};
+      (permissoesRes.data || []).forEach(r => { mapa[r.endereco_route] = r.permissoes_permitidas || []; });
+      setMapaPermissoes(mapa);
+
+      if (perfilRes.data && !perfilRes.error) {
         setPerfil({
-          ...userProfile,
-          permissaoNormalizada: normalizarPermissao(userProfile.permissao)
+          ...perfilRes.data,
+          permissaoNormalizada: normalizarPermissao(perfilRes.data.permissao)
         });
       } else {
         console.error("Perfil não encontrado no banco de dados.");
@@ -171,10 +173,11 @@ export default function RhHub() {
   }
 
   // ==========================================================================
-  // FILTRO DE SEGURANÇA APLICADO
+  // FILTRO DE SEGURANÇA APLICADO — permissões vêm do banco (folha_paginas_permissoes),
+  // não mais de um array fixo no código. Rota sem linha na tabela = ninguém acessa.
   // ==========================================================================
-  const modulosAutorizados = modulosRh.filter(modulo => 
-    modulo.permissoes_permitidas.includes(perfil.permissaoNormalizada!)
+  const modulosAutorizados = modulosRh.filter(modulo =>
+    (mapaPermissoes[modulo.link] || []).includes(perfil.permissaoNormalizada!)
   );
 
   return (

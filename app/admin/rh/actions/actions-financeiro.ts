@@ -1,90 +1,24 @@
 'use server';
 
-// app/admin/rh/actions/actions-integracao.ts
-// Integração com parceiros (bancos, benefícios). Nesta versão: estrutura,
-// montagem do lote de pagamento a partir da folha, e histórico. O envio real
-// ao banco é um ponto de plugagem (stub) — exige credenciais/certificado em
-// variáveis de ambiente e homologação, que entram numa fase posterior.
+// app/admin/rh/actions/actions-financeiro.ts
+// Montagem de lotes de pagamento a partir da folha (fechamento, adiantamento,
+// pagamento e benefícios), leitura de comprovantes via OCR (AWS Textract) e
+// histórico de lotes. O envio real ao banco é um ponto de plugagem (stub) —
+// exige credenciais/certificado em variáveis de ambiente e homologação, que
+// entram numa fase posterior. Cadastro de parceiros/bancos vive em
+// app/admin/integracao/actions.ts (tela Integrações).
 import { supabaseAdmin } from '../../../lib/supabase';
 import { calcularBeneficiosMes } from './actions-beneficios';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
 import { TextractClient, DetectDocumentTextCommand } from "@aws-sdk/client-textract";
 
-type Resultado = { 
-  ok: boolean; 
-  erro?: string; 
+type Resultado = {
+  ok: boolean;
+  erro?: string;
   info?: any;
   valor?: number;       // Adicionado para o retorno do OCR da AWS
   _textoLido?: string;  // Adicionado para diagnóstico do OCR
 };
-
-// ============================================================================
-// PARCEIROS / INTEGRAÇÕES
-// ============================================================================
-export async function listarIntegracoesAction(): Promise<Resultado> {
-  const db = supabaseAdmin();
-  try {
-    const { data, error } = await db.from('folha_integracoes').select('*').order('tipo');
-    if (error) throw new Error(error.message);
-    return { ok: true, info: { integracoes: data || [] } };
-  } catch (e: any) {
-    return { ok: false, erro: e.message };
-  }
-}
-
-// Confirma (sem nunca expor o valor) se o token da Autentique está definido
-// no ambiente do servidor. O token nunca é lido/gravado via cliente do banco.
-export async function statusTokenAutentiqueAction(): Promise<Resultado> {
-  return { ok: true, info: { configurado: !!process.env.AUTENTIQUE_API_TOKEN } };
-}
-
-// Estatísticas de uso da integração com a Autentique, para exibir no card e
-// no modal de configuração (aba Parceiros).
-export async function estatisticasAutentiqueAction(): Promise<Resultado> {
-  const db = supabaseAdmin();
-  try {
-    const { data, error } = await db
-      .from('folha_holerite_assinaturas')
-      .select('status, sandbox, enviado_em')
-      .order('enviado_em', { ascending: false });
-    if (error) throw new Error(error.message);
-
-    const rows = data || [];
-    const total = rows.length;
-    const assinados = rows.filter(r => r.status === 'ASSINADO').length;
-    const rejeitados = rows.filter(r => r.status === 'REJEITADO').length;
-    const pendentes = total - assinados - rejeitados;
-    const producao = rows.filter(r => !r.sandbox).length;
-
-    return {
-      ok: true,
-      info: {
-        total, assinados, rejeitados, pendentes,
-        producao, sandbox: total - producao,
-        ultimoEnvio: rows[0]?.enviado_em || null
-      }
-    };
-  } catch (e: any) {
-    return { ok: false, erro: e.message };
-  }
-}
-
-// Salva metadados de configuração (NÃO segredos) e status de uma integração
-export async function salvarIntegracaoAction(payload: {
-  parceiro: string; ativo: boolean; ambiente: 'SANDBOX' | 'PRODUCAO'; config: any;
-}): Promise<Resultado> {
-  const db = supabaseAdmin();
-  try {
-    const { error } = await db.from('folha_integracoes').update({
-      ativo: payload.ativo, ambiente: payload.ambiente, config: payload.config || {},
-      atualizado_em: new Date().toISOString()
-    }).eq('parceiro', payload.parceiro);
-    if (error) throw new Error(error.message);
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, erro: e.message };
-  }
-}
 
 // ============================================================================
 // MONTAR LOTE DE PAGAMENTO — 4 fontes selecionáveis por funcionário
@@ -154,7 +88,7 @@ export async function montarLoteSalariosAction(payload: {
     if (fontes.includes('FOLHA')) Object.keys(folhaPorNome).forEach(n => nomes.add(n));
     if (fontes.includes('ADIANTAMENTO')) {
       temAdiantamento.forEach(n => nomes.add(n));
-      Object.keys(adiantFichaPorNome).forEach(n => nomes.add(n)); 
+      Object.keys(adiantFichaPorNome).forEach(n => nomes.add(n));
     }
     if (fontes.includes('PAGAMENTO')) temPagamento.forEach(n => nomes.add(n));
     if (fontes.includes('BENEFICIOS')) Object.keys(beneficiosPorNome).forEach(n => nomes.add(n));
@@ -170,7 +104,7 @@ export async function montarLoteSalariosAction(payload: {
     try {
       fontesResolvidas = await resolverFontesPagamento(db, Array.from(nomes));
     } catch (e) {
-      fontesResolvidas = {}; 
+      fontesResolvidas = {};
     }
 
     const rotuloFonte: Record<FonteLote, string> = {
@@ -193,11 +127,11 @@ export async function montarLoteSalariosAction(payload: {
 
       const resolvido = fontesResolvidas[nome] || { recebeFechamento: true, recebeHolerite: true };
       const entradas: { fonte: FonteLote; valor: number; temDoc?: boolean; origem?: string }[] = [];
-      
+
       if (fontes.includes('FOLHA') && resolvido.recebeFechamento && folhaPorNome[nome] !== undefined) {
         entradas.push({ fonte: 'FOLHA', valor: folhaPorNome[nome] });
       }
-      
+
       if (fontes.includes('ADIANTAMENTO')) {
         const daFicha = adiantFichaPorNome[nome];
         if (daFicha !== undefined && daFicha > 0) {
@@ -206,7 +140,7 @@ export async function montarLoteSalariosAction(payload: {
           entradas.push({ fonte: 'ADIANTAMENTO', valor: valoresAdiant[nome] || 0, temDoc: true, origem: 'OCR' });
         }
       }
-      
+
       if (fontes.includes('PAGAMENTO') && resolvido.recebeHolerite && temPagamento.has(nome)) {
         entradas.push({ fonte: 'PAGAMENTO', valor: valoresPagto[nome] || 0, temDoc: true });
       }
@@ -219,8 +153,8 @@ export async function montarLoteSalariosAction(payload: {
           funcionario_nome: nome,
           fonte: e.fonte,
           fonte_rotulo: rotuloFonte[e.fonte],
-          temDoc: e.temDoc || false, 
-          origem: e.origem || null,  
+          temDoc: e.temDoc || false,
+          origem: e.origem || null,
           valor: e.valor,
           ...bancoInfo,
           pronto: (temPix || temConta) && e.valor > 0
@@ -260,8 +194,8 @@ export async function montarLoteSalariosAction(payload: {
 // OCR AWS TEXTRACT (SERVER-SIDE)
 // Envia o PDF digitalizado diretamente para a AWS para leitura limpa e precisa.
 // ============================================================================
-const textractClient = new TextractClient({ 
-  region: process.env.AWS_REGION || "us-east-1" 
+const textractClient = new TextractClient({
+  region: process.env.AWS_REGION || "us-east-1"
 });
 
 export async function processarOcrAwsAction(pdfBase64: string, tipo: string): Promise<Resultado> {
@@ -291,15 +225,15 @@ export async function processarOcrAwsAction(pdfBase64: string, tipo: string): Pr
 
     if (m && m[1]) {
       const numero = m[1].replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
-      return { 
-        ok: true, 
+      return {
+        ok: true,
         valor: Number(numero),
-        _textoLido: linhas.substring(0, 500) 
+        _textoLido: linhas.substring(0, 500)
       };
     }
 
-    return { 
-      ok: false, 
+    return {
+      ok: false,
       erro: 'Texto legível, mas o rótulo "Valor Líquido" não foi encontrado.',
       _textoLido: linhas.substring(0, 500)
     };

@@ -89,9 +89,9 @@ const modulosRh = [
     cor: 'bg-purple-50 border-purple-200 text-purple-700', hover: 'hover:border-purple-500'
   },
   {
-    titulo: 'APIs e Integrações',
-    descricao: 'Integração com sistemas externos e geração de APIs.',
-    icone: '🔌', link: '/admin/rh/integracao',
+    titulo: 'Financeiro',
+    descricao: 'Lotes de pagamento, OCR de comprovantes e arquivos bancários (CNAB).',
+    icone: '💸', link: '/admin/rh/financeiro',
     cor: 'bg-purple-50 border-purple-200 text-purple-700', hover: 'hover:border-purple-500'
   }
 ];

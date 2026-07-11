@@ -105,6 +105,14 @@ const MODULOS_SISTEMA = [
     bgIcon: 'bg-purple-50 text-purple-600'
   },
   {
+    titulo: 'Integrações',
+    descricao: 'Bancos e parceiros para pagamentos e envio de informações.',
+    icone: '🔗', 
+    link: '/admin/integracao',
+    cor: 'border-blue-500/50 hover:border-blue-500',
+    bgIcon: 'bg-blue-50 text-blue-600'
+  },
+  {
     titulo: 'Auditoria — Log',
     descricao: 'Histórico completo de todas as ações realizadas no sistema: acessos, edições e alterações.',
     icone: '🔍',

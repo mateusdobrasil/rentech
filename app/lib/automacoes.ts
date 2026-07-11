@@ -60,5 +60,11 @@ export async function dispararAutomacaoWhatsApp(chave: string, contexto: Record<
 
   await db.from('folha_automacoes').update({ ultima_execucao: new Date().toISOString() }).eq('chave', chave);
 
+  // Log agregado desta execução, usado pelos contadores "Enviados este mês"
+  // na tela Agendamentos e Disparos.
+  if (disparos > 0) {
+    await db.from('folha_automacoes_envios').insert({ chave, canal: 'WhatsApp', quantidade: disparos });
+  }
+
   return { disparado: true, disparos, erros };
 }

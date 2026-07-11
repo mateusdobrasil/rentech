@@ -5,6 +5,7 @@
 // campo `ativo` antes de disparar qualquer mensagem. Desligar aqui impede
 // o envio sem precisar mexer em código ou na Vercel.
 import { supabaseAdmin } from '../../lib/supabase';
+import { verificarConexaoZapi } from '../../lib/zapi';
 
 export interface RotinaAutomacaoDB {
   id: number;
@@ -183,6 +184,33 @@ export async function atualizarAutomacaoAction(id: number, payload: FormAutomaca
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
+}
+
+// Soma real de disparos deste mês, por canal, a partir de folha_automacoes_envios
+// (substitui os números fixos "1.240" / "450" que existiam antes).
+export async function contarEnviosMesAction(): Promise<Resultado<{ whatsapp: number; email: number }>> {
+  const db = supabaseAdmin();
+  try {
+    const agora = new Date();
+    const inicioMes = new Date(Date.UTC(agora.getFullYear(), agora.getMonth(), 1)).toISOString();
+    const { data, error } = await db
+      .from('folha_automacoes_envios')
+      .select('canal, quantidade')
+      .gte('criado_em', inicioMes);
+    if (error) throw new Error(error.message);
+
+    const whatsapp = (data || []).filter(d => d.canal === 'WhatsApp').reduce((s, d) => s + d.quantidade, 0);
+    const email = (data || []).filter(d => d.canal === 'E-mail').reduce((s, d) => s + d.quantidade, 0);
+    return { ok: true, data: { whatsapp, email } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// Checagem ao vivo da conexão da Z-API (substitui o badge fixo "Conectado").
+export async function verificarStatusZapiAction(): Promise<Resultado<{ conectado: boolean; detalhe?: string }>> {
+  const resultado = await verificarConexaoZapi();
+  return { ok: true, data: resultado };
 }
 
 export async function excluirAutomacaoAction(id: number): Promise<Resultado> {

@@ -7,7 +7,7 @@ import { supabase } from '../../lib/supabase';
 import {
   listarAutomacoesAction, alternarStatusAutomacaoAction,
   criarAutomacaoAction, atualizarAutomacaoAction, excluirAutomacaoAction,
-  listarFuncionariosParaAutomacaoAction,
+  listarFuncionariosParaAutomacaoAction, contarEnviosMesAction, verificarStatusZapiAction,
   type RotinaAutomacaoDB, type FormAutomacao, type FuncionarioParaAutomacao
 } from './actions';
 
@@ -50,6 +50,20 @@ export default function GestaoAgendamentos() {
 
   useEffect(() => {
     carregarRotinas();
+  }, []);
+
+  // Contadores reais de envio (mês corrente) e status ao vivo da Z-API —
+  // antes eram números/badge fixos no código.
+  const [enviosMes, setEnviosMes] = useState<{ whatsapp: number; email: number } | null>(null);
+  const [statusZapi, setStatusZapi] = useState<{ conectado: boolean; detalhe?: string } | null>(null);
+  const [statusZapiLoading, setStatusZapiLoading] = useState(true);
+
+  useEffect(() => {
+    contarEnviosMesAction().then(res => { if (res.ok) setEnviosMes(res.data || { whatsapp: 0, email: 0 }); });
+    verificarStatusZapiAction().then(res => {
+      if (res.ok) setStatusZapi(res.data || { conectado: false });
+      setStatusZapiLoading(false);
+    });
   }, []);
 
   // Funcionários ativos disponíveis para seleção como destinatários (agrupados por cargo,
@@ -289,15 +303,21 @@ export default function GestaoAgendamentos() {
           </div>
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0] border-l-4 border-l-[#16A34A]">
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">WhatsApp Enviados</p>
-            <p className="text-2xl font-black text-[#16A34A]">1.240 <span className="text-[10px] text-gray-400 font-medium">este mês</span></p>
+            <p className="text-2xl font-black text-[#16A34A]">{enviosMes === null ? '…' : enviosMes.whatsapp} <span className="text-[10px] text-gray-400 font-medium">este mês</span></p>
           </div>
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0] border-l-4 border-l-[#336699]">
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">E-mails Enviados</p>
-            <p className="text-2xl font-black text-[#336699]">450 <span className="text-[10px] text-gray-400 font-medium">este mês</span></p>
+            <p className="text-2xl font-black text-[#336699]">{enviosMes === null ? '…' : enviosMes.email} <span className="text-[10px] text-gray-400 font-medium">este mês</span></p>
           </div>
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0] border-l-4 border-l-gray-400">
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Status Z-API</p>
-            <p className="text-sm font-black text-[#16A34A] mt-2 bg-green-50 px-3 py-1 rounded-lg inline-block">✅ Conectado</p>
+            {statusZapiLoading ? (
+              <p className="text-sm font-black text-gray-400 mt-2">Verificando...</p>
+            ) : (
+              <p className={`text-sm font-black mt-2 px-3 py-1 rounded-lg inline-block ${statusZapi?.conectado ? 'text-[#16A34A] bg-green-50' : 'text-red-600 bg-red-50'}`} title={statusZapi?.detalhe}>
+                {statusZapi?.conectado ? '✅ Conectado' : '⛔ Desconectado'}
+              </p>
+            )}
           </div>
         </div>
 

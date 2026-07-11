@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase';
 import { registrarLogAuditoria } from '../../actions';
 import { revalidatePath } from 'next/cache';
 import nodemailer from 'nodemailer';
+import { dispararAutomacaoWhatsApp } from '../../lib/automacoes';
 
 // ============================================================================
 // CLIENTE ADMIN: IGNORA RLS PARA OPERAÇÕES DO SERVIDOR
@@ -44,7 +45,7 @@ export async function criarOP(data: NovaOPData) {
     const { data: novaOp, error } = await supabaseAdmin
       .from('ordens_pagamento')
       .insert([data])
-      .select('id')
+      .select('id, numero_op')
       .single();
 
     if (error) throw error;
@@ -72,7 +73,21 @@ export async function criarOP(data: NovaOPData) {
     } catch (emailError) {
       console.error("A OP foi criada, mas houve um erro no disparo do e-mail:", emailError);
     }
-    
+
+    // =========================================================
+    // DISPARO AUTOMÁTICO DE WHATSAPP NA CRIAÇÃO
+    // Respeita o toggle e os destinatários configurados na automação
+    // "Notificação de Nova OP" (tela Agendamentos e Disparos, chave 'nova-op').
+    // =========================================================
+    try {
+      const totalFormatado = Number(data.total_geral || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+      const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+      const mensagem = `💰 *Nova OP Recebida*\n\nNº: *${novaOp.numero_op || novaOp.id}*\nOS: ${data.os_numero || 'S/N'}\nSolicitante: ${data.responsavel_nome}\nFavorecido: ${data.empresa_recebedora}\nValor: *${totalFormatado}*\n\n${baseUrl}/api/baixar-op?id=${novaOp.id}`;
+      await dispararAutomacaoWhatsApp('nova-op', mensagem);
+    } catch (whatsappError) {
+      console.error("A OP foi criada, mas houve um erro no disparo do WhatsApp:", whatsappError);
+    }
+
     revalidatePath('/admin');
     return { success: true, id: novaOp.id };
   } catch (error: any) {

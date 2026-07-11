@@ -18,6 +18,9 @@ export interface RotinaAutomacaoDB {
   ativo: boolean;
   ultima_execucao: string | null;
   destinatarios: string[];
+  mensagem: string | null;
+  horario: string | null; // 'HH:MM', só para tipo CRON
+  dias_semana: number[]; // 0=Dom..6=Sáb, só para tipo CRON
 }
 
 export interface FormAutomacao {
@@ -28,6 +31,9 @@ export interface FormAutomacao {
   canais: string[];
   publico_alvo: string;
   destinatarios: string[]; // nome_completo dos funcionários; vazio = todos os ativos
+  mensagem: string;
+  horario: string;
+  dias_semana: number[];
 }
 
 export interface FuncionarioParaAutomacao {
@@ -87,6 +93,19 @@ export async function alternarStatusAutomacaoAction(id: number, ativo: boolean):
   }
 }
 
+const NOMES_DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+// Monta o rótulo exibido no card a partir do horário/dias configurados,
+// pra não ficar um texto livre desalinhado do agendamento real.
+function formatarGatilhoCron(horario: string, diasSemana: number[]): string {
+  if (!horario) return '';
+  const dias = [...diasSemana].sort();
+  const ehSegASex = dias.length === 5 && dias.join(',') === '1,2,3,4,5';
+  const todosOsDias = dias.length === 7;
+  const rotuloDias = todosOsDias ? 'Todos os dias' : ehSegASex ? 'Seg a Sex' : dias.map(d => NOMES_DIAS[d]).join(', ');
+  return `${horario} (${rotuloDias})`;
+}
+
 // Gera uma `chave` (identificador técnico estável, lido pelo Cron) a partir do
 // nome digitado, garantindo unicidade com um sufixo numérico se necessário.
 async function gerarChaveUnica(db: ReturnType<typeof supabaseAdmin>, nome: string): Promise<string> {
@@ -107,17 +126,24 @@ export async function criarAutomacaoAction(payload: FormAutomacao): Promise<Resu
   if (!nome) return { ok: false, erro: 'Informe o nome da automação.' };
   if (!payload.canais || payload.canais.length === 0) return { ok: false, erro: 'Selecione ao menos um canal de disparo.' };
 
+  if (payload.tipo === 'CRON' && !payload.horario) return { ok: false, erro: 'Informe o horário do disparo.' };
+  if (payload.tipo === 'CRON' && (!payload.dias_semana || payload.dias_semana.length === 0)) return { ok: false, erro: 'Selecione ao menos um dia da semana.' };
+
   try {
     const chave = await gerarChaveUnica(db, nome);
+    const gatilho = payload.tipo === 'CRON' ? formatarGatilhoCron(payload.horario, payload.dias_semana) : (payload.gatilho?.trim() || null);
     const { error } = await db.from('folha_automacoes').insert({
       chave,
       nome,
       descricao: payload.descricao?.trim() || null,
       tipo: payload.tipo,
-      gatilho: payload.gatilho?.trim() || null,
+      gatilho,
       canais: payload.canais,
       publico_alvo: payload.publico_alvo?.trim() || null,
       destinatarios: payload.destinatarios || [],
+      mensagem: payload.mensagem?.trim() || null,
+      horario: payload.tipo === 'CRON' ? payload.horario : null,
+      dias_semana: payload.tipo === 'CRON' ? payload.dias_semana : [1, 2, 3, 4, 5],
       ativo: true,
     });
     if (error) throw new Error(error.message);
@@ -135,15 +161,22 @@ export async function atualizarAutomacaoAction(id: number, payload: FormAutomaca
   if (!nome) return { ok: false, erro: 'Informe o nome da automação.' };
   if (!payload.canais || payload.canais.length === 0) return { ok: false, erro: 'Selecione ao menos um canal de disparo.' };
 
+  if (payload.tipo === 'CRON' && !payload.horario) return { ok: false, erro: 'Informe o horário do disparo.' };
+  if (payload.tipo === 'CRON' && (!payload.dias_semana || payload.dias_semana.length === 0)) return { ok: false, erro: 'Selecione ao menos um dia da semana.' };
+
   try {
+    const gatilho = payload.tipo === 'CRON' ? formatarGatilhoCron(payload.horario, payload.dias_semana) : (payload.gatilho?.trim() || null);
     const { error } = await db.from('folha_automacoes').update({
       nome,
       descricao: payload.descricao?.trim() || null,
       tipo: payload.tipo,
-      gatilho: payload.gatilho?.trim() || null,
+      gatilho,
       canais: payload.canais,
       publico_alvo: payload.publico_alvo?.trim() || null,
       destinatarios: payload.destinatarios || [],
+      mensagem: payload.mensagem?.trim() || null,
+      horario: payload.tipo === 'CRON' ? payload.horario : null,
+      dias_semana: payload.tipo === 'CRON' ? payload.dias_semana : [1, 2, 3, 4, 5],
     }).eq('id', id);
     if (error) throw new Error(error.message);
     return { ok: true };

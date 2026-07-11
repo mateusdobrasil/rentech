@@ -68,7 +68,7 @@ export default function GestaoAgendamentos() {
   }, {});
 
   // Modal de criação/edição de automação
-  const formVazio: FormAutomacao = { nome: '', descricao: '', tipo: 'CRON', gatilho: '', canais: [], publico_alvo: '', destinatarios: [] };
+  const formVazio: FormAutomacao = { nome: '', descricao: '', tipo: 'CRON', gatilho: '', canais: [], publico_alvo: '', destinatarios: [], mensagem: '', horario: '08:00', dias_semana: [1, 2, 3, 4, 5] };
   const [modalAutomacao, setModalAutomacao] = useState<{ open: boolean; isNew: boolean; id: number | null; chave?: string; modoTodos: boolean; form: FormAutomacao } | null>(null);
   const [salvandoAutomacao, setSalvandoAutomacao] = useState(false);
 
@@ -88,8 +88,18 @@ export default function GestaoAgendamentos() {
       canais: rotina.canais || [],
       publico_alvo: rotina.publico_alvo || '',
       destinatarios: rotina.destinatarios || [],
+      mensagem: rotina.mensagem || '',
+      horario: rotina.horario || '08:00',
+      dias_semana: (rotina.dias_semana && rotina.dias_semana.length > 0) ? rotina.dias_semana : [1, 2, 3, 4, 5],
     }
   });
+
+  const alternarDiaSemana = (dia: number) => {
+    if (!modalAutomacao) return;
+    const jaTem = modalAutomacao.form.dias_semana.includes(dia);
+    const dias_semana = jaTem ? modalAutomacao.form.dias_semana.filter(d => d !== dia) : [...modalAutomacao.form.dias_semana, dia];
+    setModalAutomacao({ ...modalAutomacao, form: { ...modalAutomacao.form, dias_semana } });
+  };
 
   const alternarCanalModal = (canal: string) => {
     if (!modalAutomacao) return;
@@ -394,18 +404,44 @@ export default function GestaoAgendamentos() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Tipo</label>
+                <select
+                  className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer"
+                  value={modalAutomacao.form.tipo}
+                  onChange={e => setModalAutomacao({ ...modalAutomacao, form: { ...modalAutomacao.form, tipo: e.target.value as 'CRON' | 'WEBHOOK' } })}
+                >
+                  <option value="CRON">⏱️ Agendamento (Cron)</option>
+                  <option value="WEBHOOK">⚡ Evento (Webhook)</option>
+                </select>
+              </div>
+
+              {modalAutomacao.form.tipo === 'CRON' ? (
                 <div>
-                  <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Tipo</label>
-                  <select
-                    className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer"
-                    value={modalAutomacao.form.tipo}
-                    onChange={e => setModalAutomacao({ ...modalAutomacao, form: { ...modalAutomacao.form, tipo: e.target.value as 'CRON' | 'WEBHOOK' } })}
-                  >
-                    <option value="CRON">⏱️ Agendamento (Cron)</option>
-                    <option value="WEBHOOK">⚡ Evento (Webhook)</option>
-                  </select>
+                  <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Horário do Disparo</label>
+                  <input
+                    type="time"
+                    step={300}
+                    className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm mb-3"
+                    value={modalAutomacao.form.horario}
+                    onChange={e => setModalAutomacao({ ...modalAutomacao, form: { ...modalAutomacao.form, horario: e.target.value } })}
+                  />
+                  <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-2">Dias da Semana</label>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((label, dia) => (
+                      <button
+                        type="button"
+                        key={dia}
+                        onClick={() => alternarDiaSemana(dia)}
+                        className={`w-11 h-9 rounded-lg text-[10px] font-black uppercase transition-colors ${modalAutomacao.form.dias_semana.includes(dia) ? 'bg-[#336699] text-white' : 'bg-[#F1F5F9] text-[#64748B] border border-[#CBD5E1]'}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-[#94A3B8] mt-1">O motor de Cron verifica os horários a cada 5 minutos.</p>
                 </div>
+              ) : (
                 <div>
                   <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Gatilho</label>
                   <input
@@ -413,9 +449,24 @@ export default function GestaoAgendamentos() {
                     className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm"
                     value={modalAutomacao.form.gatilho}
                     onChange={e => setModalAutomacao({ ...modalAutomacao, form: { ...modalAutomacao.form, gatilho: e.target.value } })}
-                    placeholder="Ex: 08:00 (Seg a Sex)"
+                    placeholder="Ex: Ao Fechar Folha"
                   />
+                  <p className="text-[10px] text-[#94A3B8] mt-1">Texto livre — o evento em si precisa existir no código (ex: criação de OP).</p>
                 </div>
+              )}
+
+              <div>
+                <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Mensagem</label>
+                <textarea
+                  className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-mono"
+                  rows={4}
+                  value={modalAutomacao.form.mensagem}
+                  onChange={e => setModalAutomacao({ ...modalAutomacao, form: { ...modalAutomacao.form, mensagem: e.target.value } })}
+                  placeholder={'Olá, *{{primeiro_nome}}*! Não esqueça de bater o ponto.'}
+                />
+                <p className="text-[10px] text-[#94A3B8] mt-1">
+                  Placeholders disponíveis: <code>{'{{primeiro_nome}}'}</code> e <code>{'{{nome_completo}}'}</code> (e outras variáveis específicas do evento, se houver — ex: <code>{'{{valor}}'}</code>, <code>{'{{numero_op}}'}</code> na automação de Nova OP).
+                </p>
               </div>
 
               <div>

@@ -76,14 +76,20 @@ export async function criarOP(data: NovaOPData) {
 
     // =========================================================
     // DISPARO AUTOMÁTICO DE WHATSAPP NA CRIAÇÃO
-    // Respeita o toggle e os destinatários configurados na automação
-    // "Notificação de Nova OP" (tela Agendamentos e Disparos, chave 'nova-op').
+    // Respeita o toggle, os destinatários e o texto da mensagem configurados
+    // na automação "Notificação de Nova OP" (Agendamentos e Disparos, chave
+    // 'nova-op') — só passamos as variáveis do evento, o template é 100% dela.
     // =========================================================
     try {
-      const totalFormatado = Number(data.total_geral || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
       const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
-      const mensagem = `💰 *Nova OP Recebida*\n\nNº: *${novaOp.numero_op || novaOp.id}*\nOS: ${data.os_numero || 'S/N'}\nSolicitante: ${data.responsavel_nome}\nFavorecido: ${data.empresa_recebedora}\nValor: *${totalFormatado}*\n\n${baseUrl}/api/baixar-op?id=${novaOp.id}`;
-      await dispararAutomacaoWhatsApp('nova-op', mensagem);
+      await dispararAutomacaoWhatsApp('nova-op', {
+        numero_op: novaOp.numero_op || novaOp.id,
+        os_numero: data.os_numero || 'S/N',
+        solicitante: data.responsavel_nome,
+        favorecido: data.empresa_recebedora,
+        valor: Number(data.total_geral || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+        link: `${baseUrl}/api/baixar-op?id=${novaOp.id}`,
+      });
     } catch (whatsappError) {
       console.error("A OP foi criada, mas houve um erro no disparo do WhatsApp:", whatsappError);
     }

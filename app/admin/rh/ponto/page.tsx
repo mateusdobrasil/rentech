@@ -10,7 +10,8 @@ import { importarPontoAction, importarAbonosAction } from '../actions/actions-po
 import {
   estatisticasPontoWhatsappAction, listarLedgerPontoWhatsappAction,
   listarSolicitacoesPendentesAction, aprovarSolicitacaoAction, rejeitarSolicitacaoAction,
-  type EstatisticasPontoWhatsapp, type RegistroLedger, type SolicitacaoPendente
+  listarHistoricoSolicitacoesAction, urlAnexoSolicitacaoAction,
+  type EstatisticasPontoWhatsapp, type RegistroLedger, type SolicitacaoPendente, type SolicitacaoHistorico
 } from '../actions/actions-ponto-whatsapp';
 import SepararHolerites from './SepararHolerites';
 import logoColorido from '../../../../app/imgs/logo.png';
@@ -125,10 +126,12 @@ export default function GestaoDePonto() {
   const [estatisticasWhatsapp, setEstatisticasWhatsapp] = useState<EstatisticasPontoWhatsapp | null>(null);
   const [ledgerWhatsapp, setLedgerWhatsapp] = useState<RegistroLedger[]>([]);
   const [carregandoLedger, setCarregandoLedger] = useState(false);
-  const [abaWhatsapp, setAbaWhatsapp] = useState<'ledger' | 'solicitacoes'>('ledger');
+  const [abaWhatsapp, setAbaWhatsapp] = useState<'ledger' | 'solicitacoes' | 'historico'>('ledger');
   const [solicitacoesPendentes, setSolicitacoesPendentes] = useState<SolicitacaoPendente[]>([]);
   const [carregandoSolicitacoes, setCarregandoSolicitacoes] = useState(false);
   const [processandoSolicitacaoId, setProcessandoSolicitacaoId] = useState<number | null>(null);
+  const [historicoSolicitacoes, setHistoricoSolicitacoes] = useState<SolicitacaoHistorico[]>([]);
+  const [carregandoHistorico, setCarregandoHistorico] = useState(false);
   // Batida via WhatsApp usa a data real do dia (não a competência de folha),
   // então tem seletor de mês próprio — por padrão o mês corrente, não o
   // anterior usado no restante da tela para o fechamento de folha.
@@ -570,7 +573,7 @@ export default function GestaoDePonto() {
     const res = await aprovarSolicitacaoAction({ id, aprovadorNome: usuarioAtual });
     setProcessandoSolicitacaoId(null);
     if (!res.ok) { alert(res.erro); return; }
-    await Promise.all([carregarSolicitacoesPendentes(), carregarAcessoEDados()]);
+    await Promise.all([carregarSolicitacoesPendentes(), carregarAcessoEDados(), carregarHistoricoSolicitacoes()]);
   };
 
   const rejeitarSolicitacao = async (id: number) => {
@@ -580,7 +583,26 @@ export default function GestaoDePonto() {
     const res = await rejeitarSolicitacaoAction({ id, aprovadorNome: usuarioAtual, motivoRejeicao: motivo.trim() });
     setProcessandoSolicitacaoId(null);
     if (!res.ok) { alert(res.erro); return; }
-    await carregarSolicitacoesPendentes();
+    await Promise.all([carregarSolicitacoesPendentes(), carregarHistoricoSolicitacoes()]);
+  };
+
+  const carregarHistoricoSolicitacoes = async () => {
+    setCarregandoHistorico(true);
+    const res = await listarHistoricoSolicitacoesAction();
+    if (res.ok) setHistoricoSolicitacoes(res.info || []);
+    setCarregandoHistorico(false);
+  };
+
+  const abrirHistoricoSolicitacoes = () => {
+    setViewMode('ponto_whatsapp');
+    setAbaWhatsapp('historico');
+    carregarHistoricoSolicitacoes();
+  };
+
+  const verAnexoSolicitacao = async (id: number) => {
+    const res = await urlAnexoSolicitacaoAction({ id });
+    if (!res.ok || !res.info) { alert(res.erro || 'Não foi possível abrir o anexo.'); return; }
+    window.open(res.info.url, '_blank');
   };
 
   const RenderEspelho = ({ nome, registrosFunc }: { nome: string, registrosFunc: RegistroDiario[] }) => {
@@ -789,40 +811,7 @@ export default function GestaoDePonto() {
               </div>
 
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
-                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">2. Importar Dados</h3>
-                <p className="text-xs text-[#64748B] mb-4">Carregue os CSVs para reescrever as batidas e abonos do mês.</p>
-                <div className="flex flex-col space-y-2">
-                  <input type="file" accept=".csv" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
-                  <button onClick={() => fileInputRef.current?.click()} disabled={isProcessing} className="w-full border-2 border-dashed border-[#336699] text-[#336699] font-black uppercase tracking-widest text-xs py-4 rounded-xl hover:bg-blue-50 transition-colors disabled:opacity-50">
-                    {isProcessing ? '⏳ Processando...' : '📥 PONTO (BATIDAS)'}
-                  </button>
-                  <input type="file" accept=".csv" className="hidden" ref={abonoFileInputRef} onChange={handleAbonoUpload} />
-                  <button onClick={() => abonoFileInputRef.current?.click()} disabled={isProcessing} className="w-full border-2 border-dashed border-green-600 text-green-600 font-black uppercase tracking-widest text-xs py-4 rounded-xl hover:bg-green-50 transition-colors disabled:opacity-50">
-                    {isProcessing ? '⏳ Processando...' : '➕ ABONOS (AUSÊNCIAS)'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
-                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">3. Abonos</h3>
-                <p className="text-xs text-[#64748B] mb-4">Consultar os abonos (ausências) lançados no mês selecionado.</p>
-                <button onClick={() => { setAbonosConsolidado(false); setViewMode('abonos'); }} className="w-full bg-green-600 hover:bg-green-700 text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
-                  📋 VER ABONOS DO MÊS
-                  {abonos.length > 0 && <span className="bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{abonos.length}</span>}
-                </button>
-              </div>
-
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
-                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">4. Holerites da Contabilidade</h3>
-                <p className="text-xs text-[#64748B] mb-4">Importar e separar por funcionário os PDFs de adiantamento e pagamento, para anexar à assinatura.</p>
-                <button onClick={() => setViewMode('separar_holerites')} className="w-full bg-[#0C1D4D] hover:bg-[#284B8C] text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
-                  📄 SEPARAR HOLERITES
-                  <span className="bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{elegiveisContabilidade.length}</span>
-                </button>
-              </div>
-
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
-                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">5. Ponto via WhatsApp</h3>
+                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">2. Ponto via WhatsApp</h3>
                 <p className="text-xs text-[#64748B] mb-4">Batidas confirmadas pelo funcionário direto no WhatsApp — ledger imutável, com numeração sequencial (NSR).</p>
                 <div className="flex flex-wrap gap-1.5 mb-4">
                   <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-emerald-100 text-emerald-700">{estatisticasWhatsapp?.funcionariosHabilitados ?? '…'} habilitados</span>
@@ -839,7 +828,43 @@ export default function GestaoDePonto() {
                       <span className="bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{estatisticasWhatsapp.solicitacoesPendentes}</span>
                     )}
                   </button>
+                  <button onClick={abrirHistoricoSolicitacoes} className="w-full bg-white border-2 border-[#0C1D4D] text-[#0C1D4D] hover:bg-[#0C1D4D] hover:text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
+                    📜 HISTÓRICO DE SOLICITAÇÕES
+                  </button>
                 </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
+                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">3. Importar Dados</h3>
+                <p className="text-xs text-[#64748B] mb-4">Carregue os CSVs para reescrever as batidas e abonos do mês.</p>
+                <div className="flex flex-col space-y-2">
+                  <input type="file" accept=".csv" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
+                  <button onClick={() => fileInputRef.current?.click()} disabled={isProcessing} className="w-full border-2 border-dashed border-[#336699] text-[#336699] font-black uppercase tracking-widest text-xs py-4 rounded-xl hover:bg-blue-50 transition-colors disabled:opacity-50">
+                    {isProcessing ? '⏳ Processando...' : '📥 PONTO (BATIDAS)'}
+                  </button>
+                  <input type="file" accept=".csv" className="hidden" ref={abonoFileInputRef} onChange={handleAbonoUpload} />
+                  <button onClick={() => abonoFileInputRef.current?.click()} disabled={isProcessing} className="w-full border-2 border-dashed border-green-600 text-green-600 font-black uppercase tracking-widest text-xs py-4 rounded-xl hover:bg-green-50 transition-colors disabled:opacity-50">
+                    {isProcessing ? '⏳ Processando...' : '➕ ABONOS (AUSÊNCIAS)'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
+                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">4. Abonos</h3>
+                <p className="text-xs text-[#64748B] mb-4">Consultar os abonos (ausências) lançados no mês selecionado.</p>
+                <button onClick={() => { setAbonosConsolidado(false); setViewMode('abonos'); }} className="w-full bg-green-600 hover:bg-green-700 text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
+                  📋 VER ABONOS DO MÊS
+                  {abonos.length > 0 && <span className="bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{abonos.length}</span>}
+                </button>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
+                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">5. Holerites da Contabilidade</h3>
+                <p className="text-xs text-[#64748B] mb-4">Importar e separar por funcionário os PDFs de adiantamento e pagamento, para anexar à assinatura.</p>
+                <button onClick={() => setViewMode('separar_holerites')} className="w-full bg-[#0C1D4D] hover:bg-[#284B8C] text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
+                  📄 SEPARAR HOLERITES
+                  <span className="bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{elegiveisContabilidade.length}</span>
+                </button>
               </div>
             </aside>
 
@@ -1048,14 +1073,7 @@ export default function GestaoDePonto() {
           <div className="flex flex-col gap-4">
             <div className="flex flex-col sm:flex-row justify-between items-center gap-3 bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm">
               <button onClick={voltarResumo} className="text-[#64748B] font-bold text-sm hover:text-[#0C1D4D] transition-colors flex items-center gap-2">⬅ Voltar ao Resumo</button>
-              <div className="flex items-center gap-3">
-                <div className="flex bg-[#F1F5F9] p-1 rounded-lg border border-[#E2E8F0]">
-                  <button onClick={() => setAbaWhatsapp('ledger')} className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abaWhatsapp === 'ledger' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>📲 Ledger</button>
-                  <button onClick={() => setAbaWhatsapp('solicitacoes')} className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abaWhatsapp === 'solicitacoes' ? 'bg-amber-500 text-white shadow-sm' : 'text-[#64748B] hover:text-amber-600'}`}>
-                    🔔 Solicitações
-                    {solicitacoesPendentes.length > 0 && <span className="ml-1.5 bg-white/25 px-1.5 py-0.5 rounded-full text-[9px]">{solicitacoesPendentes.length}</span>}
-                  </button>
-                </div>
+              <div className="flex items-center gap-2">
                 {abaWhatsapp === 'ledger' && (
                   <input
                     type="month"
@@ -1064,10 +1082,18 @@ export default function GestaoDePonto() {
                     className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]"
                   />
                 )}
+                <div className="flex bg-[#F1F5F9] p-1 rounded-lg border border-[#E2E8F0]">
+                  <button onClick={() => setAbaWhatsapp('ledger')} className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abaWhatsapp === 'ledger' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>📲 Ledger</button>
+                  <button onClick={() => setAbaWhatsapp('solicitacoes')} className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abaWhatsapp === 'solicitacoes' ? 'bg-amber-500 text-white shadow-sm' : 'text-[#64748B] hover:text-amber-600'}`}>
+                    🔔 Solicitações
+                    {solicitacoesPendentes.length > 0 && <span className="ml-1.5 bg-white/25 px-1.5 py-0.5 rounded-full text-[9px]">{solicitacoesPendentes.length}</span>}
+                  </button>
+                  <button onClick={() => setAbaWhatsapp('historico')} className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abaWhatsapp === 'historico' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>📜 Histórico</button>
+                </div>
               </div>
             </div>
 
-            {abaWhatsapp === 'ledger' ? (
+            {abaWhatsapp === 'ledger' && (
               <main className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col">
                 <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC]">
                   <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Ledger de Ponto via WhatsApp</h2>
@@ -1107,7 +1133,9 @@ export default function GestaoDePonto() {
                   </table>
                 </div>
               </main>
-            ) : (
+            )}
+
+            {abaWhatsapp === 'solicitacoes' && (
               <main className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col">
                 <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC]">
                   <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Solicitações Pendentes</h2>
@@ -1123,14 +1151,15 @@ export default function GestaoDePonto() {
                         <th className="p-4">Data</th>
                         <th className="p-4">Detalhe</th>
                         <th className="p-4">Motivo</th>
+                        <th className="p-4">Anexo</th>
                         <th className="p-4 text-right">Ação</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#E2E8F0]">
                       {carregandoSolicitacoes ? (
-                        <tr><td colSpan={6} className="p-8 text-center text-[#94A3B8] font-bold">Carregando solicitações...</td></tr>
+                        <tr><td colSpan={7} className="p-8 text-center text-[#94A3B8] font-bold">Carregando solicitações...</td></tr>
                       ) : solicitacoesPendentes.length === 0 ? (
-                        <tr><td colSpan={6} className="p-8 text-center text-[#94A3B8] font-bold">Nenhuma solicitação pendente.</td></tr>
+                        <tr><td colSpan={7} className="p-8 text-center text-[#94A3B8] font-bold">Nenhuma solicitação pendente.</td></tr>
                       ) : (
                         solicitacoesPendentes.map((s) => (
                           <tr key={s.id} className="hover:bg-[#F8FAFC] transition-colors">
@@ -1143,12 +1172,75 @@ export default function GestaoDePonto() {
                             <td className="p-4 font-bold">{s.data_referencia.split('-').reverse().join('/')}</td>
                             <td className="p-4 text-xs">{s.tipo === 'JUSTIFICATIVA_BATIDA' ? `${(s.tipo_batida || '').replace('_', ' ')} às ${s.horario_solicitado}` : '—'}</td>
                             <td className="p-4 text-xs text-gray-600">{s.motivo}</td>
+                            <td className="p-4 text-xs">
+                              {s.anexo_nome
+                                ? <button onClick={() => verAnexoSolicitacao(s.id)} className="text-[#336699] hover:underline font-bold">📎 Ver anexo</button>
+                                : '—'}
+                            </td>
                             <td className="p-4 text-right">
                               <div className="flex gap-2 justify-end">
                                 <button disabled={processandoSolicitacaoId === s.id} onClick={() => aprovarSolicitacao(s.id)} className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors">✓ Aprovar</button>
                                 <button disabled={processandoSolicitacaoId === s.id} onClick={() => rejeitarSolicitacao(s.id)} className="bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-600 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors">✕ Rejeitar</button>
                               </div>
                             </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </main>
+            )}
+
+            {abaWhatsapp === 'historico' && (
+              <main className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col">
+                <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC]">
+                  <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Histórico de Solicitações</h2>
+                  <p className="text-sm text-[#64748B]">Todas as justificativas e abonos pedidos via WhatsApp, aprovados ou não — nada é apagado, só muda de status.</p>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left border-collapse">
+                    <thead className="bg-white border-b-2 border-[#E2E8F0]">
+                      <tr className="text-[9px] xl:text-[10px] uppercase font-black tracking-widest text-[#64748B]">
+                        <th className="p-4">Colaborador</th>
+                        <th className="p-4">Tipo</th>
+                        <th className="p-4">Data</th>
+                        <th className="p-4">Motivo</th>
+                        <th className="p-4">Anexo</th>
+                        <th className="p-4">Status</th>
+                        <th className="p-4">Analisado por</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0]">
+                      {carregandoHistorico ? (
+                        <tr><td colSpan={7} className="p-8 text-center text-[#94A3B8] font-bold">Carregando histórico...</td></tr>
+                      ) : historicoSolicitacoes.length === 0 ? (
+                        <tr><td colSpan={7} className="p-8 text-center text-[#94A3B8] font-bold">Nenhuma solicitação registrada ainda.</td></tr>
+                      ) : (
+                        historicoSolicitacoes.map((s) => (
+                          <tr key={s.id} className="hover:bg-[#F8FAFC] transition-colors">
+                            <td className="p-4 font-black text-[#0C1D4D]">{s.funcionario_nome}</td>
+                            <td className="p-4">
+                              {s.tipo === 'JUSTIFICATIVA_BATIDA'
+                                ? <span className="text-[9px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-black uppercase">Justificativa</span>
+                                : <span className="text-[9px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-black uppercase">Abono</span>}
+                            </td>
+                            <td className="p-4 font-bold">{s.data_referencia.split('-').reverse().join('/')}</td>
+                            <td className="p-4 text-xs text-gray-600">{s.motivo}</td>
+                            <td className="p-4 text-xs">
+                              {s.anexo_nome
+                                ? <button onClick={() => verAnexoSolicitacao(s.id)} className="text-[#336699] hover:underline font-bold">📎 Ver</button>
+                                : '—'}
+                            </td>
+                            <td className="p-4">
+                              {s.status === 'PENDENTE' && <span className="text-[9px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-black uppercase">Pendente</span>}
+                              {s.status === 'APROVADA' && <span className="text-[9px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-black uppercase">Aprovada</span>}
+                              {s.status === 'REJEITADA' && (
+                                <span className="text-[9px] bg-red-100 text-red-600 px-2 py-0.5 rounded font-black uppercase" title={s.motivo_rejeicao || ''}>Rejeitada</span>
+                              )}
+                            </td>
+                            <td className="p-4 text-xs text-gray-500">{s.resolvido_por || '—'}</td>
                           </tr>
                         ))
                       )}

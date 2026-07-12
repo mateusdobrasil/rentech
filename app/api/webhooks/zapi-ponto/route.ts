@@ -11,14 +11,25 @@
 // proteção contra POSTs arbitrários vindos da internet.
 import { NextRequest, NextResponse } from 'next/server';
 import { enviarWhatsApp } from '../../../lib/zapi';
-import { processarMensagemPontoWhatsApp } from '../../../lib/pontoWhatsapp';
+import { processarMensagemPontoWhatsApp, type AnexoZapi } from '../../../lib/pontoWhatsapp';
 
-function extrairMensagem(body: any): { telefone: string | null; texto: string; messageId: string | null; fromMe: boolean } {
+function extrairMensagem(body: any): { telefone: string | null; texto: string; messageId: string | null; fromMe: boolean; anexo: AnexoZapi | null } {
   const telefone = body?.phone || body?.telefone || null;
-  const texto = body?.text?.message || body?.message?.text || body?.body || '';
+  const texto = body?.text?.message || body?.message?.text || body?.body || body?.image?.caption || '';
   const messageId = body?.messageId || body?.id || null;
   const fromMe = Boolean(body?.fromMe);
-  return { telefone, texto, messageId, fromMe };
+
+  // Foto ou PDF enviados pelo funcionário (ex: atestado, no fluxo ABONAR).
+  // Formato conforme a documentação da Z-API para o webhook "ao receber".
+  let anexo: AnexoZapi | null = null;
+  if (body?.image?.imageUrl) {
+    const extensao = (body.image.mimeType || 'image/jpeg').split('/')[1] || 'jpg';
+    anexo = { url: body.image.imageUrl, nomeArquivo: `foto.${extensao}`, mimeType: body.image.mimeType || 'image/jpeg' };
+  } else if (body?.document?.documentUrl) {
+    anexo = { url: body.document.documentUrl, nomeArquivo: body.document.fileName || 'documento.pdf', mimeType: body.document.mimeType || 'application/pdf' };
+  }
+
+  return { telefone, texto, messageId, fromMe, anexo };
 }
 
 export async function POST(req: NextRequest) {
@@ -33,7 +44,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, motivo: 'corpo vazio ou inválido' }, { status: 200 });
     }
 
-    const { telefone, texto, messageId, fromMe } = extrairMensagem(body);
+    const { telefone, texto, messageId, fromMe, anexo } = extrairMensagem(body);
 
     // Mensagens enviadas pela própria instância (nossas respostas) não devem
     // reiniciar o fluxo — sem essa guarda o bot conversaria consigo mesmo.
@@ -41,7 +52,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, ignorado: true });
     }
 
-    const resultado = await processarMensagemPontoWhatsApp({ telefone, texto, messageId, payloadBruto: body });
+    const resultado = await processarMensagemPontoWhatsApp({ telefone, texto, messageId, anexo, payloadBruto: body });
     if (resultado?.mensagem) {
       await enviarWhatsApp(telefone, resultado.mensagem);
     }

@@ -40,6 +40,13 @@ interface Contexto {
   data_hora_proposta?: string; // ISO — usado no fluxo CONFIRMAR_BATIDA
   data_referencia?: string;    // YYYY-MM-DD — usado em JUSTIFICAR/ABONAR
   horario?: string;            // HH:MM — usado em JUSTIFICAR
+  motivo?: string;             // usado em ABONAR, entre INFORMAR_MOTIVO e ANEXAR_ATESTADO
+}
+
+export interface AnexoZapi {
+  url: string;
+  nomeArquivo: string;
+  mimeType: string;
 }
 
 interface PendenciaPonto {
@@ -142,7 +149,7 @@ function montarMenuDias(itens: ItemMenuDia[]): string {
 }
 
 function montarMenuInicial(): string {
-  return 'O que você deseja fazer? Responda com o número:\n1) Registrar ponto\n2) Justificar batida esquecida\n3) Abonar o dia (falta/atestado)';
+  return 'Olá, tudo bem?O que você deseja fazer? Responda com o número:\n1) Registrar ponto\n2) Justificar batida esquecida\n3) Abonar o dia (falta/atestado)';
 }
 
 type Db = ReturnType<typeof supabaseAdmin>;
@@ -462,6 +469,42 @@ async function avancarJustificar(db: Db, pendencia: PendenciaPonto, texto: strin
   return { mensagem: 'Ocorreu um erro no fluxo. Envie qualquer mensagem para recomeçar.' };
 }
 
+// Bucket privado já usado para documentos de funcionário (RH → Documentos) —
+// reaproveitado aqui para atestados anexados via WhatsApp. Nunca fica
+// público: a visualização é sempre por signed URL, gerada sob demanda
+// (ver urlAnexoSolicitacaoAction em actions-ponto-whatsapp.ts).
+const BUCKET_DOCUMENTOS_FUNCIONARIO = 'documentos-funcionarios';
+
+const REGEX_DIACRITICOS = new RegExp('[' + String.fromCodePoint(0x300) + '-' + String.fromCodePoint(0x36f) + ']', 'g');
+
+function slugTexto(s: string): string {
+  return s.normalize('NFD').replace(REGEX_DIACRITICOS, '')
+    .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+}
+
+const RESPOSTAS_SEM_ANEXO = ['SEM ANEXO', 'SEMANEXO', 'SEM', 'PULAR', 'NAO', 'NÃO', 'N'];
+
+// Baixa o anexo (foto/PDF) da URL temporária da Z-API e sobe para o Storage
+// privado do funcionário — a URL da Z-API expira, então precisa virar
+// arquivo nosso na hora que chega.
+async function salvarAnexoAbono(db: Db, funcionarioNome: string, anexo: AnexoZapi): Promise<{ path: string; nome: string }> {
+  const resposta = await fetch(anexo.url);
+  if (!resposta.ok) throw new Error(`Falha ao baixar o anexo (HTTP ${resposta.status}).`);
+  const bytes = Buffer.from(await resposta.arrayBuffer());
+
+  const extensao = (anexo.nomeArquivo.split('.').pop() || 'bin').toLowerCase();
+  const nomeBase = slugTexto(anexo.nomeArquivo.replace(/\.[^.]+$/, '')) || 'anexo';
+  const path = `${slugTexto(funcionarioNome)}/atestados-whatsapp/${Date.now()}-${nomeBase}.${extensao}`;
+
+  const { error } = await db.storage.from(BUCKET_DOCUMENTOS_FUNCIONARIO).upload(path, bytes, {
+    contentType: anexo.mimeType || 'application/octet-stream',
+    upsert: false,
+  });
+  if (error) throw new Error(`Falha ao salvar o anexo: ${error.message}`);
+
+  return { path, nome: anexo.nomeArquivo };
+}
+
 // ============================================================================
 // FLUXO: ABONAR (dia inteiro sem bater ponto — atestado, falta justificada etc.)
 // ============================================================================
@@ -471,7 +514,7 @@ async function iniciarFluxoAbonar(db: Db, funcionarioNome: string, celular: stri
   return { mensagem: `Para qual dia é o abono? Responda com o número:\n${montarMenuDias(itens)}\n\nOu envie CANCELAR para desistir.` };
 }
 
-async function avancarAbonar(db: Db, pendencia: PendenciaPonto, texto: string, agora: Date): Promise<ResultadoPonto> {
+async function avancarAbonar(db: Db, pendencia: PendenciaPonto, texto: string, agora: Date, anexo: AnexoZapi | null): Promise<ResultadoPonto> {
   const contexto = pendencia.contexto;
 
   if (pendencia.etapa === 'ESCOLHER_DIA') {
@@ -489,11 +532,27 @@ async function avancarAbonar(db: Db, pendencia: PendenciaPonto, texto: string, a
     if (!motivo) {
       return { mensagem: 'Preciso de um motivo, mesmo que curto. Pode escrever?' };
     }
+    await salvarPendencia(db, pendencia.celular, pendencia.funcionario_nome, 'ABONAR', 'ANEXAR_ATESTADO', { ...contexto, motivo }, agora);
+    return { mensagem: 'Se tiver atestado ou outro documento, envie a foto ou o PDF agora. Ou responda SEM ANEXO para continuar sem.' };
+  }
 
+  if (pendencia.etapa === 'ANEXAR_ATESTADO') {
     const dataReferencia = contexto.data_referencia;
-    if (!dataReferencia) {
+    const motivo = contexto.motivo;
+    if (!dataReferencia || !motivo) {
       await limparPendencia(db, pendencia.celular);
       return { mensagem: 'Ocorreu um erro no fluxo. Envie qualquer mensagem para recomeçar.' };
+    }
+
+    let anexoSalvo: { path: string; nome: string } | null = null;
+    if (anexo) {
+      try {
+        anexoSalvo = await salvarAnexoAbono(db, pendencia.funcionario_nome, anexo);
+      } catch {
+        return { mensagem: 'Não consegui salvar o arquivo enviado. Tente reenviar a foto/PDF, ou responda SEM ANEXO para continuar sem.' };
+      }
+    } else if (!RESPOSTAS_SEM_ANEXO.includes(texto.trim().toUpperCase())) {
+      return { mensagem: 'Não entendi. Envie a foto/PDF do atestado, ou responda SEM ANEXO para continuar sem.' };
     }
 
     const jaExiste = await existeSolicitacaoPendente(db, pendencia.funcionario_nome, dataReferencia, 'ABONO_DIA', null);
@@ -509,15 +568,17 @@ async function avancarAbonar(db: Db, pendencia: PendenciaPonto, texto: string, a
       data_referencia: dataReferencia,
       dia_todo: true,
       motivo,
+      anexo_path: anexoSalvo?.path || null,
+      anexo_nome: anexoSalvo?.nome || null,
     });
 
     await registrarLogAuditoria({
       usuario_nome: 'SISTEMA (WHATSAPP)',
-      acao: `SOLICITAÇÃO DE ABONO: ${pendencia.funcionario_nome} — ${dataReferencia}`,
+      acao: `SOLICITAÇÃO DE ABONO: ${pendencia.funcionario_nome} — ${dataReferencia}${anexoSalvo ? ' (com anexo)' : ''}`,
       setor: 'RECURSOS HUMANOS / PONTO WHATSAPP',
     });
 
-    return { mensagem: `✅ Solicitação de abono enviada ao RH para ${formatarDataBR(dataReferencia)}. Você será avisado quando for analisada.` };
+    return { mensagem: `✅ Solicitação de abono enviada ao RH para ${formatarDataBR(dataReferencia)}${anexoSalvo ? ' (com anexo)' : ''}. Você será avisado quando for analisada.` };
   }
 
   await limparPendencia(db, pendencia.celular);
@@ -548,6 +609,7 @@ export async function processarMensagemPontoWhatsApp(payload: {
   telefone: string;
   texto: string;
   messageId: string | null;
+  anexo?: AnexoZapi | null;
   payloadBruto?: unknown;
 }): Promise<ResultadoPonto | null> {
   const texto = (payload.texto || '').trim();
@@ -580,7 +642,7 @@ export async function processarMensagemPontoWhatsApp(payload: {
     if (pendencia.fluxo === 'JUSTIFICAR') {
       return await avancarJustificar(db, pendencia, texto, agora);
     }
-    return await avancarAbonar(db, pendencia, texto, agora);
+    return await avancarAbonar(db, pendencia, texto, agora, payload.anexo ?? null);
   }
 
   // Toda primeira mensagem (sem pendência ativa) mostra o menu de opções —

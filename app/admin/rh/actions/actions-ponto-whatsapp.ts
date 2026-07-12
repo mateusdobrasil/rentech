@@ -93,6 +93,7 @@ export interface SolicitacaoPendente {
   tipo_batida: string | null;
   horario_solicitado: string | null;
   motivo: string;
+  anexo_nome: string | null;
   criado_em: string;
 }
 
@@ -103,11 +104,69 @@ export async function listarSolicitacoesPendentesAction(): Promise<Resultado<Sol
   try {
     const { data, error } = await db
       .from('folha_ponto_whatsapp_solicitacoes')
-      .select('id, tipo, funcionario_nome, data_referencia, tipo_batida, horario_solicitado, motivo, criado_em')
+      .select('id, tipo, funcionario_nome, data_referencia, tipo_batida, horario_solicitado, motivo, anexo_nome, criado_em')
       .eq('status', 'PENDENTE')
       .order('criado_em', { ascending: true });
     if (error) throw new Error(error.message);
     return { ok: true, info: data || [] };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+export interface SolicitacaoHistorico extends SolicitacaoPendente {
+  status: 'PENDENTE' | 'APROVADA' | 'REJEITADA';
+  resolvido_por: string | null;
+  resolvido_em: string | null;
+  motivo_rejeicao: string | null;
+}
+
+// Histórico completo (todas as solicitações, qualquer status) para
+// auditoria — nada aqui é apagado quando aprovado/rejeitado, só muda de
+// status.
+export async function listarHistoricoSolicitacoesAction(mesAno?: string): Promise<Resultado<SolicitacaoHistorico[]>> {
+  const db = supabaseAdmin();
+  try {
+    let query = db
+      .from('folha_ponto_whatsapp_solicitacoes')
+      .select('id, tipo, funcionario_nome, data_referencia, tipo_batida, horario_solicitado, motivo, anexo_nome, status, resolvido_por, resolvido_em, motivo_rejeicao, criado_em')
+      .order('criado_em', { ascending: false });
+
+    if (mesAno) {
+      const [ano, mes] = mesAno.split('-');
+      const dataInicio = `${ano}-${mes}-01`;
+      const ultimoDia = new Date(Number(ano), Number(mes), 0).getDate();
+      const dataFim = `${ano}-${mes}-${String(ultimoDia).padStart(2, '0')}`;
+      query = query.gte('data_referencia', dataInicio).lte('data_referencia', dataFim);
+    }
+
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    return { ok: true, info: data || [] };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// URL temporária (10 min) para o RH visualizar/baixar o anexo (atestado)
+// de uma solicitação — o arquivo mora no bucket privado
+// "documentos-funcionarios" e nunca fica público.
+export async function urlAnexoSolicitacaoAction(payload: { id: number }): Promise<Resultado<{ url: string }>> {
+  const db = supabaseAdmin();
+  try {
+    const { data: solicitacao } = await db
+      .from('folha_ponto_whatsapp_solicitacoes')
+      .select('anexo_path, anexo_nome')
+      .eq('id', payload.id)
+      .maybeSingle();
+    if (!solicitacao?.anexo_path) return { ok: false, erro: 'Esta solicitação não tem anexo.' };
+
+    const { data, error } = await db.storage
+      .from('documentos-funcionarios')
+      .createSignedUrl(solicitacao.anexo_path, 60 * 10, solicitacao.anexo_nome ? { download: solicitacao.anexo_nome } : undefined);
+    if (error || !data?.signedUrl) throw new Error(error?.message || 'Falha ao gerar link do anexo.');
+
+    return { ok: true, info: { url: data.signedUrl } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

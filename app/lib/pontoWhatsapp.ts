@@ -190,7 +190,7 @@ async function existeSolicitacaoPendente(db: Db, funcionarioNome: string, dataRe
 }
 
 async function salvarPendencia(db: Db, celular: string, funcionarioNome: string, fluxo: Fluxo, etapa: string, contexto: Contexto, agora: Date): Promise<void> {
-  await db.from('folha_ponto_whatsapp_pendencias').upsert({
+  const { error } = await db.from('folha_ponto_whatsapp_pendencias').upsert({
     celular,
     funcionario_nome: funcionarioNome,
     fluxo,
@@ -198,6 +198,10 @@ async function salvarPendencia(db: Db, celular: string, funcionarioNome: string,
     contexto,
     expira_em: new Date(agora.getTime() + MINUTOS_EXPIRACAO_PENDENCIA * 60000).toISOString(),
   });
+  // Falha aqui não pode passar em silêncio: sem a pendência salva, a próxima
+  // mensagem do funcionário é tratada como uma conversa nova, e ele fica
+  // preso vendo sempre a mesma pergunta de novo.
+  if (error) throw new Error(`Falha ao salvar o estado da conversa: ${error.message}`);
 }
 
 async function limparPendencia(db: Db, celular: string): Promise<void> {

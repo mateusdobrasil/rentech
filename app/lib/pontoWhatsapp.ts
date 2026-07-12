@@ -1,13 +1,19 @@
-// Ponto via WhatsApp: motor da conversa (menu com confirmação), matching do
-// funcionário por celular, e consolidação das batidas confirmadas em
+// Ponto via WhatsApp: motor da conversa (PONTO, JUSTIFICAR, ABONAR), matching
+// do funcionário por celular, e consolidação das batidas confirmadas em
 // folha_ponto_diaria. O ledger em si (folha_ponto_whatsapp_registros) é
 // append-only — NSR e cadeia de hash são calculados por trigger no banco
 // (ver folha_ponto_whatsapp.sql). Esta lib nunca edita/apaga uma batida já
 // confirmada, só grava novas ou lança ajustes aditivos.
+//
+// JUSTIFICAR (batida esquecida) e ABONAR (dia sem bater ponto) nunca gravam
+// direto: criam uma solicitação pendente em folha_ponto_whatsapp_solicitacoes,
+// que só vira ajuste/abono de verdade quando o RH aprova (ver
+// actions-ponto-whatsapp.ts) — o funcionário nunca aprova a própria exceção.
 import { supabaseAdmin } from './supabase';
 import { registrarLogAuditoria } from '../actions';
 
 export type TipoBatida = 'ENTRADA_1' | 'SAIDA_1' | 'ENTRADA_2' | 'SAIDA_2';
+type Fluxo = 'MENU_INICIAL' | 'CONFIRMAR_BATIDA' | 'JUSTIFICAR' | 'ABONAR';
 
 const ORDEM_BATIDAS: TipoBatida[] = ['ENTRADA_1', 'SAIDA_1', 'ENTRADA_2', 'SAIDA_2'];
 
@@ -18,18 +24,30 @@ const ROTULO_BATIDA: Record<TipoBatida, string> = {
   SAIDA_2: 'Saída',
 };
 
+const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+
 const MINUTOS_EXPIRACAO_PENDENCIA = 5;
+// Janela retroativa para JUSTIFICAR/ABONAR pelo WhatsApp — regra de negócio
+// combinada: no máximo os últimos 7 dias corridos (hoje incluso).
+const JANELA_DIAS_RETROATIVOS = 7;
 
 export interface ResultadoPonto {
   mensagem: string;
 }
 
+interface Contexto {
+  tipo_batida?: TipoBatida;
+  data_hora_proposta?: string; // ISO — usado no fluxo CONFIRMAR_BATIDA
+  data_referencia?: string;    // YYYY-MM-DD — usado em JUSTIFICAR/ABONAR
+  horario?: string;            // HH:MM — usado em JUSTIFICAR
+}
+
 interface PendenciaPonto {
   celular: string;
   funcionario_nome: string;
-  tipo_batida_proposto: TipoBatida;
-  data_hora_proposta: string;
-  zapi_message_id_origem: string | null;
+  fluxo: Fluxo;
+  etapa: string;
+  contexto: Contexto;
   expira_em: string;
 }
 
@@ -61,11 +79,70 @@ function timeToMinutes(timeStr: string | null): number {
   return (h * 60) + m;
 }
 
+function formatarDataBR(dataIso: string): string {
+  return dataIso.split('-').reverse().join('/');
+}
+
+// Data (YYYY-MM-DD) menos N dias, tratada como valor de calendário puro
+// (sem hora), pra não sofrer com o fuso do relógio do servidor.
+function subtrairDias(dataIso: string, dias: number): string {
+  const [ano, mes, dia] = dataIso.split('-').map(Number);
+  const d = new Date(Date.UTC(ano, mes - 1, dia));
+  d.setUTCDate(d.getUTCDate() - dias);
+  return d.toISOString().split('T')[0];
+}
+
+function diaSemanaDe(dataIso: string): number {
+  const [ano, mes, dia] = dataIso.split('-').map(Number);
+  return new Date(Date.UTC(ano, mes - 1, dia)).getUTCDay();
+}
+
+// Combina uma data de referência com um horário HH:MM num timestamp válido.
+// Brasil não observa mais horário de verão (abolido em 2019), então
+// America/Sao_Paulo é sempre UTC-3 fixo — sem pegadinha de DST aqui (mesma
+// premissa já usada em app/api/cron/motor/route.ts).
+export function timestampBR(dataReferencia: string, horaHHMMValor: string): string {
+  return new Date(`${dataReferencia}T${horaHHMMValor}:00-03:00`).toISOString();
+}
+
+function extrairHorario(texto: string): string | null {
+  const m = texto.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
 function normalizarResposta(texto: string): 'SIM' | 'NAO' | 'OUTRO' {
   const t = texto.trim().toUpperCase();
   if (['SIM', 'S', '1', 'YES', 'OK', 'CONFIRMAR'].includes(t)) return 'SIM';
   if (['NAO', 'NÃO', 'N', '2', 'NO', 'CANCELAR'].includes(t)) return 'NAO';
   return 'OUTRO';
+}
+
+interface ItemMenuDia { indice: number; dataIso: string; rotulo: string; }
+
+// Menu numerado dos últimos JANELA_DIAS_RETROATIVOS dias (hoje incluso),
+// usado tanto em JUSTIFICAR quanto em ABONAR — responder só o número evita
+// ter que interpretar datas em texto livre.
+function diasParaMenu(agora: Date): ItemMenuDia[] {
+  const hojeIso = dataReferenciaBR(agora);
+  const itens: ItemMenuDia[] = [];
+  for (let i = 0; i < JANELA_DIAS_RETROATIVOS; i++) {
+    const dataIso = subtrairDias(hojeIso, i);
+    const rotuloBase = i === 0 ? 'Hoje' : i === 1 ? 'Ontem' : DIAS_SEMANA[diaSemanaDe(dataIso)];
+    itens.push({ indice: i + 1, dataIso, rotulo: `${rotuloBase} (${formatarDataBR(dataIso)})` });
+  }
+  return itens;
+}
+
+function montarMenuDias(itens: ItemMenuDia[]): string {
+  return itens.map(it => `${it.indice}) ${it.rotulo}`).join('\n');
+}
+
+function montarMenuInicial(): string {
+  return 'O que você deseja fazer? Responda com o número:\n1) Registrar ponto\n2) Justificar batida esquecida\n3) Abonar o dia (falta/atestado)';
 }
 
 type Db = ReturnType<typeof supabaseAdmin>;
@@ -83,7 +160,10 @@ async function buscarFuncionarioPorCelular(db: Db, telefone: string): Promise<{ 
   return achado ? { nome_completo: achado.nome_completo } : null;
 }
 
-async function proximaBatidaDoDia(db: Db, funcionarioNome: string, dataReferencia: string): Promise<TipoBatida | null> {
+// Batidas do dia ainda não registradas (nem no ledger, nem por ajuste
+// aprovado), na ordem E1→S1→E2→S2. Usada tanto para decidir a próxima
+// batida do fluxo PONTO quanto para montar o menu do fluxo JUSTIFICAR.
+async function batidasFaltantesNoDia(db: Db, funcionarioNome: string, dataReferencia: string): Promise<TipoBatida[]> {
   const [{ data: batidas }, { data: ajustes }] = await Promise.all([
     db.from('folha_ponto_whatsapp_registros').select('tipo_batida').eq('funcionario_nome', funcionarioNome).eq('data_referencia', dataReferencia),
     db.from('folha_ponto_whatsapp_ajustes').select('tipo_batida').eq('funcionario_nome', funcionarioNome).eq('data_referencia', dataReferencia),
@@ -93,17 +173,45 @@ async function proximaBatidaDoDia(db: Db, funcionarioNome: string, dataReferenci
     ...(batidas || []).map((b) => b.tipo_batida),
     ...(ajustes || []).map((a) => a.tipo_batida),
   ]);
-  return ORDEM_BATIDAS.find(t => !jaFeitas.has(t)) || null;
+  return ORDEM_BATIDAS.filter(t => !jaFeitas.has(t));
+}
+
+async function existeSolicitacaoPendente(db: Db, funcionarioNome: string, dataReferencia: string, tipo: 'JUSTIFICATIVA_BATIDA' | 'ABONO_DIA', tipoBatida: TipoBatida | null): Promise<boolean> {
+  let query = db.from('folha_ponto_whatsapp_solicitacoes')
+    .select('id')
+    .eq('funcionario_nome', funcionarioNome)
+    .eq('data_referencia', dataReferencia)
+    .eq('tipo', tipo)
+    .eq('status', 'PENDENTE');
+  if (tipoBatida) query = query.eq('tipo_batida', tipoBatida);
+
+  const { data } = await query.limit(1);
+  return !!(data && data.length > 0);
+}
+
+async function salvarPendencia(db: Db, celular: string, funcionarioNome: string, fluxo: Fluxo, etapa: string, contexto: Contexto, agora: Date): Promise<void> {
+  await db.from('folha_ponto_whatsapp_pendencias').upsert({
+    celular,
+    funcionario_nome: funcionarioNome,
+    fluxo,
+    etapa,
+    contexto,
+    expira_em: new Date(agora.getTime() + MINUTOS_EXPIRACAO_PENDENCIA * 60000).toISOString(),
+  });
+}
+
+async function limparPendencia(db: Db, celular: string): Promise<void> {
+  await db.from('folha_ponto_whatsapp_pendencias').delete().eq('celular', celular);
 }
 
 async function buscarPendenciaValida(db: Db, celular: string, agora: Date): Promise<PendenciaPonto | null> {
   const { data } = await db.from('folha_ponto_whatsapp_pendencias').select('*').eq('celular', celular).maybeSingle();
   if (!data) return null;
   if (new Date(data.expira_em).getTime() < agora.getTime()) {
-    await db.from('folha_ponto_whatsapp_pendencias').delete().eq('celular', celular);
+    await limparPendencia(db, celular);
     return null;
   }
-  return data;
+  return data as PendenciaPonto;
 }
 
 // Reconstrói o dia (batidas do ledger + ajustes) e sobrescreve a linha
@@ -111,7 +219,9 @@ async function buscarPendenciaValida(db: Db, celular: string, agora: Date): Prom
 // CSV_PONTOMAIS: se o dia já tem ponto importado do Pontomais, a
 // consolidação é pulada e um aviso é logado para o RH conciliar (o registro
 // no ledger legal acontece de qualquer forma, isto só afeta o relatório).
-async function consolidarDia(db: Db, funcionarioNome: string, dataReferencia: string): Promise<void> {
+// Exportada porque também é chamada depois que o RH aprova uma justificativa
+// (novo ajuste some no dia, precisa recalcular o relatório).
+export async function consolidarDia(db: Db, funcionarioNome: string, dataReferencia: string): Promise<void> {
   const { data: existenteOutraOrigem } = await db
     .from('folha_ponto_diaria')
     .select('id')
@@ -182,31 +292,254 @@ async function consolidarDia(db: Db, funcionarioNome: string, dataReferencia: st
   });
 }
 
-async function confirmarBatida(db: Db, pendencia: PendenciaPonto, messageId: string | null, payloadBruto: unknown): Promise<{ nsr: number; tipo_batida: TipoBatida; data_hora_batida: string }> {
-  const dataHoraProposta = new Date(pendencia.data_hora_proposta);
-  const dataReferencia = dataReferenciaBR(dataHoraProposta);
+interface DadosConfirmacaoBatida {
+  funcionario_nome: string;
+  celular: string;
+  tipo_batida: TipoBatida;
+  data_hora_proposta: string;
+}
+
+async function confirmarBatida(db: Db, dados: DadosConfirmacaoBatida, messageId: string | null, payloadBruto: unknown): Promise<{ nsr: number; tipo_batida: TipoBatida; data_hora_batida: string }> {
+  const dataReferencia = dataReferenciaBR(new Date(dados.data_hora_proposta));
 
   const { data, error } = await db.from('folha_ponto_whatsapp_registros').insert({
-    funcionario_nome: pendencia.funcionario_nome,
-    celular: pendencia.celular,
-    tipo_batida: pendencia.tipo_batida_proposto,
+    funcionario_nome: dados.funcionario_nome,
+    celular: dados.celular,
+    tipo_batida: dados.tipo_batida,
     data_referencia: dataReferencia,
-    data_hora_batida: pendencia.data_hora_proposta,
+    data_hora_batida: dados.data_hora_proposta,
     zapi_message_id: messageId,
     payload_bruto: payloadBruto ?? null,
   }).select('nsr, tipo_batida, data_hora_batida').single();
 
   if (error) throw new Error(`Falha ao gravar a batida no ledger: ${error.message}`);
 
-  await consolidarDia(db, pendencia.funcionario_nome, dataReferencia);
-  await db.from('folha_ponto_whatsapp_pendencias').delete().eq('celular', pendencia.celular);
+  await consolidarDia(db, dados.funcionario_nome, dataReferencia);
 
   return data as { nsr: number; tipo_batida: TipoBatida; data_hora_batida: string };
 }
 
-// Ponto de entrada único chamado pelo webhook (app/api/webhooks/zapi-ponto).
-// Recebe já os campos extraídos do payload cru da Z-API e devolve o texto de
-// resposta a ser enviado de volta via enviarWhatsApp.
+// ============================================================================
+// FLUXO: CONFIRMAR_BATIDA (bater ponto em tempo real — comportamento original)
+// ============================================================================
+async function iniciarFluxoConfirmarBatida(db: Db, funcionarioNome: string, celular: string, agora: Date): Promise<ResultadoPonto> {
+  const dataReferencia = dataReferenciaBR(agora);
+  const faltantes = await batidasFaltantesNoDia(db, funcionarioNome, dataReferencia);
+  const proxima = faltantes[0];
+  if (!proxima) {
+    return { mensagem: 'Todas as batidas de hoje já foram registradas. Se precisar corrigir algo, envie qualquer mensagem para ver as opções.' };
+  }
+
+  await salvarPendencia(db, celular, funcionarioNome, 'CONFIRMAR_BATIDA', 'AGUARDANDO_CONFIRMACAO', {
+    tipo_batida: proxima,
+    data_hora_proposta: agora.toISOString(),
+  }, agora);
+
+  return { mensagem: `Confirma ${ROTULO_BATIDA[proxima]} às ${horaHHMM(agora)}? Responda SIM ou NAO.` };
+}
+
+async function avancarConfirmarBatida(db: Db, pendencia: PendenciaPonto, texto: string, messageId: string | null, payloadBruto: unknown): Promise<ResultadoPonto> {
+  const { tipo_batida, data_hora_proposta } = pendencia.contexto;
+  if (!tipo_batida || !data_hora_proposta) {
+    await limparPendencia(db, pendencia.celular);
+    return { mensagem: 'Ocorreu um erro no fluxo. Envie qualquer mensagem para recomeçar.' };
+  }
+
+  const resposta = normalizarResposta(texto);
+  if (resposta === 'SIM') {
+    const registro = await confirmarBatida(db, {
+      funcionario_nome: pendencia.funcionario_nome,
+      celular: pendencia.celular,
+      tipo_batida,
+      data_hora_proposta,
+    }, messageId, payloadBruto);
+    await limparPendencia(db, pendencia.celular);
+    return { mensagem: `✅ Ponto registrado: ${ROTULO_BATIDA[registro.tipo_batida]} às ${horaHHMM(new Date(registro.data_hora_batida))} (NSR ${registro.nsr}).` };
+  }
+  if (resposta === 'NAO') {
+    await limparPendencia(db, pendencia.celular);
+    return { mensagem: 'Ok, registro cancelado. Envie uma nova mensagem quando quiser bater o ponto.' };
+  }
+  return { mensagem: `Confirma ${ROTULO_BATIDA[tipo_batida]} às ${horaHHMM(new Date(data_hora_proposta))}? Responda SIM ou NAO.` };
+}
+
+// ============================================================================
+// FLUXO: JUSTIFICAR (bateu só uma parte do ponto, esqueceu uma batida)
+// ============================================================================
+async function iniciarFluxoJustificar(db: Db, funcionarioNome: string, celular: string, agora: Date): Promise<ResultadoPonto> {
+  const itens = diasParaMenu(agora);
+  await salvarPendencia(db, celular, funcionarioNome, 'JUSTIFICAR', 'ESCOLHER_DIA', {}, agora);
+  return { mensagem: `Para qual dia é a justificativa? Responda com o número:\n${montarMenuDias(itens)}\n\nOu envie CANCELAR para desistir.` };
+}
+
+async function avancarJustificar(db: Db, pendencia: PendenciaPonto, texto: string, agora: Date): Promise<ResultadoPonto> {
+  const contexto = pendencia.contexto;
+
+  if (pendencia.etapa === 'ESCOLHER_DIA') {
+    const itens = diasParaMenu(agora);
+    const escolha = itens.find(it => String(it.indice) === texto.trim());
+    if (!escolha) {
+      return { mensagem: `Não entendi. Responda com o número do dia:\n${montarMenuDias(itens)}` };
+    }
+
+    const faltantes = await batidasFaltantesNoDia(db, pendencia.funcionario_nome, escolha.dataIso);
+    if (faltantes.length === 0) {
+      await limparPendencia(db, pendencia.celular);
+      return { mensagem: `O dia ${escolha.rotulo} já está com as 4 batidas completas. Nada para justificar.` };
+    }
+
+    await salvarPendencia(db, pendencia.celular, pendencia.funcionario_nome, 'JUSTIFICAR', 'ESCOLHER_BATIDA', { data_referencia: escolha.dataIso }, agora);
+    const menuBatidas = faltantes.map((t, i) => `${i + 1}) ${ROTULO_BATIDA[t]}`).join('\n');
+    return { mensagem: `Qual batida falta em ${escolha.rotulo}?\n${menuBatidas}` };
+  }
+
+  if (pendencia.etapa === 'ESCOLHER_BATIDA') {
+    const dataReferencia = contexto.data_referencia;
+    if (!dataReferencia) { await limparPendencia(db, pendencia.celular); return { mensagem: 'Ocorreu um erro no fluxo. Envie qualquer mensagem para recomeçar.' }; }
+
+    const faltantes = await batidasFaltantesNoDia(db, pendencia.funcionario_nome, dataReferencia);
+    const tipoEscolhido = faltantes[Number(texto.trim()) - 1];
+    if (!tipoEscolhido) {
+      const menuBatidas = faltantes.map((t, i) => `${i + 1}) ${ROTULO_BATIDA[t]}`).join('\n');
+      return { mensagem: `Não entendi. Responda com o número da batida:\n${menuBatidas}` };
+    }
+
+    await salvarPendencia(db, pendencia.celular, pendencia.funcionario_nome, 'JUSTIFICAR', 'INFORMAR_HORARIO', { ...contexto, tipo_batida: tipoEscolhido }, agora);
+    return { mensagem: `A que horas foi essa batida (${ROTULO_BATIDA[tipoEscolhido]})? Responda no formato HH:MM (ex: 08:15).` };
+  }
+
+  if (pendencia.etapa === 'INFORMAR_HORARIO') {
+    const horario = extrairHorario(texto);
+    if (!horario) {
+      return { mensagem: 'Não entendi o horário. Responda no formato HH:MM (ex: 08:15).' };
+    }
+    await salvarPendencia(db, pendencia.celular, pendencia.funcionario_nome, 'JUSTIFICAR', 'INFORMAR_MOTIVO', { ...contexto, horario }, agora);
+    return { mensagem: 'Qual o motivo? (ex: esqueci de bater, celular sem internet)' };
+  }
+
+  if (pendencia.etapa === 'INFORMAR_MOTIVO') {
+    const motivo = texto.trim();
+    if (!motivo) {
+      return { mensagem: 'Preciso de um motivo, mesmo que curto. Pode escrever?' };
+    }
+
+    const { data_referencia: dataReferencia, tipo_batida: tipoBatida, horario } = contexto;
+    if (!dataReferencia || !tipoBatida || !horario) {
+      await limparPendencia(db, pendencia.celular);
+      return { mensagem: 'Ocorreu um erro no fluxo. Envie qualquer mensagem para recomeçar.' };
+    }
+
+    const jaExiste = await existeSolicitacaoPendente(db, pendencia.funcionario_nome, dataReferencia, 'JUSTIFICATIVA_BATIDA', tipoBatida);
+    await limparPendencia(db, pendencia.celular);
+    if (jaExiste) {
+      return { mensagem: 'Você já tem uma solicitação pendente para esse dia/batida. Aguarde o RH analisar antes de enviar outra.' };
+    }
+
+    await db.from('folha_ponto_whatsapp_solicitacoes').insert({
+      tipo: 'JUSTIFICATIVA_BATIDA',
+      funcionario_nome: pendencia.funcionario_nome,
+      celular: pendencia.celular,
+      data_referencia: dataReferencia,
+      tipo_batida: tipoBatida,
+      horario_solicitado: horario,
+      motivo,
+    });
+
+    await registrarLogAuditoria({
+      usuario_nome: 'SISTEMA (WHATSAPP)',
+      acao: `SOLICITAÇÃO DE JUSTIFICATIVA: ${pendencia.funcionario_nome} — ${ROTULO_BATIDA[tipoBatida]} em ${dataReferencia}`,
+      setor: 'RECURSOS HUMANOS / PONTO WHATSAPP',
+    });
+
+    return { mensagem: `✅ Solicitação enviada ao RH: ${ROTULO_BATIDA[tipoBatida]} às ${horario} em ${formatarDataBR(dataReferencia)}. Você será avisado quando for analisada.` };
+  }
+
+  await limparPendencia(db, pendencia.celular);
+  return { mensagem: 'Ocorreu um erro no fluxo. Envie qualquer mensagem para recomeçar.' };
+}
+
+// ============================================================================
+// FLUXO: ABONAR (dia inteiro sem bater ponto — atestado, falta justificada etc.)
+// ============================================================================
+async function iniciarFluxoAbonar(db: Db, funcionarioNome: string, celular: string, agora: Date): Promise<ResultadoPonto> {
+  const itens = diasParaMenu(agora);
+  await salvarPendencia(db, celular, funcionarioNome, 'ABONAR', 'ESCOLHER_DIA', {}, agora);
+  return { mensagem: `Para qual dia é o abono? Responda com o número:\n${montarMenuDias(itens)}\n\nOu envie CANCELAR para desistir.` };
+}
+
+async function avancarAbonar(db: Db, pendencia: PendenciaPonto, texto: string, agora: Date): Promise<ResultadoPonto> {
+  const contexto = pendencia.contexto;
+
+  if (pendencia.etapa === 'ESCOLHER_DIA') {
+    const itens = diasParaMenu(agora);
+    const escolha = itens.find(it => String(it.indice) === texto.trim());
+    if (!escolha) {
+      return { mensagem: `Não entendi. Responda com o número do dia:\n${montarMenuDias(itens)}` };
+    }
+    await salvarPendencia(db, pendencia.celular, pendencia.funcionario_nome, 'ABONAR', 'INFORMAR_MOTIVO', { data_referencia: escolha.dataIso }, agora);
+    return { mensagem: `Qual o motivo do abono em ${escolha.rotulo}? (ex: atestado médico, falta justificada)` };
+  }
+
+  if (pendencia.etapa === 'INFORMAR_MOTIVO') {
+    const motivo = texto.trim();
+    if (!motivo) {
+      return { mensagem: 'Preciso de um motivo, mesmo que curto. Pode escrever?' };
+    }
+
+    const dataReferencia = contexto.data_referencia;
+    if (!dataReferencia) {
+      await limparPendencia(db, pendencia.celular);
+      return { mensagem: 'Ocorreu um erro no fluxo. Envie qualquer mensagem para recomeçar.' };
+    }
+
+    const jaExiste = await existeSolicitacaoPendente(db, pendencia.funcionario_nome, dataReferencia, 'ABONO_DIA', null);
+    await limparPendencia(db, pendencia.celular);
+    if (jaExiste) {
+      return { mensagem: 'Você já tem uma solicitação de abono pendente para esse dia. Aguarde o RH analisar.' };
+    }
+
+    await db.from('folha_ponto_whatsapp_solicitacoes').insert({
+      tipo: 'ABONO_DIA',
+      funcionario_nome: pendencia.funcionario_nome,
+      celular: pendencia.celular,
+      data_referencia: dataReferencia,
+      dia_todo: true,
+      motivo,
+    });
+
+    await registrarLogAuditoria({
+      usuario_nome: 'SISTEMA (WHATSAPP)',
+      acao: `SOLICITAÇÃO DE ABONO: ${pendencia.funcionario_nome} — ${dataReferencia}`,
+      setor: 'RECURSOS HUMANOS / PONTO WHATSAPP',
+    });
+
+    return { mensagem: `✅ Solicitação de abono enviada ao RH para ${formatarDataBR(dataReferencia)}. Você será avisado quando for analisada.` };
+  }
+
+  await limparPendencia(db, pendencia.celular);
+  return { mensagem: 'Ocorreu um erro no fluxo. Envie qualquer mensagem para recomeçar.' };
+}
+
+// ============================================================================
+// FLUXO: MENU_INICIAL (toda primeira mensagem do funcionário cai aqui)
+// ============================================================================
+async function avancarMenuInicial(db: Db, pendencia: PendenciaPonto, texto: string, agora: Date): Promise<ResultadoPonto> {
+  const escolha = texto.trim().toUpperCase();
+  if (['1', 'PONTO', 'REGISTRAR PONTO'].includes(escolha)) {
+    return await iniciarFluxoConfirmarBatida(db, pendencia.funcionario_nome, pendencia.celular, agora);
+  }
+  if (['2', 'JUSTIFICAR'].includes(escolha)) {
+    return await iniciarFluxoJustificar(db, pendencia.funcionario_nome, pendencia.celular, agora);
+  }
+  if (['3', 'ABONAR'].includes(escolha)) {
+    return await iniciarFluxoAbonar(db, pendencia.funcionario_nome, pendencia.celular, agora);
+  }
+  return { mensagem: `Não entendi. Responda só com o número:\n${montarMenuInicial()}` };
+}
+
+// ============================================================================
+// ROTEADOR PRINCIPAL — chamado pelo webhook (app/api/webhooks/zapi-ponto)
+// ============================================================================
 export async function processarMensagemPontoWhatsApp(payload: {
   telefone: string;
   texto: string;
@@ -214,9 +547,6 @@ export async function processarMensagemPontoWhatsApp(payload: {
   payloadBruto?: unknown;
 }): Promise<ResultadoPonto | null> {
   const texto = (payload.texto || '').trim();
-  if (!texto) {
-    return { mensagem: 'Não entendi sua mensagem. Envie qualquer texto para iniciar o registro de ponto.' };
-  }
 
   const db = supabaseAdmin();
   const funcionario = await buscarFuncionarioPorCelular(db, payload.telefone);
@@ -233,32 +563,24 @@ export async function processarMensagemPontoWhatsApp(payload: {
   const pendencia = await buscarPendenciaValida(db, payload.telefone, agora);
 
   if (pendencia) {
-    const resposta = normalizarResposta(texto);
-    if (resposta === 'SIM') {
-      const registro = await confirmarBatida(db, pendencia, payload.messageId, payload.payloadBruto);
-      return { mensagem: `✅ Ponto registrado: ${ROTULO_BATIDA[registro.tipo_batida]} às ${horaHHMM(new Date(registro.data_hora_batida))} (NSR ${registro.nsr}).` };
+    if (texto.toUpperCase() === 'CANCELAR' && (pendencia.fluxo === 'JUSTIFICAR' || pendencia.fluxo === 'ABONAR')) {
+      await limparPendencia(db, payload.telefone);
+      return { mensagem: 'Ok, solicitação cancelada.' };
     }
-    if (resposta === 'NAO') {
-      await db.from('folha_ponto_whatsapp_pendencias').delete().eq('celular', payload.telefone);
-      return { mensagem: 'Ok, registro cancelado. Envie uma nova mensagem quando quiser bater o ponto.' };
+    if (pendencia.fluxo === 'MENU_INICIAL') {
+      return await avancarMenuInicial(db, pendencia, texto, agora);
     }
-    return { mensagem: `Confirma ${ROTULO_BATIDA[pendencia.tipo_batida_proposto]} às ${horaHHMM(new Date(pendencia.data_hora_proposta))}? Responda SIM ou NAO.` };
+    if (pendencia.fluxo === 'CONFIRMAR_BATIDA') {
+      return await avancarConfirmarBatida(db, pendencia, texto, payload.messageId, payload.payloadBruto);
+    }
+    if (pendencia.fluxo === 'JUSTIFICAR') {
+      return await avancarJustificar(db, pendencia, texto, agora);
+    }
+    return await avancarAbonar(db, pendencia, texto, agora);
   }
 
-  const dataReferencia = dataReferenciaBR(agora);
-  const proxima = await proximaBatidaDoDia(db, funcionario.nome_completo, dataReferencia);
-  if (!proxima) {
-    return { mensagem: 'Todas as batidas de hoje já foram registradas. Se precisar corrigir algo, fale com o RH.' };
-  }
-
-  await db.from('folha_ponto_whatsapp_pendencias').upsert({
-    celular: payload.telefone,
-    funcionario_nome: funcionario.nome_completo,
-    tipo_batida_proposto: proxima,
-    data_hora_proposta: agora.toISOString(),
-    zapi_message_id_origem: payload.messageId,
-    expira_em: new Date(agora.getTime() + MINUTOS_EXPIRACAO_PENDENCIA * 60000).toISOString(),
-  });
-
-  return { mensagem: `Confirma ${ROTULO_BATIDA[proxima]} às ${horaHHMM(agora)}? Responda SIM ou NAO.` };
+  // Toda primeira mensagem (sem pendência ativa) mostra o menu de opções —
+  // o funcionário responde só com o número (1/2/3) na próxima mensagem.
+  await salvarPendencia(db, payload.telefone, funcionario.nome_completo, 'MENU_INICIAL', 'ESCOLHER_OPCAO', {}, agora);
+  return { mensagem: montarMenuInicial() };
 }

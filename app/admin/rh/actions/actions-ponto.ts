@@ -108,16 +108,39 @@ export async function importarAbonosAction(payload: {
     const ultimoDia = new Date(Number(anoRef), Number(mesRef), 0).getDate();
     const dataFim = `${anoRef}-${mesRef}-${String(ultimoDia).padStart(2, '0')}`;
 
+    // Abono aprovado via WhatsApp (origem legal) nunca é apagado pela
+    // reimportação do CSV — mesmo que o funcionário também apareça no
+    // arquivo do Pontomais naquele mês.
+    const { data: diasWhatsapp } = await db.from('folha_ponto_abono')
+      .select('funcionario_nome, data_abono')
+      .in('funcionario_nome', nomes)
+      .eq('origem', 'WHATSAPP')
+      .gte('data_abono', `${anoRef}-${mesRef}-01`)
+      .lte('data_abono', dataFim);
+
+    const diasPreservados = new Set((diasWhatsapp || []).map((d) => `${d.funcionario_nome}|${d.data_abono}`));
+
     const { error: delErr } = await db.from('folha_ponto_abono').delete()
       .in('funcionario_nome', nomes)
+      .neq('origem', 'WHATSAPP')
       .gte('data_abono', `${anoRef}-${mesRef}-01`)
       .lte('data_abono', dataFim);
     if (delErr) throw new Error(`Falha ao limpar abonos antigos: ${delErr.message}`);
 
-    const { data: inseridos, error: insErr } = await db.from('folha_ponto_abono').insert(abonos).select('id');
-    if (insErr) throw new Error(`Falha ao gravar no banco: ${insErr.message}`);
-    if (!inseridos || inseridos.length === 0) {
-      throw new Error('O banco não gravou nenhuma linha de abono.');
+    const abonosFiltrados = abonos.filter(
+      (a) => !diasPreservados.has(`${a.funcionario_nome}|${a.data_abono}`)
+    );
+
+    let gravados = 0;
+    if (abonosFiltrados.length > 0) {
+      const { data: inseridos, error: insErr } = await db.from('folha_ponto_abono').insert(
+        abonosFiltrados.map((a) => ({ ...a, origem: 'CSV_PONTOMAIS' }))
+      ).select('id');
+      if (insErr) throw new Error(`Falha ao gravar no banco: ${insErr.message}`);
+      if (!inseridos || inseridos.length === 0) {
+        throw new Error('O banco não gravou nenhuma linha de abono.');
+      }
+      gravados = inseridos.length;
     }
 
     await registrarLogAuditoria({
@@ -126,7 +149,11 @@ export async function importarAbonosAction(payload: {
       setor: 'RECURSOS HUMANOS / PONTO'
     });
 
-    return { ok: true, info: { gravados: inseridos.length } };
+    const aviso = diasPreservados.size > 0
+      ? `${diasPreservados.size} dia(s) com abono via WhatsApp foram preservados e não foram sobrescritos pelo CSV.`
+      : undefined;
+
+    return { ok: true, info: { gravados, aviso } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

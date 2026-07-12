@@ -7,7 +7,11 @@ import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
 import { importarPontoAction, importarAbonosAction } from '../actions/actions-ponto';
-import { estatisticasPontoWhatsappAction, listarLedgerPontoWhatsappAction, type EstatisticasPontoWhatsapp, type RegistroLedger } from '../actions/actions-ponto-whatsapp';
+import {
+  estatisticasPontoWhatsappAction, listarLedgerPontoWhatsappAction,
+  listarSolicitacoesPendentesAction, aprovarSolicitacaoAction, rejeitarSolicitacaoAction,
+  type EstatisticasPontoWhatsapp, type RegistroLedger, type SolicitacaoPendente
+} from '../actions/actions-ponto-whatsapp';
 import SepararHolerites from './SepararHolerites';
 import logoColorido from '../../../../app/imgs/logo.png';
 
@@ -121,6 +125,17 @@ export default function GestaoDePonto() {
   const [estatisticasWhatsapp, setEstatisticasWhatsapp] = useState<EstatisticasPontoWhatsapp | null>(null);
   const [ledgerWhatsapp, setLedgerWhatsapp] = useState<RegistroLedger[]>([]);
   const [carregandoLedger, setCarregandoLedger] = useState(false);
+  const [abaWhatsapp, setAbaWhatsapp] = useState<'ledger' | 'solicitacoes'>('ledger');
+  const [solicitacoesPendentes, setSolicitacoesPendentes] = useState<SolicitacaoPendente[]>([]);
+  const [carregandoSolicitacoes, setCarregandoSolicitacoes] = useState(false);
+  const [processandoSolicitacaoId, setProcessandoSolicitacaoId] = useState<number | null>(null);
+  // Batida via WhatsApp usa a data real do dia (não a competência de folha),
+  // então tem seletor de mês próprio — por padrão o mês corrente, não o
+  // anterior usado no restante da tela para o fechamento de folha.
+  const [mesAnoWhatsapp, setMesAnoWhatsapp] = useState(() => {
+    const hoje = new Date();
+    return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [abonosConsolidado, setAbonosConsolidado] = useState(false);
   const [elegiveisContabilidade, setElegiveisContabilidade] = useState<{ nome_completo: string; tipo_contrato: string }[]>([]);
 
@@ -184,11 +199,17 @@ export default function GestaoDePonto() {
       .map(f => ({ nome_completo: f.nome_completo, tipo_contrato: f.tipo_contrato }));
     setElegiveisContabilidade(elegiveis);
 
-    const statsWhatsapp = await estatisticasPontoWhatsappAction(mesAno);
-    if (statsWhatsapp.ok) setEstatisticasWhatsapp(statsWhatsapp.info || null);
-
     setLoading(false);
   };
+
+  // Estatísticas de Ponto via WhatsApp têm seletor de mês próprio
+  // (mesAnoWhatsapp), independente da competência de folha da tela.
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    estatisticasPontoWhatsappAction(mesAnoWhatsapp).then(res => {
+      if (res.ok) setEstatisticasWhatsapp(res.info || null);
+    });
+  }, [mesAnoWhatsapp, authLoading, acessoNegado]);
 
   const timeToMinutes = (timeStr: string | null) => {
     if (!timeStr) return 0;
@@ -422,7 +443,7 @@ export default function GestaoDePonto() {
         });
         if (!res.ok) throw new Error(res.erro);
 
-        alert(`Sucesso! ${abonosProcessados.length} registros de abono importados.`);
+        alert(`Sucesso! ${res.info?.gravados ?? abonosProcessados.length} registros de abono importados.${res.info?.aviso ? `\n\n⚠️ ${res.info.aviso}` : ''}`);
 
         const mesIdentificado = `${anoRef}-${mesRef}`;
         setMesAnoSelecionado(mesIdentificado);
@@ -517,12 +538,49 @@ export default function GestaoDePonto() {
   const abrirTodosEspelhos = () => setViewMode('espelho_todos');
   const voltarResumo = () => { setViewMode('resumo'); setFuncionarioSelecionado(''); };
 
-  const abrirLedgerWhatsapp = async () => {
-    setViewMode('ponto_whatsapp');
+  const carregarLedgerWhatsapp = async (mesAnoAlvo?: string) => {
     setCarregandoLedger(true);
-    const res = await listarLedgerPontoWhatsappAction(mesAnoSelecionado);
+    const res = await listarLedgerPontoWhatsappAction(mesAnoAlvo || mesAnoWhatsapp);
     if (res.ok) setLedgerWhatsapp(res.info || []);
     setCarregandoLedger(false);
+  };
+
+  const abrirLedgerWhatsapp = () => {
+    setViewMode('ponto_whatsapp');
+    setAbaWhatsapp('ledger');
+    carregarLedgerWhatsapp();
+  };
+
+  const carregarSolicitacoesPendentes = async () => {
+    setCarregandoSolicitacoes(true);
+    const res = await listarSolicitacoesPendentesAction();
+    if (res.ok) setSolicitacoesPendentes(res.info || []);
+    setCarregandoSolicitacoes(false);
+  };
+
+  const abrirSolicitacoesPendentes = () => {
+    setViewMode('ponto_whatsapp');
+    setAbaWhatsapp('solicitacoes');
+    carregarSolicitacoesPendentes();
+  };
+
+  const aprovarSolicitacao = async (id: number) => {
+    if (!confirm('Aprovar esta solicitação? Isso já grava o ajuste/abono e avisa o funcionário pelo WhatsApp.')) return;
+    setProcessandoSolicitacaoId(id);
+    const res = await aprovarSolicitacaoAction({ id, aprovadorNome: usuarioAtual });
+    setProcessandoSolicitacaoId(null);
+    if (!res.ok) { alert(res.erro); return; }
+    await Promise.all([carregarSolicitacoesPendentes(), carregarAcessoEDados()]);
+  };
+
+  const rejeitarSolicitacao = async (id: number) => {
+    const motivo = prompt('Motivo da rejeição (o funcionário verá esta mensagem):');
+    if (!motivo?.trim()) return;
+    setProcessandoSolicitacaoId(id);
+    const res = await rejeitarSolicitacaoAction({ id, aprovadorNome: usuarioAtual, motivoRejeicao: motivo.trim() });
+    setProcessandoSolicitacaoId(null);
+    if (!res.ok) { alert(res.erro); return; }
+    await carregarSolicitacoesPendentes();
   };
 
   const RenderEspelho = ({ nome, registrosFunc }: { nome: string, registrosFunc: RegistroDiario[] }) => {
@@ -771,9 +829,17 @@ export default function GestaoDePonto() {
                   <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-blue-100 text-blue-700">{estatisticasWhatsapp?.batidasHoje ?? '…'} batidas hoje</span>
                   <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-gray-100 text-gray-600">{estatisticasWhatsapp?.batidasMes ?? '…'} no mês</span>
                 </div>
-                <button onClick={abrirLedgerWhatsapp} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
-                  📲 VER LEDGER DO MÊS
-                </button>
+                <div className="flex flex-col gap-2">
+                  <button onClick={abrirLedgerWhatsapp} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
+                    📲 VER LEDGER DO MÊS
+                  </button>
+                  <button onClick={abrirSolicitacoesPendentes} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
+                    🔔 SOLICITAÇÕES PENDENTES
+                    {!!estatisticasWhatsapp?.solicitacoesPendentes && (
+                      <span className="bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{estatisticasWhatsapp.solicitacoesPendentes}</span>
+                    )}
+                  </button>
+                </div>
               </div>
             </aside>
 
@@ -980,50 +1046,117 @@ export default function GestaoDePonto() {
 
         {viewMode === 'ponto_whatsapp' && (
           <div className="flex flex-col gap-4">
-            <div className="flex justify-between items-center bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm">
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-3 bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm">
               <button onClick={voltarResumo} className="text-[#64748B] font-bold text-sm hover:text-[#0C1D4D] transition-colors flex items-center gap-2">⬅ Voltar ao Resumo</button>
-              <span className="text-sm font-bold text-[#336699]">Competência: {mesAnoSelecionado.split('-').reverse().join('/')}</span>
+              <div className="flex items-center gap-3">
+                <div className="flex bg-[#F1F5F9] p-1 rounded-lg border border-[#E2E8F0]">
+                  <button onClick={() => setAbaWhatsapp('ledger')} className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abaWhatsapp === 'ledger' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>📲 Ledger</button>
+                  <button onClick={() => setAbaWhatsapp('solicitacoes')} className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abaWhatsapp === 'solicitacoes' ? 'bg-amber-500 text-white shadow-sm' : 'text-[#64748B] hover:text-amber-600'}`}>
+                    🔔 Solicitações
+                    {solicitacoesPendentes.length > 0 && <span className="ml-1.5 bg-white/25 px-1.5 py-0.5 rounded-full text-[9px]">{solicitacoesPendentes.length}</span>}
+                  </button>
+                </div>
+                {abaWhatsapp === 'ledger' && (
+                  <input
+                    type="month"
+                    value={mesAnoWhatsapp}
+                    onChange={(e) => { setMesAnoWhatsapp(e.target.value); carregarLedgerWhatsapp(e.target.value); }}
+                    className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]"
+                  />
+                )}
+              </div>
             </div>
 
-            <main className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col">
-              <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC]">
-                <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Ledger de Ponto via WhatsApp</h2>
-                <p className="text-sm text-[#64748B]">Registro append-only (imutável) das batidas confirmadas pelo funcionário. NSR e hash calculados no banco no momento da gravação.</p>
-              </div>
+            {abaWhatsapp === 'ledger' ? (
+              <main className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col">
+                <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC]">
+                  <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Ledger de Ponto via WhatsApp</h2>
+                  <p className="text-sm text-[#64748B]">Registro append-only (imutável) das batidas confirmadas pelo funcionário. NSR e hash calculados no banco no momento da gravação.</p>
+                </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left border-collapse">
-                  <thead className="bg-white border-b-2 border-[#E2E8F0]">
-                    <tr className="text-[9px] xl:text-[10px] uppercase font-black tracking-widest text-[#64748B]">
-                      <th className="p-4">NSR</th>
-                      <th className="p-4">Colaborador</th>
-                      <th className="p-4">Data</th>
-                      <th className="p-4">Tipo de Batida</th>
-                      <th className="p-4">Horário</th>
-                      <th className="p-4">Hash</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#E2E8F0]">
-                    {carregandoLedger ? (
-                      <tr><td colSpan={6} className="p-8 text-center text-[#94A3B8] font-bold">Carregando ledger...</td></tr>
-                    ) : ledgerWhatsapp.length === 0 ? (
-                      <tr><td colSpan={6} className="p-8 text-center text-[#94A3B8] font-bold">Nenhuma batida via WhatsApp neste mês.</td></tr>
-                    ) : (
-                      ledgerWhatsapp.map((r) => (
-                        <tr key={r.nsr} className="hover:bg-[#F8FAFC] transition-colors">
-                          <td className="p-4 font-mono font-bold text-[#0C1D4D]">{r.nsr}</td>
-                          <td className="p-4 font-black text-[#0C1D4D]">{r.funcionario_nome}</td>
-                          <td className="p-4">{r.data_referencia.split('-').reverse().join('/')}</td>
-                          <td className="p-4">{r.tipo_batida.replace('_', ' ')}</td>
-                          <td className="p-4 font-bold">{new Date(r.data_hora_batida).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })}</td>
-                          <td className="p-4 font-mono text-[10px] text-gray-400">{r.hash_registro.slice(0, 16)}…</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </main>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left border-collapse">
+                    <thead className="bg-white border-b-2 border-[#E2E8F0]">
+                      <tr className="text-[9px] xl:text-[10px] uppercase font-black tracking-widest text-[#64748B]">
+                        <th className="p-4">NSR</th>
+                        <th className="p-4">Colaborador</th>
+                        <th className="p-4">Data</th>
+                        <th className="p-4">Tipo de Batida</th>
+                        <th className="p-4">Horário</th>
+                        <th className="p-4">Hash</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0]">
+                      {carregandoLedger ? (
+                        <tr><td colSpan={6} className="p-8 text-center text-[#94A3B8] font-bold">Carregando ledger...</td></tr>
+                      ) : ledgerWhatsapp.length === 0 ? (
+                        <tr><td colSpan={6} className="p-8 text-center text-[#94A3B8] font-bold">Nenhuma batida via WhatsApp neste mês.</td></tr>
+                      ) : (
+                        ledgerWhatsapp.map((r) => (
+                          <tr key={r.nsr} className="hover:bg-[#F8FAFC] transition-colors">
+                            <td className="p-4 font-mono font-bold text-[#0C1D4D]">{r.nsr}</td>
+                            <td className="p-4 font-black text-[#0C1D4D]">{r.funcionario_nome}</td>
+                            <td className="p-4">{r.data_referencia.split('-').reverse().join('/')}</td>
+                            <td className="p-4">{r.tipo_batida.replace('_', ' ')}</td>
+                            <td className="p-4 font-bold">{new Date(r.data_hora_batida).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })}</td>
+                            <td className="p-4 font-mono text-[10px] text-gray-400">{r.hash_registro.slice(0, 16)}…</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </main>
+            ) : (
+              <main className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col">
+                <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC]">
+                  <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Solicitações Pendentes</h2>
+                  <p className="text-sm text-[#64748B]">Justificativas de batida esquecida e abonos de dia todo pedidos pelo funcionário via WhatsApp. Aprovar grava o ajuste/abono; nada disso é automático.</p>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left border-collapse">
+                    <thead className="bg-white border-b-2 border-[#E2E8F0]">
+                      <tr className="text-[9px] xl:text-[10px] uppercase font-black tracking-widest text-[#64748B]">
+                        <th className="p-4">Colaborador</th>
+                        <th className="p-4">Tipo</th>
+                        <th className="p-4">Data</th>
+                        <th className="p-4">Detalhe</th>
+                        <th className="p-4">Motivo</th>
+                        <th className="p-4 text-right">Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0]">
+                      {carregandoSolicitacoes ? (
+                        <tr><td colSpan={6} className="p-8 text-center text-[#94A3B8] font-bold">Carregando solicitações...</td></tr>
+                      ) : solicitacoesPendentes.length === 0 ? (
+                        <tr><td colSpan={6} className="p-8 text-center text-[#94A3B8] font-bold">Nenhuma solicitação pendente.</td></tr>
+                      ) : (
+                        solicitacoesPendentes.map((s) => (
+                          <tr key={s.id} className="hover:bg-[#F8FAFC] transition-colors">
+                            <td className="p-4 font-black text-[#0C1D4D]">{s.funcionario_nome}</td>
+                            <td className="p-4">
+                              {s.tipo === 'JUSTIFICATIVA_BATIDA'
+                                ? <span className="text-[9px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-black uppercase">Justificativa</span>
+                                : <span className="text-[9px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-black uppercase">Abono (dia todo)</span>}
+                            </td>
+                            <td className="p-4 font-bold">{s.data_referencia.split('-').reverse().join('/')}</td>
+                            <td className="p-4 text-xs">{s.tipo === 'JUSTIFICATIVA_BATIDA' ? `${(s.tipo_batida || '').replace('_', ' ')} às ${s.horario_solicitado}` : '—'}</td>
+                            <td className="p-4 text-xs text-gray-600">{s.motivo}</td>
+                            <td className="p-4 text-right">
+                              <div className="flex gap-2 justify-end">
+                                <button disabled={processandoSolicitacaoId === s.id} onClick={() => aprovarSolicitacao(s.id)} className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors">✓ Aprovar</button>
+                                <button disabled={processandoSolicitacaoId === s.id} onClick={() => rejeitarSolicitacao(s.id)} className="bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-600 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors">✕ Rejeitar</button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </main>
+            )}
           </div>
         )}
 

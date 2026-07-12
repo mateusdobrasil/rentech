@@ -7,6 +7,7 @@ import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
 import { importarPontoAction, importarAbonosAction } from '../actions/actions-ponto';
+import { estatisticasPontoWhatsappAction, listarLedgerPontoWhatsappAction, type EstatisticasPontoWhatsapp, type RegistroLedger } from '../actions/actions-ponto-whatsapp';
 import SepararHolerites from './SepararHolerites';
 import logoColorido from '../../../../app/imgs/logo.png';
 
@@ -115,8 +116,11 @@ export default function GestaoDePonto() {
   const [loading, setLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const [viewMode, setViewMode] = useState<'resumo' | 'espelho' | 'espelho_todos' | 'abonos' | 'separar_holerites'>('resumo');
+  const [viewMode, setViewMode] = useState<'resumo' | 'espelho' | 'espelho_todos' | 'abonos' | 'separar_holerites' | 'ponto_whatsapp'>('resumo');
   const [funcionarioSelecionado, setFuncionarioSelecionado] = useState('');
+  const [estatisticasWhatsapp, setEstatisticasWhatsapp] = useState<EstatisticasPontoWhatsapp | null>(null);
+  const [ledgerWhatsapp, setLedgerWhatsapp] = useState<RegistroLedger[]>([]);
+  const [carregandoLedger, setCarregandoLedger] = useState(false);
   const [abonosConsolidado, setAbonosConsolidado] = useState(false);
   const [elegiveisContabilidade, setElegiveisContabilidade] = useState<{ nome_completo: string; tipo_contrato: string }[]>([]);
 
@@ -179,6 +183,9 @@ export default function GestaoDePonto() {
       .filter(f => contratosComHolerite.has(f.tipo_contrato))
       .map(f => ({ nome_completo: f.nome_completo, tipo_contrato: f.tipo_contrato }));
     setElegiveisContabilidade(elegiveis);
+
+    const statsWhatsapp = await estatisticasPontoWhatsappAction(mesAno);
+    if (statsWhatsapp.ok) setEstatisticasWhatsapp(statsWhatsapp.info || null);
 
     setLoading(false);
   };
@@ -323,8 +330,8 @@ export default function GestaoDePonto() {
         });
         if (!res.ok) throw new Error(res.erro);
 
-        alert(`Sucesso! ${registrosProcessados.length} dias de trabalho importados.`);
-        
+        alert(`Sucesso! ${res.info?.gravados ?? registrosProcessados.length} dias de trabalho importados.${res.info?.aviso ? `\n\n⚠️ ${res.info.aviso}` : ''}`);
+
         const mesIdentificado = `${anoRef}-${mesRef}`;
         setMesAnoSelecionado(mesIdentificado);
         carregarAcessoEDados(mesIdentificado);
@@ -509,6 +516,14 @@ export default function GestaoDePonto() {
   const abrirEspelhoUnico = (nome: string) => { setFuncionarioSelecionado(nome); setViewMode('espelho'); };
   const abrirTodosEspelhos = () => setViewMode('espelho_todos');
   const voltarResumo = () => { setViewMode('resumo'); setFuncionarioSelecionado(''); };
+
+  const abrirLedgerWhatsapp = async () => {
+    setViewMode('ponto_whatsapp');
+    setCarregandoLedger(true);
+    const res = await listarLedgerPontoWhatsappAction(mesAnoSelecionado);
+    if (res.ok) setLedgerWhatsapp(res.info || []);
+    setCarregandoLedger(false);
+  };
 
   const RenderEspelho = ({ nome, registrosFunc }: { nome: string, registrosFunc: RegistroDiario[] }) => {
     const [ano, mes] = mesAnoSelecionado.split('-').map(Number);
@@ -747,6 +762,19 @@ export default function GestaoDePonto() {
                   <span className="bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{elegiveisContabilidade.length}</span>
                 </button>
               </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
+                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">5. Ponto via WhatsApp</h3>
+                <p className="text-xs text-[#64748B] mb-4">Batidas confirmadas pelo funcionário direto no WhatsApp — ledger imutável, com numeração sequencial (NSR).</p>
+                <div className="flex flex-wrap gap-1.5 mb-4">
+                  <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-emerald-100 text-emerald-700">{estatisticasWhatsapp?.funcionariosHabilitados ?? '…'} habilitados</span>
+                  <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-blue-100 text-blue-700">{estatisticasWhatsapp?.batidasHoje ?? '…'} batidas hoje</span>
+                  <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-gray-100 text-gray-600">{estatisticasWhatsapp?.batidasMes ?? '…'} no mês</span>
+                </div>
+                <button onClick={abrirLedgerWhatsapp} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
+                  📲 VER LEDGER DO MÊS
+                </button>
+              </div>
             </aside>
 
             <main className="flex-grow bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col h-fit">
@@ -946,6 +974,55 @@ export default function GestaoDePonto() {
                   </table>
                 </div>
               )}
+            </main>
+          </div>
+        )}
+
+        {viewMode === 'ponto_whatsapp' && (
+          <div className="flex flex-col gap-4">
+            <div className="flex justify-between items-center bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm">
+              <button onClick={voltarResumo} className="text-[#64748B] font-bold text-sm hover:text-[#0C1D4D] transition-colors flex items-center gap-2">⬅ Voltar ao Resumo</button>
+              <span className="text-sm font-bold text-[#336699]">Competência: {mesAnoSelecionado.split('-').reverse().join('/')}</span>
+            </div>
+
+            <main className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col">
+              <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC]">
+                <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Ledger de Ponto via WhatsApp</h2>
+                <p className="text-sm text-[#64748B]">Registro append-only (imutável) das batidas confirmadas pelo funcionário. NSR e hash calculados no banco no momento da gravação.</p>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left border-collapse">
+                  <thead className="bg-white border-b-2 border-[#E2E8F0]">
+                    <tr className="text-[9px] xl:text-[10px] uppercase font-black tracking-widest text-[#64748B]">
+                      <th className="p-4">NSR</th>
+                      <th className="p-4">Colaborador</th>
+                      <th className="p-4">Data</th>
+                      <th className="p-4">Tipo de Batida</th>
+                      <th className="p-4">Horário</th>
+                      <th className="p-4">Hash</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E2E8F0]">
+                    {carregandoLedger ? (
+                      <tr><td colSpan={6} className="p-8 text-center text-[#94A3B8] font-bold">Carregando ledger...</td></tr>
+                    ) : ledgerWhatsapp.length === 0 ? (
+                      <tr><td colSpan={6} className="p-8 text-center text-[#94A3B8] font-bold">Nenhuma batida via WhatsApp neste mês.</td></tr>
+                    ) : (
+                      ledgerWhatsapp.map((r) => (
+                        <tr key={r.nsr} className="hover:bg-[#F8FAFC] transition-colors">
+                          <td className="p-4 font-mono font-bold text-[#0C1D4D]">{r.nsr}</td>
+                          <td className="p-4 font-black text-[#0C1D4D]">{r.funcionario_nome}</td>
+                          <td className="p-4">{r.data_referencia.split('-').reverse().join('/')}</td>
+                          <td className="p-4">{r.tipo_batida.replace('_', ' ')}</td>
+                          <td className="p-4 font-bold">{new Date(r.data_hora_batida).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })}</td>
+                          <td className="p-4 font-mono text-[10px] text-gray-400">{r.hash_registro.slice(0, 16)}…</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </main>
           </div>
         )}

@@ -38,14 +38,35 @@ export async function importarPontoAction(payload: {
     const ultimoDia = new Date(Number(anoRef), Number(mesRef), 0).getDate();
     const dataFim = `${anoRef}-${mesRef}-${String(ultimoDia).padStart(2, '0')}`;
 
+    // Dias com batida via WhatsApp (origem legal, imutável) nunca são apagados
+    // pela reimportação do CSV — mesmo que o funcionário também apareça no
+    // arquivo do Pontomais naquele mês.
+    const { data: diasWhatsapp } = await db.from('folha_ponto_diaria')
+      .select('funcionario_nome, data_registro')
+      .in('funcionario_nome', nomes)
+      .eq('origem', 'WHATSAPP')
+      .gte('data_registro', `${anoRef}-${mesRef}-01`)
+      .lte('data_registro', dataFim);
+
+    const diasPreservados = new Set((diasWhatsapp || []).map((d) => `${d.funcionario_nome}|${d.data_registro}`));
+
     const { error: delErr } = await db.from('folha_ponto_diaria').delete()
       .in('funcionario_nome', nomes)
+      .neq('origem', 'WHATSAPP')
       .gte('data_registro', `${anoRef}-${mesRef}-01`)
       .lte('data_registro', dataFim);
     if (delErr) throw new Error(`Falha ao limpar ponto antigo: ${delErr.message}`);
 
-    const { error: insErr } = await db.from('folha_ponto_diaria').insert(registros);
-    if (insErr) throw new Error(`Falha ao gravar ponto: ${insErr.message}`);
+    const registrosFiltrados = registros.filter(
+      (r) => !diasPreservados.has(`${r.funcionario_nome}|${r.data_registro}`)
+    );
+
+    if (registrosFiltrados.length > 0) {
+      const { error: insErr } = await db.from('folha_ponto_diaria').insert(
+        registrosFiltrados.map((r) => ({ ...r, origem: 'CSV_PONTOMAIS' }))
+      );
+      if (insErr) throw new Error(`Falha ao gravar ponto: ${insErr.message}`);
+    }
 
     await registrarLogAuditoria({
       usuario_nome: usuarioNome,
@@ -53,7 +74,11 @@ export async function importarPontoAction(payload: {
       setor: 'RECURSOS HUMANOS / PONTO'
     });
 
-    return { ok: true, info: { gravados: registros.length } };
+    const aviso = diasPreservados.size > 0
+      ? `${diasPreservados.size} dia(s) com ponto via WhatsApp foram preservados e não foram sobrescritos pelo CSV.`
+      : undefined;
+
+    return { ok: true, info: { gravados: registrosFiltrados.length, aviso } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

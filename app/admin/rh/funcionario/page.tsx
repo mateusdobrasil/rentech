@@ -72,6 +72,7 @@ interface FuncionarioFin {
   valor_diaria: number; valor_adiantamento: number;
   data_admissao: string | null; data_desligamento: string | null;
   data_nascimento: string | null; cpf: string | null; celular: string | null; email: string | null;
+  ponto_whatsapp_ativo: boolean;
   banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null;
   pix_tipo: string | null; pix_chave: string | null;
   recebe_fechamento: boolean | null; recebe_holerite: boolean | null;
@@ -110,6 +111,7 @@ export default function FuncionarioPage() {
     salario_folha: 0, salario_contrato: 0, valor_diaria: 0, valor_adiantamento: 0,
     data_admissao: null, data_desligamento: null,
     data_nascimento: null, cpf: null, celular: null, email: null,
+    ponto_whatsapp_ativo: false,
     banco_codigo: null, banco_agencia: null, banco_conta: null, banco_tipo: null,
     pix_tipo: null, pix_chave: null,
     recebe_fechamento: null, recebe_holerite: null
@@ -471,6 +473,10 @@ export default function FuncionarioPage() {
                       <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Data de Nascimento</label><input type="date" value={form.data_nascimento || ''} onChange={e => setForm({...form, data_nascimento: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
                       <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Celular (WhatsApp)</label><input type="tel" value={form.celular || ''} onChange={e => setForm({...form, celular: e.target.value || null})} placeholder="(11) 90000-0000" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
                       <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">E-mail</label><input type="email" value={form.email || ''} onChange={e => setForm({...form, email: e.target.value || null})} placeholder="nome@email.com" className="w-full p-2 border border-gray-300 rounded text-sm lowercase" /></div>
+                      <div className="col-span-2 flex items-center gap-2 bg-white p-2.5 rounded-lg border border-indigo-100">
+                        <input type="checkbox" id="ponto_whatsapp_ativo" checked={form.ponto_whatsapp_ativo} onChange={e => setForm({...form, ponto_whatsapp_ativo: e.target.checked})} className="w-4 h-4" />
+                        <label htmlFor="ponto_whatsapp_ativo" className="text-[11px] font-bold text-gray-600 uppercase">📲 Bate ponto pelo WhatsApp (usa o Celular acima)</label>
+                      </div>
 
                       <div className="col-span-2 text-[10px] font-black text-indigo-600 uppercase tracking-wider mt-2">Dados Bancários (para pagamento)</div>
                       <div>

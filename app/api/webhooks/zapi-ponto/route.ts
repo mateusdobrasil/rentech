@@ -1,0 +1,60 @@
+// app/api/webhooks/zapi-ponto/route.ts
+// Recebe as mensagens de WhatsApp da Z-API (webhook "ao receber mensagem") e
+// conduz o fluxo de "bater ponto": app/lib/pontoWhatsapp.ts decide a
+// pergunta/confirmação e este endpoint só extrai o payload e devolve a
+// resposta via Z-API.
+//
+// Configurar no painel da Z-API (instância → Webhooks → "Ao receber"):
+//   https://SEU-DOMINIO/api/webhooks/zapi-ponto?token=SEU_ZAPI_WEBHOOK_SECRET
+// O token é comparado a process.env.ZAPI_WEBHOOK_SECRET — a Z-API não
+// garante um header de assinatura, então esse segredo na própria URL é a
+// proteção contra POSTs arbitrários vindos da internet.
+import { NextRequest, NextResponse } from 'next/server';
+import { enviarWhatsApp } from '../../../lib/zapi';
+import { processarMensagemPontoWhatsApp } from '../../../lib/pontoWhatsapp';
+
+function extrairMensagem(body: any): { telefone: string | null; texto: string; messageId: string | null; fromMe: boolean } {
+  const telefone = body?.phone || body?.telefone || null;
+  const texto = body?.text?.message || body?.message?.text || body?.body || '';
+  const messageId = body?.messageId || body?.id || null;
+  const fromMe = Boolean(body?.fromMe);
+  return { telefone, texto, messageId, fromMe };
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const token = req.nextUrl.searchParams.get('token');
+    if (!process.env.ZAPI_WEBHOOK_SECRET || token !== process.env.ZAPI_WEBHOOK_SECRET) {
+      return NextResponse.json({ ok: false, erro: 'Token inválido.' }, { status: 401 });
+    }
+
+    const body = await req.json().catch(() => null);
+    if (!body) {
+      return NextResponse.json({ ok: false, motivo: 'corpo vazio ou inválido' }, { status: 200 });
+    }
+
+    const { telefone, texto, messageId, fromMe } = extrairMensagem(body);
+
+    // Mensagens enviadas pela própria instância (nossas respostas) não devem
+    // reiniciar o fluxo — sem essa guarda o bot conversaria consigo mesmo.
+    if (fromMe || !telefone) {
+      return NextResponse.json({ ok: true, ignorado: true });
+    }
+
+    const resultado = await processarMensagemPontoWhatsApp({ telefone, texto, messageId, payloadBruto: body });
+    if (resultado?.mensagem) {
+      await enviarWhatsApp(telefone, resultado.mensagem);
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    console.error('Webhook Ponto WhatsApp — erro:', e.message);
+    // Responde 200 para a Z-API não ficar reentregando o mesmo evento em loop.
+    return NextResponse.json({ ok: false, erro: e.message }, { status: 200 });
+  }
+}
+
+// A Z-API faz um GET de verificação ao cadastrar o webhook.
+export async function GET() {
+  return NextResponse.json({ ok: true, servico: 'webhook-zapi-ponto' });
+}

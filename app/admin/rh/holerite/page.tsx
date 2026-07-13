@@ -7,7 +7,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
-import { fecharFolhaLoteAction, reabrirFolhaAction } from '../actions/actions-folha';
+import { fecharFolhaLoteAction, reabrirFolhaAction, salvarBonusDescontosAction } from '../actions/actions-folha';
 import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction, previaDocumentoAssinaturaAction } from '../actions/actions-assinatura';
 import logoColorido from '../../../../app/imgs/logo.png';
 
@@ -522,7 +522,11 @@ export default function HoleritePage() {
 
   const [regrasContrato, setRegrasContrato] = useState<Record<string, RegraContrato>>({});
   const [funcionarioSelecionado, setFuncionarioSelecionado] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'config' | 'impressao'>('impressao');
+  const [activeTab, setActiveTab] = useState<'BONUS_DESCONTOS' | 'HOLERITES'>('HOLERITES');
+
+  const [listaFuncionarios, setListaFuncionarios] = useState<FuncionarioFin[]>([]);
+  const [buscaGrid, setBuscaGrid] = useState('');
+  const [filtroContrato, setFiltroContrato] = useState('TODOS');
 
   const [lote, setLote] = useState<ItemLote[]>([]);
   const [enviandoAssinatura, setEnviandoAssinatura] = useState<string | null>(null);
@@ -534,6 +538,15 @@ export default function HoleritePage() {
   const [formSelecionado, setFormSelecionado] = useState<FuncionarioFin | null>(null);
   const [descontosSelecionado, setDescontosSelecionado] = useState<Desconto[]>([]);
   const [bonusSelecionado, setBonusSelecionado] = useState<Bonus[]>([]);
+  const [snapshotBonusDesc, setSnapshotBonusDesc] = useState('');
+  const [mostrarQuitados, setMostrarQuitados] = useState(false);
+  const [mostrarBonusEncerrados, setMostrarBonusEncerrados] = useState(false);
+
+  const fichaAtualSerializada = useMemo(
+    () => JSON.stringify({ descontosSelecionado, bonusSelecionado }),
+    [descontosSelecionado, bonusSelecionado]
+  );
+  const temAlteracoesNaoSalvas = snapshotBonusDesc !== '' && fichaAtualSerializada !== snapshotBonusDesc;
 
   const [mesReferencia, setMesReferencia] = useState(() => {
     const hoje = new Date();
@@ -580,6 +593,7 @@ export default function HoleritePage() {
       setEmailUsuario(perfil.email || session.user.email || '');
       setAuthLoading(false);
       carregarRegras();
+      carregarListaFuncionarios();
     }
     checkAuth();
   }, [router, pathname]);
@@ -587,6 +601,11 @@ export default function HoleritePage() {
   useEffect(() => {
     if (!authLoading) carregarLote(mesReferencia);
   }, [mesReferencia, authLoading]);
+
+  const carregarListaFuncionarios = async () => {
+    const { data } = await supabase.from('folha_funcionarios').select('*').order('nome_completo');
+    if (data) setListaFuncionarios(data);
+  };
 
   const carregarRegras = async () => {
     const { data: regrasData } = await supabase.from('folha_parametros').select('*');
@@ -660,10 +679,14 @@ export default function HoleritePage() {
     setFormSelecionado(funcData);
 
     const { data: descData } = await supabase.from('folha_descontos').select('*').eq('funcionario_nome', nome);
-    setDescontosSelecionado(descData ? descData.map(d => ({ ...d, tipo: d.tipo || 'PARCELADO' })) : []);
+    const descontosCarregados = descData ? descData.map(d => ({ ...d, tipo: d.tipo || 'PARCELADO' })) : [];
+    setDescontosSelecionado(descontosCarregados);
 
     const { data: bonusData } = await supabase.from('folha_bonus').select('*').eq('funcionario_nome', nome);
-    setBonusSelecionado(bonusData || []);
+    const bonusCarregados = bonusData || [];
+    setBonusSelecionado(bonusCarregados);
+
+    setSnapshotBonusDesc(JSON.stringify({ descontosSelecionado: descontosCarregados, bonusSelecionado: bonusCarregados }));
 
     const { data: fechData } = await supabase
       .from('folha_holerites').select('*')
@@ -681,6 +704,92 @@ export default function HoleritePage() {
       carregarDetalhes(funcionarioSelecionado, mesReferencia);
     }
   }, [funcionarioSelecionado, mesReferencia, authLoading]);
+
+  const salvarBonusDescontos = async (): Promise<boolean> => {
+    if (!funcionarioSelecionado) return false;
+    setLoading(true);
+    try {
+      const res = await salvarBonusDescontosAction({
+        funcionarioNome: funcionarioSelecionado,
+        descontos: descontosSelecionado,
+        bonus: bonusSelecionado,
+        usuarioNome: usuarioAtual
+      });
+      if (!res.ok) throw new Error(res.erro);
+
+      alert("Bônus e descontos guardados com sucesso!");
+      setSnapshotBonusDesc(JSON.stringify({ descontosSelecionado, bonusSelecionado }));
+      return true;
+    } catch (e: any) { alert("Erro ao salvar: " + e.message); return false; }
+    finally { setLoading(false); }
+  };
+
+  const trocarFuncionario = async (nome: string) => {
+    if (nome === funcionarioSelecionado) return;
+
+    if (temAlteracoesNaoSalvas) {
+      const salvar = confirm(
+        `Os bônus/descontos de ${formSelecionado?.nome_completo || 'este colaborador'} têm alterações não salvas.\n\n` +
+        `OK = Salvar antes de trocar\nCancelar = Descartar as alterações`
+      );
+      if (salvar) {
+        const ok = await salvarBonusDescontos();
+        if (!ok) return;
+      }
+    }
+
+    setFuncionarioSelecionado(nome);
+  };
+
+  const addDesconto = () => setDescontosSelecionado([...descontosSelecionado, { descricao: '', tipo: 'PARCELADO', parcelas: 1, mes_inicio: mesReferencia, mes_fim: mesReferencia, valor_parcela: 0 }]);
+  const addBonus = () => setBonusSelecionado([...bonusSelecionado, { descricao: '', recorrencia: 'UNICO', mes_referencia: mesReferencia, valor: 0 }]);
+  const removeDesconto = (idx: number) => setDescontosSelecionado(descontosSelecionado.filter((_, i) => i !== idx));
+  const removeBonus = (idx: number) => setBonusSelecionado(bonusSelecionado.filter((_, i) => i !== idx));
+
+  const handleDescontoChange = <K extends keyof Desconto>(idx: number, campo: K, valor: Desconto[K]) => {
+    const novosDescontos = [...descontosSelecionado];
+    novosDescontos[idx] = { ...novosDescontos[idx], [campo]: valor };
+    if (campo === 'tipo') {
+      novosDescontos[idx].mes_fim = valor === 'FIXO' ? '2099-12' : calcularMesFim(novosDescontos[idx].mes_inicio, novosDescontos[idx].parcelas);
+    } else if (campo === 'mes_inicio' || campo === 'parcelas') {
+      if (novosDescontos[idx].tipo === 'PARCELADO') {
+        novosDescontos[idx].mes_fim = calcularMesFim(novosDescontos[idx].mes_inicio, novosDescontos[idx].parcelas || 1);
+      }
+    }
+    setDescontosSelecionado(novosDescontos);
+  };
+
+  const contratosDisponiveis = useMemo(() => {
+    const set = new Set<string>();
+    listaFuncionarios.forEach(f => { if (f.tipo_contrato) set.add(f.tipo_contrato); });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [listaFuncionarios]);
+
+  const funcFiltrados = useMemo(() =>
+    listaFuncionarios
+      .filter(f => f.nome_completo.toLowerCase().includes(buscaGrid.toLowerCase()))
+      .filter(f => filtroContrato === 'TODOS' || f.tipo_contrato === filtroContrato)
+      .sort((a, b) => {
+        if (a.ativo !== b.ativo) return a.ativo ? -1 : 1;
+        return a.nome_completo.localeCompare(b.nome_completo);
+      }),
+    [listaFuncionarios, buscaGrid, filtroContrato]);
+
+  const descontosComIndice = useMemo(() => descontosSelecionado.map((d, idx) => {
+    let quitado = false;
+    if (d.tipo === 'PARCELADO' && d.mes_inicio && d.parcelas > 0) {
+      const fimReal = calcularMesFim(d.mes_inicio, d.parcelas);
+      quitado = mesReferencia > fimReal;
+    }
+    return { d, idx, quitado };
+  }), [descontosSelecionado, mesReferencia]);
+  const qtdQuitados = useMemo(() => descontosComIndice.filter(x => x.quitado).length, [descontosComIndice]);
+
+  const bonusComIndice = useMemo(() => bonusSelecionado.map((b, idx) => ({
+    b, idx,
+    encerrado: b.recorrencia === 'UNICO' && !!b.mes_referencia && mesReferencia > b.mes_referencia
+  })), [bonusSelecionado, mesReferencia]);
+  const qtdBonusEncerrados = useMemo(() => bonusComIndice.filter(x => x.encerrado).length, [bonusComIndice]);
 
   const carregarLote = async (mesAno: string) => {
     setLoadingLote(true);
@@ -968,6 +1077,196 @@ export default function HoleritePage() {
         </button>
       </div>
 
+      <div className="p-4 md:px-8 pt-6 print:hidden">
+        <div className="bg-white p-3 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row items-center gap-2 max-w-[1500px] mx-auto w-full">
+          <div className="flex bg-[#F1F5F9] p-1 rounded-xl border border-[#E2E8F0] w-full sm:w-auto">
+            <button
+              onClick={() => setActiveTab('BONUS_DESCONTOS')}
+              className={`flex-1 sm:flex-initial px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-colors shadow-sm ${activeTab === 'BONUS_DESCONTOS' ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:text-[#0C1D4D]'}`}
+            >
+              💵 Bônus e Descontos
+            </button>
+            <button
+              onClick={() => setActiveTab('HOLERITES')}
+              className={`flex-1 sm:flex-initial px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-colors shadow-sm ${activeTab === 'HOLERITES' ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:text-[#0C1D4D]'}`}
+            >
+              📄 Holerites
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {activeTab === 'BONUS_DESCONTOS' && (
+        <div className="p-4 md:px-8 pb-10 flex-grow flex flex-col lg:flex-row gap-6 max-w-[1500px] mx-auto w-full print:hidden">
+
+          {/* LISTAGEM LATERAL */}
+          <aside className="w-full lg:w-80 flex-shrink-0 space-y-4">
+            <div className="bg-[#0C1D4D] p-5 rounded-2xl shadow-md text-white">
+              <h2 className="font-black uppercase tracking-wider mb-4">Equipe Rentech</h2>
+              <input
+                type="text" placeholder="Buscar nome..." value={buscaGrid} onChange={e => setBuscaGrid(e.target.value)}
+                className="w-full p-2.5 rounded-lg text-sm text-white bg-[#1E3A6E] outline-none font-bold placeholder:text-blue-200"
+              />
+              <select
+                value={filtroContrato} onChange={e => setFiltroContrato(e.target.value)}
+                className="w-full mt-3 p-2.5 rounded-lg text-sm text-white bg-[#1E3A6E] outline-none font-bold cursor-pointer"
+              >
+                <option value="TODOS">Todos os contratos</option>
+                {contratosDisponiveis.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              {filtroContrato !== 'TODOS' && (
+                <p className="text-[10px] text-blue-200 font-bold mt-2 uppercase tracking-wider">
+                  {funcFiltrados.length} de {listaFuncionarios.length} — filtrado por contrato
+                </p>
+              )}
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden max-h-[65vh] overflow-y-auto">
+              {funcFiltrados.map((f, i) => (
+                <div
+                  key={i} onClick={() => trocarFuncionario(f.nome_completo)}
+                  className={`p-4 border-b border-[#E2E8F0] cursor-pointer transition-colors flex justify-between items-center ${funcionarioSelecionado === f.nome_completo ? 'bg-blue-50 border-l-4 border-l-[#336699]' : 'hover:bg-gray-50'}`}
+                >
+                  <div>
+                    <strong className={`block text-xs uppercase tracking-wider ${f.ativo ? 'text-[#0C1D4D]' : 'text-gray-400 line-through'}`}>{f.nome_completo}</strong>
+                    <span className="text-[10px] text-gray-500 font-medium">{f.cargo || 'Sem função'}</span>
+                  </div>
+                  {!f.ativo && <span className="bg-red-100 text-red-700 text-[9px] font-black px-2 py-0.5 rounded">INATIVO</span>}
+                </div>
+              ))}
+            </div>
+          </aside>
+
+          {/* CORPO */}
+          <main className="flex-grow flex flex-col gap-4">
+            {!funcionarioSelecionado || !formSelecionado ? (
+              <div className="bg-white border-2 border-dashed border-gray-300 rounded-2xl h-full flex items-center justify-center text-gray-400 font-bold uppercase tracking-wider p-20">
+                Selecione um colaborador no menu lateral
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4 pb-20">
+                <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-4">
+                  <div>
+                    <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider">{formSelecionado.nome_completo}</h3>
+                    <span className="text-[10px] text-gray-400 font-bold uppercase">{formSelecionado.cargo || 'sem cargo'} • {formSelecionado.tipo_contrato}</span>
+                  </div>
+                  <button onClick={salvarBonusDescontos} disabled={loading} className={`font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md transition-all active:scale-[0.98] disabled:opacity-50 ${temAlteracoesNaoSalvas ? 'bg-[#16A34A] hover:bg-[#15803D] text-white animate-pulse' : 'bg-[#0C1D4D] hover:bg-[#284B8C] text-white'}`}>
+                    {loading ? '⏳ Gravando...' : '💾 Gravar'}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <div className="bg-white p-5 rounded-2xl shadow-sm border border-green-200">
+                    <div className="flex justify-between items-center border-b border-green-100 pb-2 mb-4">
+                      <h3 className="font-black text-[#16A34A] uppercase tracking-wider">Bônus e Prêmios</h3>
+                      <button onClick={addBonus} className="text-[10px] bg-green-100 text-green-700 font-black px-3 py-1.5 rounded uppercase tracking-wider">+ ADICIONAR</button>
+                    </div>
+                    <p className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-3 uppercase">ℹ️ As datas são a COMPETÊNCIA (mês trabalhado). O pagamento sai sempre no mês seguinte.</p>
+                    <div className="space-y-3">
+                      {bonusComIndice
+                        .filter(({ encerrado }) => mostrarBonusEncerrados || !encerrado)
+                        .map(({ b, idx, encerrado }) => (
+                        <div key={idx} className={`p-3 border rounded-lg grid grid-cols-2 gap-2 relative group ${encerrado ? 'bg-gray-100 border-gray-200' : 'bg-green-50/30 border-green-100'}`}>
+                          {!encerrado && <button onClick={() => removeBonus(idx)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 font-bold opacity-0 group-hover:opacity-100">X</button>}
+                          <div className="col-span-2 flex items-center justify-between gap-2">
+                            <input type="text" placeholder="Descrição" value={b.descricao} disabled={encerrado} onChange={e => { const n = [...bonusSelecionado]; n[idx].descricao = e.target.value; setBonusSelecionado(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs uppercase disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" />
+                            {encerrado && <span className="text-[9px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded font-black uppercase whitespace-nowrap">🔒 Pago</span>}
+                          </div>
+                          <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Valor R$</label><input type="number" step="0.01" value={b.valor} disabled={encerrado} onChange={e => { const n = [...bonusSelecionado]; n[idx].valor = Number(e.target.value); setBonusSelecionado(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs text-[#16A34A] font-bold disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
+                          <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Recorrência</label><select value={b.recorrencia} disabled={encerrado} onChange={e => { const n = [...bonusSelecionado]; n[idx].recorrencia = e.target.value as 'MENSAL'|'UNICO'; setBonusSelecionado(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed"><option value="UNICO">Única Vez</option><option value="MENSAL">Fixo (Mensal)</option></select></div>
+                          {b.recorrencia === 'UNICO' && <div className="col-span-2"><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Competência do Bônus</label><input type="month" value={b.mes_referencia} disabled={encerrado} onChange={e => { const n = [...bonusSelecionado]; n[idx].mes_referencia = e.target.value; setBonusSelecionado(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" />{b.mes_referencia && <p className="text-[9px] font-bold text-emerald-600 mt-0.5 uppercase">💵 Sai no pagamento de {competenciaParaPagamento(b.mes_referencia)}</p>}</div>}
+                        </div>
+                      ))}
+
+                      {bonusSelecionado.length === 0 && (
+                        <p className="text-[11px] text-gray-400 font-medium text-center py-2 uppercase">Nenhum bônus lançado</p>
+                      )}
+                    </div>
+
+                    {qtdBonusEncerrados > 0 && (
+                      <button
+                        onClick={() => setMostrarBonusEncerrados(!mostrarBonusEncerrados)}
+                        className="w-full mt-3 text-[10px] font-black uppercase tracking-wider text-gray-500 hover:text-[#0C1D4D] bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg py-2 transition-colors"
+                      >
+                        {mostrarBonusEncerrados
+                          ? `▲ Ocultar ${qtdBonusEncerrados} bônus já pago(s)`
+                          : `▼ Ver ${qtdBonusEncerrados} bônus já pago(s)`}
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="bg-white p-5 rounded-2xl shadow-sm border border-red-200">
+                    <div className="flex justify-between items-center border-b border-red-100 pb-2 mb-4">
+                      <h3 className="font-black text-red-600 uppercase tracking-wider">Débitos e Descontos</h3>
+                      <button onClick={addDesconto} className="text-[10px] bg-red-100 text-red-700 font-black px-3 py-1.5 rounded uppercase tracking-wider">+ ADICIONAR</button>
+                    </div>
+                    <p className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-3 uppercase">ℹ️ A "Competência 1ª Parcela" é o mês trabalhado. O desconto sai no pagamento do mês seguinte.</p>
+                    <div className="space-y-3">
+                      {descontosComIndice
+                        .filter(({ quitado }) => mostrarQuitados || !quitado)
+                        .map(({ d, idx, quitado }) => {
+                        return (
+                        <div key={idx} className={`p-3 border rounded-lg grid grid-cols-2 gap-2 relative group ${quitado ? 'bg-gray-100 border-gray-200' : 'bg-red-50/30 border-red-100'}`}>
+                          {!quitado && <button onClick={() => removeDesconto(idx)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 font-bold opacity-0 group-hover:opacity-100">X</button>}
+                          <div className="col-span-2 flex items-center justify-between gap-2">
+                            <input type="text" placeholder="Descrição do Desconto" value={d.descricao} disabled={quitado} onChange={e => handleDescontoChange(idx, 'descricao', e.target.value)} className="w-full p-1.5 border border-gray-200 rounded text-xs uppercase disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" />
+                            {quitado && <span className="text-[9px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded font-black uppercase whitespace-nowrap">🔒 Quitado</span>}
+                          </div>
+                          <div><input type="number" step="0.01" placeholder="Valor R$" value={d.valor_parcela} disabled={quitado} onChange={e => handleDescontoChange(idx, 'valor_parcela', Number(e.target.value))} className="w-full p-1.5 border border-gray-200 rounded text-xs text-red-600 font-bold disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
+                          <div>
+                            <select value={d.tipo} disabled={quitado} onChange={e => handleDescontoChange(idx, 'tipo', e.target.value as Desconto['tipo'])} className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed">
+                              <option value="PARCELADO">Parcelado</option>
+                              <option value="FIXO">Fixo (Mensal)</option>
+                            </select>
+                          </div>
+                          <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Competência 1ª Parcela</label><input type="month" value={d.mes_inicio} disabled={quitado} onChange={e => handleDescontoChange(idx, 'mes_inicio', e.target.value)} className="w-full p-1.5 border border-gray-200 rounded text-xs disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
+
+                          {d.tipo === 'PARCELADO' ? (
+                            <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Qtd Parcelas</label><input type="number" placeholder="Qtd Parc." value={d.parcelas} disabled={quitado} onChange={e => handleDescontoChange(idx, 'parcelas', Number(e.target.value))} className="w-full p-1.5 border border-gray-200 rounded text-xs disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
+                          ) : (
+                            <div className="flex items-end"><div className="w-full p-1.5 bg-gray-100 text-gray-500 rounded text-[10px] text-center font-bold">FIXO CONTÍNUO</div></div>
+                          )}
+
+                          {d.tipo === 'PARCELADO' && d.mes_inicio && (
+                            <div className="col-span-2 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1.5">
+                              <p className="text-[9px] font-black text-emerald-700 uppercase leading-tight">
+                                💵 1ª parcela paga em {competenciaParaPagamento(d.mes_inicio)}
+                                {d.mes_fim && ` • última em ${competenciaParaPagamento(d.mes_fim)}`}
+                              </p>
+                              {quitado && <p className="text-[9px] font-bold text-gray-500 uppercase mt-0.5">Encerrada, bloqueada para edição</p>}
+                            </div>
+                          )}
+                        </div>
+                        );
+                      })}
+
+                      {descontosSelecionado.length === 0 && (
+                        <p className="text-[11px] text-gray-400 font-medium text-center py-2 uppercase">Nenhum desconto lançado</p>
+                      )}
+                      {descontosSelecionado.length > 0 && qtdQuitados === descontosSelecionado.length && !mostrarQuitados && (
+                        <p className="text-[11px] text-gray-400 font-medium text-center py-2 uppercase">Todos os descontos deste colaborador já estão quitados</p>
+                      )}
+                    </div>
+
+                    {qtdQuitados > 0 && (
+                      <button
+                        onClick={() => setMostrarQuitados(!mostrarQuitados)}
+                        className="w-full mt-3 text-[10px] font-black uppercase tracking-wider text-gray-500 hover:text-[#0C1D4D] bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg py-2 transition-colors"
+                      >
+                        {mostrarQuitados
+                          ? `▲ Ocultar ${qtdQuitados} desconto(s) quitado(s)`
+                          : `▼ Ver ${qtdQuitados} desconto(s) quitado(s)`}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+      )}
+
+      {activeTab === 'HOLERITES' && (
       <div className="p-4 md:px-8 pt-6 flex-grow flex flex-col max-w-[1500px] mx-auto w-full">
         <div className="flex flex-col items-center pb-10">
           <div className="w-full max-w-5xl bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] mb-6 print:hidden">
@@ -1129,6 +1428,7 @@ export default function HoleritePage() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

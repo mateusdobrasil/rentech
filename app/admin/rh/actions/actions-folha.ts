@@ -9,16 +9,16 @@ import { registrarLogAuditoria } from '../../../actions';
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
 // ============================================================================
-// SALVAR FICHA DO COLABORADOR (funcionário + descontos + bônus)
+// SALVAR FICHA DO COLABORADOR (funcionário + dependentes + movimentações)
 // ============================================================================
 export async function salvarColaboradorAction(payload: {
   form: any;
-  descontos: any[];
-  bonus: any[];
+  dependentes: any[];
+  movimentacoes: any[];
   usuarioNome: string;
 }): Promise<Resultado> {
   const db = supabaseAdmin();
-  const { form, descontos, bonus, usuarioNome } = payload;
+  const { form, dependentes, movimentacoes, usuarioNome } = payload;
 
   if (!form?.nome_completo) return { ok: false, erro: 'O Nome Completo é obrigatório.' };
 
@@ -31,12 +31,68 @@ export async function salvarColaboradorAction(payload: {
       .upsert(form, { onConflict: 'nome_completo' });
     if (upsertError) throw new Error(`Falha ao gravar a ficha: ${upsertError.message}`);
 
-    const { error: delDesc } = await db.from('folha_descontos').delete().eq('funcionario_nome', form.nome_completo);
+    const { error: delDep } = await db.from('folha_dependentes').delete().eq('funcionario_nome', form.nome_completo);
+    if (delDep) throw new Error(`Falha ao limpar dependentes antigos: ${delDep.message}`);
+
+    if (dependentes.length > 0) {
+      const limpaDependentes = dependentes.map((d: any) => ({
+        funcionario_nome: form.nome_completo,
+        tipo_dependente: d.tipo_dependente || null,
+        nome_completo: d.nome_completo || null,
+        cpf: d.cpf || null,
+        data_nascimento: d.data_nascimento || null
+      }));
+      const { error: insDep } = await db.from('folha_dependentes').insert(limpaDependentes);
+      if (insDep) throw new Error(`Falha ao gravar dependentes: ${insDep.message}`);
+    }
+
+    const { error: delMov } = await db.from('folha_movimentacoes').delete().eq('funcionario_nome', form.nome_completo);
+    if (delMov) throw new Error(`Falha ao limpar movimentações antigas: ${delMov.message}`);
+
+    if (movimentacoes.length > 0) {
+      const limpaMovimentacoes = movimentacoes.map((m: any) => ({
+        funcionario_nome: form.nome_completo,
+        motivo: m.motivo || null,
+        cargo: m.cargo || null,
+        data_movimentacao: m.data_movimentacao || null
+      }));
+      const { error: insMov } = await db.from('folha_movimentacoes').insert(limpaMovimentacoes);
+      if (insMov) throw new Error(`Falha ao gravar movimentações: ${insMov.message}`);
+    }
+
+    await registrarLogAuditoria({
+      usuario_nome: usuarioNome,
+      acao: `ATUALIZAÇÃO FINANCEIRA INTEGRADA: ${form.nome_completo}`,
+      setor: 'RECURSOS HUMANOS / HOLERITES'
+    });
+
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// SALVAR BÔNUS E DESCONTOS DE UM FUNCIONÁRIO (usado pela página de Holerite)
+// ============================================================================
+export async function salvarBonusDescontosAction(payload: {
+  funcionarioNome: string;
+  descontos: any[];
+  bonus: any[];
+  usuarioNome: string;
+}): Promise<Resultado> {
+  const db = supabaseAdmin();
+  const { funcionarioNome, descontos, bonus, usuarioNome } = payload;
+
+  if (!funcionarioNome) return { ok: false, erro: 'Funcionário não informado.' };
+
+  try {
+    const { error: delDesc } = await db.from('folha_descontos').delete().eq('funcionario_nome', funcionarioNome);
     if (delDesc) throw new Error(`Falha ao limpar descontos antigos: ${delDesc.message}`);
 
     if (descontos.length > 0) {
       const limpaDescontos = descontos.map((d: any) => ({
-        funcionario_nome: form.nome_completo,
+        funcionario_nome: funcionarioNome,
         descricao: d.descricao || 'DESCONTO', tipo: d.tipo,
         parcelas: d.tipo === 'FIXO' ? 1 : (Number(d.parcelas) || 1),
         mes_inicio: d.mes_inicio,
@@ -47,12 +103,12 @@ export async function salvarColaboradorAction(payload: {
       if (insDesc) throw new Error(`Falha ao gravar descontos: ${insDesc.message}`);
     }
 
-    const { error: delBonus } = await db.from('folha_bonus').delete().eq('funcionario_nome', form.nome_completo);
+    const { error: delBonus } = await db.from('folha_bonus').delete().eq('funcionario_nome', funcionarioNome);
     if (delBonus) throw new Error(`Falha ao limpar bônus antigos: ${delBonus.message}`);
 
     if (bonus.length > 0) {
       const limpaBonus = bonus.map((b: any) => ({
-        funcionario_nome: form.nome_completo,
+        funcionario_nome: funcionarioNome,
         descricao: b.descricao || 'PRÊMIO', recorrencia: b.recorrencia,
         mes_referencia: b.mes_referencia, valor: Number(b.valor) || 0
       }));
@@ -62,7 +118,7 @@ export async function salvarColaboradorAction(payload: {
 
     await registrarLogAuditoria({
       usuario_nome: usuarioNome,
-      acao: `ATUALIZAÇÃO FINANCEIRA INTEGRADA: ${form.nome_completo}`,
+      acao: `ATUALIZAÇÃO DE BÔNUS/DESCONTOS: ${funcionarioNome}`,
       setor: 'RECURSOS HUMANOS / HOLERITES'
     });
 

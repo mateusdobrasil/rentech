@@ -31,22 +31,6 @@ const formatarMesAnoBR = (mesAnoIso: string) => {
   return `${mes}/${ano}`;
 };
 
-// A RenTech paga a competência no MÊS SEGUINTE. Esta função traduz a
-// competência (mês trabalhado) para o mês em que o dinheiro efetivamente sai.
-const competenciaParaPagamento = (mesAnoIso: string) => {
-  if (!mesAnoIso) return '';
-  const [ano, mes] = mesAnoIso.split('-').map(Number);
-  const d = new Date(ano, mes, 1); // mes (0-based) + 1 = mês seguinte
-  return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
-};
-
-const calcularMesFim = (mesInicio: string, parcelas: number) => {
-  if (!mesInicio || parcelas < 1) return mesInicio;
-  const [ano, mes] = mesInicio.split('-').map(Number);
-  const dataFim = new Date(ano, (mes - 1) + (parcelas - 1), 1);
-  return `${dataFim.getFullYear()}-${String(dataFim.getMonth() + 1).padStart(2, '0')}`;
-};
-
 // Interfaces
 interface RegraContrato {
   nome_regra: string;
@@ -76,10 +60,35 @@ interface FuncionarioFin {
   banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null;
   pix_tipo: string | null; pix_chave: string | null;
   recebe_fechamento: boolean | null; recebe_holerite: boolean | null;
+
+  // Definições de registro
+  pis: string | null; matricula_esocial: string | null;
+
+  // Dados pessoais
+  aposentado: boolean | null; pais_nascimento: string | null; cidade_nascimento: string | null;
+  estado_civil: string | null; genero: string | null; nome_mae: string | null; nome_pai: string | null;
+  etnia: string | null; escolaridade: string | null;
+
+  // Contato e endereço
+  telefone_alternativo: string | null; email_alternativo: string | null;
+  cep: string | null; cidade: string | null; endereco: string | null; numero: string | null;
+  complemento: string | null; bairro: string | null;
+
+  // Informações especiais
+  deficiencia_fisica: boolean | null; deficiencia_mental: boolean | null; deficiencia_auditiva: boolean | null;
+  deficiencia_intelectual: boolean | null; deficiencia_visual: boolean | null;
+  reabilitado_readaptado: boolean | null; notas_especiais: string | null;
+
+  // Trabalhador estrangeiro
+  estrangeiro: boolean | null; casado_com_brasileiro: boolean | null; filhos_brasileiros: boolean | null;
+  data_chegada_estrangeiro: string | null; tipo_visto_estrangeiro: string | null;
+  cep_estrangeiro: string | null; pais_estrangeiro: string | null; cidade_estrangeiro: string | null;
+  endereco_estrangeiro: string | null; numero_estrangeiro: string | null;
+  complemento_estrangeiro: string | null; bairro_estrangeiro: string | null;
 }
 
-interface Desconto { id?: string; funcionario_nome?: string; descricao: string; tipo: 'FIXO' | 'PARCELADO'; parcelas: number; mes_inicio: string; mes_fim: string; valor_parcela: number; }
-interface Bonus { id?: string; funcionario_nome?: string; descricao: string; recorrencia: 'MENSAL' | 'UNICO'; mes_referencia: string; valor: number; }
+interface Dependente { id?: string; funcionario_nome?: string; tipo_dependente: string; nome_completo: string; cpf: string; data_nascimento: string; }
+interface Movimentacao { id?: string; funcionario_nome?: string; motivo: 'ADMISSAO' | 'ALTERACAO_CARGO' | 'DEMISSAO'; cargo: string; data_movimentacao: string; }
 
 export default function FuncionarioPage() {
   const router = useRouter();
@@ -97,13 +106,7 @@ export default function FuncionarioPage() {
   const [buscaGrid, setBuscaGrid] = useState('');
   const [filtroContrato, setFiltroContrato] = useState('TODOS');
   const [funcionarioSelecionado, setFuncionarioSelecionado] = useState<string | null>(null);
-  const [fichaExpandida, setFichaExpandida] = useState(false);
-
-  const [mesReferencia, setMesReferencia] = useState(() => {
-    const hoje = new Date();
-    const comp = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1);
-    return `${comp.getFullYear()}-${String(comp.getMonth() + 1).padStart(2, '0')}`;
-  });
+  const [abaAtiva, setAbaAtiva] = useState<'ESSENCIAL' | 'COMPLETO'>('ESSENCIAL');
 
   const defaultForm: FuncionarioFin = {
     nome_completo: '', cargo: '', tipo_contrato: 'CLT + Contrato', ativo: true,
@@ -114,20 +117,38 @@ export default function FuncionarioPage() {
     ponto_whatsapp_ativo: false,
     banco_codigo: null, banco_agencia: null, banco_conta: null, banco_tipo: null,
     pix_tipo: null, pix_chave: null,
-    recebe_fechamento: null, recebe_holerite: null
+    recebe_fechamento: null, recebe_holerite: null,
+
+    pis: null, matricula_esocial: null,
+
+    aposentado: null, pais_nascimento: null, cidade_nascimento: null,
+    estado_civil: null, genero: null, nome_mae: null, nome_pai: null,
+    etnia: null, escolaridade: null,
+
+    telefone_alternativo: null, email_alternativo: null,
+    cep: null, cidade: null, endereco: null, numero: null,
+    complemento: null, bairro: null,
+
+    deficiencia_fisica: null, deficiencia_mental: null, deficiencia_auditiva: null,
+    deficiencia_intelectual: null, deficiencia_visual: null,
+    reabilitado_readaptado: null, notas_especiais: null,
+
+    estrangeiro: null, casado_com_brasileiro: null, filhos_brasileiros: null,
+    data_chegada_estrangeiro: null, tipo_visto_estrangeiro: null,
+    cep_estrangeiro: null, pais_estrangeiro: null, cidade_estrangeiro: null,
+    endereco_estrangeiro: null, numero_estrangeiro: null,
+    complemento_estrangeiro: null, bairro_estrangeiro: null
   };
 
   const [form, setForm] = useState<FuncionarioFin>(defaultForm);
-  const [descontos, setDescontos] = useState<Desconto[]>([]);
-  const [bonus, setBonus] = useState<Bonus[]>([]);
+  const [dependentes, setDependentes] = useState<Dependente[]>([]);
+  const [movimentacoes, setMovimentacoes] = useState<Movimentacao[]>([]);
 
   const [snapshotFicha, setSnapshotFicha] = useState('');
-  const [mostrarQuitados, setMostrarQuitados] = useState(false);
-  const [mostrarBonusEncerrados, setMostrarBonusEncerrados] = useState(false);
 
   const fichaAtualSerializada = useMemo(
-    () => JSON.stringify({ form, descontos, bonus }),
-    [form, descontos, bonus]
+    () => JSON.stringify({ form, dependentes, movimentacoes }),
+    [form, dependentes, movimentacoes]
   );
   const temAlteracoesNaoSalvas = snapshotFicha !== '' && fichaAtualSerializada !== snapshotFicha;
 
@@ -237,16 +258,16 @@ export default function FuncionarioPage() {
     }
     setForm(funcData);
 
-    const { data: descData } = await supabase.from('folha_descontos').select('*').eq('funcionario_nome', nome);
-    setDescontos(descData ? descData.map(d => ({ ...d, tipo: d.tipo || 'PARCELADO' })) : []);
+    const { data: depData } = await supabase.from('folha_dependentes').select('*').eq('funcionario_nome', nome);
+    setDependentes(depData || []);
 
-    const { data: bonusData } = await supabase.from('folha_bonus').select('*').eq('funcionario_nome', nome);
-    setBonus(bonusData || []);
+    const { data: movData } = await supabase.from('folha_movimentacoes').select('*').eq('funcionario_nome', nome);
+    setMovimentacoes(movData || []);
 
     setSnapshotFicha(JSON.stringify({
       form: funcData,
-      descontos: descData ? descData.map(d => ({ ...d, tipo: d.tipo || 'PARCELADO' })) : [],
-      bonus: bonusData || []
+      dependentes: depData || [],
+      movimentacoes: movData || []
     }));
 
     setLoading(false);
@@ -254,8 +275,8 @@ export default function FuncionarioPage() {
 
   const prepararNovo = () => {
     setFuncionarioSelecionado('NOVO'); setForm(defaultForm);
-    setDescontos([]); setBonus([]);
-    setFichaExpandida(true);
+    setDependentes([]); setMovimentacoes([]);
+    setAbaAtiva('ESSENCIAL');
   };
 
   const salvarColaborador = async (): Promise<boolean> => {
@@ -263,11 +284,11 @@ export default function FuncionarioPage() {
     setLoading(true);
 
     try {
-      const res = await salvarColaboradorAction({ form, descontos, bonus, usuarioNome: usuarioAtual });
+      const res = await salvarColaboradorAction({ form, dependentes, movimentacoes, usuarioNome: usuarioAtual });
       if (!res.ok) throw new Error(res.erro);
 
       alert("Ficha guardada com sucesso!");
-      setSnapshotFicha(JSON.stringify({ form, descontos, bonus }));
+      setSnapshotFicha(JSON.stringify({ form, dependentes, movimentacoes }));
       carregarListaFuncionarios();
       if (funcionarioSelecionado === 'NOVO') setFuncionarioSelecionado(form.nome_completo);
       return true;
@@ -294,23 +315,11 @@ export default function FuncionarioPage() {
 
   const alternarStatusAtivo = async () => setForm({ ...form, ativo: !form.ativo });
 
-  const addDesconto = () => setDescontos([...descontos, { descricao: '', tipo: 'PARCELADO', parcelas: 1, mes_inicio: mesReferencia, mes_fim: mesReferencia, valor_parcela: 0 }]);
-  const addBonus = () => setBonus([...bonus, { descricao: '', recorrencia: 'UNICO', mes_referencia: mesReferencia, valor: 0 }]);
-  const removeDesconto = (idx: number) => setDescontos(descontos.filter((_, i) => i !== idx));
-  const removeBonus = (idx: number) => setBonus(bonus.filter((_, i) => i !== idx));
+  const addDependente = () => setDependentes([...dependentes, { tipo_dependente: '', nome_completo: '', cpf: '', data_nascimento: '' }]);
+  const removeDependente = (idx: number) => setDependentes(dependentes.filter((_, i) => i !== idx));
 
-  const handleDescontoChange = <K extends keyof Desconto>(idx: number, campo: K, valor: Desconto[K]) => {
-    const novosDescontos = [...descontos];
-    novosDescontos[idx] = { ...novosDescontos[idx], [campo]: valor };
-    if (campo === 'tipo') {
-      novosDescontos[idx].mes_fim = valor === 'FIXO' ? '2099-12' : calcularMesFim(novosDescontos[idx].mes_inicio, novosDescontos[idx].parcelas);
-    } else if (campo === 'mes_inicio' || campo === 'parcelas') {
-      if (novosDescontos[idx].tipo === 'PARCELADO') {
-        novosDescontos[idx].mes_fim = calcularMesFim(novosDescontos[idx].mes_inicio, novosDescontos[idx].parcelas || 1);
-      }
-    }
-    setDescontos(novosDescontos);
-  };
+  const addMovimentacao = () => setMovimentacoes([...movimentacoes, { motivo: 'ADMISSAO', cargo: form.cargo, data_movimentacao: '' }]);
+  const removeMovimentacao = (idx: number) => setMovimentacoes(movimentacoes.filter((_, i) => i !== idx));
 
   const regraAtiva = regrasContrato[form.tipo_contrato] || null;
 
@@ -329,22 +338,6 @@ export default function FuncionarioPage() {
         return a.nome_completo.localeCompare(b.nome_completo);
       }),
     [listaFuncionarios, buscaGrid, filtroContrato]);
-
-  const descontosComIndice = useMemo(() => descontos.map((d, idx) => {
-    let quitado = false;
-    if (d.tipo === 'PARCELADO' && d.mes_inicio && d.parcelas > 0) {
-      const fimReal = calcularMesFim(d.mes_inicio, d.parcelas);
-      quitado = mesReferencia > fimReal;
-    }
-    return { d, idx, quitado };
-  }), [descontos, mesReferencia]);
-  const qtdQuitados = useMemo(() => descontosComIndice.filter(x => x.quitado).length, [descontosComIndice]);
-
-  const bonusComIndice = useMemo(() => bonus.map((b, idx) => ({
-    b, idx,
-    encerrado: b.recorrencia === 'UNICO' && !!b.mes_referencia && mesReferencia > b.mes_referencia
-  })), [bonus, mesReferencia]);
-  const qtdBonusEncerrados = useMemo(() => bonusComIndice.filter(x => x.encerrado).length, [bonusComIndice]);
 
   if (authLoading) {
     return (
@@ -427,9 +420,18 @@ export default function FuncionarioPage() {
 
           <div className="bg-white p-3 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row items-center gap-2 print:hidden">
             <div className="flex bg-[#F1F5F9] p-1 rounded-xl border border-[#E2E8F0] w-full sm:w-auto">
-              <span className="flex-1 sm:flex-initial px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg bg-[#0C1D4D] text-white shadow-sm">
+              <button
+                onClick={() => setAbaAtiva('ESSENCIAL')}
+                className={`flex-1 sm:flex-initial px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-colors shadow-sm ${abaAtiva === 'ESSENCIAL' ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:text-[#0C1D4D]'}`}
+              >
                 👤 Ficha Individual
-              </span>
+              </button>
+              <button
+                onClick={() => setAbaAtiva('COMPLETO')}
+                className={`flex-1 sm:flex-initial px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-colors shadow-sm ${abaAtiva === 'COMPLETO' ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:text-[#0C1D4D]'}`}
+              >
+                📋 Dados Completos
+              </button>
             </div>
             <button
               onClick={prepararNovo}
@@ -445,22 +447,20 @@ export default function FuncionarioPage() {
             </div>
           ) : (
             <div className="flex flex-col gap-6 print:hidden pb-20">
+            {abaAtiva === 'ESSENCIAL' && (
+            <>
               <div className="grid grid-cols-1 xl:grid-cols-1 gap-6">
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] space-y-4 h-fit">
                   <div className="flex justify-between items-center border-b border-[#E2E8F0] pb-2">
-                    <button onClick={() => setFichaExpandida(!fichaExpandida)} className="flex items-center gap-2 text-left group">
-                      <span className="text-[#336699] font-black text-lg transition-transform" style={{ transform: fichaExpandida ? 'rotate(90deg)' : 'none' }}>▸</span>
-                      <div>
-                        <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider group-hover:text-[#336699] transition-colors">{form.nome_completo || 'Novo Colaborador'}</h3>
-                        {!fichaExpandida && <span className="text-[10px] text-gray-400 font-bold uppercase">{form.cargo || 'sem cargo'} • {form.tipo_contrato} • clique para editar dados</span>}
-                      </div>
-                    </button>
+                    <div>
+                      <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider">{form.nome_completo || 'Novo Colaborador'}</h3>
+                      <span className="text-[10px] text-gray-400 font-bold uppercase">{form.cargo || 'sem cargo'} • {form.tipo_contrato}</span>
+                    </div>
                     <button onClick={alternarStatusAtivo} className={`text-[10px] px-3 py-1 rounded font-black uppercase tracking-wider transition-colors flex-shrink-0 ${form.ativo ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-green-50 text-green-600 hover:bg-green-100'}`}>
                       {form.ativo ? 'SUSPENDER' : 'REATIVAR'}
                     </button>
                   </div>
 
-                  {fichaExpandida && (
                   <div className="grid grid-cols-2 gap-4">
                     <div className="col-span-2">
                         <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Nome Completo</label>
@@ -603,116 +603,19 @@ export default function FuncionarioPage() {
                     )}
                     <div className="col-span-2"><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Adiantamento (Dia 20)</label><input type="number" step="0.01" value={form.valor_adiantamento} onChange={e => setForm({...form, valor_adiantamento: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-red-600" /></div>
                   </div>
-                  )}
                 </div>
               </div>
+            </>
+            )}
 
-              {/* BÔNUS E DESCONTOS */}
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                <div className="bg-white p-5 rounded-2xl shadow-sm border border-green-200">
-                  <div className="flex justify-between items-center border-b border-green-100 pb-2 mb-4">
-                    <h3 className="font-black text-[#16A34A] uppercase tracking-wider">Bônus e Prêmios</h3>
-                    <button onClick={addBonus} className="text-[10px] bg-green-100 text-green-700 font-black px-3 py-1.5 rounded uppercase tracking-wider">+ ADICIONAR</button>
-                  </div>
-                  <p className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-3 uppercase">ℹ️ As datas são a COMPETÊNCIA (mês trabalhado). O pagamento sai sempre no mês seguinte.</p>
-                  <div className="space-y-3">
-                    {bonusComIndice
-                      .filter(({ encerrado }) => mostrarBonusEncerrados || !encerrado)
-                      .map(({ b, idx, encerrado }) => (
-                      <div key={idx} className={`p-3 border rounded-lg grid grid-cols-2 gap-2 relative group ${encerrado ? 'bg-gray-100 border-gray-200' : 'bg-green-50/30 border-green-100'}`}>
-                        {!encerrado && <button onClick={() => removeBonus(idx)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 font-bold opacity-0 group-hover:opacity-100">X</button>}
-                        <div className="col-span-2 flex items-center justify-between gap-2">
-                          <input type="text" placeholder="Descrição" value={b.descricao} disabled={encerrado} onChange={e => { const n = [...bonus]; n[idx].descricao = e.target.value; setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs uppercase disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" />
-                          {encerrado && <span className="text-[9px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded font-black uppercase whitespace-nowrap">🔒 Pago</span>}
-                        </div>
-                        <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Valor R$</label><input type="number" step="0.01" value={b.valor} disabled={encerrado} onChange={e => { const n = [...bonus]; n[idx].valor = Number(e.target.value); setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs text-[#16A34A] font-bold disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
-                        <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Recorrência</label><select value={b.recorrencia} disabled={encerrado} onChange={e => { const n = [...bonus]; n[idx].recorrencia = e.target.value as 'MENSAL'|'UNICO'; setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed"><option value="UNICO">Única Vez</option><option value="MENSAL">Fixo (Mensal)</option></select></div>
-                        {b.recorrencia === 'UNICO' && <div className="col-span-2"><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Competência do Bônus</label><input type="month" value={b.mes_referencia} disabled={encerrado} onChange={e => { const n = [...bonus]; n[idx].mes_referencia = e.target.value; setBonus(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" />{b.mes_referencia && <p className="text-[9px] font-bold text-emerald-600 mt-0.5 uppercase">💵 Sai no pagamento de {competenciaParaPagamento(b.mes_referencia)}</p>}</div>}
-                      </div>
-                    ))}
-
-                    {bonus.length === 0 && (
-                      <p className="text-[11px] text-gray-400 font-medium text-center py-2 uppercase">Nenhum bônus lançado</p>
-                    )}
-                  </div>
-
-                  {qtdBonusEncerrados > 0 && (
-                    <button
-                      onClick={() => setMostrarBonusEncerrados(!mostrarBonusEncerrados)}
-                      className="w-full mt-3 text-[10px] font-black uppercase tracking-wider text-gray-500 hover:text-[#0C1D4D] bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg py-2 transition-colors"
-                    >
-                      {mostrarBonusEncerrados
-                        ? `▲ Ocultar ${qtdBonusEncerrados} bônus já pago(s)`
-                        : `▼ Ver ${qtdBonusEncerrados} bônus já pago(s)`}
-                    </button>
-                  )}
-                </div>
-
-                <div className="bg-white p-5 rounded-2xl shadow-sm border border-red-200">
-                  <div className="flex justify-between items-center border-b border-red-100 pb-2 mb-4">
-                    <h3 className="font-black text-red-600 uppercase tracking-wider">Débitos e Descontos</h3>
-                    <button onClick={addDesconto} className="text-[10px] bg-red-100 text-red-700 font-black px-3 py-1.5 rounded uppercase tracking-wider">+ ADICIONAR</button>
-                  </div>
-                  <p className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-3 uppercase">ℹ️ A "Competência 1ª Parcela" é o mês trabalhado. O desconto sai no pagamento do mês seguinte.</p>
-                  <div className="space-y-3">
-                    {descontosComIndice
-                      .filter(({ quitado }) => mostrarQuitados || !quitado)
-                      .map(({ d, idx, quitado }) => {
-                      return (
-                      <div key={idx} className={`p-3 border rounded-lg grid grid-cols-2 gap-2 relative group ${quitado ? 'bg-gray-100 border-gray-200' : 'bg-red-50/30 border-red-100'}`}>
-                        {!quitado && <button onClick={() => removeDesconto(idx)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 font-bold opacity-0 group-hover:opacity-100">X</button>}
-                        <div className="col-span-2 flex items-center justify-between gap-2">
-                          <input type="text" placeholder="Descrição do Desconto" value={d.descricao} disabled={quitado} onChange={e => handleDescontoChange(idx, 'descricao', e.target.value)} className="w-full p-1.5 border border-gray-200 rounded text-xs uppercase disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" />
-                          {quitado && <span className="text-[9px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded font-black uppercase whitespace-nowrap">🔒 Quitado</span>}
-                        </div>
-                        <div><input type="number" step="0.01" placeholder="Valor R$" value={d.valor_parcela} disabled={quitado} onChange={e => handleDescontoChange(idx, 'valor_parcela', Number(e.target.value))} className="w-full p-1.5 border border-gray-200 rounded text-xs text-red-600 font-bold disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
-                        <div>
-                          <select value={d.tipo} disabled={quitado} onChange={e => handleDescontoChange(idx, 'tipo', e.target.value as Desconto['tipo'])} className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed">
-                            <option value="PARCELADO">Parcelado</option>
-                            <option value="FIXO">Fixo (Mensal)</option>
-                          </select>
-                        </div>
-                        <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Competência 1ª Parcela</label><input type="month" value={d.mes_inicio} disabled={quitado} onChange={e => handleDescontoChange(idx, 'mes_inicio', e.target.value)} className="w-full p-1.5 border border-gray-200 rounded text-xs disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
-
-                        {d.tipo === 'PARCELADO' ? (
-                          <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Qtd Parcelas</label><input type="number" placeholder="Qtd Parc." value={d.parcelas} disabled={quitado} onChange={e => handleDescontoChange(idx, 'parcelas', Number(e.target.value))} className="w-full p-1.5 border border-gray-200 rounded text-xs disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
-                        ) : (
-                          <div className="flex items-end"><div className="w-full p-1.5 bg-gray-100 text-gray-500 rounded text-[10px] text-center font-bold">FIXO CONTÍNUO</div></div>
-                        )}
-
-                        {d.tipo === 'PARCELADO' && d.mes_inicio && (
-                          <div className="col-span-2 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1.5">
-                            <p className="text-[9px] font-black text-emerald-700 uppercase leading-tight">
-                              💵 1ª parcela paga em {competenciaParaPagamento(d.mes_inicio)}
-                              {d.mes_fim && ` • última em ${competenciaParaPagamento(d.mes_fim)}`}
-                            </p>
-                            {quitado && <p className="text-[9px] font-bold text-gray-500 uppercase mt-0.5">Encerrada, bloqueada para edição</p>}
-                          </div>
-                        )}
-                      </div>
-                      );
-                    })}
-
-                    {descontos.length === 0 && (
-                      <p className="text-[11px] text-gray-400 font-medium text-center py-2 uppercase">Nenhum desconto lançado</p>
-                    )}
-                    {descontos.length > 0 && qtdQuitados === descontos.length && !mostrarQuitados && (
-                      <p className="text-[11px] text-gray-400 font-medium text-center py-2 uppercase">Todos os descontos deste colaborador já estão quitados</p>
-                    )}
-                  </div>
-
-                  {qtdQuitados > 0 && (
-                    <button
-                      onClick={() => setMostrarQuitados(!mostrarQuitados)}
-                      className="w-full mt-3 text-[10px] font-black uppercase tracking-wider text-gray-500 hover:text-[#0C1D4D] bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg py-2 transition-colors"
-                    >
-                      {mostrarQuitados
-                        ? `▲ Ocultar ${qtdQuitados} desconto(s) quitado(s)`
-                        : `▼ Ver ${qtdQuitados} desconto(s) quitado(s)`}
-                    </button>
-                  )}
-                </div>
-              </div>
+            {abaAtiva === 'COMPLETO' && (
+              <DadosCompletos
+                form={form} setForm={setForm}
+                dependentes={dependentes} addDependente={addDependente} removeDependente={removeDependente} setDependentes={setDependentes}
+                movimentacoes={movimentacoes} addMovimentacao={addMovimentacao} removeMovimentacao={removeMovimentacao} setMovimentacoes={setMovimentacoes}
+                cargosCatalogo={cargosCatalogo}
+              />
+            )}
 
               <div className="w-full mt-4">
                 <button onClick={salvarColaborador} disabled={loading} className={`w-full font-black uppercase tracking-widest text-sm py-4 rounded-xl shadow-md transition-all active:scale-[0.99] disabled:opacity-50 ${temAlteracoesNaoSalvas ? 'bg-[#16A34A] hover:bg-[#15803D] text-white' : 'bg-[#0C1D4D] hover:bg-[#284B8C] text-white'}`}>
@@ -725,5 +628,267 @@ export default function FuncionarioPage() {
         </main>
       </div>
     </div>
+  );
+}
+
+// ============================================================================
+// ABA "DADOS COMPLETOS" — cadastro estendido (eSocial, endereço, dependentes, etc.)
+// ============================================================================
+function DadosCompletos({
+  form, setForm,
+  dependentes, addDependente, removeDependente, setDependentes,
+  movimentacoes, addMovimentacao, removeMovimentacao, setMovimentacoes,
+  cargosCatalogo
+}: {
+  form: FuncionarioFin; setForm: (f: FuncionarioFin) => void;
+  dependentes: Dependente[]; addDependente: () => void; removeDependente: (idx: number) => void; setDependentes: (d: Dependente[]) => void;
+  movimentacoes: Movimentacao[]; addMovimentacao: () => void; removeMovimentacao: (idx: number) => void; setMovimentacoes: (m: Movimentacao[]) => void;
+  cargosCatalogo: string[];
+}) {
+  const handleDependenteChange = <K extends keyof Dependente>(idx: number, campo: K, valor: Dependente[K]) => {
+    const novos = [...dependentes];
+    novos[idx] = { ...novos[idx], [campo]: valor };
+    setDependentes(novos);
+  };
+
+  const handleMovimentacaoChange = <K extends keyof Movimentacao>(idx: number, campo: K, valor: Movimentacao[K]) => {
+    const novas = [...movimentacoes];
+    novas[idx] = { ...novas[idx], [campo]: valor };
+    setMovimentacoes(novas);
+  };
+
+  return (
+    <>
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
+        <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider">{form.nome_completo || 'Novo Colaborador'}</h3>
+        <span className="text-[10px] text-gray-400 font-bold uppercase">{form.cargo || 'sem cargo'} • {form.tipo_contrato}</span>
+      </div>
+
+      {/* DEFINIÇÕES DE REGISTRO */}
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] space-y-4">
+        <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider border-b border-[#E2E8F0] pb-2">Definições de Registro</h3>
+        <div className="grid grid-cols-2 gap-4">
+          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">PIS</label><input type="text" value={form.pis || ''} onChange={e => setForm({...form, pis: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Matrícula eSocial</label><input type="text" value={form.matricula_esocial || ''} onChange={e => setForm({...form, matricula_esocial: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+        </div>
+      </div>
+
+      {/* DADOS PESSOAIS */}
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] space-y-4">
+        <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider border-b border-[#E2E8F0] pb-2">Dados Pessoais</h3>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="col-span-2 flex items-center gap-2 bg-indigo-50 p-2.5 rounded-lg border border-indigo-100">
+            <input type="checkbox" id="aposentado" checked={!!form.aposentado} onChange={e => setForm({...form, aposentado: e.target.checked})} className="w-4 h-4" />
+            <label htmlFor="aposentado" className="text-[11px] font-bold text-gray-600 uppercase">É aposentado?</label>
+          </div>
+          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">País de Nascimento</label><input type="text" value={form.pais_nascimento || ''} onChange={e => setForm({...form, pais_nascimento: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Cidade de Nascimento</label><input type="text" value={form.cidade_nascimento || ''} onChange={e => setForm({...form, cidade_nascimento: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Estado Civil</label>
+            <select value={form.estado_civil || ''} onChange={e => setForm({...form, estado_civil: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white">
+              <option value="">— Selecione —</option>
+              <option value="SOLTEIRO">Solteiro(a)</option>
+              <option value="CASADO">Casado(a)</option>
+              <option value="UNIAO_ESTAVEL">União Estável</option>
+              <option value="DIVORCIADO">Divorciado(a)</option>
+              <option value="VIUVO">Viúvo(a)</option>
+              <option value="SEPARADO">Separado(a)</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Gênero</label>
+            <select value={form.genero || ''} onChange={e => setForm({...form, genero: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white">
+              <option value="">— Selecione —</option>
+              <option value="MASCULINO">Masculino</option>
+              <option value="FEMININO">Feminino</option>
+              <option value="OUTRO">Outro</option>
+              <option value="PREFIRO_NAO_INFORMAR">Prefiro não informar</option>
+            </select>
+          </div>
+          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Nome da Mãe</label><input type="text" value={form.nome_mae || ''} onChange={e => setForm({...form, nome_mae: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Nome do Pai</label><input type="text" value={form.nome_pai || ''} onChange={e => setForm({...form, nome_pai: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Etnia</label>
+            <select value={form.etnia || ''} onChange={e => setForm({...form, etnia: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white">
+              <option value="">— Selecione —</option>
+              <option value="BRANCA">Branca</option>
+              <option value="PRETA">Preta</option>
+              <option value="PARDA">Parda</option>
+              <option value="AMARELA">Amarela</option>
+              <option value="INDIGENA">Indígena</option>
+              <option value="NAO_INFORMADA">Não informada</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Escolaridade</label>
+            <select value={form.escolaridade || ''} onChange={e => setForm({...form, escolaridade: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white">
+              <option value="">— Selecione —</option>
+              <option value="ANALFABETO">Analfabeto</option>
+              <option value="FUNDAMENTAL_INCOMPLETO">Fundamental Incompleto</option>
+              <option value="FUNDAMENTAL_COMPLETO">Fundamental Completo</option>
+              <option value="MEDIO_INCOMPLETO">Médio Incompleto</option>
+              <option value="MEDIO_COMPLETO">Médio Completo</option>
+              <option value="SUPERIOR_INCOMPLETO">Superior Incompleto</option>
+              <option value="SUPERIOR_COMPLETO">Superior Completo</option>
+              <option value="POS_GRADUACAO">Pós-Graduação</option>
+              <option value="MESTRADO">Mestrado</option>
+              <option value="DOUTORADO">Doutorado</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* CONTATO E ENDEREÇO */}
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] space-y-4">
+        <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider border-b border-[#E2E8F0] pb-2">Contato e Endereço</h3>
+        <div className="grid grid-cols-2 gap-4">
+          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Telefone Alternativo</label><input type="tel" value={form.telefone_alternativo || ''} onChange={e => setForm({...form, telefone_alternativo: e.target.value || null})} placeholder="(11) 90000-0000" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">E-mail Alternativo</label><input type="email" value={form.email_alternativo || ''} onChange={e => setForm({...form, email_alternativo: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm lowercase" /></div>
+          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">CEP</label><input type="text" value={form.cep || ''} onChange={e => setForm({...form, cep: e.target.value || null})} placeholder="00000-000" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Cidade</label><input type="text" value={form.cidade || ''} onChange={e => setForm({...form, cidade: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+          <div className="col-span-2"><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Endereço</label><input type="text" value={form.endereco || ''} onChange={e => setForm({...form, endereco: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Número</label><input type="text" value={form.numero || ''} onChange={e => setForm({...form, numero: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Complemento</label><input type="text" value={form.complemento || ''} onChange={e => setForm({...form, complemento: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+          <div className="col-span-2"><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Bairro</label><input type="text" value={form.bairro || ''} onChange={e => setForm({...form, bairro: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+        </div>
+      </div>
+
+      {/* DEPENDENTES E HISTÓRICO DE MOVIMENTAÇÃO */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-purple-200">
+          <div className="flex justify-between items-center border-b border-purple-100 pb-2 mb-4">
+            <h3 className="font-black text-purple-700 uppercase tracking-wider">Dependentes</h3>
+            <button onClick={addDependente} className="text-[10px] bg-purple-100 text-purple-700 font-black px-3 py-1.5 rounded uppercase tracking-wider">+ ADICIONAR</button>
+          </div>
+          <div className="space-y-3">
+            {dependentes.map((d, idx) => (
+              <div key={idx} className="p-3 border rounded-lg grid grid-cols-2 gap-2 relative group bg-purple-50/30 border-purple-100">
+                <button onClick={() => removeDependente(idx)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 font-bold opacity-0 group-hover:opacity-100">X</button>
+                <div>
+                  <label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Tipo</label>
+                  <select value={d.tipo_dependente} onChange={e => handleDependenteChange(idx, 'tipo_dependente', e.target.value)} className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white">
+                    <option value="">— Selecione —</option>
+                    <option value="CONJUGE">Cônjuge</option>
+                    <option value="FILHO">Filho</option>
+                    <option value="FILHA">Filha</option>
+                    <option value="ENTEADO">Enteado(a)</option>
+                    <option value="PAI">Pai</option>
+                    <option value="MAE">Mãe</option>
+                    <option value="IRMAO">Irmão(ã)</option>
+                    <option value="OUTROS">Outros</option>
+                  </select>
+                </div>
+                <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Data de Nascimento</label><input type="date" value={d.data_nascimento} onChange={e => handleDependenteChange(idx, 'data_nascimento', e.target.value)} className="w-full p-1.5 border border-gray-200 rounded text-xs" /></div>
+                <div className="col-span-2"><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Nome Completo</label><input type="text" value={d.nome_completo} onChange={e => handleDependenteChange(idx, 'nome_completo', e.target.value.toUpperCase())} className="w-full p-1.5 border border-gray-200 rounded text-xs uppercase" /></div>
+                <div className="col-span-2"><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">CPF</label><input type="text" value={d.cpf} onChange={e => handleDependenteChange(idx, 'cpf', e.target.value)} placeholder="000.000.000-00" className="w-full p-1.5 border border-gray-200 rounded text-xs" /></div>
+              </div>
+            ))}
+            {dependentes.length === 0 && (
+              <p className="text-[11px] text-gray-400 font-medium text-center py-2 uppercase">Nenhum dependente cadastrado</p>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-blue-200">
+          <div className="flex justify-between items-center border-b border-blue-100 pb-2 mb-4">
+            <h3 className="font-black text-[#336699] uppercase tracking-wider">Dados da Empresa (Movimentação)</h3>
+            <button onClick={addMovimentacao} className="text-[10px] bg-blue-100 text-blue-700 font-black px-3 py-1.5 rounded uppercase tracking-wider">+ ADICIONAR</button>
+          </div>
+          <div className="space-y-3">
+            {movimentacoes.map((m, idx) => (
+              <div key={idx} className="p-3 border rounded-lg grid grid-cols-2 gap-2 relative group bg-blue-50/30 border-blue-100">
+                <button onClick={() => removeMovimentacao(idx)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 font-bold opacity-0 group-hover:opacity-100">X</button>
+                <div>
+                  <label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Motivo</label>
+                  <select value={m.motivo} onChange={e => handleMovimentacaoChange(idx, 'motivo', e.target.value as Movimentacao['motivo'])} className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white">
+                    <option value="ADMISSAO">Admissão</option>
+                    <option value="ALTERACAO_CARGO">Alteração de Cargo</option>
+                    <option value="DEMISSAO">Demissão</option>
+                  </select>
+                </div>
+                <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Data da Movimentação</label><input type="date" value={m.data_movimentacao} onChange={e => handleMovimentacaoChange(idx, 'data_movimentacao', e.target.value)} className="w-full p-1.5 border border-gray-200 rounded text-xs" /></div>
+                <div className="col-span-2">
+                  <label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Cargo</label>
+                  <select value={m.cargo} onChange={e => handleMovimentacaoChange(idx, 'cargo', e.target.value)} className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white uppercase">
+                    <option value="">— Selecione —</option>
+                    {m.cargo && !cargosCatalogo.includes(m.cargo) && <option value={m.cargo}>{m.cargo} (fora do catálogo)</option>}
+                    {cargosCatalogo.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+            ))}
+            {movimentacoes.length === 0 && (
+              <p className="text-[11px] text-gray-400 font-medium text-center py-2 uppercase">Nenhuma movimentação registrada</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* INFORMAÇÕES ESPECIAIS */}
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] space-y-4">
+        <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider border-b border-[#E2E8F0] pb-2">Informações Especiais</h3>
+        <div className="grid grid-cols-2 gap-3">
+          {([
+            ['deficiencia_fisica', 'Possui deficiência física?'],
+            ['deficiencia_mental', 'Possui deficiência mental?'],
+            ['deficiencia_auditiva', 'Possui deficiência auditiva?'],
+            ['deficiencia_intelectual', 'Possui deficiência intelectual?'],
+            ['deficiencia_visual', 'Possui deficiência visual?'],
+            ['reabilitado_readaptado', 'É reabilitado ou readaptado?'],
+          ] as [keyof FuncionarioFin, string][]).map(([campo, rotulo]) => (
+            <div key={campo} className="flex items-center gap-2 bg-amber-50 p-2.5 rounded-lg border border-amber-100">
+              <input type="checkbox" id={campo} checked={!!form[campo]} onChange={e => setForm({...form, [campo]: e.target.checked})} className="w-4 h-4" />
+              <label htmlFor={campo} className="text-[11px] font-bold text-gray-600 uppercase">{rotulo}</label>
+            </div>
+          ))}
+        </div>
+        <div>
+          <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Notas</label>
+          <textarea value={form.notas_especiais || ''} onChange={e => setForm({...form, notas_especiais: e.target.value || null})} rows={3} className="w-full p-2 border border-gray-300 rounded text-sm" />
+        </div>
+      </div>
+
+      {/* TRABALHADOR ESTRANGEIRO */}
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] space-y-4">
+        <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider border-b border-[#E2E8F0] pb-2">Trabalhador Estrangeiro</h3>
+        <div className="flex items-center gap-2 bg-cyan-50 p-2.5 rounded-lg border border-cyan-100">
+          <input type="checkbox" id="estrangeiro" checked={!!form.estrangeiro} onChange={e => setForm({...form, estrangeiro: e.target.checked})} className="w-4 h-4" />
+          <label htmlFor="estrangeiro" className="text-[11px] font-bold text-gray-600 uppercase">É estrangeiro?</label>
+        </div>
+
+        {form.estrangeiro && (
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex items-center gap-2 bg-cyan-50/50 p-2.5 rounded-lg border border-cyan-100">
+              <input type="checkbox" id="casado_com_brasileiro" checked={!!form.casado_com_brasileiro} onChange={e => setForm({...form, casado_com_brasileiro: e.target.checked})} className="w-4 h-4" />
+              <label htmlFor="casado_com_brasileiro" className="text-[11px] font-bold text-gray-600 uppercase">É casado com brasileiro(a)?</label>
+            </div>
+            <div className="flex items-center gap-2 bg-cyan-50/50 p-2.5 rounded-lg border border-cyan-100">
+              <input type="checkbox" id="filhos_brasileiros" checked={!!form.filhos_brasileiros} onChange={e => setForm({...form, filhos_brasileiros: e.target.checked})} className="w-4 h-4" />
+              <label htmlFor="filhos_brasileiros" className="text-[11px] font-bold text-gray-600 uppercase">Tem filhos brasileiros?</label>
+            </div>
+            <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Data de Chegada</label><input type="date" value={form.data_chegada_estrangeiro || ''} onChange={e => setForm({...form, data_chegada_estrangeiro: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+            <div>
+              <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Tipo de Visto</label>
+              <select value={form.tipo_visto_estrangeiro || ''} onChange={e => setForm({...form, tipo_visto_estrangeiro: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white">
+                <option value="">— Selecione —</option>
+                <option value="PERMANENTE">Permanente</option>
+                <option value="TEMPORARIO">Temporário</option>
+                <option value="DIPLOMATICO">Diplomático</option>
+                <option value="CORTESIA">Cortesia</option>
+                <option value="OFICIAL">Oficial</option>
+                <option value="OUTRO">Outro</option>
+              </select>
+            </div>
+            <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">CEP</label><input type="text" value={form.cep_estrangeiro || ''} onChange={e => setForm({...form, cep_estrangeiro: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+            <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">País</label><input type="text" value={form.pais_estrangeiro || ''} onChange={e => setForm({...form, pais_estrangeiro: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+            <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Cidade</label><input type="text" value={form.cidade_estrangeiro || ''} onChange={e => setForm({...form, cidade_estrangeiro: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+            <div className="col-span-2"><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Endereço</label><input type="text" value={form.endereco_estrangeiro || ''} onChange={e => setForm({...form, endereco_estrangeiro: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+            <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Número</label><input type="text" value={form.numero_estrangeiro || ''} onChange={e => setForm({...form, numero_estrangeiro: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+            <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Complemento</label><input type="text" value={form.complemento_estrangeiro || ''} onChange={e => setForm({...form, complemento_estrangeiro: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+            <div className="col-span-2"><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Bairro</label><input type="text" value={form.bairro_estrangeiro || ''} onChange={e => setForm({...form, bairro_estrangeiro: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+          </div>
+        )}
+      </div>
+    </>
   );
 }

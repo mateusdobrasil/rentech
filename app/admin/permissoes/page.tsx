@@ -354,11 +354,13 @@ export default function GestaoPermissoes() {
   };
 
   const usuariosFiltrados = useMemo(() => {
-    return usuarios.filter(u => 
-      u.nome.toLowerCase().includes(busca.toLowerCase()) || 
-      u.email.toLowerCase().includes(busca.toLowerCase()) ||
-      u.permissao.toLowerCase().includes(busca.toLowerCase())
-    );
+    return usuarios
+      .filter(u =>
+        u.nome.toLowerCase().includes(busca.toLowerCase()) ||
+        u.email.toLowerCase().includes(busca.toLowerCase()) ||
+        u.permissao.toLowerCase().includes(busca.toLowerCase())
+      )
+      .sort((a, b) => Number(b.ativo) - Number(a.ativo));
   }, [usuarios, busca]);
 
   const paginasFiltradas = useMemo(() => {

@@ -45,6 +45,12 @@ const modulosOperacional = [
     descricao: 'Gestão de entrada, saída e manutenção de equipamentos cadastrados.',
     icone: '📦', link: '/admin/operacional/estoque',
     cor: 'bg-amber-50 border-amber-200 text-amber-700', hover: 'hover:border-amber-500'
+  },
+  {
+    titulo: 'Controle de Frota',
+    descricao: 'Ficha dos veículos, documentos, seguros, vencimentos e manutenções.',
+    icone: '🚚', link: '/admin/operacional/frota',
+    cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
   }
 ];
 

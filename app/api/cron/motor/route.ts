@@ -1,6 +1,18 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { dispararAutomacaoWhatsApp } from '../../../lib/automacoes';
+import { montarContextoFrotaVencida } from '../../../lib/frota';
+
+// Automações cujo disparo depende de um contexto calculado em código (ex: uma
+// lista dinâmica), em vez de só {{primeiro_nome}}/{{nome_completo}}. Se a
+// função devolver null, o motor pula essa automação sem disparar nada.
+const CONTEXTOS_ESPECIAIS: Record<string, () => Promise<Record<string, string | number> | null>> = {
+  'frota-vencimentos': async () => {
+    const resultado = await montarContextoFrotaVencida();
+    if (!resultado) return null;
+    return { lista: resultado.lista, quantidade: resultado.quantidade };
+  }
+};
 
 // Motor único de agendamentos: roda a cada 5 minutos (ver vercel.json) e
 // dispara qualquer automação do tipo CRON cujo horário/dias da semana,
@@ -55,7 +67,15 @@ export async function GET(request: Request) {
         }
       }
 
-      const resultado = await dispararAutomacaoWhatsApp(automacao.chave, {});
+      let contexto: Record<string, string | number> = {};
+      const montarContexto = CONTEXTOS_ESPECIAIS[automacao.chave];
+      if (montarContexto) {
+        const contextoEspecial = await montarContexto();
+        if (!contextoEspecial) continue; // nada a reportar hoje, não dispara
+        contexto = contextoEspecial;
+      }
+
+      const resultado = await dispararAutomacaoWhatsApp(automacao.chave, contexto);
       if (resultado.disparado) {
         executadas.push({ chave: automacao.chave, disparos: resultado.disparos, erros: resultado.erros });
         await db.from('logs_auditoria').insert([{

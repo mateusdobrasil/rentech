@@ -43,7 +43,7 @@ const modulosOperacional = [
   {
     titulo: 'Controle de Estoque',
     descricao: 'Gestão de entrada, saída e manutenção de equipamentos cadastrados.',
-    icone: '📦', link: '/admin/estoque',
+    icone: '📦', link: '/admin/operacional/estoque',
     cor: 'bg-amber-50 border-amber-200 text-amber-700', hover: 'hover:border-amber-500'
   }
 ];

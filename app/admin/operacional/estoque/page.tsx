@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { supabase } from '../../lib/supabase';
-import { registrarLogAuditoria } from '../../actions';
+import { supabase } from '../../../lib/supabase';
+import { registrarLogAuditoria } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
 
 // ============================================================================

@@ -359,7 +359,7 @@ export default function PainelEstoque() {
           <div className="text-5xl mb-4">⛔</div>
           <h2 className="text-xl font-black text-red-600 uppercase tracking-wider mb-2">Acesso Restrito</h2>
           <p className="text-sm text-gray-500 mb-6">Você não possui permissão para acessar o Controle de Estoque.</p>
-          <button onClick={() => router.push('/admin')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
+          <button onClick={() => router.push('/admin/operacional')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
             Voltar ao Menu Principal
           </button>
         </div>
@@ -376,7 +376,7 @@ export default function PainelEstoque() {
         <p className="text-[#0369A1] font-medium text-sm">
           📦 <strong>Olá, {usuarioAtual}</strong>. Gerencie o catálogo técnico de equipamentos e categorias da locadora.
         </p>
-        <button onClick={() => router.push('/admin')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
+        <button onClick={() => router.push('/admin/operacional')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
           ⬅ VOLTAR AO HUB
         </button>
       </div>

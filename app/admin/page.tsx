@@ -57,6 +57,22 @@ const MODULOS_SISTEMA = [
     bgIcon: 'bg-rose-50 text-rose-600'
   },
   {
+    titulo: 'Operacional',
+    descricao: 'Controle de estoque e cadastros de equipamentos, acessórios, veículos e afins.',
+    icone: '👷‍♂️',
+    link: '/admin/operacional',
+    cor: 'border-slate-500/50 hover:border-slate-500',
+    bgIcon: 'bg-slate-50 text-slate-600'
+  },
+  {
+    titulo: 'Banco de Talentos',
+    descricao: 'Acesso à lista de colaboradores Freelance, especialidades e chaves PIX.',
+    icone: '👷',
+    link: '/admin/freelance',
+    cor: 'border-blue-500/50 hover:border-blue-500',
+    bgIcon: 'bg-blue-50 text-blue-600'
+  },
+  {
     titulo: 'Portal de Downloads',
     descricao: 'Faça upload e gerencie os arquivos, softwares e manuais públicos da Rentech.',
     icone: '📁',
@@ -73,31 +89,7 @@ const MODULOS_SISTEMA = [
     bgIcon: 'bg-blue-50 text-[#336699]'
   },
   {
-    titulo: 'Controle de Estoque',
-    descricao: 'Gestão de entrada, saída e manutenção de equipamentos cadastrados.',
-    icone: '📦',
-    link: '/admin/estoque',
-    cor: 'border-amber-500/50 hover:border-amber-500',
-    bgIcon: 'bg-amber-50 text-amber-600'
-  },
-  {
-    titulo: 'Banco de Talentos',
-    descricao: 'Acesso à lista de colaboradores Freelance, especialidades e chaves PIX.',
-    icone: '👷',
-    link: '/admin/freelance',
-    cor: 'border-blue-500/50 hover:border-blue-500',
-    bgIcon: 'bg-blue-50 text-blue-600'
-  },
-  {
-    titulo: 'Gestão de Acessos',
-    descricao: 'Controle de usuários, blocks e alteração de níveis de permissão da equipe.',
-    icone: '🔐',
-    link: '/admin/permissoes',
-    cor: 'border-purple-500/50 hover:border-purple-500',
-    bgIcon: 'bg-purple-50 text-purple-600'
-  },
-  {
-    titulo: 'Gestão de Agendamentos',
+    titulo: 'Agendamentos e Disparos',
     descricao: 'Gestão de agendas, lembretes e rotinas diárias para os colaboradores.',
     icone: '⏰',
     link: '/admin/agendamentos',
@@ -107,13 +99,21 @@ const MODULOS_SISTEMA = [
   {
     titulo: 'Integrações',
     descricao: 'Bancos e parceiros para pagamentos e envio de informações.',
-    icone: '🔗', 
+    icone: '🔗',
     link: '/admin/integracao',
     cor: 'border-blue-500/50 hover:border-blue-500',
     bgIcon: 'bg-blue-50 text-blue-600'
   },
   {
-    titulo: 'Auditoria — Log',
+    titulo: 'Controle de Acesso',
+    descricao: 'Controle de usuários, blocks e alteração de níveis de permissão da equipe.',
+    icone: '🔐',
+    link: '/admin/permissoes',
+    cor: 'border-purple-500/50 hover:border-purple-500',
+    bgIcon: 'bg-purple-50 text-purple-600'
+  },
+  {
+    titulo: 'Log de Auditoria',
     descricao: 'Histórico completo de todas as ações realizadas no sistema: acessos, edições e alterações.',
     icone: '🔍',
     link: '/admin/log',

@@ -33,6 +33,11 @@ const COR_STATUS: Record<string, string> = {
   'INATIVO': 'bg-gray-100 text-gray-500 border-gray-300'
 };
 const TIPOS_MANUTENCAO = ['REVISÃO', 'TROCA DE ÓLEO', 'TROCA DE PNEUS', 'REPARO', 'OUTRO'];
+const PROPRIEDADE_VEICULO = ['PRÓPRIO', 'ALUGADO'];
+const COR_PROPRIEDADE: Record<string, string> = {
+  'PRÓPRIO': 'bg-slate-100 text-slate-600 border-slate-300',
+  'ALUGADO': 'bg-indigo-100 text-indigo-700 border-indigo-300'
+};
 
 // Interfaces do Banco de Dados
 interface Veiculo {
@@ -50,6 +55,13 @@ interface Veiculo {
   combustivel?: string;
   km_atual?: number | null;
   status: string;
+  propriedade: string;
+  locacao_locadora?: string;
+  locacao_vigencia_inicio?: string | null;
+  locacao_vigencia_fim?: string | null;
+  locacao_apolice?: string;
+  locacao_contato_nome?: string;
+  locacao_contato_telefone?: string;
   apolice_numero?: string;
   segurado_nome?: string;
   segurado_cnpj?: string;
@@ -101,6 +113,8 @@ const dataOuNulo = (v?: string | null) => (v && v.trim() !== '' ? v : null);
 const veiculoVazio: Partial<Veiculo> = {
   apelido: '', tipo: 'CAMINHÃO', marca: '', modelo: '', ano_fabricacao: undefined, ano_modelo: undefined,
   placa: '', renavam: '', chassi: '', cor: '', combustivel: '', km_atual: undefined, status: 'ATIVO',
+  propriedade: 'PRÓPRIO', locacao_locadora: '', locacao_vigencia_inicio: '', locacao_vigencia_fim: '',
+  locacao_apolice: '', locacao_contato_nome: '', locacao_contato_telefone: '',
   apolice_numero: '', segurado_nome: '', segurado_cnpj: '', seguradora: '', seguradora_telefone: '',
   corretora: '', seguro_vigencia_inicio: '', seguro_vigencia_fim: '', crlv_vencimento: '', observacoes: ''
 };
@@ -219,9 +233,14 @@ export default function PainelFrota() {
   // Veículos com documentação vencida ou a vencer em até 30 dias
   const veiculosComAlerta = useMemo(() => {
     return veiculos.filter(v => {
-      const seguro = getStatusVencimento(v.seguro_vigencia_fim);
       const crlv = getStatusVencimento(v.crlv_vencimento);
-      return seguro.cor.includes('red') || seguro.cor.includes('amber') || crlv.cor.includes('red') || crlv.cor.includes('amber');
+      const alertaCrlv = crlv.cor.includes('red') || crlv.cor.includes('amber');
+      if (v.propriedade === 'ALUGADO') {
+        const locacao = getStatusVencimento(v.locacao_vigencia_fim);
+        return alertaCrlv || locacao.cor.includes('red') || locacao.cor.includes('amber');
+      }
+      const seguro = getStatusVencimento(v.seguro_vigencia_fim);
+      return alertaCrlv || seguro.cor.includes('red') || seguro.cor.includes('amber');
     });
   }, [veiculos]);
 
@@ -277,6 +296,8 @@ export default function PainelFrota() {
       seguro_vigencia_inicio: dataOuNulo(modalVeiculo.v.seguro_vigencia_inicio),
       seguro_vigencia_fim: dataOuNulo(modalVeiculo.v.seguro_vigencia_fim),
       crlv_vencimento: dataOuNulo(modalVeiculo.v.crlv_vencimento),
+      locacao_vigencia_inicio: dataOuNulo(modalVeiculo.v.locacao_vigencia_inicio),
+      locacao_vigencia_fim: dataOuNulo(modalVeiculo.v.locacao_vigencia_fim),
     };
 
     if (arquivoDocumento) {
@@ -431,7 +452,7 @@ export default function PainelFrota() {
           <div className="px-4 md:px-8 pt-6 flex-shrink-0">
             {veiculosComAlerta.length > 0 && (
               <div className="mb-4 bg-amber-50 border border-amber-300 text-amber-800 text-xs font-bold px-4 py-3 rounded-lg">
-                ⚠️ {veiculosComAlerta.length} veículo(s) com seguro ou CRLV vencido ou vencendo nos próximos 30 dias.
+                ⚠️ {veiculosComAlerta.length} veículo(s) com seguro, CRLV ou contrato de locação vencido ou vencendo nos próximos 30 dias.
               </div>
             )}
             <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col md:flex-row gap-4 justify-between items-center">
@@ -469,6 +490,7 @@ export default function PainelFrota() {
                 {veiculosFiltrados.map(v => {
                   const seguro = getStatusVencimento(v.seguro_vigencia_fim);
                   const crlv = getStatusVencimento(v.crlv_vencimento);
+                  const locacao = getStatusVencimento(v.locacao_vigencia_fim);
                   return (
                     <div key={v.id} className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-5 flex flex-col gap-3">
                       <div className="flex justify-between items-start">
@@ -479,7 +501,10 @@ export default function PainelFrota() {
                             <p className="text-[10px] text-[#64748B] font-bold uppercase">{v.placa}</p>
                           </div>
                         </div>
-                        <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-full border ${COR_STATUS[v.status] || COR_STATUS['INATIVO']}`}>{v.status}</span>
+                        <div className="flex flex-col gap-1 items-end">
+                          <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-full border ${COR_STATUS[v.status] || COR_STATUS['INATIVO']}`}>{v.status}</span>
+                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full border ${COR_PROPRIEDADE[v.propriedade] || COR_PROPRIEDADE['PRÓPRIO']}`}>{v.propriedade || 'PRÓPRIO'}</span>
+                        </div>
                       </div>
 
                       <p className="text-xs text-[#475569] font-medium truncate" title={`${v.marca || ''} ${v.modelo || ''}`}>
@@ -487,14 +512,22 @@ export default function PainelFrota() {
                       </p>
 
                       <div className="space-y-1.5 border-t border-[#F1F5F9] pt-3">
-                        <div className="flex justify-between items-center">
-                          <span className="text-[10px] text-[#94A3B8] font-bold uppercase">Seguro</span>
-                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border ${seguro.cor}`}>{seguro.texto}</span>
-                        </div>
+                        {v.propriedade !== 'ALUGADO' && (
+                          <div className="flex justify-between items-center">
+                            <span className="text-[10px] text-[#94A3B8] font-bold uppercase">Seguro</span>
+                            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border ${seguro.cor}`}>{seguro.texto}</span>
+                          </div>
+                        )}
                         <div className="flex justify-between items-center">
                           <span className="text-[10px] text-[#94A3B8] font-bold uppercase">CRLV</span>
                           <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border ${crlv.cor}`}>{crlv.texto}</span>
                         </div>
+                        {v.propriedade === 'ALUGADO' && (
+                          <div className="flex justify-between items-center">
+                            <span className="text-[10px] text-[#94A3B8] font-bold uppercase">Locação</span>
+                            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border ${locacao.cor}`}>{locacao.texto}</span>
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex gap-2 pt-2 mt-auto">
@@ -671,7 +704,7 @@ export default function PainelFrota() {
                     <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.combustivel || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, combustivel: up(e.target.value) } })} />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4 mt-4">
+                <div className="grid grid-cols-3 gap-4 mt-4">
                   <div>
                     <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">KM Atual</label>
                     <input type="number" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.km_atual ?? ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, km_atual: e.target.value ? parseFloat(e.target.value) : undefined } })} />
@@ -682,51 +715,94 @@ export default function PainelFrota() {
                       {STATUS_VEICULO.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Propriedade</label>
+                    <select className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer" value={modalVeiculo.v.propriedade || 'PRÓPRIO'} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, propriedade: e.target.value } })}>
+                      {PROPRIEDADE_VEICULO.map(p => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                  </div>
                 </div>
               </div>
 
-              {/* Dados do Seguro */}
-              <div>
-                <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#CBD5E1] pb-2 mb-3">Dados do Seguro</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Apólice</label>
-                    <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.apolice_numero || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, apolice_numero: up(e.target.value) } })} />
+              {/* Dados da Locação (apenas se o veículo for alugado) */}
+              {modalVeiculo.v.propriedade === 'ALUGADO' && (
+                <div>
+                  <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#CBD5E1] pb-2 mb-3">Dados da Locação</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Locadora</label>
+                      <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.locacao_locadora || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, locacao_locadora: up(e.target.value) } })} />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Apólice da Locadora</label>
+                      <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.locacao_apolice || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, locacao_apolice: up(e.target.value) } })} />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Seguradora</label>
-                    <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.seguradora || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, seguradora: up(e.target.value) } })} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Segurado</label>
-                    <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.segurado_nome || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, segurado_nome: up(e.target.value) } })} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">CNPJ do Segurado</label>
-                    <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.segurado_cnpj || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, segurado_cnpj: up(e.target.value) } })} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Telefone Seguradora</label>
-                    <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.seguradora_telefone || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, seguradora_telefone: up(e.target.value) } })} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Corretora</label>
-                    <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.corretora || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, corretora: up(e.target.value) } })} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Vigência Início</label>
-                    <input type="date" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.seguro_vigencia_inicio || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, seguro_vigencia_inicio: e.target.value } })} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Vigência Fim</label>
-                    <input type="date" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.seguro_vigencia_fim || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, seguro_vigencia_fim: e.target.value } })} />
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Vigência Início</label>
+                      <input type="date" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.locacao_vigencia_inicio || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, locacao_vigencia_inicio: e.target.value } })} />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Vigência Fim</label>
+                      <input type="date" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.locacao_vigencia_fim || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, locacao_vigencia_fim: e.target.value } })} />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Contato (Nome)</label>
+                      <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.locacao_contato_nome || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, locacao_contato_nome: up(e.target.value) } })} />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Contato (Telefone)</label>
+                      <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.locacao_contato_telefone || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, locacao_contato_telefone: up(e.target.value) } })} />
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
+
+              {/* Dados do Seguro (não se aplica a veículo alugado — fica sob responsabilidade da locadora) */}
+              {modalVeiculo.v.propriedade !== 'ALUGADO' && (
+                <div>
+                  <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#CBD5E1] pb-2 mb-3">Dados do Seguro</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Apólice</label>
+                      <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.apolice_numero || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, apolice_numero: up(e.target.value) } })} />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Seguradora</label>
+                      <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.seguradora || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, seguradora: up(e.target.value) } })} />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Segurado</label>
+                      <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.segurado_nome || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, segurado_nome: up(e.target.value) } })} />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">CNPJ do Segurado</label>
+                      <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.segurado_cnpj || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, segurado_cnpj: up(e.target.value) } })} />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Telefone Seguradora</label>
+                      <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.seguradora_telefone || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, seguradora_telefone: up(e.target.value) } })} />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Corretora</label>
+                      <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.corretora || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, corretora: up(e.target.value) } })} />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Vigência Início</label>
+                      <input type="date" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.seguro_vigencia_inicio || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, seguro_vigencia_inicio: e.target.value } })} />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Vigência Fim</label>
+                      <input type="date" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.seguro_vigencia_fim || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, seguro_vigencia_fim: e.target.value } })} />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Documentação e Anexos */}
               <div>

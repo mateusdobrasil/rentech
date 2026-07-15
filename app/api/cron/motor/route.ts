@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { dispararAutomacaoWhatsApp } from '../../../lib/automacoes';
 import { montarContextoFrotaVencida } from '../../../lib/frota';
+import { montarContextoDocumentosVencidos } from '../../../lib/documentos';
 
 // Automações cujo disparo depende de um contexto calculado em código (ex: uma
 // lista dinâmica), em vez de só {{primeiro_nome}}/{{nome_completo}}. Se a
@@ -9,6 +10,11 @@ import { montarContextoFrotaVencida } from '../../../lib/frota';
 const CONTEXTOS_ESPECIAIS: Record<string, () => Promise<Record<string, string | number> | null>> = {
   'frota-vencimentos': async () => {
     const resultado = await montarContextoFrotaVencida();
+    if (!resultado) return null;
+    return { lista: resultado.lista, quantidade: resultado.quantidade };
+  },
+  'documentos-vencidos': async () => {
+    const resultado = await montarContextoDocumentosVencidos();
     if (!resultado) return null;
     return { lista: resultado.lista, quantidade: resultado.quantidade };
   }

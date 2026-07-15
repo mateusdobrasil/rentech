@@ -75,6 +75,7 @@ interface Veiculo {
   seguro_vigencia_inicio?: string | null;
   seguro_vigencia_fim?: string | null;
   crlv_vencimento?: string | null;
+  ipva_vencimento?: string | null;
   observacoes?: string;
 }
 
@@ -114,7 +115,7 @@ const veiculoVazio: Partial<Veiculo> = {
   propriedade: 'PRÓPRIO', exibir_na_frota: false, locacao_locadora: '', locacao_vigencia_inicio: '', locacao_vigencia_fim: '',
   locacao_apolice: '', locacao_contato_nome: '', locacao_contato_telefone: '',
   apolice_numero: '', segurado_nome: '', segurado_cnpj: '', seguradora: '', seguradora_telefone: '',
-  corretora: '', seguro_vigencia_inicio: '', seguro_vigencia_fim: '', crlv_vencimento: '', observacoes: ''
+  corretora: '', seguro_vigencia_inicio: '', seguro_vigencia_fim: '', crlv_vencimento: '', ipva_vencimento: '', observacoes: ''
 };
 
 export default function PainelControleFrota() {
@@ -222,13 +223,14 @@ export default function PainelControleFrota() {
   const veiculosComAlerta = useMemo(() => {
     return veiculos.filter(v => {
       const crlv = getStatusVencimento(v.crlv_vencimento);
-      const alertaCrlv = crlv.cor.includes('red') || crlv.cor.includes('amber');
+      const ipva = getStatusVencimento(v.ipva_vencimento);
+      const alertaCrlvIpva = crlv.cor.includes('red') || crlv.cor.includes('amber') || ipva.cor.includes('red') || ipva.cor.includes('amber');
       if (v.propriedade === 'ALUGADO') {
         const locacao = getStatusVencimento(v.locacao_vigencia_fim);
-        return alertaCrlv || locacao.cor.includes('red') || locacao.cor.includes('amber');
+        return alertaCrlvIpva || locacao.cor.includes('red') || locacao.cor.includes('amber');
       }
       const seguro = getStatusVencimento(v.seguro_vigencia_fim);
-      return alertaCrlv || seguro.cor.includes('red') || seguro.cor.includes('amber');
+      return alertaCrlvIpva || seguro.cor.includes('red') || seguro.cor.includes('amber');
     });
   }, [veiculos]);
 
@@ -273,6 +275,7 @@ export default function PainelControleFrota() {
       seguro_vigencia_inicio: dataOuNulo(modalVeiculo.v.seguro_vigencia_inicio),
       seguro_vigencia_fim: dataOuNulo(modalVeiculo.v.seguro_vigencia_fim),
       crlv_vencimento: dataOuNulo(modalVeiculo.v.crlv_vencimento),
+      ipva_vencimento: dataOuNulo(modalVeiculo.v.ipva_vencimento),
       locacao_vigencia_inicio: dataOuNulo(modalVeiculo.v.locacao_vigencia_inicio),
       locacao_vigencia_fim: dataOuNulo(modalVeiculo.v.locacao_vigencia_fim),
     };
@@ -444,7 +447,7 @@ export default function PainelControleFrota() {
       <div className="px-4 md:px-8 pt-6 flex-shrink-0">
         {veiculosComAlerta.length > 0 && (
           <div className="mb-4 bg-amber-50 border border-amber-300 text-amber-800 text-xs font-bold px-4 py-3 rounded-lg">
-            ⚠️ {veiculosComAlerta.length} veículo(s) com seguro, CRLV ou contrato de locação vencido ou vencendo nos próximos 30 dias.
+            ⚠️ {veiculosComAlerta.length} veículo(s) com seguro, CRLV, IPVA ou contrato de locação vencido ou vencendo nos próximos 30 dias.
           </div>
         )}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col md:flex-row gap-4 justify-between items-center">
@@ -490,6 +493,7 @@ export default function PainelControleFrota() {
             {veiculosFiltrados.map(v => {
               const seguro = getStatusVencimento(v.seguro_vigencia_fim);
               const crlv = getStatusVencimento(v.crlv_vencimento);
+              const ipva = getStatusVencimento(v.ipva_vencimento);
               const locacao = getStatusVencimento(v.locacao_vigencia_fim);
               return (
                 <div key={v.id} className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-5 flex flex-col gap-3">
@@ -524,6 +528,10 @@ export default function PainelControleFrota() {
                     <div className="flex justify-between items-center">
                       <span className="text-[10px] text-[#94A3B8] font-bold uppercase">CRLV</span>
                       <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border ${crlv.cor}`}>{crlv.texto}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] text-[#94A3B8] font-bold uppercase">IPVA</span>
+                      <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border ${ipva.cor}`}>{ipva.texto}</span>
                     </div>
                     {v.propriedade === 'ALUGADO' && (
                       <div className="flex justify-between items-center">
@@ -732,6 +740,10 @@ export default function PainelControleFrota() {
                   <div>
                     <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Vencimento do CRLV</label>
                     <input type="date" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.crlv_vencimento || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, crlv_vencimento: e.target.value } })} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Vencimento do IPVA</label>
+                    <input type="date" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.ipva_vencimento || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, ipva_vencimento: e.target.value } })} />
                   </div>
                 </div>
                 {!modalVeiculo.isNew && modalVeiculo.v.id && (

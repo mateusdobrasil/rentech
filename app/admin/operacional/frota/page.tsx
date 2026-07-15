@@ -76,6 +76,7 @@ interface Veiculo {
   seguro_vigencia_inicio?: string | null;
   seguro_vigencia_fim?: string | null;
   crlv_vencimento?: string | null;
+  ipva_vencimento?: string | null;
   observacoes?: string;
 }
 
@@ -115,9 +116,9 @@ function getStatusVencimento(dataStr?: string | null): { texto: string; cor: str
   return { texto: `Válido até ${alvo.toLocaleDateString('pt-BR')}`, cor: 'bg-green-100 text-green-700 border-green-300' };
 }
 
-// Pior urgência entre os documentos do veículo (CRLV + Seguro ou Locação, conforme o caso)
+// Pior urgência entre os documentos do veículo (CRLV + IPVA + Seguro ou Locação, conforme o caso)
 function getUrgenciaVeiculo(v: Veiculo): 'vencido' | 'proximo' | null {
-  const status = [getStatusVencimento(v.crlv_vencimento)];
+  const status = [getStatusVencimento(v.crlv_vencimento), getStatusVencimento(v.ipva_vencimento)];
   status.push(v.propriedade === 'ALUGADO' ? getStatusVencimento(v.locacao_vigencia_fim) : getStatusVencimento(v.seguro_vigencia_fim));
 
   if (status.some(s => s.cor.includes('red'))) return 'vencido';
@@ -417,7 +418,7 @@ export default function VisualizacaoFrota() {
         <div className="px-4 md:px-8 py-6 flex-grow flex flex-col">
           {veiculosComAlerta.length > 0 && (
             <div className="mb-4 bg-amber-50 border border-amber-300 text-amber-800 text-xs font-bold px-4 py-3 rounded-lg">
-              ⚠️ {veiculosComAlerta.length} veículo(s) com seguro, CRLV ou contrato de locação vencido ou vencendo nos próximos 30 dias.
+              ⚠️ {veiculosComAlerta.length} veículo(s) com seguro, CRLV, IPVA ou contrato de locação vencido ou vencendo nos próximos 30 dias.
             </div>
           )}
 
@@ -686,6 +687,7 @@ function Campo({ label, valor }: { label: string; valor?: string | number | null
 function FichaVeiculo({ veiculo, documentos, onVerManutencoes }: { veiculo: Veiculo; documentos: Documento[]; onVerManutencoes: () => void }) {
   const seguro = getStatusVencimento(veiculo.seguro_vigencia_fim);
   const crlv = getStatusVencimento(veiculo.crlv_vencimento);
+  const ipva = getStatusVencimento(veiculo.ipva_vencimento);
   const locacao = getStatusVencimento(veiculo.locacao_vigencia_fim);
 
   return (
@@ -756,6 +758,8 @@ function FichaVeiculo({ veiculo, documentos, onVerManutencoes }: { veiculo: Veic
         <div className="flex items-center gap-3 flex-wrap mb-3">
           <span className="text-[10px] text-[#94A3B8] font-bold uppercase">CRLV</span>
           <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded border ${crlv.cor}`}>{crlv.texto}</span>
+          <span className="text-[10px] text-[#94A3B8] font-bold uppercase">IPVA</span>
+          <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded border ${ipva.cor}`}>{ipva.texto}</span>
         </div>
         {documentos.length === 0 ? (
           <p className="text-xs text-[#94A3B8] font-medium">Nenhum documento disponível para visualização.</p>

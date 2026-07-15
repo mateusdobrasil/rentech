@@ -144,6 +144,7 @@ export default function PainelFrota() {
   // Filtros da aba Frota
   const [busca, setBusca] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('TODOS');
+  const [filtroPropriedade, setFiltroPropriedade] = useState('TODOS');
 
   // Veículo selecionado na aba Manutenção
   const [veiculoSelecionadoId, setVeiculoSelecionadoId] = useState('');
@@ -226,9 +227,10 @@ export default function PainelFrota() {
       const termo = busca.toLowerCase();
       const matchBusca = v.apelido.toLowerCase().includes(termo) || (v.placa || '').toLowerCase().includes(termo) || (v.modelo || '').toLowerCase().includes(termo);
       const matchStatus = filtroStatus === 'TODOS' || v.status === filtroStatus;
-      return matchBusca && matchStatus;
+      const matchPropriedade = filtroPropriedade === 'TODOS' || v.propriedade === filtroPropriedade;
+      return matchBusca && matchStatus && matchPropriedade;
     });
-  }, [veiculos, busca, filtroStatus]);
+  }, [veiculos, busca, filtroStatus, filtroPropriedade]);
 
   // Veículos com documentação vencida ou a vencer em até 30 dias
   const veiculosComAlerta = useMemo(() => {
@@ -471,6 +473,14 @@ export default function PainelFrota() {
                 >
                   <option value="TODOS">TODOS OS STATUS</option>
                   {STATUS_VEICULO.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <select
+                  className="p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer w-48"
+                  value={filtroPropriedade}
+                  onChange={(e) => setFiltroPropriedade(e.target.value)}
+                >
+                  <option value="TODOS">PRÓPRIO / ALUGADO</option>
+                  {PROPRIEDADE_VEICULO.map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
 

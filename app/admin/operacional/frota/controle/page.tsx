@@ -447,7 +447,7 @@ export default function PainelControleFrota() {
       <div className="px-4 md:px-8 pt-6 flex-shrink-0">
         {veiculosComAlerta.length > 0 && (
           <div className="mb-4 bg-amber-50 border border-amber-300 text-amber-800 text-xs font-bold px-4 py-3 rounded-lg">
-            ⚠️ {veiculosComAlerta.length} veículo(s) com seguro, Licenciamento, IPVA ou contrato de locação vencido ou vencendo nos próximos 30 dias.
+            ⚠️ {veiculosComAlerta.length} veículo(s) com Seguro, Licenciamento, IPVA ou Contrato de Locação vencido ou vencendo nos próximos 30 dias.
           </div>
         )}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col md:flex-row gap-4 justify-between items-center">

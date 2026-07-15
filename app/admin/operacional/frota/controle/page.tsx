@@ -700,7 +700,7 @@ export default function PainelControleFrota() {
                       <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.segurado_nome || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, segurado_nome: up(e.target.value) } })} />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">CNPJ do Segurado</label>
+                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">CNPJ/CPF do Segurado</label>
                       <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.segurado_cnpj || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, segurado_cnpj: up(e.target.value) } })} />
                     </div>
                   </div>

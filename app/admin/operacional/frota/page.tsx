@@ -161,8 +161,11 @@ export default function VisualizacaoFrota() {
   const [filtroStatus, setFiltroStatus] = useState('TODOS');
   const [filtroPropriedade, setFiltroPropriedade] = useState('TODOS');
 
-  // Veículo selecionado na aba Manutenção
+  // Veículo selecionado na aba Veículos (ficha lateral)
   const [veiculoSelecionadoId, setVeiculoSelecionadoId] = useState('');
+
+  // Filtro de veículo na aba Manutenção — vazio mostra o histórico de todos
+  const [filtroManutencaoVeiculoId, setFiltroManutencaoVeiculoId] = useState('');
 
   // Estados de UI (Modal e Dialog)
   const [dialog, setDialog] = useState<{ open: boolean; type: 'loading' | 'success' | 'error'; title: string; msg: string }>({ open: false, type: 'loading', title: '', msg: '' });
@@ -260,9 +263,11 @@ export default function VisualizacaoFrota() {
     return veiculos.filter(v => getUrgenciaVeiculo(v) !== null);
   }, [veiculos]);
 
-  const manutencoesDoVeiculo = useMemo(() => {
-    return manutencoes.filter(m => m.veiculo_id === veiculoSelecionadoId);
-  }, [manutencoes, veiculoSelecionadoId]);
+  // Todas as manutenções (já vêm ordenadas por data desc.), filtradas pelo veículo quando um for selecionado
+  const manutencoesExibidas = useMemo(() => {
+    if (!filtroManutencaoVeiculoId) return manutencoes;
+    return manutencoes.filter(m => m.veiculo_id === filtroManutencaoVeiculoId);
+  }, [manutencoes, filtroManutencaoVeiculoId]);
 
   // Mantém sempre um veículo selecionado para a ficha lateral, acompanhando os filtros
   useEffect(() => {
@@ -303,9 +308,9 @@ export default function VisualizacaoFrota() {
   // AÇÕES DE CRUD - MANUTENÇÕES
   // ============================================================================
   const abrirModalNovaManutencao = () => {
-    if (!veiculoSelecionadoId) return;
+    if (!filtroManutencaoVeiculoId) return;
     setArquivoAnexo(null);
-    setModalManutencao({ open: true, m: { ...manutencaoVazia, veiculo_id: veiculoSelecionadoId, data: new Date().toISOString().slice(0, 10) } });
+    setModalManutencao({ open: true, m: { ...manutencaoVazia, veiculo_id: filtroManutencaoVeiculoId, data: new Date().toISOString().slice(0, 10) } });
   };
 
   const salvarManutencao = async () => {
@@ -495,7 +500,7 @@ export default function VisualizacaoFrota() {
                 {!veiculoDetalhe ? (
                   <div className="h-full flex items-center justify-center text-[#94A3B8] text-sm font-bold p-12 text-center">Selecione um veículo na lista ao lado para ver a ficha completa.</div>
                 ) : (
-                  <FichaVeiculo veiculo={veiculoDetalhe} documentos={documentos.filter(d => d.veiculo_id === veiculoDetalhe.id)} onVerManutencoes={() => setAbaAtiva('manutencao')} />
+                  <FichaVeiculo veiculo={veiculoDetalhe} documentos={documentos.filter(d => d.veiculo_id === veiculoDetalhe.id)} onVerManutencoes={() => { setFiltroManutencaoVeiculoId(veiculoDetalhe.id); setAbaAtiva('manutencao'); }} />
                 )}
               </div>
             </div>
@@ -511,29 +516,31 @@ export default function VisualizacaoFrota() {
           <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col md:flex-row gap-4 justify-between items-center mb-6">
             <select
               className="w-full md:w-96 p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-bold text-[#0C1D4D] focus:border-[#336699] outline-none cursor-pointer"
-              value={veiculoSelecionadoId}
-              onChange={(e) => setVeiculoSelecionadoId(e.target.value)}
+              value={filtroManutencaoVeiculoId}
+              onChange={(e) => setFiltroManutencaoVeiculoId(e.target.value)}
             >
-              <option value="">-- Selecione um veículo --</option>
+              <option value="">TODOS OS VEÍCULOS</option>
               {veiculos.map(v => <option key={v.id} value={v.id}>{v.apelido} ({v.placa})</option>)}
             </select>
 
             <button
               onClick={abrirModalNovaManutencao}
-              disabled={!veiculoSelecionadoId}
+              disabled={!filtroManutencaoVeiculoId}
+              title={!filtroManutencaoVeiculoId ? 'Selecione ou clique em um veículo para registrar uma manutenção' : undefined}
               className="w-full md:w-auto bg-[#336699] hover:bg-[#284B8C] text-white px-6 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-md hover:shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
             >
               ➕ Nova Manutenção
             </button>
           </div>
 
-          {!veiculoSelecionadoId ? (
-            <div className="text-center py-12 text-[#94A3B8] font-bold text-sm bg-white rounded-xl border border-dashed border-[#CBD5E1]">Selecione um veículo para ver o histórico de manutenções.</div>
+          {loading ? (
+            <div className="text-center py-12 text-[#94A3B8] font-bold text-sm">Carregando manutenções...</div>
           ) : (
             <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto">
-              <table className="w-full text-left border-collapse min-w-[900px]">
+              <table className="w-full text-left border-collapse min-w-[1000px]">
                 <thead className="bg-[#F8FAFC] sticky top-0 shadow-sm z-10">
                   <tr className="text-[#64748B] text-[10px] uppercase tracking-wider font-bold">
+                    <th className="p-4 border-b-2 border-[#E2E8F0] w-44">Veículo</th>
                     <th className="p-4 border-b-2 border-[#E2E8F0] w-36">Tipo</th>
                     <th className="p-4 border-b-2 border-[#E2E8F0] w-28">Data</th>
                     <th className="p-4 border-b-2 border-[#E2E8F0] w-24 text-center">KM</th>
@@ -545,13 +552,19 @@ export default function VisualizacaoFrota() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#E2E8F0] text-xs">
-                  {manutencoesDoVeiculo.length === 0 ? (
-                    <tr><td colSpan={8} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Nenhuma manutenção registrada para este veículo.</td></tr>
+                  {manutencoesExibidas.length === 0 ? (
+                    <tr><td colSpan={9} className="text-center py-12 text-[#94A3B8] font-bold text-sm">{filtroManutencaoVeiculoId ? 'Nenhuma manutenção registrada para este veículo.' : 'Nenhuma manutenção registrada.'}</td></tr>
                   ) : (
-                    manutencoesDoVeiculo.map(m => {
+                    manutencoesExibidas.map(m => {
                       const proxima = getStatusVencimento(m.proxima_data);
                       return (
-                        <tr key={m.id} className="hover:bg-[#F8FAFC] transition-colors">
+                        <tr
+                          key={m.id}
+                          onClick={() => setFiltroManutencaoVeiculoId(m.veiculo_id)}
+                          className={`cursor-pointer transition-colors ${m.veiculo_id === filtroManutencaoVeiculoId ? 'bg-blue-50' : 'hover:bg-[#F8FAFC]'}`}
+                          title="Clique para selecionar este veículo"
+                        >
+                          <td className="p-4 font-black text-[#0C1D4D] text-[11px] uppercase truncate max-w-[170px]" title={getVeiculoNome(m.veiculo_id)}>{getVeiculoNome(m.veiculo_id)}</td>
                           <td className="p-4"><span className="bg-[#E2E8F0] text-[#475569] font-black px-2 py-1 rounded text-[9px] uppercase tracking-widest">{m.tipo}</span></td>
                           <td className="p-4 font-bold text-[#0C1D4D]">{new Date(`${m.data}T00:00:00`).toLocaleDateString('pt-BR')}</td>
                           <td className="p-4 text-center text-[#64748B] font-medium">{m.km_atual ? `${m.km_atual.toLocaleString('pt-BR')} km` : '-'}</td>
@@ -562,7 +575,7 @@ export default function VisualizacaoFrota() {
                             {m.proxima_data ? <span className={`text-[9px] font-black uppercase px-2 py-1 rounded border ${proxima.cor}`}>{proxima.texto}</span> : <span className="text-[#CBD5E1]">-</span>}
                           </td>
                           <td className="p-4 text-center">
-                            {m.anexo_url ? <a href={m.anexo_url} target="_blank" rel="noopener noreferrer" title="Ver anexo">📎</a> : '-'}
+                            {m.anexo_url ? <a href={m.anexo_url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} title="Ver anexo">📎</a> : '-'}
                           </td>
                         </tr>
                       );

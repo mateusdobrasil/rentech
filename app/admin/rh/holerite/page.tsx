@@ -29,6 +29,35 @@ const formatCurrency = (value: number) => new Intl.NumberFormat('pt-BR', { style
 const formatTimeStr = (totalMins: number) => `${Math.floor(totalMins / 60).toString().padStart(2, '0')}:${(totalMins % 60).toString().padStart(2, '0')}:00`;
 
 // ============================================================================
+// INPUT COM MÁSCARA DE MOEDA (R$) — digita os centavos da direita pra esquerda
+// ============================================================================
+function InputMoeda({ value, onChange, className, disabled, placeholder }: {
+  value: number;
+  onChange: (v: number) => void;
+  className?: string;
+  disabled?: boolean;
+  placeholder?: string;
+}) {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const digitos = e.target.value.replace(/\D/g, '');
+    const centavos = digitos ? parseInt(digitos, 10) : 0;
+    onChange(centavos / 100);
+  };
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={formatCurrency(value)}
+      onChange={handleChange}
+      disabled={disabled}
+      placeholder={placeholder}
+      className={className}
+    />
+  );
+}
+
+// ============================================================================
 // VALOR POR EXTENSO (pt-BR) — protege o valor numérico contra adulteração
 // ============================================================================
 const UNIDADES = ['', 'UM', 'DOIS', 'TRÊS', 'QUATRO', 'CINCO', 'SEIS', 'SETE', 'OITO', 'NOVE'];
@@ -1177,8 +1206,8 @@ export default function HoleritePage() {
                 <div className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0]">
                   <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider border-b border-[#E2E8F0] pb-2 mb-4">Dados Salariais</h3>
                   <div className="grid grid-cols-2 gap-4">
-                    <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Salário Folha</label><input type="number" step="0.01" value={formSelecionado.salario_folha} onChange={e => setFormSelecionado({...formSelecionado, salario_folha: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-[#0C1D4D]" /></div>
-                    <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Salário Contrato Total</label><input type="number" step="0.01" value={formSelecionado.salario_contrato} onChange={e => setFormSelecionado({...formSelecionado, salario_contrato: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-[#16A34A]" /></div>
+                    <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Salário Folha</label><InputMoeda value={formSelecionado.salario_folha} onChange={v => setFormSelecionado({...formSelecionado, salario_folha: v})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-[#0C1D4D]" /></div>
+                    <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Salário Contrato Total</label><InputMoeda value={formSelecionado.salario_contrato} onChange={v => setFormSelecionado({...formSelecionado, salario_contrato: v})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-[#16A34A]" /></div>
 
                     {regraAtiva && (regraAtiva.direito_vr || regraAtiva.direito_vt) ? (
                       <div className="col-span-2 bg-blue-50/50 p-3 rounded-lg border border-blue-100">
@@ -1194,7 +1223,7 @@ export default function HoleritePage() {
                               <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">
                                 {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' ? 'VR — Valor do Mês' : 'VR — Diária'}
                               </label>
-                              <input type="number" step="0.01" value={formSelecionado.valor_refeicao} onChange={e => setFormSelecionado({...formSelecionado, valor_refeicao: Number(e.target.value)})} className="w-full p-2 border border-blue-200 rounded text-sm" />
+                              <InputMoeda value={formSelecionado.valor_refeicao} onChange={v => setFormSelecionado({...formSelecionado, valor_refeicao: v})} className="w-full p-2 border border-blue-200 rounded text-sm" />
                               {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' && formSelecionado.valor_refeicao > 0 && (
                                 <p className="text-[9px] font-bold text-blue-600 mt-0.5 uppercase">Diária: {formatCurrency(formSelecionado.valor_refeicao / 30)}</p>
                               )}
@@ -1205,7 +1234,7 @@ export default function HoleritePage() {
                               <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">
                                 {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' ? 'VT — Valor do Mês' : 'VT — Diária'}
                               </label>
-                              <input type="number" step="0.01" value={formSelecionado.valor_transporte} onChange={e => setFormSelecionado({...formSelecionado, valor_transporte: Number(e.target.value)})} className="w-full p-2 border border-blue-200 rounded text-sm" />
+                              <InputMoeda value={formSelecionado.valor_transporte} onChange={v => setFormSelecionado({...formSelecionado, valor_transporte: v})} className="w-full p-2 border border-blue-200 rounded text-sm" />
                               {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' && formSelecionado.valor_transporte > 0 && (
                                 <p className="text-[9px] font-bold text-blue-600 mt-0.5 uppercase">Diária: {formatCurrency(formSelecionado.valor_transporte / 30)}</p>
                               )}
@@ -1219,7 +1248,7 @@ export default function HoleritePage() {
                         Este contrato ({formSelecionado.tipo_contrato}) não dá direito a VR/VT. Ajuste no Motor de Regras se necessário.
                       </div>
                     )}
-                    <div className="col-span-2"><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Adiantamento (Dia 20)</label><input type="number" step="0.01" value={formSelecionado.valor_adiantamento} onChange={e => setFormSelecionado({...formSelecionado, valor_adiantamento: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-red-600" /></div>
+                    <div className="col-span-2"><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Adiantamento (Dia 20)</label><InputMoeda value={formSelecionado.valor_adiantamento} onChange={v => setFormSelecionado({...formSelecionado, valor_adiantamento: v})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-red-600" /></div>
                   </div>
                 </div>
 
@@ -1240,7 +1269,7 @@ export default function HoleritePage() {
                             <input type="text" placeholder="Descrição" value={b.descricao} disabled={encerrado} onChange={e => { const n = [...bonusSelecionado]; n[idx].descricao = e.target.value; setBonusSelecionado(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs uppercase disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" />
                             {encerrado && <span className="text-[9px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded font-black uppercase whitespace-nowrap">🔒 Pago</span>}
                           </div>
-                          <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Valor R$</label><input type="number" step="0.01" value={b.valor} disabled={encerrado} onChange={e => { const n = [...bonusSelecionado]; n[idx].valor = Number(e.target.value); setBonusSelecionado(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs text-[#16A34A] font-bold disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
+                          <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Valor R$</label><InputMoeda value={b.valor} disabled={encerrado} onChange={v => { const n = [...bonusSelecionado]; n[idx].valor = v; setBonusSelecionado(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs text-[#16A34A] font-bold disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
                           <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Recorrência</label><select value={b.recorrencia} disabled={encerrado} onChange={e => { const n = [...bonusSelecionado]; n[idx].recorrencia = e.target.value as 'MENSAL'|'UNICO'; setBonusSelecionado(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed"><option value="UNICO">Única Vez</option><option value="MENSAL">Fixo (Mensal)</option></select></div>
                           {b.recorrencia === 'UNICO' && <div className="col-span-2"><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Competência do Bônus</label><input type="month" value={b.mes_referencia} disabled={encerrado} onChange={e => { const n = [...bonusSelecionado]; n[idx].mes_referencia = e.target.value; setBonusSelecionado(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" />{b.mes_referencia && <p className="text-[9px] font-bold text-emerald-600 mt-0.5 uppercase">💵 Sai no pagamento de {competenciaParaPagamento(b.mes_referencia)}</p>}</div>}
                         </div>
@@ -1280,7 +1309,7 @@ export default function HoleritePage() {
                             <input type="text" placeholder="Descrição do Desconto" value={d.descricao} disabled={quitado} onChange={e => handleDescontoChange(idx, 'descricao', e.target.value)} className="w-full p-1.5 border border-gray-200 rounded text-xs uppercase disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" />
                             {quitado && <span className="text-[9px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded font-black uppercase whitespace-nowrap">🔒 Quitado</span>}
                           </div>
-                          <div><input type="number" step="0.01" placeholder="Valor R$" value={d.valor_parcela} disabled={quitado} onChange={e => handleDescontoChange(idx, 'valor_parcela', Number(e.target.value))} className="w-full p-1.5 border border-gray-200 rounded text-xs text-red-600 font-bold disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
+                          <div><InputMoeda placeholder="Valor R$" value={d.valor_parcela} disabled={quitado} onChange={v => handleDescontoChange(idx, 'valor_parcela', v)} className="w-full p-1.5 border border-gray-200 rounded text-xs text-red-600 font-bold disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
                           <div>
                             <select value={d.tipo} disabled={quitado} onChange={e => handleDescontoChange(idx, 'tipo', e.target.value as Desconto['tipo'])} className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed">
                               <option value="PARCELADO">Parcelado</option>

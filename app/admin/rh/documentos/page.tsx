@@ -8,6 +8,10 @@ import {
   listarCategoriasDocAction, criarCategoriaDocAction, uploadDocumentoAction,
   listarDocumentosAction, urlDocumentoAction, excluirDocumentoAction, painelDocumentosAction
 } from '../actions/actions-documentos-func';
+import {
+  listarCategoriasDocEmpresaAction, criarCategoriaDocEmpresaAction, uploadDocumentoEmpresaAction,
+  listarDocumentosEmpresaAction, urlDocumentoEmpresaAction, excluirDocumentoEmpresaAction
+} from '../actions/actions-documentos-empresa';
 
 const fmtTamanho = (b: number | null) => {
   if (!b) return '—';
@@ -28,8 +32,17 @@ interface LinhaPainel {
   nome: string; cargo: string; totalDocs: number; vencidos: number; vencendo: number; semDocumentos: boolean;
 }
 
+interface CategoriaEmpresa { id: number; nome: string; exige_validade: boolean; }
+interface DocumentoEmpresa {
+  id: number; categoria_id: number; categoria: string;
+  titulo: string | null; nome_arquivo: string; tipo_mime: string | null;
+  tamanho_bytes: number | null; data_validade: string | null; observacao: string | null;
+  criado_em: string; statusValidade: 'SEM' | 'OK' | 'VENCENDO' | 'VENCIDO';
+}
+
 export default function DocumentosPage() {
   const router = useRouter();
+  const [aba, setAba] = useState<'funcionarios' | 'empresa'>('funcionarios');
   const [loading, setLoading] = useState(true);
   const [linhas, setLinhas] = useState<LinhaPainel[]>([]);
   const [totais, setTotais] = useState({ funcionarios: 0, semDocumentos: 0, totalDocs: 0, vencidos: 0, vencendo: 0 });
@@ -103,10 +116,116 @@ export default function DocumentosPage() {
   const [novaCat, setNovaCat] = useState('');
   const [novaCatValidade, setNovaCatValidade] = useState(false);
 
+  // ============================================================================
+  // ABA "EMPRESA" — documentos da Rentech (certidões, cartão CNPJ, etc.)
+  // ============================================================================
+  const [categoriasEmpresa, setCategoriasEmpresa] = useState<CategoriaEmpresa[]>([]);
+  const [docsEmpresa, setDocsEmpresa] = useState<DocumentoEmpresa[]>([]);
+  const [carregandoEmpresa, setCarregandoEmpresa] = useState(true);
+  const [buscaEmpresa, setBuscaEmpresa] = useState('');
+  const [filtroEmpresa, setFiltroEmpresa] = useState<'TODOS' | 'PENDENCIAS'>('TODOS');
+
+  const [mostrarUploadEmpresa, setMostrarUploadEmpresa] = useState(false);
+  const [upCategoriaEmpresa, setUpCategoriaEmpresa] = useState('');
+  const [upTituloEmpresa, setUpTituloEmpresa] = useState('');
+  const [upArquivoEmpresa, setUpArquivoEmpresa] = useState<File | null>(null);
+  const [upValidadeEmpresa, setUpValidadeEmpresa] = useState('');
+  const [upObsEmpresa, setUpObsEmpresa] = useState('');
+  const [enviandoEmpresa, setEnviandoEmpresa] = useState(false);
+  const upRefEmpresa = useRef<HTMLInputElement>(null);
+
+  const [mostrarCatsEmpresa, setMostrarCatsEmpresa] = useState(false);
+  const [novaCatEmpresa, setNovaCatEmpresa] = useState('');
+  const [novaCatValidadeEmpresa, setNovaCatValidadeEmpresa] = useState(false);
+
+  const [previewUrlEmpresa, setPreviewUrlEmpresa] = useState<string | null>(null);
+  const [previewDocEmpresa, setPreviewDocEmpresa] = useState<DocumentoEmpresa | null>(null);
+
   useEffect(() => {
     try { const raw = localStorage.getItem('rh_usuario'); if (raw) setUsuarioAtual(JSON.parse(raw)?.nome || ''); } catch {}
     carregar();
+    carregarEmpresa();
   }, []);
+
+  const carregarEmpresa = async () => {
+    setCarregandoEmpresa(true);
+    try {
+      const [docs, cats] = await Promise.all([listarDocumentosEmpresaAction(), listarCategoriasDocEmpresaAction()]);
+      if (docs.ok) setDocsEmpresa(docs.info.documentos);
+      if (cats.ok) setCategoriasEmpresa(cats.info.categorias);
+    } catch (e: any) { alert('Erro ao carregar documentos da empresa: ' + e.message); }
+    finally { setCarregandoEmpresa(false); }
+  };
+
+  const catSelecionadaEmpresa = categoriasEmpresa.find(c => String(c.id) === upCategoriaEmpresa);
+
+  const enviarUploadEmpresa = async () => {
+    if (!upCategoriaEmpresa) { alert('Escolha a categoria.'); return; }
+    if (!upArquivoEmpresa) { alert('Selecione o arquivo.'); return; }
+    if (catSelecionadaEmpresa?.exige_validade && !upValidadeEmpresa) {
+      if (!confirm('Esta categoria costuma ter validade e você não preencheu a data. Enviar mesmo assim?')) return;
+    }
+    setEnviandoEmpresa(true);
+    try {
+      const base64 = await fileParaBase64(upArquivoEmpresa);
+      const res = await uploadDocumentoEmpresaAction({
+        categoriaId: Number(upCategoriaEmpresa), titulo: upTituloEmpresa || null,
+        arquivoBase64: base64, nomeArquivo: upArquivoEmpresa.name, tipoMime: upArquivoEmpresa.type,
+        dataValidade: upValidadeEmpresa || null, observacao: upObsEmpresa || null, enviadoPor: usuarioAtual
+      });
+      if (!res.ok) throw new Error(res.erro);
+      setUpCategoriaEmpresa(''); setUpTituloEmpresa(''); setUpArquivoEmpresa(null); setUpValidadeEmpresa(''); setUpObsEmpresa('');
+      if (upRefEmpresa.current) upRefEmpresa.current.value = '';
+      setMostrarUploadEmpresa(false);
+      carregarEmpresa();
+    } catch (e: any) { alert('Erro ao enviar: ' + e.message); }
+    finally { setEnviandoEmpresa(false); }
+  };
+
+  const abrirPreviewEmpresa = async (doc: DocumentoEmpresa) => {
+    try {
+      const res = await urlDocumentoEmpresaAction({ id: doc.id });
+      if (!res.ok) throw new Error(res.erro);
+      setPreviewUrlEmpresa(res.info.url); setPreviewDocEmpresa(doc);
+    } catch (e: any) { alert('Erro ao abrir: ' + e.message); }
+  };
+
+  const baixarEmpresa = async (doc: DocumentoEmpresa) => {
+    try {
+      const res = await urlDocumentoEmpresaAction({ id: doc.id, download: true });
+      if (!res.ok) throw new Error(res.erro);
+      window.open(res.info.url, '_blank', 'noopener,noreferrer');
+    } catch (e: any) { alert('Erro ao baixar: ' + e.message); }
+  };
+
+  const excluirEmpresa = async (doc: DocumentoEmpresa) => {
+    if (!confirm(`Excluir "${doc.categoria}${doc.titulo ? ' — ' + doc.titulo : ''}"?\n\nEsta ação é permanente.`)) return;
+    try {
+      const res = await excluirDocumentoEmpresaAction({ id: doc.id });
+      if (!res.ok) throw new Error(res.erro);
+      carregarEmpresa();
+    } catch (e: any) { alert('Erro ao excluir: ' + e.message); }
+  };
+
+  const adicionarCategoriaEmpresa = async () => {
+    if (!novaCatEmpresa.trim()) return;
+    const res = await criarCategoriaDocEmpresaAction({ nome: novaCatEmpresa, exigeValidade: novaCatValidadeEmpresa });
+    if (!res.ok) { alert(res.erro); return; }
+    setNovaCatEmpresa(''); setNovaCatValidadeEmpresa(false);
+    const cats = await listarCategoriasDocEmpresaAction();
+    if (cats.ok) setCategoriasEmpresa(cats.info.categorias);
+  };
+
+  const docsEmpresaFiltrados = useMemo(() => docsEmpresa
+    .filter(d => `${d.categoria} ${d.titulo || ''} ${d.nome_arquivo}`.toLowerCase().includes(buscaEmpresa.toLowerCase()))
+    .filter(d => filtroEmpresa === 'TODOS' || d.statusValidade === 'VENCENDO' || d.statusValidade === 'VENCIDO'),
+    [docsEmpresa, buscaEmpresa, filtroEmpresa]);
+
+  const totaisEmpresa = useMemo(() => ({
+    total: docsEmpresa.length,
+    vencendo: docsEmpresa.filter(d => d.statusValidade === 'VENCENDO').length,
+    vencidos: docsEmpresa.filter(d => d.statusValidade === 'VENCIDO').length,
+  }), [docsEmpresa]);
 
   const carregar = async () => {
     setLoading(true);
@@ -218,13 +337,33 @@ export default function DocumentosPage() {
 
       <div className="bg-[#DBEAFE] border-b border-[#BFDBFE] px-4 md:px-8 py-4 flex justify-between items-center shadow-sm">
         <p className="text-[#1E40AF] font-medium text-sm">
-          📁 <strong>Gestão de Documentos</strong>. Arquivos, contratos e exames de cada colaborador.
+          📁 <strong>Gestão de Documentos</strong>. Arquivos da empresa e de cada colaborador.
         </p>
         <button onClick={() => router.push('/admin/rh')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BFDBFE] text-[#1E40AF] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
           ⬅ VOLTAR AO RH
         </button>
       </div>
 
+      {/* ABAS */}
+      <div className="px-4 md:px-8 pt-4 flex-shrink-0 flex gap-2 border-b border-[#E2E8F0] bg-white">
+        <button
+          onClick={() => setAba('funcionarios')}
+          className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${aba === 'funcionarios' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
+        >
+          👤 Funcionários
+        </button>
+        <button
+          onClick={() => setAba('empresa')}
+          className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${aba === 'empresa' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
+        >
+          🏢 Empresa {(totaisEmpresa.vencidos + totaisEmpresa.vencendo) > 0 && <span className="ml-1 bg-red-500 text-white rounded-full px-1.5 py-0.5 text-[9px]">{totaisEmpresa.vencidos + totaisEmpresa.vencendo}</span>}
+        </button>
+      </div>
+
+      {/* ============================================================================ */}
+      {/* ABA: FUNCIONÁRIOS */}
+      {/* ============================================================================ */}
+      {aba === 'funcionarios' && (
       <div className="p-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full">
 
         {/* KPIs */}
@@ -332,6 +471,134 @@ export default function DocumentosPage() {
           )}
         </div>
       </div>
+      )}
+
+      {/* ============================================================================ */}
+      {/* ABA: EMPRESA (certidões, cartão CNPJ, contrato social, etc.) */}
+      {/* ============================================================================ */}
+      {aba === 'empresa' && (
+      <div className="p-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full">
+
+        {/* KPIs */}
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
+          <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 text-center">
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Total de documentos</p>
+            <p className="text-2xl font-black text-[#336699]">{totaisEmpresa.total}</p>
+          </div>
+          <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 text-center">
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Vencendo (30d)</p>
+            <p className={`text-2xl font-black ${totaisEmpresa.vencendo > 0 ? 'text-amber-600' : 'text-gray-300'}`}>{totaisEmpresa.vencendo}</p>
+          </div>
+          <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 text-center">
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Vencidos</p>
+            <p className={`text-2xl font-black ${totaisEmpresa.vencidos > 0 ? 'text-red-600' : 'text-gray-300'}`}>{totaisEmpresa.vencidos}</p>
+          </div>
+        </div>
+
+        {/* Controles */}
+        <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-3 mb-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <input type="text" placeholder="Buscar documento..." value={buscaEmpresa} onChange={e => setBuscaEmpresa(e.target.value)} className="p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+            <div className="flex bg-gray-100 p-1 rounded-xl">
+              {(['TODOS', 'PENDENCIAS'] as const).map(f => (
+                <button key={f} onClick={() => setFiltroEmpresa(f)} className={`px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${filtroEmpresa === f ? 'bg-[#0C1D4D] text-white' : 'text-gray-500'}`}>
+                  {f === 'TODOS' ? 'Todos' : 'Vencimentos'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setMostrarCatsEmpresa(!mostrarCatsEmpresa)} className="text-[10px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-4 py-2.5 rounded-lg uppercase tracking-wider">⚙ Categorias</button>
+            <button onClick={() => setMostrarUploadEmpresa(!mostrarUploadEmpresa)} className={`text-[10px] font-black uppercase tracking-wider px-4 py-2.5 rounded-lg transition-colors ${mostrarUploadEmpresa ? 'bg-gray-200 text-gray-700' : 'bg-[#16A34A] text-white hover:bg-[#15803D]'}`}>
+              {mostrarUploadEmpresa ? '✕ Fechar envio' : '＋ Enviar documento'}
+            </button>
+          </div>
+        </div>
+
+        {/* Painel de categorias */}
+        {mostrarCatsEmpresa && (
+          <div className="bg-white p-5 rounded-2xl shadow-sm border-2 border-blue-200 mb-6">
+            <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider mb-3">Categorias de documento da empresa</h3>
+            <div className="flex flex-wrap gap-2 items-end mb-4">
+              <input type="text" value={novaCatEmpresa} onChange={e => setNovaCatEmpresa(e.target.value)} placeholder="Nova categoria..." className="p-2 border border-gray-300 rounded text-sm uppercase" />
+              <label className="flex items-center gap-2 text-[11px] font-black uppercase text-gray-600 cursor-pointer">
+                <input type="checkbox" checked={novaCatValidadeEmpresa} onChange={e => setNovaCatValidadeEmpresa(e.target.checked)} /> Tem validade
+              </label>
+              <button onClick={adicionarCategoriaEmpresa} className="bg-[#336699] text-white font-black text-xs px-4 py-2 rounded-lg uppercase">Add</button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {categoriasEmpresa.map(c => (
+                <span key={c.id} className="text-[10px] font-black bg-blue-50 text-blue-700 px-2 py-1 rounded uppercase">
+                  {c.nome}{c.exige_validade && <span className="text-amber-500 ml-1">⏳</span>}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Formulário de upload */}
+        {mostrarUploadEmpresa && (
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0] mb-6 space-y-3">
+            <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Enviar documento da empresa</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Categoria</label>
+                <select value={upCategoriaEmpresa} onChange={e => setUpCategoriaEmpresa(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold bg-white">
+                  <option value="">— Selecione —</option>
+                  {categoriasEmpresa.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">
+                  Validade {catSelecionadaEmpresa?.exige_validade && <span className="text-amber-500">(recomendada)</span>}
+                </label>
+                <input type="date" value={upValidadeEmpresa} onChange={e => setUpValidadeEmpresa(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg text-sm" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Título / descrição (opcional)</label>
+              <input type="text" value={upTituloEmpresa} onChange={e => setUpTituloEmpresa(e.target.value)} placeholder="Ex: Cartão CNPJ atualizado 2026" className="w-full p-2 border border-gray-300 rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Arquivo (PDF ou imagem)</label>
+              <input ref={upRefEmpresa} type="file" accept="application/pdf,image/*" onChange={e => setUpArquivoEmpresa(e.target.files?.[0] || null)} className="w-full text-sm file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-[#0C1D4D] file:text-white file:font-bold file:text-xs file:uppercase" />
+            </div>
+            <button onClick={enviarUploadEmpresa} disabled={enviandoEmpresa} className="w-full bg-[#16A34A] hover:bg-[#15803D] text-white font-black uppercase tracking-widest text-xs py-3 rounded-xl disabled:opacity-50">
+              {enviandoEmpresa ? '⏳ Enviando...' : '📤 Enviar Documento'}
+            </button>
+          </div>
+        )}
+
+        {/* Lista de documentos da empresa */}
+        <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-3 md:p-4 space-y-2">
+          {carregandoEmpresa ? (
+            <p className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Carregando...</p>
+          ) : docsEmpresaFiltrados.length === 0 ? (
+            <p className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Nenhum documento da empresa encontrado.</p>
+          ) : docsEmpresaFiltrados.map(doc => (
+            <div key={doc.id} className="bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] p-3 flex items-center gap-3">
+              <div className="text-2xl">{isImagem(doc.tipo_mime) ? '🖼️' : isPdf(doc.tipo_mime) ? '📄' : '📎'}</div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-black text-[#0C1D4D] text-[13px] uppercase">{doc.categoria}</span>
+                  {badgeValidade(doc.statusValidade)}
+                </div>
+                {doc.titulo && <p className="text-[11px] text-gray-600">{doc.titulo}</p>}
+                <p className="text-[10px] text-gray-400">
+                  {doc.nome_arquivo} · {fmtTamanho(doc.tamanho_bytes)}
+                  {doc.data_validade && <> · vence {fmtData(doc.data_validade)}</>}
+                </p>
+              </div>
+              <div className="flex items-center gap-1">
+                <button onClick={() => abrirPreviewEmpresa(doc)} title="Visualizar" className="text-gray-400 hover:text-[#0C1D4D] p-1.5">👁</button>
+                <button onClick={() => baixarEmpresa(doc)} title="Baixar" className="text-gray-400 hover:text-emerald-600 p-1.5">⬇</button>
+                <button onClick={() => excluirEmpresa(doc)} title="Excluir" className="text-gray-400 hover:text-red-600 p-1.5">🗑</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      )}
 
       {/* Drawer de documentos do funcionário */}
       {funcSel && (
@@ -437,6 +704,36 @@ export default function DocumentosPage() {
                 <div className="p-12 text-center">
                   <p className="text-gray-500 mb-3">Este tipo de arquivo não tem pré-visualização.</p>
                   <button onClick={() => baixar(previewDoc)} className="bg-[#0C1D4D] text-white font-black uppercase text-xs px-5 py-3 rounded-xl">⬇ Baixar arquivo</button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Preview inline — documentos da empresa */}
+      {previewUrlEmpresa && previewDocEmpresa && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50" onClick={() => { setPreviewUrlEmpresa(null); setPreviewDocEmpresa(null); }}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center p-4 border-b border-gray-200">
+              <div>
+                <h3 className="font-black text-[#0C1D4D] uppercase text-sm">{previewDocEmpresa.categoria}</h3>
+                <p className="text-[11px] text-gray-500">{previewDocEmpresa.nome_arquivo}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => baixarEmpresa(previewDocEmpresa)} className="text-[10px] font-black bg-emerald-600 text-white px-3 py-2 rounded-lg uppercase">⬇ Baixar</button>
+                <button onClick={() => { setPreviewUrlEmpresa(null); setPreviewDocEmpresa(null); }} className="text-[10px] font-black bg-gray-100 px-3 py-2 rounded-lg uppercase">Fechar</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto bg-gray-100 flex items-center justify-center">
+              {isImagem(previewDocEmpresa.tipo_mime) ? (
+                <img src={previewUrlEmpresa} alt={previewDocEmpresa.nome_arquivo} className="max-w-full max-h-full object-contain" />
+              ) : isPdf(previewDocEmpresa.tipo_mime) ? (
+                <iframe src={previewUrlEmpresa} className="w-full h-[75vh]" title={previewDocEmpresa.nome_arquivo} />
+              ) : (
+                <div className="p-12 text-center">
+                  <p className="text-gray-500 mb-3">Este tipo de arquivo não tem pré-visualização.</p>
+                  <button onClick={() => baixarEmpresa(previewDocEmpresa)} className="bg-[#0C1D4D] text-white font-black uppercase text-xs px-5 py-3 rounded-xl">⬇ Baixar arquivo</button>
                 </div>
               )}
             </div>

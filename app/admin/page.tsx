@@ -48,13 +48,22 @@ const MODULOS_SISTEMA = [
     link: '/admin/op',
     cor: 'border-[#336699]/50 hover:border-[#336699]',
     bgIcon: 'bg-blue-50 text-[#336699]'
-  }, {
+  }, 
+  {
     titulo: 'RH',
     descricao: 'Importe os registros do relógio, calcule horas extras e gere espelhos de jornada.',
     icone: '🫀​',
     link: '/admin/rh',
     cor: 'border-rose-500/50 hover:border-rose-500',
     bgIcon: 'bg-rose-50 text-rose-600'
+  },
+  {
+    titulo: 'Comercial',
+    descricao: 'Gerencie documentos, oportunidades, leads e relacionamento com clientes.',
+    icone: '🤝',
+    link: '/admin/comercial',
+    cor: 'border-slate-500/50 hover:border-slate-500',
+    bgIcon: 'bg-slate-50 text-slate-600'
   },
   {
     titulo: 'Operacional',

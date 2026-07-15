@@ -129,6 +129,48 @@ export async function salvarBonusDescontosAction(payload: {
 }
 
 // ============================================================================
+// SALVAR DADOS SALARIAIS DE UM FUNCIONÁRIO (usado pela página de Holerite)
+// ============================================================================
+export async function salvarDadosSalariaisAction(payload: {
+  funcionarioNome: string;
+  salario_folha: number;
+  salario_contrato: number;
+  valor_refeicao: number;
+  valor_transporte: number;
+  valor_adiantamento: number;
+  usuarioNome: string;
+}): Promise<Resultado> {
+  const db = supabaseAdmin();
+  const { funcionarioNome, salario_folha, salario_contrato, valor_refeicao, valor_transporte, valor_adiantamento, usuarioNome } = payload;
+
+  if (!funcionarioNome) return { ok: false, erro: 'Funcionário não informado.' };
+
+  try {
+    const { error } = await db
+      .from('folha_funcionarios')
+      .update({
+        salario_folha: Number(salario_folha) || 0,
+        salario_contrato: Number(salario_contrato) || 0,
+        valor_refeicao: Number(valor_refeicao) || 0,
+        valor_transporte: Number(valor_transporte) || 0,
+        valor_adiantamento: Number(valor_adiantamento) || 0
+      })
+      .eq('nome_completo', funcionarioNome);
+    if (error) throw new Error(`Falha ao gravar os dados salariais: ${error.message}`);
+
+    await registrarLogAuditoria({
+      usuario_nome: usuarioNome,
+      acao: `ATUALIZAÇÃO DE DADOS SALARIAIS: ${funcionarioNome}`,
+      setor: 'RECURSOS HUMANOS / HOLERITES'
+    });
+
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
 // FECHAR FOLHA EM LOTE
 // ============================================================================
 export async function fecharFolhaLoteAction(payload: {

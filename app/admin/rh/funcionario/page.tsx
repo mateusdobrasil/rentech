@@ -23,8 +23,6 @@ const normalizarPermissao = (permissaoBruta: string): string => {
 };
 
 // Utilitários
-const formatCurrency = (value: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
-
 const formatarMesAnoBR = (mesAnoIso: string) => {
   if (!mesAnoIso) return '';
   const [ano, mes] = mesAnoIso.split('-');
@@ -321,8 +319,6 @@ export default function FuncionarioPage() {
   const addMovimentacao = () => setMovimentacoes([...movimentacoes, { motivo: 'ADMISSAO', cargo: form.cargo, data_movimentacao: '' }]);
   const removeMovimentacao = (idx: number) => setMovimentacoes(movimentacoes.filter((_, i) => i !== idx));
 
-  const regraAtiva = regrasContrato[form.tipo_contrato] || null;
-
   const contratosDisponiveis = useMemo(() => {
     const set = new Set<string>();
     listaFuncionarios.forEach(f => { if (f.tipo_contrato) set.add(f.tipo_contrato); });
@@ -559,49 +555,12 @@ export default function FuncionarioPage() {
                       </div>
                     </div>
 
-                    <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Salário Folha</label><input type="number" step="0.01" value={form.salario_folha} onChange={e => setForm({...form, salario_folha: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-[#0C1D4D]" /></div>
-                    <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Salário Contrato Total</label><input type="number" step="0.01" value={form.salario_contrato} onChange={e => setForm({...form, salario_contrato: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-[#16A34A]" /></div>
-
-                    {regraAtiva && (regraAtiva.direito_vr || regraAtiva.direito_vt) ? (
-                      <div className="col-span-2 bg-blue-50/50 p-3 rounded-lg border border-blue-100">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-[10px] font-black text-[#336699] uppercase tracking-wider">Benefícios (VR / VT)</span>
-                          <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-700">
-                            {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' ? 'Valor Fechado (÷30)' : 'Por Dia'}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          {regraAtiva.direito_vr && (
-                            <div>
-                              <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">
-                                {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' ? 'VR — Valor do Mês' : 'VR — Diária'}
-                              </label>
-                              <input type="number" step="0.01" value={form.valor_refeicao} onChange={e => setForm({...form, valor_refeicao: Number(e.target.value)})} className="w-full p-2 border border-blue-200 rounded text-sm" />
-                              {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' && form.valor_refeicao > 0 && (
-                                <p className="text-[9px] font-bold text-blue-600 mt-0.5 uppercase">Diária: {formatCurrency(form.valor_refeicao / 30)}</p>
-                              )}
-                            </div>
-                          )}
-                          {regraAtiva.direito_vt && (
-                            <div>
-                              <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">
-                                {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' ? 'VT — Valor do Mês' : 'VT — Diária'}
-                              </label>
-                              <input type="number" step="0.01" value={form.valor_transporte} onChange={e => setForm({...form, valor_transporte: Number(e.target.value)})} className="w-full p-2 border border-blue-200 rounded text-sm" />
-                              {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' && form.valor_transporte > 0 && (
-                                <p className="text-[9px] font-bold text-blue-600 mt-0.5 uppercase">Diária: {formatCurrency(form.valor_transporte / 30)}</p>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                        <p className="text-[9px] text-blue-500 font-medium mt-2 uppercase">Os valores são gerados por dia trabalhado conforme a jornada. Configure o direito e a modalidade no Motor de Regras.</p>
-                      </div>
-                    ) : (
-                      <div className="col-span-2 bg-gray-50 p-3 rounded-lg border border-gray-200 text-[10px] font-bold text-gray-400 uppercase text-center">
-                        Este contrato ({form.tipo_contrato}) não dá direito a VR/VT. Ajuste no Motor de Regras se necessário.
-                      </div>
-                    )}
-                    <div className="col-span-2"><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Adiantamento (Dia 20)</label><input type="number" step="0.01" value={form.valor_adiantamento} onChange={e => setForm({...form, valor_adiantamento: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-red-600" /></div>
+                    <div className="col-span-2 bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center justify-between gap-3">
+                      <p className="text-[10px] font-bold text-amber-700 uppercase">💡 Salário, Benefícios (VR/VT) e Adiantamento agora são editados na página Holerite (acesso restrito a Financeiro/RH).</p>
+                      <button type="button" onClick={() => router.push('/admin/rh/holerite')} className="flex-shrink-0 text-[10px] font-black bg-white hover:bg-amber-100 border border-amber-300 text-amber-700 px-3 py-2 rounded-lg transition-colors uppercase tracking-wider">
+                        Ir para Holerite →
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

@@ -7,7 +7,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
-import { fecharFolhaLoteAction, reabrirFolhaAction, salvarBonusDescontosAction } from '../actions/actions-folha';
+import { fecharFolhaLoteAction, reabrirFolhaAction, salvarBonusDescontosAction, salvarDadosSalariaisAction } from '../actions/actions-folha';
 import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction, previaDocumentoAssinaturaAction } from '../actions/actions-assinatura';
 import logoColorido from '../../../../app/imgs/logo.png';
 
@@ -509,6 +509,12 @@ const HoleriteDoc = ({ nome, dados, mesRef, fechamento }: {
   );
 };
 
+const extrairDadosSalariais = (f: FuncionarioFin | null) => f ? {
+  salario_folha: f.salario_folha, salario_contrato: f.salario_contrato,
+  valor_refeicao: f.valor_refeicao, valor_transporte: f.valor_transporte,
+  valor_adiantamento: f.valor_adiantamento
+} : null;
+
 export default function HoleritePage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -543,8 +549,8 @@ export default function HoleritePage() {
   const [mostrarBonusEncerrados, setMostrarBonusEncerrados] = useState(false);
 
   const fichaAtualSerializada = useMemo(
-    () => JSON.stringify({ descontosSelecionado, bonusSelecionado }),
-    [descontosSelecionado, bonusSelecionado]
+    () => JSON.stringify({ descontosSelecionado, bonusSelecionado, dadosSalariais: extrairDadosSalariais(formSelecionado) }),
+    [descontosSelecionado, bonusSelecionado, formSelecionado]
   );
   const temAlteracoesNaoSalvas = snapshotBonusDesc !== '' && fichaAtualSerializada !== snapshotBonusDesc;
 
@@ -686,7 +692,7 @@ export default function HoleritePage() {
     const bonusCarregados = bonusData || [];
     setBonusSelecionado(bonusCarregados);
 
-    setSnapshotBonusDesc(JSON.stringify({ descontosSelecionado: descontosCarregados, bonusSelecionado: bonusCarregados }));
+    setSnapshotBonusDesc(JSON.stringify({ descontosSelecionado: descontosCarregados, bonusSelecionado: bonusCarregados, dadosSalariais: extrairDadosSalariais(funcData) }));
 
     const { data: fechData } = await supabase
       .from('folha_holerites').select('*')
@@ -706,7 +712,7 @@ export default function HoleritePage() {
   }, [funcionarioSelecionado, mesReferencia, authLoading]);
 
   const salvarBonusDescontos = async (): Promise<boolean> => {
-    if (!funcionarioSelecionado) return false;
+    if (!funcionarioSelecionado || !formSelecionado) return false;
     setLoading(true);
     try {
       const res = await salvarBonusDescontosAction({
@@ -717,8 +723,21 @@ export default function HoleritePage() {
       });
       if (!res.ok) throw new Error(res.erro);
 
-      alert("Bônus e descontos guardados com sucesso!");
-      setSnapshotBonusDesc(JSON.stringify({ descontosSelecionado, bonusSelecionado }));
+      const resSalarial = await salvarDadosSalariaisAction({
+        funcionarioNome: funcionarioSelecionado,
+        salario_folha: formSelecionado.salario_folha,
+        salario_contrato: formSelecionado.salario_contrato,
+        valor_refeicao: formSelecionado.valor_refeicao,
+        valor_transporte: formSelecionado.valor_transporte,
+        valor_adiantamento: formSelecionado.valor_adiantamento,
+        usuarioNome: usuarioAtual
+      });
+      if (!resSalarial.ok) throw new Error(resSalarial.erro);
+
+      alert("Bônus, descontos e dados salariais guardados com sucesso!");
+      setSnapshotBonusDesc(JSON.stringify({ descontosSelecionado, bonusSelecionado, dadosSalariais: extrairDadosSalariais(formSelecionado) }));
+      carregarListaFuncionarios();
+      carregarLote(mesReferencia);
       return true;
     } catch (e: any) { alert("Erro ao salvar: " + e.message); return false; }
     finally { setLoading(false); }
@@ -1153,6 +1172,55 @@ export default function HoleritePage() {
                   <button onClick={salvarBonusDescontos} disabled={loading} className={`font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md transition-all active:scale-[0.98] disabled:opacity-50 ${temAlteracoesNaoSalvas ? 'bg-[#16A34A] hover:bg-[#15803D] text-white animate-pulse' : 'bg-[#0C1D4D] hover:bg-[#284B8C] text-white'}`}>
                     {loading ? '⏳ Gravando...' : '💾 Gravar'}
                   </button>
+                </div>
+
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0]">
+                  <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider border-b border-[#E2E8F0] pb-2 mb-4">Dados Salariais</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Salário Folha</label><input type="number" step="0.01" value={formSelecionado.salario_folha} onChange={e => setFormSelecionado({...formSelecionado, salario_folha: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-[#0C1D4D]" /></div>
+                    <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Salário Contrato Total</label><input type="number" step="0.01" value={formSelecionado.salario_contrato} onChange={e => setFormSelecionado({...formSelecionado, salario_contrato: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-[#16A34A]" /></div>
+
+                    {regraAtiva && (regraAtiva.direito_vr || regraAtiva.direito_vt) ? (
+                      <div className="col-span-2 bg-blue-50/50 p-3 rounded-lg border border-blue-100">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[10px] font-black text-[#336699] uppercase tracking-wider">Benefícios (VR / VT)</span>
+                          <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-700">
+                            {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' ? 'Valor Fechado (÷30)' : 'Por Dia'}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          {regraAtiva.direito_vr && (
+                            <div>
+                              <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">
+                                {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' ? 'VR — Valor do Mês' : 'VR — Diária'}
+                              </label>
+                              <input type="number" step="0.01" value={formSelecionado.valor_refeicao} onChange={e => setFormSelecionado({...formSelecionado, valor_refeicao: Number(e.target.value)})} className="w-full p-2 border border-blue-200 rounded text-sm" />
+                              {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' && formSelecionado.valor_refeicao > 0 && (
+                                <p className="text-[9px] font-bold text-blue-600 mt-0.5 uppercase">Diária: {formatCurrency(formSelecionado.valor_refeicao / 30)}</p>
+                              )}
+                            </div>
+                          )}
+                          {regraAtiva.direito_vt && (
+                            <div>
+                              <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">
+                                {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' ? 'VT — Valor do Mês' : 'VT — Diária'}
+                              </label>
+                              <input type="number" step="0.01" value={formSelecionado.valor_transporte} onChange={e => setFormSelecionado({...formSelecionado, valor_transporte: Number(e.target.value)})} className="w-full p-2 border border-blue-200 rounded text-sm" />
+                              {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' && formSelecionado.valor_transporte > 0 && (
+                                <p className="text-[9px] font-bold text-blue-600 mt-0.5 uppercase">Diária: {formatCurrency(formSelecionado.valor_transporte / 30)}</p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <p className="text-[9px] text-blue-500 font-medium mt-2 uppercase">Os valores são gerados por dia trabalhado conforme a jornada. Configure o direito e a modalidade no Motor de Regras.</p>
+                      </div>
+                    ) : (
+                      <div className="col-span-2 bg-gray-50 p-3 rounded-lg border border-gray-200 text-[10px] font-bold text-gray-400 uppercase text-center">
+                        Este contrato ({formSelecionado.tipo_contrato}) não dá direito a VR/VT. Ajuste no Motor de Regras se necessário.
+                      </div>
+                    )}
+                    <div className="col-span-2"><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Adiantamento (Dia 20)</label><input type="number" step="0.01" value={formSelecionado.valor_adiantamento} onChange={e => setFormSelecionado({...formSelecionado, valor_adiantamento: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-red-600" /></div>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">

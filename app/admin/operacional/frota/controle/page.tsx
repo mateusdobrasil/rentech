@@ -447,7 +447,7 @@ export default function PainelControleFrota() {
       <div className="px-4 md:px-8 pt-6 flex-shrink-0">
         {veiculosComAlerta.length > 0 && (
           <div className="mb-4 bg-amber-50 border border-amber-300 text-amber-800 text-xs font-bold px-4 py-3 rounded-lg">
-            ⚠️ {veiculosComAlerta.length} veículo(s) com seguro, CRLV, IPVA ou contrato de locação vencido ou vencendo nos próximos 30 dias.
+            ⚠️ {veiculosComAlerta.length} veículo(s) com seguro, Licenciamento, IPVA ou contrato de locação vencido ou vencendo nos próximos 30 dias.
           </div>
         )}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col md:flex-row gap-4 justify-between items-center">
@@ -526,7 +526,7 @@ export default function PainelControleFrota() {
                       </div>
                     )}
                     <div className="flex justify-between items-center">
-                      <span className="text-[10px] text-[#94A3B8] font-bold uppercase">CRLV</span>
+                      <span className="text-[10px] text-[#94A3B8] font-bold uppercase">Licenciamento</span>
                       <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border ${crlv.cor}`}>{crlv.texto}</span>
                     </div>
                     <div className="flex justify-between items-center">
@@ -738,7 +738,7 @@ export default function PainelControleFrota() {
                 <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#CBD5E1] pb-2 mb-3">Documentação</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Vencimento do CRLV</label>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Vencimento do Licenciamento</label>
                     <input type="date" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.crlv_vencimento || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, crlv_vencimento: e.target.value } })} />
                   </div>
                   <div>

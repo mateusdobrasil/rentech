@@ -20,8 +20,9 @@ const normalizarPermissao = (permissaoBruta: string): string => {
   return 'USUARIO';
 };
 
+const ROTA_CONTROLE = '/admin/operacional/frota/controle';
+
 // Listas fixas de apoio
-const TIPOS_VEICULO = ['CAMINHÃO', 'VAN', 'CARRO', 'UTILITÁRIO', 'CARRETA', 'MOTO', 'ÔNIBUS', 'OUTRO'];
 const ICONE_TIPO: Record<string, string> = {
   'CAMINHÃO': '🚛', 'VAN': '🚐', 'CARRO': '🚗', 'UTILITÁRIO': '🚚',
   'CARRETA': '⛟', 'MOTO': '🏍️', 'ÔNIBUS': '🚌', 'OUTRO': '🚙'
@@ -32,12 +33,12 @@ const COR_STATUS: Record<string, string> = {
   'EM MANUTENÇÃO': 'bg-amber-100 text-amber-700 border-amber-300',
   'INATIVO': 'bg-gray-100 text-gray-500 border-gray-300'
 };
-const TIPOS_MANUTENCAO = ['REVISÃO', 'TROCA DE ÓLEO', 'TROCA DE PNEUS', 'REPARO', 'OUTRO'];
 const PROPRIEDADE_VEICULO = ['PRÓPRIO', 'ALUGADO'];
 const COR_PROPRIEDADE: Record<string, string> = {
   'PRÓPRIO': 'bg-slate-100 text-slate-600 border-slate-300',
   'ALUGADO': 'bg-indigo-100 text-indigo-700 border-indigo-300'
 };
+const TIPOS_MANUTENCAO = ['REVISÃO', 'TROCA DE ÓLEO', 'TROCA DE PNEUS', 'REPARO', 'OUTRO'];
 
 // Interfaces do Banco de Dados
 interface Veiculo {
@@ -56,6 +57,7 @@ interface Veiculo {
   km_atual?: number | null;
   status: string;
   propriedade: string;
+  exibir_na_frota: boolean;
   locacao_locadora?: string;
   locacao_vigencia_inicio?: string | null;
   locacao_vigencia_fim?: string | null;
@@ -72,7 +74,6 @@ interface Veiculo {
   seguro_vigencia_fim?: string | null;
   crlv_vencimento?: string | null;
   documento_url?: string;
-  documento_path?: string;
   observacoes?: string;
 }
 
@@ -91,7 +92,7 @@ interface Manutencao {
   anexo_path?: string;
 }
 
-// Calcula o status de vencimento de uma data (seguro, CRLV, próxima manutenção)
+// Calcula o status de vencimento de uma data (seguro, CRLV, locação, próxima manutenção)
 function getStatusVencimento(dataStr?: string | null): { texto: string; cor: string } {
   if (!dataStr) return { texto: 'Sem data cadastrada', cor: 'bg-gray-100 text-gray-500 border-gray-300' };
   const hoje = new Date();
@@ -104,27 +105,28 @@ function getStatusVencimento(dataStr?: string | null): { texto: string; cor: str
   return { texto: `Válido até ${alvo.toLocaleDateString('pt-BR')}`, cor: 'bg-green-100 text-green-700 border-green-300' };
 }
 
+// Pior urgência entre os documentos do veículo (CRLV + Seguro ou Locação, conforme o caso)
+function getUrgenciaVeiculo(v: Veiculo): 'vencido' | 'proximo' | null {
+  const status = [getStatusVencimento(v.crlv_vencimento)];
+  status.push(v.propriedade === 'ALUGADO' ? getStatusVencimento(v.locacao_vigencia_fim) : getStatusVencimento(v.seguro_vigencia_fim));
+
+  if (status.some(s => s.cor.includes('red'))) return 'vencido';
+  if (status.some(s => s.cor.includes('amber'))) return 'proximo';
+  return null;
+}
+
 // Padroniza a escrita em maiúsculas nos campos de texto livre
 const up = (v: string) => v.toUpperCase();
 
 // Colunas do tipo "date" no Postgres rejeitam string vazia — normaliza para null
 const dataOuNulo = (v?: string | null) => (v && v.trim() !== '' ? v : null);
 
-const veiculoVazio: Partial<Veiculo> = {
-  apelido: '', tipo: 'CAMINHÃO', marca: '', modelo: '', ano_fabricacao: undefined, ano_modelo: undefined,
-  placa: '', renavam: '', chassi: '', cor: '', combustivel: '', km_atual: undefined, status: 'ATIVO',
-  propriedade: 'PRÓPRIO', locacao_locadora: '', locacao_vigencia_inicio: '', locacao_vigencia_fim: '',
-  locacao_apolice: '', locacao_contato_nome: '', locacao_contato_telefone: '',
-  apolice_numero: '', segurado_nome: '', segurado_cnpj: '', seguradora: '', seguradora_telefone: '',
-  corretora: '', seguro_vigencia_inicio: '', seguro_vigencia_fim: '', crlv_vencimento: '', observacoes: ''
-};
-
 const manutencaoVazia: Partial<Manutencao> = {
   tipo: 'REVISÃO', data: '', km_atual: undefined, custo: undefined, fornecedor: '', descricao: '',
   proxima_data: '', proxima_km: undefined
 };
 
-export default function PainelFrota() {
+export default function VisualizacaoFrota() {
   const router = useRouter();
   const pathname = usePathname();
   const [usuarioAtual, setUsuarioAtual] = useState('');
@@ -132,16 +134,17 @@ export default function PainelFrota() {
   // Estados de Segurança e Autenticação
   const [authLoading, setAuthLoading] = useState(true);
   const [acessoNegado, setAcessoNegado] = useState(false);
+  const [podeGerenciar, setPodeGerenciar] = useState(false);
 
   // Aba ativa
-  const [abaAtiva, setAbaAtiva] = useState<'frota' | 'manutencao' | 'checkin'>('frota');
+  const [abaAtiva, setAbaAtiva] = useState<'veiculos' | 'manutencao'>('veiculos');
 
   // Estados de Dados
   const [veiculos, setVeiculos] = useState<Veiculo[]>([]);
   const [manutencoes, setManutencoes] = useState<Manutencao[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Filtros da aba Frota
+  // Filtros da aba Veículos
   const [busca, setBusca] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('TODOS');
   const [filtroPropriedade, setFiltroPropriedade] = useState('TODOS');
@@ -149,10 +152,8 @@ export default function PainelFrota() {
   // Veículo selecionado na aba Manutenção
   const [veiculoSelecionadoId, setVeiculoSelecionadoId] = useState('');
 
-  // Estados de UI (Modais)
+  // Estados de UI (Modal e Dialog)
   const [dialog, setDialog] = useState<{ open: boolean; type: 'loading' | 'success' | 'error'; title: string; msg: string }>({ open: false, type: 'loading', title: '', msg: '' });
-  const [modalVeiculo, setModalVeiculo] = useState<{ open: boolean; isNew: boolean; v: Partial<Veiculo> | null }>({ open: false, isNew: false, v: null });
-  const [arquivoDocumento, setArquivoDocumento] = useState<File | null>(null);
   const [modalManutencao, setModalManutencao] = useState<{ open: boolean; m: Partial<Manutencao> | null }>({ open: false, m: null });
   const [arquivoAnexo, setArquivoAnexo] = useState<File | null>(null);
   const [enviando, setEnviando] = useState(false);
@@ -179,24 +180,22 @@ export default function PainelFrota() {
         return;
       }
 
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
+      const [rotaAtualRes, rotaControleRes] = await Promise.all([
+        supabase.from('folha_paginas_permissoes').select('permissoes_permitidas').eq('endereco_route', pathname).single(),
+        supabase.from('folha_paginas_permissoes').select('permissoes_permitidas').eq('endereco_route', ROTA_CONTROLE).single()
+      ]);
 
       const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
+      const permissoesLiberadas = rotaAtualRes.data?.permissoes_permitidas || [];
 
       if (!permissoesLiberadas.includes(permissaoNormalizada)) {
         setAcessoNegado(true);
         setAuthLoading(false);
         return;
       }
+
+      const permissoesControle = rotaControleRes.data?.permissoes_permitidas || [];
+      setPodeGerenciar(permissoesControle.includes(permissaoNormalizada));
 
       setUsuarioAtual(perfil.nome || 'Usuário');
       setAuthLoading(false);
@@ -206,22 +205,33 @@ export default function PainelFrota() {
     checkAuth();
   }, [router, pathname]);
 
-  // 2. Carregar Dados Principais (Veículos e Manutenções)
+  // 2. Carregar apenas os veículos liberados para exibição na Frota, e as manutenções deles
   const carregarDados = async () => {
     setLoading(true);
+    const { data: veiculosData } = await supabase
+      .from('frota_veiculos')
+      .select('*')
+      .eq('exibir_na_frota', true)
+      .order('apelido', { ascending: true });
 
-    const [resVeiculos, resManutencoes] = await Promise.all([
-      supabase.from('frota_veiculos').select('*').order('apelido', { ascending: true }),
-      supabase.from('frota_manutencoes').select('*').order('data', { ascending: false })
-    ]);
-
-    if (resVeiculos.data) setVeiculos(resVeiculos.data);
-    if (resManutencoes.data) setManutencoes(resManutencoes.data);
-
+    if (veiculosData) {
+      setVeiculos(veiculosData);
+      const ids = veiculosData.map(v => v.id);
+      if (ids.length > 0) {
+        const { data: manutencoesData } = await supabase
+          .from('frota_manutencoes')
+          .select('*')
+          .in('veiculo_id', ids)
+          .order('data', { ascending: false });
+        if (manutencoesData) setManutencoes(manutencoesData);
+      } else {
+        setManutencoes([]);
+      }
+    }
     setLoading(false);
   };
 
-  // Filtro Dinâmico da Frota
+  // Filtro Dinâmico da aba Veículos
   const veiculosFiltrados = useMemo(() => {
     return veiculos.filter(v => {
       const termo = busca.toLowerCase();
@@ -234,21 +244,24 @@ export default function PainelFrota() {
 
   // Veículos com documentação vencida ou a vencer em até 30 dias
   const veiculosComAlerta = useMemo(() => {
-    return veiculos.filter(v => {
-      const crlv = getStatusVencimento(v.crlv_vencimento);
-      const alertaCrlv = crlv.cor.includes('red') || crlv.cor.includes('amber');
-      if (v.propriedade === 'ALUGADO') {
-        const locacao = getStatusVencimento(v.locacao_vigencia_fim);
-        return alertaCrlv || locacao.cor.includes('red') || locacao.cor.includes('amber');
-      }
-      const seguro = getStatusVencimento(v.seguro_vigencia_fim);
-      return alertaCrlv || seguro.cor.includes('red') || seguro.cor.includes('amber');
-    });
+    return veiculos.filter(v => getUrgenciaVeiculo(v) !== null);
   }, [veiculos]);
 
   const manutencoesDoVeiculo = useMemo(() => {
     return manutencoes.filter(m => m.veiculo_id === veiculoSelecionadoId);
   }, [manutencoes, veiculoSelecionadoId]);
+
+  // Mantém sempre um veículo selecionado para a ficha lateral, acompanhando os filtros
+  useEffect(() => {
+    if (veiculosFiltrados.length === 0) return;
+    if (!veiculosFiltrados.some(v => v.id === veiculoSelecionadoId)) {
+      setVeiculoSelecionadoId(veiculosFiltrados[0].id);
+    }
+  }, [veiculosFiltrados, veiculoSelecionadoId]);
+
+  const veiculoDetalhe = useMemo(() => {
+    return veiculos.find(v => v.id === veiculoSelecionadoId) || null;
+  }, [veiculos, veiculoSelecionadoId]);
 
   const getVeiculoNome = (id: string) => {
     const v = veiculos.find(x => x.id === id);
@@ -271,68 +284,6 @@ export default function PainelFrota() {
 
     const { data } = supabase.storage.from('frota').getPublicUrl(filePath);
     return { url: data.publicUrl, path: filePath };
-  };
-
-  // ============================================================================
-  // AÇÕES DE CRUD - VEÍCULOS
-  // ============================================================================
-  const abrirModalNovoVeiculo = () => {
-    setArquivoDocumento(null);
-    setModalVeiculo({ open: true, isNew: true, v: { ...veiculoVazio } });
-  };
-
-  const abrirModalEditarVeiculo = (v: Veiculo) => {
-    setArquivoDocumento(null);
-    setModalVeiculo({ open: true, isNew: false, v: { ...v } });
-  };
-
-  const salvarVeiculo = async () => {
-    if (!modalVeiculo.v?.apelido || !modalVeiculo.v?.placa) {
-      setDialog({ open: true, type: 'error', title: 'Atenção', msg: 'O Apelido e a Placa são obrigatórios.' });
-      return;
-    }
-
-    setEnviando(true);
-    let payload: Partial<Veiculo> = {
-      ...modalVeiculo.v,
-      seguro_vigencia_inicio: dataOuNulo(modalVeiculo.v.seguro_vigencia_inicio),
-      seguro_vigencia_fim: dataOuNulo(modalVeiculo.v.seguro_vigencia_fim),
-      crlv_vencimento: dataOuNulo(modalVeiculo.v.crlv_vencimento),
-      locacao_vigencia_inicio: dataOuNulo(modalVeiculo.v.locacao_vigencia_inicio),
-      locacao_vigencia_fim: dataOuNulo(modalVeiculo.v.locacao_vigencia_fim),
-    };
-
-    if (arquivoDocumento) {
-      const resultado = await enviarArquivo(arquivoDocumento, 'documentos');
-      if (!resultado) { setEnviando(false); return; }
-      payload.documento_url = resultado.url;
-      payload.documento_path = resultado.path;
-    }
-
-    let res;
-    if (modalVeiculo.isNew) {
-      res = await supabase.from('frota_veiculos').insert([payload]);
-    } else {
-      res = await supabase.from('frota_veiculos').update(payload).eq('id', payload.id);
-    }
-
-    setEnviando(false);
-
-    if (res.error) {
-      setDialog({ open: true, type: 'error', title: 'Erro', msg: res.error.message });
-    } else {
-      registrarLogAuditoria({
-        usuario_nome: usuarioAtual,
-        acao: modalVeiculo.isNew ? 'CADASTROU VEÍCULO' : 'EDITOU VEÍCULO',
-        setor: 'FROTA',
-        equipamento_id: modalVeiculo.isNew ? null : (payload.id ?? null),
-        equipamento_nome: `${payload.apelido} (${payload.placa})`,
-      });
-      setDialog({ open: true, type: 'success', title: 'Concluído', msg: 'Veículo salvo com sucesso.' });
-      setModalVeiculo({ open: false, isNew: false, v: null });
-      carregarDados();
-      setTimeout(() => setDialog(prev => ({ ...prev, open: false })), 2000);
-    }
   };
 
   // ============================================================================
@@ -401,7 +352,7 @@ export default function PainelFrota() {
         <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200">
           <div className="text-5xl mb-4">⛔</div>
           <h2 className="text-xl font-black text-red-600 uppercase tracking-wider mb-2">Acesso Restrito</h2>
-          <p className="text-sm text-gray-500 mb-6">Você não possui permissão para acessar o Controle de Frota.</p>
+          <p className="text-sm text-gray-500 mb-6">Você não possui permissão para acessar a Frota.</p>
           <button onClick={() => router.push('/admin/operacional')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
             Voltar ao Menu Principal
           </button>
@@ -415,22 +366,29 @@ export default function PainelFrota() {
       <Analytics />
 
       {/* IDENTIFICAÇÃO E NAVEGAÇÃO ALINHADOS À NAVBAR GLOBAL */}
-      <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex-shrink-0 flex justify-between items-center shadow-sm">
+      <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex-shrink-0 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 shadow-sm">
         <p className="text-[#0369A1] font-medium text-sm">
-          🚚 <strong>Olá, {usuarioAtual}</strong>. Gerencie a frota, documentos, seguros e manutenções.
+          🚚 <strong>Olá, {usuarioAtual}</strong>. Consulte os veículos da frota e registre manutenções.
         </p>
-        <button onClick={() => router.push('/admin/operacional')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
-          ⬅ VOLTAR AO HUB
-        </button>
+        <div className="flex gap-2 w-full md:w-auto">
+          {podeGerenciar && (
+            <button onClick={() => router.push(ROTA_CONTROLE)} className="flex-1 md:flex-none text-[10px] md:text-xs font-black bg-[#336699] hover:bg-[#284B8C] text-white px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
+              ⚙️ Gerenciar Frota
+            </button>
+          )}
+          <button onClick={() => router.push('/admin/operacional')} className="flex-1 md:flex-none text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
+            ⬅ VOLTAR AO HUB
+          </button>
+        </div>
       </div>
 
       {/* ABAS */}
       <div className="px-4 md:px-8 pt-4 flex-shrink-0 flex gap-2 border-b border-[#E2E8F0] bg-white">
         <button
-          onClick={() => setAbaAtiva('frota')}
-          className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${abaAtiva === 'frota' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
+          onClick={() => setAbaAtiva('veiculos')}
+          className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${abaAtiva === 'veiculos' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
         >
-          🚚 Frota {veiculosComAlerta.length > 0 && <span className="ml-1 bg-red-500 text-white rounded-full px-1.5 py-0.5 text-[9px]">{veiculosComAlerta.length}</span>}
+          🚚 Veículos {veiculosComAlerta.length > 0 && <span className="ml-1 bg-red-500 text-white rounded-full px-1.5 py-0.5 text-[9px]">{veiculosComAlerta.length}</span>}
         </button>
         <button
           onClick={() => setAbaAtiva('manutencao')}
@@ -438,128 +396,98 @@ export default function PainelFrota() {
         >
           🔧 Manutenção
         </button>
-        <button
-          onClick={() => setAbaAtiva('checkin')}
-          className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${abaAtiva === 'checkin' ? 'bg-[#336699] text-white' : 'text-[#94A3B8] hover:bg-[#F0F4F8]'}`}
-        >
-          🅿️ Check-in <span className="opacity-60 normal-case font-semibold">(em breve)</span>
-        </button>
       </div>
 
       {/* ============================================================================ */}
-      {/* ABA: FROTA */}
+      {/* ABA: VEÍCULOS (ficha lateral + detalhe) */}
       {/* ============================================================================ */}
-      {abaAtiva === 'frota' && (
-        <>
-          <div className="px-4 md:px-8 pt-6 flex-shrink-0">
-            {veiculosComAlerta.length > 0 && (
-              <div className="mb-4 bg-amber-50 border border-amber-300 text-amber-800 text-xs font-bold px-4 py-3 rounded-lg">
-                ⚠️ {veiculosComAlerta.length} veículo(s) com seguro, CRLV ou contrato de locação vencido ou vencendo nos próximos 30 dias.
-              </div>
-            )}
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col md:flex-row gap-4 justify-between items-center">
-              <div className="flex w-full md:w-auto gap-4 flex-grow max-w-2xl">
+      {abaAtiva === 'veiculos' && (
+        <div className="px-4 md:px-8 py-6 flex-grow flex flex-col">
+          {veiculosComAlerta.length > 0 && (
+            <div className="mb-4 bg-amber-50 border border-amber-300 text-amber-800 text-xs font-bold px-4 py-3 rounded-lg">
+              ⚠️ {veiculosComAlerta.length} veículo(s) com seguro, CRLV ou contrato de locação vencido ou vencendo nos próximos 30 dias.
+            </div>
+          )}
+
+          {loading ? (
+            <div className="text-center py-12 text-[#94A3B8] font-bold text-sm">Carregando frota...</div>
+          ) : veiculos.length === 0 ? (
+            <div className="text-center py-12 text-[#94A3B8] font-bold text-sm bg-white rounded-xl border border-dashed border-[#CBD5E1]">Nenhum veículo disponível para visualização no momento.</div>
+          ) : (
+            <div className="flex flex-col md:flex-row gap-5 flex-grow min-h-0">
+              {/* SIDEBAR: busca, filtros e lista de veículos */}
+              <div className="w-full md:w-80 flex-shrink-0 flex flex-col gap-3">
                 <input
                   type="text"
-                  placeholder="🔍 Buscar por apelido, placa ou modelo..."
-                  className="flex-grow p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-semibold text-[#0C1D4D] focus:border-[#336699] outline-none"
+                  placeholder="🔍 Buscar..."
+                  className="p-2.5 border-2 border-[#E2E8F0] rounded-lg text-sm font-semibold text-[#0C1D4D] focus:border-[#336699] outline-none bg-white"
                   value={busca}
                   onChange={(e) => setBusca(e.target.value)}
                 />
-                <select
-                  className="p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer w-48"
-                  value={filtroStatus}
-                  onChange={(e) => setFiltroStatus(e.target.value)}
-                >
-                  <option value="TODOS">TODOS OS STATUS</option>
-                  {STATUS_VEICULO.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-                <select
-                  className="p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer w-48"
-                  value={filtroPropriedade}
-                  onChange={(e) => setFiltroPropriedade(e.target.value)}
-                >
-                  <option value="TODOS">PRÓPRIO / ALUGADO</option>
-                  {PROPRIEDADE_VEICULO.map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
+                <div className="flex gap-2">
+                  <select
+                    className="flex-1 p-2 border-2 border-[#E2E8F0] rounded-lg text-[11px] font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer bg-white"
+                    value={filtroStatus}
+                    onChange={(e) => setFiltroStatus(e.target.value)}
+                  >
+                    <option value="TODOS">TODOS OS STATUS</option>
+                    {STATUS_VEICULO.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <select
+                    className="flex-1 p-2 border-2 border-[#E2E8F0] rounded-lg text-[11px] font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer bg-white"
+                    value={filtroPropriedade}
+                    onChange={(e) => setFiltroPropriedade(e.target.value)}
+                  >
+                    <option value="TODOS">PRÓPRIO / ALUGADO</option>
+                    {PROPRIEDADE_VEICULO.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+
+                <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm overflow-y-auto flex-grow max-h-[70vh] md:max-h-none divide-y divide-[#F1F5F9]">
+                  {veiculosFiltrados.length === 0 ? (
+                    <p className="text-center text-[#94A3B8] text-xs font-bold p-6">Nenhum veículo encontrado.</p>
+                  ) : (
+                    veiculosFiltrados.map(v => (
+                      <button
+                        key={v.id}
+                        onClick={() => setVeiculoSelecionadoId(v.id)}
+                        className={`w-full text-left p-3 flex items-center gap-3 transition-colors ${v.id === veiculoSelecionadoId ? 'bg-blue-50 border-l-4 border-[#336699]' : 'hover:bg-[#F8FAFC] border-l-4 border-transparent'}`}
+                      >
+                        <span className="relative text-2xl flex-shrink-0">
+                          {ICONE_TIPO[v.tipo] || '🚙'}
+                          {(() => {
+                            const urgencia = getUrgenciaVeiculo(v);
+                            if (!urgencia) return null;
+                            return (
+                              <span
+                                className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-white ${urgencia === 'vencido' ? 'bg-red-500' : 'bg-amber-500'}`}
+                                title={urgencia === 'vencido' ? 'Documento vencido' : 'Documento vence em até 30 dias'}
+                              />
+                            );
+                          })()}
+                        </span>
+                        <div className="min-w-0 flex-grow">
+                          <p className="font-black text-[#0C1D4D] text-xs uppercase truncate">{v.apelido}</p>
+                          <p className="text-[10px] text-[#64748B] font-bold uppercase">{v.placa}</p>
+                        </div>
+                        <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full border flex-shrink-0 ${COR_STATUS[v.status] || COR_STATUS['INATIVO']}`}>{v.status}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
               </div>
 
-              <button onClick={abrirModalNovoVeiculo} className="w-full md:w-auto bg-[#336699] hover:bg-[#284B8C] text-white px-6 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-md hover:shadow-lg">
-                ➕ Novo Veículo
-              </button>
+              {/* FICHA COMPLETA DO VEÍCULO SELECIONADO */}
+              <div className="flex-grow bg-white rounded-2xl border border-[#E2E8F0] shadow-sm overflow-y-auto">
+                {!veiculoDetalhe ? (
+                  <div className="h-full flex items-center justify-center text-[#94A3B8] text-sm font-bold p-12 text-center">Selecione um veículo na lista ao lado para ver a ficha completa.</div>
+                ) : (
+                  <FichaVeiculo veiculo={veiculoDetalhe} onVerManutencoes={() => setAbaAtiva('manutencao')} />
+                )}
+              </div>
             </div>
-          </div>
-
-          <div className="px-4 md:px-8 py-6 flex-grow">
-            {loading ? (
-              <div className="text-center py-12 text-[#94A3B8] font-bold text-sm">Carregando frota...</div>
-            ) : veiculosFiltrados.length === 0 ? (
-              <div className="text-center py-12 text-[#94A3B8] font-bold text-sm bg-white rounded-xl border border-dashed border-[#CBD5E1]">Nenhum veículo encontrado.</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                {veiculosFiltrados.map(v => {
-                  const seguro = getStatusVencimento(v.seguro_vigencia_fim);
-                  const crlv = getStatusVencimento(v.crlv_vencimento);
-                  const locacao = getStatusVencimento(v.locacao_vigencia_fim);
-                  return (
-                    <div key={v.id} className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-5 flex flex-col gap-3">
-                      <div className="flex justify-between items-start">
-                        <div className="flex items-center gap-2">
-                          <span className="text-3xl">{ICONE_TIPO[v.tipo] || '🚙'}</span>
-                          <div>
-                            <h3 className="font-black text-[#0C1D4D] text-sm uppercase tracking-wide">{v.apelido}</h3>
-                            <p className="text-[10px] text-[#64748B] font-bold uppercase">{v.placa}</p>
-                          </div>
-                        </div>
-                        <div className="flex flex-col gap-1 items-end">
-                          <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-full border ${COR_STATUS[v.status] || COR_STATUS['INATIVO']}`}>{v.status}</span>
-                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full border ${COR_PROPRIEDADE[v.propriedade] || COR_PROPRIEDADE['PRÓPRIO']}`}>{v.propriedade || 'PRÓPRIO'}</span>
-                        </div>
-                      </div>
-
-                      <p className="text-xs text-[#475569] font-medium truncate" title={`${v.marca || ''} ${v.modelo || ''}`}>
-                        {v.marca} {v.modelo} {v.ano_modelo ? `• ${v.ano_modelo}` : ''}
-                      </p>
-
-                      <div className="space-y-1.5 border-t border-[#F1F5F9] pt-3">
-                        {v.propriedade !== 'ALUGADO' && (
-                          <div className="flex justify-between items-center">
-                            <span className="text-[10px] text-[#94A3B8] font-bold uppercase">Seguro</span>
-                            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border ${seguro.cor}`}>{seguro.texto}</span>
-                          </div>
-                        )}
-                        <div className="flex justify-between items-center">
-                          <span className="text-[10px] text-[#94A3B8] font-bold uppercase">CRLV</span>
-                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border ${crlv.cor}`}>{crlv.texto}</span>
-                        </div>
-                        {v.propriedade === 'ALUGADO' && (
-                          <div className="flex justify-between items-center">
-                            <span className="text-[10px] text-[#94A3B8] font-bold uppercase">Locação</span>
-                            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border ${locacao.cor}`}>{locacao.texto}</span>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex gap-2 pt-2 mt-auto">
-                        <button onClick={() => abrirModalEditarVeiculo(v)} className="flex-1 bg-amber-100 text-amber-700 hover:bg-amber-200 font-bold text-[10px] uppercase px-3 py-2 rounded transition-colors">
-                          ✏️ Editar Ficha
-                        </button>
-                        <button onClick={() => { setVeiculoSelecionadoId(v.id); setAbaAtiva('manutencao'); }} className="flex-1 bg-blue-50 text-[#336699] hover:bg-blue-100 border border-blue-200 font-bold text-[10px] uppercase px-3 py-2 rounded transition-colors">
-                          🔧 Manutenções
-                        </button>
-                        {v.documento_url && (
-                          <a href={v.documento_url} target="_blank" rel="noopener noreferrer" className="bg-gray-100 text-gray-600 hover:bg-gray-200 font-bold text-[10px] uppercase px-3 py-2 rounded transition-colors flex items-center" title="Ver documento anexado">
-                            📎
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </>
+          )}
+        </div>
       )}
 
       {/* ============================================================================ */}
@@ -631,219 +559,6 @@ export default function PainelFrota() {
               </table>
             </div>
           )}
-        </div>
-      )}
-
-      {/* ============================================================================ */}
-      {/* ABA: CHECK-IN (placeholder) */}
-      {/* ============================================================================ */}
-      {abaAtiva === 'checkin' && (
-        <div className="px-4 md:px-8 py-12 flex-grow flex items-center justify-center">
-          <div className="bg-white p-10 rounded-2xl border border-dashed border-[#CBD5E1] text-center max-w-md">
-            <span className="text-4xl mb-4 block">🅿️</span>
-            <h3 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider mb-2">Em Construção</h3>
-            <p className="text-[#64748B] text-sm">O controle de entrada e saída da frota (check-in/check-out) será disponibilizado em uma próxima etapa.</p>
-          </div>
-        </div>
-      )}
-
-      {/* ============================================================================ */}
-      {/* MODAL: CRIAR / EDITAR VEÍCULO */}
-      {/* ============================================================================ */}
-      {modalVeiculo.open && modalVeiculo.v && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="bg-[#336699] p-5 flex justify-between items-center text-white flex-shrink-0">
-              <h3 className="font-black uppercase tracking-wider text-sm">{modalVeiculo.isNew ? '➕ Novo Veículo' : '✏️ Editar Veículo'}</h3>
-              <button onClick={() => setModalVeiculo({ open: false, isNew: false, v: null })} className="text-white hover:text-red-300 text-2xl leading-none">&times;</button>
-            </div>
-
-            <div className="p-6 overflow-y-auto space-y-6">
-              {/* Dados do Veículo */}
-              <div>
-                <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#CBD5E1] pb-2 mb-3">Dados do Veículo</h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Apelido</label>
-                    <input type="text" placeholder="Ex: CAMINHÃO 01" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-bold text-[#0C1D4D]" value={modalVeiculo.v.apelido || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, apelido: up(e.target.value) } })} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Tipo</label>
-                    <select className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer" value={modalVeiculo.v.tipo || 'OUTRO'} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, tipo: e.target.value } })}>
-                      {TIPOS_VEICULO.map(t => <option key={t} value={t}>{ICONE_TIPO[t]} {t}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Placa</label>
-                    <input type="text" placeholder="Ex: KLY0182" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-bold uppercase text-[#0C1D4D]" value={modalVeiculo.v.placa || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, placa: e.target.value.toUpperCase() } })} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Marca</label>
-                    <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.marca || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, marca: up(e.target.value) } })} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Modelo</label>
-                    <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.modelo || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, modelo: up(e.target.value) } })} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Ano Fabricação</label>
-                    <input type="number" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.ano_fabricacao ?? ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, ano_fabricacao: e.target.value ? parseInt(e.target.value) : undefined } })} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Ano Modelo</label>
-                    <input type="number" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.ano_modelo ?? ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, ano_modelo: e.target.value ? parseInt(e.target.value) : undefined } })} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">RENAVAM</label>
-                    <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.renavam || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, renavam: up(e.target.value) } })} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Chassi</label>
-                    <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.chassi || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, chassi: up(e.target.value) } })} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Cor</label>
-                    <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.cor || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, cor: up(e.target.value) } })} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Combustível</label>
-                    <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.combustivel || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, combustivel: up(e.target.value) } })} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 gap-4 mt-4">
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">KM Atual</label>
-                    <input type="number" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.km_atual ?? ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, km_atual: e.target.value ? parseFloat(e.target.value) : undefined } })} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Status</label>
-                    <select className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer" value={modalVeiculo.v.status || 'ATIVO'} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, status: e.target.value } })}>
-                      {STATUS_VEICULO.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Propriedade</label>
-                    <select className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer" value={modalVeiculo.v.propriedade || 'PRÓPRIO'} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, propriedade: e.target.value } })}>
-                      {PROPRIEDADE_VEICULO.map(p => <option key={p} value={p}>{p}</option>)}
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              {/* Dados da Locação (apenas se o veículo for alugado) */}
-              {modalVeiculo.v.propriedade === 'ALUGADO' && (
-                <div>
-                  <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#CBD5E1] pb-2 mb-3">Dados da Locação</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Locadora</label>
-                      <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.locacao_locadora || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, locacao_locadora: up(e.target.value) } })} />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Apólice da Locadora</label>
-                      <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.locacao_apolice || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, locacao_apolice: up(e.target.value) } })} />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-                    <div>
-                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Vigência Início</label>
-                      <input type="date" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.locacao_vigencia_inicio || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, locacao_vigencia_inicio: e.target.value } })} />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Vigência Fim</label>
-                      <input type="date" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.locacao_vigencia_fim || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, locacao_vigencia_fim: e.target.value } })} />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Contato (Nome)</label>
-                      <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.locacao_contato_nome || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, locacao_contato_nome: up(e.target.value) } })} />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Contato (Telefone)</label>
-                      <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.locacao_contato_telefone || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, locacao_contato_telefone: up(e.target.value) } })} />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Dados do Seguro (não se aplica a veículo alugado — fica sob responsabilidade da locadora) */}
-              {modalVeiculo.v.propriedade !== 'ALUGADO' && (
-                <div>
-                  <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#CBD5E1] pb-2 mb-3">Dados do Seguro</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Apólice</label>
-                      <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.apolice_numero || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, apolice_numero: up(e.target.value) } })} />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Seguradora</label>
-                      <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.seguradora || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, seguradora: up(e.target.value) } })} />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                    <div>
-                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Segurado</label>
-                      <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.segurado_nome || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, segurado_nome: up(e.target.value) } })} />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">CNPJ do Segurado</label>
-                      <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.segurado_cnpj || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, segurado_cnpj: up(e.target.value) } })} />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-                    <div>
-                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Telefone Seguradora</label>
-                      <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.seguradora_telefone || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, seguradora_telefone: up(e.target.value) } })} />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Corretora</label>
-                      <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.corretora || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, corretora: up(e.target.value) } })} />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Vigência Início</label>
-                      <input type="date" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.seguro_vigencia_inicio || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, seguro_vigencia_inicio: e.target.value } })} />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Vigência Fim</label>
-                      <input type="date" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.seguro_vigencia_fim || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, seguro_vigencia_fim: e.target.value } })} />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Documentação e Anexos */}
-              <div>
-                <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#CBD5E1] pb-2 mb-3">Documentação</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Vencimento do CRLV</label>
-                    <input type="date" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.crlv_vencimento || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, crlv_vencimento: e.target.value } })} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Anexar Apólice / CRLV (PDF ou imagem)</label>
-                    <input type="file" accept=".pdf,image/*" className="w-full p-1.5 border border-[#CBD5E1] rounded outline-none text-xs" onChange={e => setArquivoDocumento(e.target.files?.[0] || null)} />
-                    {modalVeiculo.v.documento_url && !arquivoDocumento && (
-                      <a href={modalVeiculo.v.documento_url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-[#336699] font-bold underline mt-1 inline-block">📎 Ver documento atual</a>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Observações</label>
-                <textarea rows={2} className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm resize-none" value={modalVeiculo.v.observacoes || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, observacoes: up(e.target.value) } })} />
-              </div>
-            </div>
-
-            <div className="p-5 border-t border-[#E2E8F0] bg-white flex-shrink-0">
-              <button onClick={salvarVeiculo} disabled={enviando} className="w-full bg-[#16A34A] hover:bg-[#15803D] text-white font-black text-sm uppercase tracking-widest py-4 rounded-xl shadow-lg transition-colors disabled:opacity-50">
-                {enviando ? '⏳ Enviando...' : '💾 Confirmar e Salvar'}
-              </button>
-            </div>
-          </div>
         </div>
       )}
 
@@ -940,6 +655,115 @@ export default function PainelFrota() {
         </div>
       )}
 
+    </div>
+  );
+}
+
+// ============================================================================
+// FICHA COMPLETA DO VEÍCULO (somente leitura)
+// ============================================================================
+function Campo({ label, valor }: { label: string; valor?: string | number | null }) {
+  return (
+    <div>
+      <span className="block text-[10px] font-bold text-[#94A3B8] uppercase tracking-wide mb-0.5">{label}</span>
+      <span className="block text-sm font-bold text-[#0C1D4D]">{valor || valor === 0 ? valor : '—'}</span>
+    </div>
+  );
+}
+
+function FichaVeiculo({ veiculo, onVerManutencoes }: { veiculo: Veiculo; onVerManutencoes: () => void }) {
+  const seguro = getStatusVencimento(veiculo.seguro_vigencia_fim);
+  const crlv = getStatusVencimento(veiculo.crlv_vencimento);
+  const locacao = getStatusVencimento(veiculo.locacao_vigencia_fim);
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex justify-between items-start flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <span className="text-4xl">{ICONE_TIPO[veiculo.tipo] || '🚙'}</span>
+          <div>
+            <h2 className="font-black text-[#0C1D4D] text-lg uppercase tracking-wide">{veiculo.apelido}</h2>
+            <p className="text-xs text-[#64748B] font-bold uppercase">{veiculo.placa} · {veiculo.tipo}</p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <span className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-full border ${COR_STATUS[veiculo.status] || COR_STATUS['INATIVO']}`}>{veiculo.status}</span>
+          <span className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-full border ${COR_PROPRIEDADE[veiculo.propriedade] || COR_PROPRIEDADE['PRÓPRIO']}`}>{veiculo.propriedade || 'PRÓPRIO'}</span>
+        </div>
+      </div>
+
+      <div>
+        <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#E2E8F0] pb-2 mb-3">Dados do Veículo</h4>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Campo label="Marca" valor={veiculo.marca} />
+          <Campo label="Modelo" valor={veiculo.modelo} />
+          <Campo label="Ano Fabricação" valor={veiculo.ano_fabricacao} />
+          <Campo label="Ano Modelo" valor={veiculo.ano_modelo} />
+          <Campo label="RENAVAM" valor={veiculo.renavam} />
+          <Campo label="Chassi" valor={veiculo.chassi} />
+          <Campo label="Cor" valor={veiculo.cor} />
+          <Campo label="Combustível" valor={veiculo.combustivel} />
+          <Campo label="KM Atual" valor={veiculo.km_atual ? `${veiculo.km_atual.toLocaleString('pt-BR')} km` : undefined} />
+        </div>
+      </div>
+
+      {veiculo.propriedade === 'ALUGADO' ? (
+        <div>
+          <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#E2E8F0] pb-2 mb-3">Dados da Locação</h4>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Campo label="Locadora" valor={veiculo.locacao_locadora} />
+            <Campo label="Apólice da Locadora" valor={veiculo.locacao_apolice} />
+            <Campo label="Contato" valor={veiculo.locacao_contato_nome} />
+            <Campo label="Telefone" valor={veiculo.locacao_contato_telefone} />
+          </div>
+          <div className="flex items-center gap-2 mt-4">
+            <span className="text-[10px] text-[#94A3B8] font-bold uppercase">Vigência do Contrato</span>
+            <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded border ${locacao.cor}`}>{locacao.texto}</span>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#E2E8F0] pb-2 mb-3">Dados do Seguro</h4>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Campo label="Apólice" valor={veiculo.apolice_numero} />
+            <Campo label="Seguradora" valor={veiculo.seguradora} />
+            <Campo label="Segurado" valor={veiculo.segurado_nome} />
+            <Campo label="CNPJ do Segurado" valor={veiculo.segurado_cnpj} />
+            <Campo label="Telefone Seguradora" valor={veiculo.seguradora_telefone} />
+            <Campo label="Corretora" valor={veiculo.corretora} />
+          </div>
+          <div className="flex items-center gap-2 mt-4">
+            <span className="text-[10px] text-[#94A3B8] font-bold uppercase">Vigência do Seguro</span>
+            <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded border ${seguro.cor}`}>{seguro.texto}</span>
+          </div>
+        </div>
+      )}
+
+      <div>
+        <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#E2E8F0] pb-2 mb-3">Documentação</h4>
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-[10px] text-[#94A3B8] font-bold uppercase">CRLV</span>
+          <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded border ${crlv.cor}`}>{crlv.texto}</span>
+          {veiculo.documento_url && (
+            <a href={veiculo.documento_url} target="_blank" rel="noopener noreferrer" className="bg-gray-100 text-gray-600 hover:bg-gray-200 font-bold text-[10px] uppercase px-3 py-1.5 rounded transition-colors">
+              📎 Ver Documento
+            </a>
+          )}
+        </div>
+      </div>
+
+      {veiculo.observacoes && (
+        <div>
+          <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#E2E8F0] pb-2 mb-3">Observações</h4>
+          <p className="text-sm text-[#475569] font-medium whitespace-pre-wrap">{veiculo.observacoes}</p>
+        </div>
+      )}
+
+      <div className="pt-2">
+        <button onClick={onVerManutencoes} className="bg-blue-50 text-[#336699] hover:bg-blue-100 border border-blue-200 font-bold text-[10px] uppercase px-4 py-2.5 rounded transition-colors">
+          🔧 Ver Manutenções deste Veículo
+        </button>
+      </div>
     </div>
   );
 }

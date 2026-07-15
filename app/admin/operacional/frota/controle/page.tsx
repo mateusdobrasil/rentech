@@ -37,6 +37,10 @@ const COR_PROPRIEDADE: Record<string, string> = {
   'PRÓPRIO': 'bg-slate-100 text-slate-600 border-slate-300',
   'ALUGADO': 'bg-indigo-100 text-indigo-700 border-indigo-300'
 };
+const TIPOS_DOCUMENTO = ['APÓLICE DE SEGURO', 'CRLV', 'CONTRATO DE LOCAÇÃO', 'NOTA FISCAL', 'OUTRO'];
+const ICONE_DOCUMENTO: Record<string, string> = {
+  'APÓLICE DE SEGURO': '🛡️', 'CRLV': '🪪', 'CONTRATO DE LOCAÇÃO': '📃', 'NOTA FISCAL': '🧾', 'OUTRO': '📎'
+};
 
 // Interface do Banco de Dados
 interface Veiculo {
@@ -71,9 +75,18 @@ interface Veiculo {
   seguro_vigencia_inicio?: string | null;
   seguro_vigencia_fim?: string | null;
   crlv_vencimento?: string | null;
-  documento_url?: string;
-  documento_path?: string;
   observacoes?: string;
+}
+
+interface Documento {
+  id: string;
+  veiculo_id: string;
+  tipo: string;
+  descricao?: string;
+  arquivo_url: string;
+  arquivo_path: string;
+  visivel_frota: boolean;
+  created_at?: string;
 }
 
 // Calcula o status de vencimento de uma data (seguro, CRLV, locação)
@@ -125,8 +138,17 @@ export default function PainelControleFrota() {
   // Estados de UI (Modal)
   const [dialog, setDialog] = useState<{ open: boolean; type: 'loading' | 'success' | 'error'; title: string; msg: string }>({ open: false, type: 'loading', title: '', msg: '' });
   const [modalVeiculo, setModalVeiculo] = useState<{ open: boolean; isNew: boolean; v: Partial<Veiculo> | null }>({ open: false, isNew: false, v: null });
-  const [arquivoDocumento, setArquivoDocumento] = useState<File | null>(null);
   const [enviando, setEnviando] = useState(false);
+
+  // Estados do modal de Documentos
+  const [modalDocumentos, setModalDocumentos] = useState<{ open: boolean; veiculo: Veiculo | null }>({ open: false, veiculo: null });
+  const [documentos, setDocumentos] = useState<Documento[]>([]);
+  const [carregandoDocumentos, setCarregandoDocumentos] = useState(false);
+  const [novoDocTipo, setNovoDocTipo] = useState(TIPOS_DOCUMENTO[0]);
+  const [novoDocDescricao, setNovoDocDescricao] = useState('');
+  const [novoDocVisivel, setNovoDocVisivel] = useState(false);
+  const [arquivoNovoDocumento, setArquivoNovoDocumento] = useState<File | null>(null);
+  const [enviandoDocumento, setEnviandoDocumento] = useState(false);
 
   // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
   useEffect(() => {
@@ -232,12 +254,10 @@ export default function PainelControleFrota() {
   // AÇÕES DE CRUD - VEÍCULOS
   // ============================================================================
   const abrirModalNovoVeiculo = () => {
-    setArquivoDocumento(null);
     setModalVeiculo({ open: true, isNew: true, v: { ...veiculoVazio } });
   };
 
   const abrirModalEditarVeiculo = (v: Veiculo) => {
-    setArquivoDocumento(null);
     setModalVeiculo({ open: true, isNew: false, v: { ...v } });
   };
 
@@ -256,13 +276,6 @@ export default function PainelControleFrota() {
       locacao_vigencia_inicio: dataOuNulo(modalVeiculo.v.locacao_vigencia_inicio),
       locacao_vigencia_fim: dataOuNulo(modalVeiculo.v.locacao_vigencia_fim),
     };
-
-    if (arquivoDocumento) {
-      const resultado = await enviarArquivo(arquivoDocumento, 'documentos');
-      if (!resultado) { setEnviando(false); return; }
-      payload.documento_url = resultado.url;
-      payload.documento_path = resultado.path;
-    }
 
     let res;
     if (modalVeiculo.isNew) {
@@ -307,6 +320,84 @@ export default function PainelControleFrota() {
       equipamento_nome: `${v.apelido} (${v.placa})`,
     });
     carregarDados();
+  };
+
+  // ============================================================================
+  // AÇÕES DE CRUD - DOCUMENTOS
+  // ============================================================================
+  const carregarDocumentos = async (veiculoId: string) => {
+    setCarregandoDocumentos(true);
+    const { data } = await supabase.from('frota_documentos').select('*').eq('veiculo_id', veiculoId).order('created_at', { ascending: false });
+    setDocumentos(data || []);
+    setCarregandoDocumentos(false);
+  };
+
+  const abrirModalDocumentos = (v: Veiculo) => {
+    setModalDocumentos({ open: true, veiculo: v });
+    setNovoDocTipo(TIPOS_DOCUMENTO[0]);
+    setNovoDocDescricao('');
+    setNovoDocVisivel(false);
+    setArquivoNovoDocumento(null);
+    carregarDocumentos(v.id);
+  };
+
+  const adicionarDocumento = async () => {
+    if (!modalDocumentos.veiculo || !arquivoNovoDocumento) {
+      setDialog({ open: true, type: 'error', title: 'Atenção', msg: 'Selecione um arquivo para anexar.' });
+      return;
+    }
+
+    setEnviandoDocumento(true);
+    const resultado = await enviarArquivo(arquivoNovoDocumento, `documentos/${modalDocumentos.veiculo.id}`);
+    if (!resultado) { setEnviandoDocumento(false); return; }
+
+    const { error } = await supabase.from('frota_documentos').insert([{
+      veiculo_id: modalDocumentos.veiculo.id,
+      tipo: novoDocTipo,
+      descricao: novoDocDescricao || null,
+      arquivo_url: resultado.url,
+      arquivo_path: resultado.path,
+      visivel_frota: novoDocVisivel,
+    }]);
+
+    setEnviandoDocumento(false);
+
+    if (error) {
+      setDialog({ open: true, type: 'error', title: 'Erro', msg: error.message });
+      return;
+    }
+
+    registrarLogAuditoria({
+      usuario_nome: usuarioAtual,
+      acao: `ANEXOU DOCUMENTO (${novoDocTipo})`,
+      setor: 'FROTA',
+      equipamento_id: modalDocumentos.veiculo.id,
+      equipamento_nome: `${modalDocumentos.veiculo.apelido} (${modalDocumentos.veiculo.placa})`,
+    });
+
+    setNovoDocDescricao('');
+    setNovoDocVisivel(false);
+    setArquivoNovoDocumento(null);
+    carregarDocumentos(modalDocumentos.veiculo.id);
+  };
+
+  const alternarVisibilidadeDocumento = async (doc: Documento) => {
+    const novoValor = !doc.visivel_frota;
+    setDocumentos(prev => prev.map(d => d.id === doc.id ? { ...d, visivel_frota: novoValor } : d));
+    await supabase.from('frota_documentos').update({ visivel_frota: novoValor }).eq('id', doc.id);
+  };
+
+  const excluirDocumento = async (doc: Documento) => {
+    if (!confirm('Tem certeza que deseja remover este documento?')) return;
+
+    await supabase.storage.from('frota').remove([doc.arquivo_path]);
+    const { error } = await supabase.from('frota_documentos').delete().eq('id', doc.id);
+    if (error) {
+      setDialog({ open: true, type: 'error', title: 'Erro', msg: error.message });
+      return;
+    }
+
+    setDocumentos(prev => prev.filter(d => d.id !== doc.id));
   };
 
   // ============================================================================
@@ -446,11 +537,9 @@ export default function PainelControleFrota() {
                     <button onClick={() => abrirModalEditarVeiculo(v)} className="flex-1 bg-amber-100 text-amber-700 hover:bg-amber-200 font-bold text-[10px] uppercase px-3 py-2 rounded transition-colors">
                       ✏️ Editar Ficha
                     </button>
-                    {v.documento_url && (
-                      <a href={v.documento_url} target="_blank" rel="noopener noreferrer" className="bg-gray-100 text-gray-600 hover:bg-gray-200 font-bold text-[10px] uppercase px-3 py-2 rounded transition-colors flex items-center" title="Ver documento anexado">
-                        📎
-                      </a>
-                    )}
+                    <button onClick={() => abrirModalDocumentos(v)} className="bg-gray-100 text-gray-600 hover:bg-gray-200 font-bold text-[10px] uppercase px-3 py-2 rounded transition-colors" title="Documentos anexados">
+                      📁
+                    </button>
                     <button onClick={() => excluirVeiculo(v)} className="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 font-bold text-[10px] uppercase px-3 py-2 rounded transition-colors" title="Remover veículo">
                       🗑️
                     </button>
@@ -636,7 +725,7 @@ export default function PainelControleFrota() {
                 </div>
               )}
 
-              {/* Documentação e Anexos */}
+              {/* Documentação */}
               <div>
                 <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#CBD5E1] pb-2 mb-3">Documentação</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -644,14 +733,14 @@ export default function PainelControleFrota() {
                     <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Vencimento do CRLV</label>
                     <input type="date" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.crlv_vencimento || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, crlv_vencimento: e.target.value } })} />
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Anexar Apólice / CRLV (PDF ou imagem)</label>
-                    <input type="file" accept=".pdf,image/*" className="w-full p-1.5 border border-[#CBD5E1] rounded outline-none text-xs" onChange={e => setArquivoDocumento(e.target.files?.[0] || null)} />
-                    {modalVeiculo.v.documento_url && !arquivoDocumento && (
-                      <a href={modalVeiculo.v.documento_url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-[#336699] font-bold underline mt-1 inline-block">📎 Ver documento atual</a>
-                    )}
-                  </div>
                 </div>
+                {!modalVeiculo.isNew && modalVeiculo.v.id && (
+                  <p className="text-[10px] text-[#64748B] mt-3">
+                    Para anexar apólice, CRLV e outros arquivos, use o botão{' '}
+                    <button type="button" onClick={() => abrirModalDocumentos(modalVeiculo.v as Veiculo)} className="text-[#336699] font-bold underline">📁 Documentos</button>{' '}
+                    no card do veículo.
+                  </p>
+                )}
               </div>
 
               <div>
@@ -664,6 +753,88 @@ export default function PainelControleFrota() {
               <button onClick={salvarVeiculo} disabled={enviando} className="w-full bg-[#16A34A] hover:bg-[#15803D] text-white font-black text-sm uppercase tracking-widest py-4 rounded-xl shadow-lg transition-colors disabled:opacity-50">
                 {enviando ? '⏳ Enviando...' : '💾 Confirmar e Salvar'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================================ */}
+      {/* MODAL: DOCUMENTOS DO VEÍCULO */}
+      {/* ============================================================================ */}
+      {modalDocumentos.open && modalDocumentos.veiculo && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white flex-shrink-0">
+              <div>
+                <h3 className="font-black uppercase tracking-wider text-sm">📁 Documentos do Veículo</h3>
+                <p className="text-[10px] text-blue-200 mt-0.5">{modalDocumentos.veiculo.apelido} ({modalDocumentos.veiculo.placa})</p>
+              </div>
+              <button onClick={() => setModalDocumentos({ open: false, veiculo: null })} className="text-white hover:text-red-300 text-2xl leading-none">&times;</button>
+            </div>
+
+            <div className="p-6 overflow-y-auto bg-[#F8FAFC] space-y-6">
+              {/* Formulário de novo documento */}
+              <div className="bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm">
+                <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest mb-3">Anexar Novo Documento</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Tipo</label>
+                    <select className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer" value={novoDocTipo} onChange={e => setNovoDocTipo(e.target.value)}>
+                      {TIPOS_DOCUMENTO.map(t => <option key={t} value={t}>{ICONE_DOCUMENTO[t]} {t}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Descrição (opcional)</label>
+                    <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm" value={novoDocDescricao} onChange={e => setNovoDocDescricao(up(e.target.value))} />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Arquivo (PDF ou imagem)</label>
+                  <input type="file" accept=".pdf,image/*" className="w-full p-1.5 border border-[#CBD5E1] rounded-lg outline-none text-xs" onChange={e => setArquivoNovoDocumento(e.target.files?.[0] || null)} />
+                </div>
+                <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" className="w-4 h-4 accent-[#336699]" checked={novoDocVisivel} onChange={e => setNovoDocVisivel(e.target.checked)} />
+                    <span className="text-xs font-bold text-[#78350F]">Este documento pode ser exibido para a equipe de Operações na tela da Frota</span>
+                  </label>
+                  <p className="text-[10px] text-[#92400E] mt-1 ml-6">Deixe desmarcado se o arquivo contiver dados financeiros ou informações sensíveis (ex: boleto, valor pago, dados bancários).</p>
+                </div>
+                <button
+                  onClick={adicionarDocumento}
+                  disabled={enviandoDocumento || !arquivoNovoDocumento}
+                  className="mt-3 w-full bg-[#336699] hover:bg-[#284B8C] text-white font-black text-xs uppercase tracking-widest py-2.5 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {enviandoDocumento ? '⏳ Enviando...' : '➕ Adicionar Documento'}
+                </button>
+              </div>
+
+              {/* Lista de documentos existentes */}
+              <div>
+                <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#CBD5E1] pb-2 mb-3">Documentos Anexados</h4>
+                {carregandoDocumentos ? (
+                  <p className="text-center text-[#94A3B8] text-xs font-bold py-6">Carregando...</p>
+                ) : documentos.length === 0 ? (
+                  <p className="text-center text-[#94A3B8] text-xs font-bold py-6 bg-white border border-dashed border-[#CBD5E1] rounded-lg">Nenhum documento anexado ainda.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {documentos.map(doc => (
+                      <div key={doc.id} className="bg-white p-3 rounded-lg border border-[#E2E8F0] flex items-center gap-3">
+                        <span className="text-xl">{ICONE_DOCUMENTO[doc.tipo] || '📎'}</span>
+                        <div className="flex-grow min-w-0">
+                          <p className="text-xs font-black text-[#0C1D4D] uppercase truncate">{doc.tipo}</p>
+                          {doc.descricao && <p className="text-[10px] text-[#64748B] truncate">{doc.descricao}</p>}
+                        </div>
+                        <a href={doc.arquivo_url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-[#336699] font-bold underline flex-shrink-0">Ver</a>
+                        <label className="flex items-center gap-1.5 flex-shrink-0 cursor-pointer" title="Visível na Frota">
+                          <input type="checkbox" className="w-3.5 h-3.5 accent-[#336699]" checked={doc.visivel_frota} onChange={() => alternarVisibilidadeDocumento(doc)} />
+                          <span className="text-[9px] font-bold text-[#64748B] uppercase">{doc.visivel_frota ? 'Visível' : 'Restrito'}</span>
+                        </label>
+                        <button onClick={() => excluirDocumento(doc)} className="text-red-500 hover:bg-red-50 px-2 py-1 rounded text-xs font-black flex-shrink-0" title="Remover documento">🗑️</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

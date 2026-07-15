@@ -39,6 +39,9 @@ const COR_PROPRIEDADE: Record<string, string> = {
   'ALUGADO': 'bg-indigo-100 text-indigo-700 border-indigo-300'
 };
 const TIPOS_MANUTENCAO = ['REVISÃO', 'TROCA DE ÓLEO', 'TROCA DE PNEUS', 'REPARO', 'OUTRO'];
+const ICONE_DOCUMENTO: Record<string, string> = {
+  'APÓLICE DE SEGURO': '🛡️', 'CRLV': '🪪', 'CONTRATO DE LOCAÇÃO': '📃', 'NOTA FISCAL': '🧾', 'OUTRO': '📎'
+};
 
 // Interfaces do Banco de Dados
 interface Veiculo {
@@ -73,8 +76,15 @@ interface Veiculo {
   seguro_vigencia_inicio?: string | null;
   seguro_vigencia_fim?: string | null;
   crlv_vencimento?: string | null;
-  documento_url?: string;
   observacoes?: string;
+}
+
+interface Documento {
+  id: string;
+  veiculo_id: string;
+  tipo: string;
+  descricao?: string;
+  arquivo_url: string;
 }
 
 interface Manutencao {
@@ -142,6 +152,7 @@ export default function VisualizacaoFrota() {
   // Estados de Dados
   const [veiculos, setVeiculos] = useState<Veiculo[]>([]);
   const [manutencoes, setManutencoes] = useState<Manutencao[]>([]);
+  const [documentos, setDocumentos] = useState<Documento[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Filtros da aba Veículos
@@ -218,14 +229,15 @@ export default function VisualizacaoFrota() {
       setVeiculos(veiculosData);
       const ids = veiculosData.map(v => v.id);
       if (ids.length > 0) {
-        const { data: manutencoesData } = await supabase
-          .from('frota_manutencoes')
-          .select('*')
-          .in('veiculo_id', ids)
-          .order('data', { ascending: false });
-        if (manutencoesData) setManutencoes(manutencoesData);
+        const [{ data: manutencoesData }, { data: documentosData }] = await Promise.all([
+          supabase.from('frota_manutencoes').select('*').in('veiculo_id', ids).order('data', { ascending: false }),
+          supabase.from('frota_documentos').select('id, veiculo_id, tipo, descricao, arquivo_url').in('veiculo_id', ids).eq('visivel_frota', true)
+        ]);
+        setManutencoes(manutencoesData || []);
+        setDocumentos(documentosData || []);
       } else {
         setManutencoes([]);
+        setDocumentos([]);
       }
     }
     setLoading(false);
@@ -482,7 +494,7 @@ export default function VisualizacaoFrota() {
                 {!veiculoDetalhe ? (
                   <div className="h-full flex items-center justify-center text-[#94A3B8] text-sm font-bold p-12 text-center">Selecione um veículo na lista ao lado para ver a ficha completa.</div>
                 ) : (
-                  <FichaVeiculo veiculo={veiculoDetalhe} onVerManutencoes={() => setAbaAtiva('manutencao')} />
+                  <FichaVeiculo veiculo={veiculoDetalhe} documentos={documentos.filter(d => d.veiculo_id === veiculoDetalhe.id)} onVerManutencoes={() => setAbaAtiva('manutencao')} />
                 )}
               </div>
             </div>
@@ -671,7 +683,7 @@ function Campo({ label, valor }: { label: string; valor?: string | number | null
   );
 }
 
-function FichaVeiculo({ veiculo, onVerManutencoes }: { veiculo: Veiculo; onVerManutencoes: () => void }) {
+function FichaVeiculo({ veiculo, documentos, onVerManutencoes }: { veiculo: Veiculo; documentos: Documento[]; onVerManutencoes: () => void }) {
   const seguro = getStatusVencimento(veiculo.seguro_vigencia_fim);
   const crlv = getStatusVencimento(veiculo.crlv_vencimento);
   const locacao = getStatusVencimento(veiculo.locacao_vigencia_fim);
@@ -741,15 +753,23 @@ function FichaVeiculo({ veiculo, onVerManutencoes }: { veiculo: Veiculo; onVerMa
 
       <div>
         <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#E2E8F0] pb-2 mb-3">Documentação</h4>
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap mb-3">
           <span className="text-[10px] text-[#94A3B8] font-bold uppercase">CRLV</span>
           <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded border ${crlv.cor}`}>{crlv.texto}</span>
-          {veiculo.documento_url && (
-            <a href={veiculo.documento_url} target="_blank" rel="noopener noreferrer" className="bg-gray-100 text-gray-600 hover:bg-gray-200 font-bold text-[10px] uppercase px-3 py-1.5 rounded transition-colors">
-              📎 Ver Documento
-            </a>
-          )}
         </div>
+        {documentos.length === 0 ? (
+          <p className="text-xs text-[#94A3B8] font-medium">Nenhum documento disponível para visualização.</p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {documentos.map(doc => (
+              <a key={doc.id} href={doc.arquivo_url} target="_blank" rel="noopener noreferrer" className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs px-3 py-2 rounded-lg transition-colors flex items-center gap-2 w-fit">
+                <span>{ICONE_DOCUMENTO[doc.tipo] || '📎'}</span>
+                <span className="uppercase">{doc.tipo}</span>
+                {doc.descricao && <span className="text-[#94A3B8] font-medium normal-case">— {doc.descricao}</span>}
+              </a>
+            ))}
+          </div>
+        )}
       </div>
 
       {veiculo.observacoes && (

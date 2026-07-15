@@ -23,8 +23,8 @@ const normalizarPermissao = (permissaoBruta: string): string => {
 // Listas fixas de apoio
 const TIPOS_VEICULO = ['CAMINHÃO', 'VAN', 'CARRO', 'UTILITÁRIO', 'CARRETA', 'MOTO', 'ÔNIBUS', 'OUTRO'];
 const ICONE_TIPO: Record<string, string> = {
-  'CAMINHÃO': '🚚', 'VAN': '🚐', 'CARRO': '🚗', 'UTILITÁRIO': '🛻',
-  'CARRETA': '🚛', 'MOTO': '🏍️', 'ÔNIBUS': '🚌', 'OUTRO': '🚙'
+  'CAMINHÃO': '🚛', 'VAN': '🚐', 'CARRO': '🚗', 'UTILITÁRIO': '🚚',
+  'CARRETA': '⛟', 'MOTO': '🏍️', 'ÔNIBUS': '🚌', 'OUTRO': '🚙'
 };
 const STATUS_VEICULO = ['ATIVO', 'EM MANUTENÇÃO', 'INATIVO'];
 const COR_STATUS: Record<string, string> = {

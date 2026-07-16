@@ -169,7 +169,8 @@ export default function VisualizacaoFrota() {
 
   // Estados de UI (Modal e Dialog)
   const [dialog, setDialog] = useState<{ open: boolean; type: 'loading' | 'success' | 'error'; title: string; msg: string }>({ open: false, type: 'loading', title: '', msg: '' });
-  const [modalManutencao, setModalManutencao] = useState<{ open: boolean; m: Partial<Manutencao> | null }>({ open: false, m: null });
+  const [modalManutencao, setModalManutencao] = useState<{ open: boolean; isNew: boolean; m: Partial<Manutencao> | null }>({ open: false, isNew: true, m: null });
+  const [previewManutencao, setPreviewManutencao] = useState<Manutencao | null>(null);
   const [arquivoAnexo, setArquivoAnexo] = useState<File | null>(null);
   const [enviando, setEnviando] = useState(false);
 
@@ -310,7 +311,12 @@ export default function VisualizacaoFrota() {
   const abrirModalNovaManutencao = () => {
     if (!filtroManutencaoVeiculoId) return;
     setArquivoAnexo(null);
-    setModalManutencao({ open: true, m: { ...manutencaoVazia, veiculo_id: filtroManutencaoVeiculoId, data: new Date().toISOString().slice(0, 10) } });
+    setModalManutencao({ open: true, isNew: true, m: { ...manutencaoVazia, veiculo_id: filtroManutencaoVeiculoId, data: new Date().toISOString().slice(0, 10) } });
+  };
+
+  const abrirModalEditarManutencao = (m: Manutencao) => {
+    setArquivoAnexo(null);
+    setModalManutencao({ open: true, isNew: false, m: { ...m } });
   };
 
   const salvarManutencao = async () => {
@@ -332,7 +338,9 @@ export default function VisualizacaoFrota() {
       payload.anexo_path = resultado.path;
     }
 
-    const res = await supabase.from('frota_manutencoes').insert([payload]);
+    const res = modalManutencao.isNew
+      ? await supabase.from('frota_manutencoes').insert([payload])
+      : await supabase.from('frota_manutencoes').update(payload).eq('id', payload.id);
     setEnviando(false);
 
     if (res.error) {
@@ -340,13 +348,13 @@ export default function VisualizacaoFrota() {
     } else {
       registrarLogAuditoria({
         usuario_nome: usuarioAtual,
-        acao: `REGISTROU MANUTENÇÃO (${payload.tipo})`,
+        acao: `${modalManutencao.isNew ? 'REGISTROU' : 'EDITOU'} MANUTENÇÃO (${payload.tipo})`,
         setor: 'FROTA',
         equipamento_id: payload.veiculo_id ?? null,
         equipamento_nome: getVeiculoNome(payload.veiculo_id || ''),
       });
-      setDialog({ open: true, type: 'success', title: 'Concluído', msg: 'Manutenção registrada com sucesso.' });
-      setModalManutencao({ open: false, m: null });
+      setDialog({ open: true, type: 'success', title: 'Concluído', msg: `Manutenção ${modalManutencao.isNew ? 'registrada' : 'atualizada'} com sucesso.` });
+      setModalManutencao({ open: false, isNew: true, m: null });
       carregarDados();
       setTimeout(() => setDialog(prev => ({ ...prev, open: false })), 2000);
     }
@@ -549,20 +557,21 @@ export default function VisualizacaoFrota() {
                     <th className="p-4 border-b-2 border-[#E2E8F0]">Descrição</th>
                     <th className="p-4 border-b-2 border-[#E2E8F0] w-40">Próxima</th>
                     <th className="p-4 border-b-2 border-[#E2E8F0] w-16 text-center">Anexo</th>
+                    <th className="p-4 border-b-2 border-[#E2E8F0] w-16 text-center">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#E2E8F0] text-xs">
                   {manutencoesExibidas.length === 0 ? (
-                    <tr><td colSpan={9} className="text-center py-12 text-[#94A3B8] font-bold text-sm">{filtroManutencaoVeiculoId ? 'Nenhuma manutenção registrada para este veículo.' : 'Nenhuma manutenção registrada.'}</td></tr>
+                    <tr><td colSpan={10} className="text-center py-12 text-[#94A3B8] font-bold text-sm">{filtroManutencaoVeiculoId ? 'Nenhuma manutenção registrada para este veículo.' : 'Nenhuma manutenção registrada.'}</td></tr>
                   ) : (
                     manutencoesExibidas.map(m => {
                       const proxima = getStatusVencimento(m.proxima_data);
                       return (
                         <tr
                           key={m.id}
-                          onClick={() => setFiltroManutencaoVeiculoId(m.veiculo_id)}
-                          className={`cursor-pointer transition-colors ${m.veiculo_id === filtroManutencaoVeiculoId ? 'bg-blue-50' : 'hover:bg-[#F8FAFC]'}`}
-                          title="Clique para selecionar este veículo"
+                          onClick={() => setPreviewManutencao(m)}
+                          className="cursor-pointer transition-colors hover:bg-[#F8FAFC]"
+                          title="Clique para ver os detalhes"
                         >
                           <td className="p-4 font-black text-[#0C1D4D] text-[11px] uppercase truncate max-w-[170px]" title={getVeiculoNome(m.veiculo_id)}>{getVeiculoNome(m.veiculo_id)}</td>
                           <td className="p-4"><span className="bg-[#E2E8F0] text-[#475569] font-black px-2 py-1 rounded text-[9px] uppercase tracking-widest">{m.tipo}</span></td>
@@ -576,6 +585,11 @@ export default function VisualizacaoFrota() {
                           </td>
                           <td className="p-4 text-center">
                             {m.anexo_url ? <a href={m.anexo_url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} title="Ver anexo">📎</a> : '-'}
+                          </td>
+                          <td className="p-4 text-center">
+                            {podeGerenciar ? (
+                              <button onClick={e => { e.stopPropagation(); abrirModalEditarManutencao(m); }} className="text-amber-600 hover:bg-amber-50 px-2 py-1 rounded text-xs font-black transition-colors" title="Editar manutenção">✏️</button>
+                            ) : '-'}
                           </td>
                         </tr>
                       );
@@ -596,10 +610,10 @@ export default function VisualizacaoFrota() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[90vh]">
             <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white flex-shrink-0">
               <div>
-                <h3 className="font-black uppercase tracking-wider text-sm">🔧 Nova Manutenção</h3>
+                <h3 className="font-black uppercase tracking-wider text-sm">{modalManutencao.isNew ? '🔧 Nova Manutenção' : '✏️ Editar Manutenção'}</h3>
                 <p className="text-[10px] text-blue-200 mt-0.5">Veículo: {getVeiculoNome(modalManutencao.m.veiculo_id || '')}</p>
               </div>
-              <button onClick={() => setModalManutencao({ open: false, m: null })} className="text-white hover:text-red-300 text-2xl leading-none">&times;</button>
+              <button onClick={() => setModalManutencao({ open: false, isNew: true, m: null })} className="text-white hover:text-red-300 text-2xl leading-none">&times;</button>
             </div>
 
             <div className="p-6 overflow-y-auto space-y-4 bg-[#F8FAFC]">
@@ -651,13 +665,74 @@ export default function VisualizacaoFrota() {
               <div>
                 <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Anexar Nota Fiscal / Comprovante</label>
                 <input type="file" accept=".pdf,image/*" className="w-full p-1.5 border border-[#CBD5E1] rounded-lg outline-none text-xs bg-white" onChange={e => setArquivoAnexo(e.target.files?.[0] || null)} />
+                {modalManutencao.m.anexo_url && !arquivoAnexo && (
+                  <a href={modalManutencao.m.anexo_url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-[#336699] font-bold underline mt-1 inline-block">📎 Ver anexo atual</a>
+                )}
               </div>
             </div>
 
             <div className="p-5 border-t border-[#E2E8F0] bg-white flex-shrink-0">
               <button onClick={salvarManutencao} disabled={enviando} className="w-full bg-[#16A34A] hover:bg-[#15803D] text-white font-black text-sm uppercase tracking-widest py-4 rounded-xl shadow-lg transition-colors disabled:opacity-50">
-                {enviando ? '⏳ Enviando...' : '💾 Registrar Manutenção'}
+                {enviando ? '⏳ Enviando...' : modalManutencao.isNew ? '💾 Registrar Manutenção' : '💾 Salvar Alterações'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================================ */}
+      {/* MODAL: PREVIEW DA MANUTENÇÃO */}
+      {/* ============================================================================ */}
+      {previewManutencao && (
+        <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white flex-shrink-0">
+              <div>
+                <h3 className="font-black uppercase tracking-wider text-sm">🔧 {previewManutencao.tipo}</h3>
+                <p className="text-[10px] text-blue-200 mt-0.5">{getVeiculoNome(previewManutencao.veiculo_id)}</p>
+              </div>
+              <button onClick={() => setPreviewManutencao(null)} className="text-white hover:text-red-300 text-2xl leading-none">&times;</button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <Campo label="Data" valor={new Date(`${previewManutencao.data}T00:00:00`).toLocaleDateString('pt-BR')} />
+                <Campo label="KM Atual" valor={previewManutencao.km_atual ? `${previewManutencao.km_atual.toLocaleString('pt-BR')} km` : undefined} />
+                <Campo label="Custo" valor={previewManutencao.custo ? previewManutencao.custo.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : undefined} />
+                <Campo label="Oficina / Fornecedor" valor={previewManutencao.fornecedor} />
+              </div>
+
+              <div>
+                <span className="block text-[10px] font-bold text-[#94A3B8] uppercase tracking-wide mb-0.5">Descrição</span>
+                <p className="text-sm font-medium text-[#0C1D4D] whitespace-pre-wrap">{previewManutencao.descricao || '—'}</p>
+              </div>
+
+              {(previewManutencao.proxima_data || previewManutencao.proxima_km) && (
+                <div className="grid grid-cols-2 gap-4">
+                  <Campo label="Próxima (Data)" valor={previewManutencao.proxima_data ? new Date(`${previewManutencao.proxima_data}T00:00:00`).toLocaleDateString('pt-BR') : undefined} />
+                  <Campo label="Próxima (KM)" valor={previewManutencao.proxima_km ? `${previewManutencao.proxima_km.toLocaleString('pt-BR')} km` : undefined} />
+                </div>
+              )}
+
+              {previewManutencao.anexo_url && (
+                <a href={previewManutencao.anexo_url} target="_blank" rel="noopener noreferrer" className="inline-block bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs px-3 py-2 rounded-lg transition-colors">
+                  📎 Ver Anexo
+                </a>
+              )}
+            </div>
+
+            <div className="p-5 border-t border-[#E2E8F0] bg-white flex-shrink-0 flex gap-3">
+              <button onClick={() => setPreviewManutencao(null)} className="flex-1 py-3 bg-[#E2E8F0] text-[#0C1D4D] font-bold text-xs uppercase tracking-wider rounded-lg hover:bg-[#CBD5E1] transition-colors">
+                Fechar
+              </button>
+              {podeGerenciar && (
+                <button
+                  onClick={() => { const m = previewManutencao; setPreviewManutencao(null); abrirModalEditarManutencao(m); }}
+                  className="flex-1 py-3 bg-[#336699] hover:bg-[#284B8C] text-white font-black text-xs uppercase tracking-wider rounded-lg shadow-lg transition-colors"
+                >
+                  ✏️ Editar
+                </button>
+              )}
             </div>
           </div>
         </div>

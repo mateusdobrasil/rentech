@@ -38,7 +38,6 @@ const COR_PROPRIEDADE: Record<string, string> = {
   'PRÓPRIO': 'bg-slate-100 text-slate-600 border-slate-300',
   'ALUGADO': 'bg-indigo-100 text-indigo-700 border-indigo-300'
 };
-const TIPOS_MANUTENCAO = ['REVISÃO', 'TROCA DE ÓLEO', 'TROCA DE PNEUS', 'REPARO', 'OUTRO'];
 const ICONE_DOCUMENTO: Record<string, string> = {
   'APÓLICE DE SEGURO': '🛡️', 'CRLV': '🪪', 'CONTRATO DE LOCAÇÃO': '📃', 'NOTA FISCAL': '🧾', 'OUTRO': '📎'
 };
@@ -103,6 +102,11 @@ interface Manutencao {
   anexo_path?: string;
 }
 
+interface TipoManutencao {
+  id: string;
+  nome: string;
+}
+
 // Calcula o status de vencimento de uma data (seguro, CRLV, locação, próxima manutenção)
 function getStatusVencimento(dataStr?: string | null): { texto: string; cor: string } {
   if (!dataStr) return { texto: 'Sem data cadastrada', cor: 'bg-gray-100 text-gray-500 border-gray-300' };
@@ -133,7 +137,7 @@ const up = (v: string) => v.toUpperCase();
 const dataOuNulo = (v?: string | null) => (v && v.trim() !== '' ? v : null);
 
 const manutencaoVazia: Partial<Manutencao> = {
-  tipo: 'REVISÃO', data: '', km_atual: undefined, custo: undefined, fornecedor: '', descricao: '',
+  tipo: '', data: '', km_atual: undefined, custo: undefined, fornecedor: '', descricao: '',
   proxima_data: '', proxima_km: undefined
 };
 
@@ -154,6 +158,7 @@ export default function VisualizacaoFrota() {
   const [veiculos, setVeiculos] = useState<Veiculo[]>([]);
   const [manutencoes, setManutencoes] = useState<Manutencao[]>([]);
   const [documentos, setDocumentos] = useState<Documento[]>([]);
+  const [tiposManutencao, setTiposManutencao] = useState<TipoManutencao[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Filtros da aba Veículos
@@ -173,6 +178,8 @@ export default function VisualizacaoFrota() {
   const [previewManutencao, setPreviewManutencao] = useState<Manutencao | null>(null);
   const [arquivoAnexo, setArquivoAnexo] = useState<File | null>(null);
   const [enviando, setEnviando] = useState(false);
+  const [modalTipos, setModalTipos] = useState(false);
+  const [novoTipoNome, setNovoTipoNome] = useState('');
 
   // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
   useEffect(() => {
@@ -224,11 +231,12 @@ export default function VisualizacaoFrota() {
   // 2. Carregar apenas os veículos liberados para exibição na Frota, e as manutenções deles
   const carregarDados = async () => {
     setLoading(true);
-    const { data: veiculosData } = await supabase
-      .from('frota_veiculos')
-      .select('*')
-      .eq('exibir_na_frota', true)
-      .order('apelido', { ascending: true });
+    const [{ data: veiculosData }, { data: tiposData }] = await Promise.all([
+      supabase.from('frota_veiculos').select('*').eq('exibir_na_frota', true).order('apelido', { ascending: true }),
+      supabase.from('frota_tipos_manutencao').select('*').order('nome', { ascending: true })
+    ]);
+
+    setTiposManutencao(tiposData || []);
 
     if (veiculosData) {
       setVeiculos(veiculosData);
@@ -246,6 +254,35 @@ export default function VisualizacaoFrota() {
       }
     }
     setLoading(false);
+  };
+
+  // ============================================================================
+  // AÇÕES DE CRUD - TIPOS DE MANUTENÇÃO
+  // ============================================================================
+  const adicionarTipoManutencao = async () => {
+    const nome = novoTipoNome.trim().toUpperCase();
+    if (!nome) return;
+
+    const { data, error } = await supabase.from('frota_tipos_manutencao').insert([{ nome }]).select().single();
+    if (error) {
+      setDialog({ open: true, type: 'error', title: 'Erro', msg: error.message });
+      return;
+    }
+
+    setTiposManutencao(prev => [...prev, data].sort((a, b) => a.nome.localeCompare(b.nome)));
+    setNovoTipoNome('');
+  };
+
+  const excluirTipoManutencao = async (tipo: TipoManutencao) => {
+    if (!confirm(`Remover o tipo "${tipo.nome}"? Manutenções já registradas com esse tipo não serão alteradas.`)) return;
+
+    const { error } = await supabase.from('frota_tipos_manutencao').delete().eq('id', tipo.id);
+    if (error) {
+      setDialog({ open: true, type: 'error', title: 'Erro', msg: error.message });
+      return;
+    }
+
+    setTiposManutencao(prev => prev.filter(t => t.id !== tipo.id));
   };
 
   // Filtro Dinâmico da aba Veículos
@@ -311,7 +348,7 @@ export default function VisualizacaoFrota() {
   const abrirModalNovaManutencao = () => {
     if (!filtroManutencaoVeiculoId) return;
     setArquivoAnexo(null);
-    setModalManutencao({ open: true, isNew: true, m: { ...manutencaoVazia, veiculo_id: filtroManutencaoVeiculoId, data: new Date().toISOString().slice(0, 10) } });
+    setModalManutencao({ open: true, isNew: true, m: { ...manutencaoVazia, tipo: tiposManutencao[0]?.nome || '', veiculo_id: filtroManutencaoVeiculoId, data: new Date().toISOString().slice(0, 10) } });
   };
 
   const abrirModalEditarManutencao = (m: Manutencao) => {
@@ -531,14 +568,22 @@ export default function VisualizacaoFrota() {
               {veiculos.map(v => <option key={v.id} value={v.id}>{v.apelido} ({v.placa})</option>)}
             </select>
 
-            <button
-              onClick={abrirModalNovaManutencao}
-              disabled={!filtroManutencaoVeiculoId}
-              title={!filtroManutencaoVeiculoId ? 'Selecione ou clique em um veículo para registrar uma manutenção' : undefined}
-              className="w-full md:w-auto bg-[#336699] hover:bg-[#284B8C] text-white px-6 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-md hover:shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              ➕ Nova Manutenção
-            </button>
+            <div className="flex gap-2 w-full md:w-auto">
+              <button
+                onClick={() => setModalTipos(true)}
+                className="flex-1 md:flex-none bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] px-4 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-[#CBD5E1]"
+              >
+                🏷️ Tipos
+              </button>
+              <button
+                onClick={abrirModalNovaManutencao}
+                disabled={!filtroManutencaoVeiculoId}
+                title={!filtroManutencaoVeiculoId ? 'Selecione ou clique em um veículo para registrar uma manutenção' : undefined}
+                className="flex-1 md:flex-none bg-[#336699] hover:bg-[#284B8C] text-white px-6 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-md hover:shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                ➕ Nova Manutenção
+              </button>
+            </div>
           </div>
 
           {loading ? (
@@ -620,8 +665,9 @@ export default function VisualizacaoFrota() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Tipo</label>
-                  <select className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer bg-white" value={modalManutencao.m.tipo || 'REVISÃO'} onChange={e => setModalManutencao({ ...modalManutencao, m: { ...modalManutencao.m, tipo: e.target.value } })}>
-                    {TIPOS_MANUTENCAO.map(t => <option key={t} value={t}>{t}</option>)}
+                  <select className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer bg-white" value={modalManutencao.m.tipo || ''} onChange={e => setModalManutencao({ ...modalManutencao, m: { ...modalManutencao.m, tipo: e.target.value } })}>
+                    {tiposManutencao.length === 0 && <option value="">-- Cadastre um tipo em "🏷️ Tipos" --</option>}
+                    {tiposManutencao.map(t => <option key={t.id} value={t.nome}>{t.nome}</option>)}
                   </select>
                 </div>
                 <div>
@@ -733,6 +779,63 @@ export default function VisualizacaoFrota() {
                   ✏️ Editar
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================================ */}
+      {/* MODAL: GERENCIAR TIPOS DE MANUTENÇÃO */}
+      {/* ============================================================================ */}
+      {modalTipos && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white flex-shrink-0">
+              <h3 className="font-black uppercase tracking-wider text-sm">🏷️ Tipos de Manutenção</h3>
+              <button onClick={() => setModalTipos(false)} className="text-white hover:text-red-300 text-2xl leading-none">&times;</button>
+            </div>
+
+            <div className="p-6 overflow-y-auto bg-[#F8FAFC]">
+              <div className="bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm mb-6">
+                <h4 className="text-[10px] font-black uppercase text-[#64748B] mb-3">Adicionar Novo Tipo</h4>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Ex: TROCA DE FILTRO"
+                    className="flex-grow p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-xs font-semibold"
+                    value={novoTipoNome}
+                    onChange={(e) => setNovoTipoNome(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') adicionarTipoManutencao(); }}
+                  />
+                  <button
+                    onClick={adicionarTipoManutencao}
+                    disabled={!novoTipoNome.trim()}
+                    className="bg-[#16A34A] hover:bg-[#15803D] text-white px-4 py-2.5 rounded-lg font-black text-[10px] uppercase tracking-widest transition-colors disabled:opacity-50"
+                  >
+                    Salvar
+                  </button>
+                </div>
+              </div>
+
+              <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#CBD5E1] pb-2 mb-3">Tipos Cadastrados</h4>
+              <div className="space-y-2">
+                {tiposManutencao.length === 0 ? (
+                  <p className="text-xs text-center text-[#94A3B8] py-4 bg-white border border-dashed border-[#CBD5E1] rounded-lg">Nenhum tipo cadastrado ainda.</p>
+                ) : (
+                  tiposManutencao.map(tipo => (
+                    <div key={tipo.id} className="flex justify-between items-center bg-white p-3 border border-[#E2E8F0] rounded-lg shadow-sm">
+                      <span className="text-sm font-bold text-[#0C1D4D]">{tipo.nome}</span>
+                      <button
+                        onClick={() => excluirTipoManutencao(tipo)}
+                        className="text-red-500 hover:bg-red-50 px-2 py-1 rounded text-xs font-black transition-colors"
+                        title="Remover tipo"
+                      >
+                        Remover
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         </div>

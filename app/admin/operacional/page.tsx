@@ -51,6 +51,12 @@ const modulosOperacional = [
     descricao: 'Ficha dos veículos, documentos, seguros, vencimentos e manutenções.',
     icone: '🚚', link: '/admin/operacional/frota',
     cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
+  },
+  {
+    titulo: 'Relatórios Operacionais',
+    descricao: 'Relatório completo da frota e controle de estoque, com indicadores e gráficos.',
+    icone: '📊', link: '/admin/operacional/relatorios',
+    cor: 'bg-indigo-50 border-indigo-200 text-indigo-700', hover: 'hover:border-indigo-500'
   }
 ];
 

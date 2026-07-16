@@ -5,6 +5,8 @@ import { useRouter, usePathname } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { gridBeneficiosAction } from '../actions/actions-beneficios';
+import { painelDocumentosAction } from '../actions/actions-documentos-func';
+import { listarAssinaturasAction } from '../actions/actions-assinatura';
 
 // ============================================================================
 // MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
@@ -39,6 +41,19 @@ const getDiaSemana = (dataIso: string) => {
 };
 
 // ============================================================================
+// PALETA (ordem fixa — identidade nunca depende de rank/valor)
+// ============================================================================
+const PALETA_CATEGORICA = ['#2a78d6', '#008300', '#e87ba4', '#eda100', '#1baf7a', '#eb6834', '#4a3aa7', '#e34948'];
+function corPorCategoria(nome: string, listaOrdenada: string[]): string {
+  const i = listaOrdenada.indexOf(nome);
+  return i >= 0 && i < PALETA_CATEGORICA.length ? PALETA_CATEGORICA[i] : '#94A3B8';
+}
+
+const COR_MOTIVO: Record<string, string> = { 'ADMISSAO': '#16A34A', 'DEMISSAO': '#DC2626', 'ALTERACAO_CARGO': '#336699' };
+const LABEL_MOTIVO: Record<string, string> = { 'ADMISSAO': 'Admissão', 'DEMISSAO': 'Desligamento', 'ALTERACAO_CARGO': 'Alteração de Cargo' };
+const COR_STATUS_ASSINATURA: Record<string, string> = { 'ENVIADO': '#D97706', 'VISUALIZADO': '#336699', 'ASSINADO': '#16A34A', 'REJEITADO': '#DC2626' };
+
+// ============================================================================
 // INTERFACES
 // ============================================================================
 interface RegraContrato {
@@ -63,6 +78,12 @@ interface LinhaRelatorio {
   faltas: number; totalCreditos: number; totalDebitos: number; liquido: number;
   fechado: boolean;
 }
+
+interface FuncionarioResumo { nome_completo: string; cargo: string; ativo: boolean; data_admissao: string | null; data_desligamento: string | null; }
+interface Movimentacao { funcionario_nome: string; motivo: 'ADMISSAO' | 'DEMISSAO' | 'ALTERACAO_CARGO'; cargo: string | null; data_movimentacao: string; }
+interface LinhaDocumentos { nome: string; cargo: string; totalDocs: number; vencidos: number; vencendo: number; semDocumentos: boolean; }
+interface PainelDocumentos { linhas: LinhaDocumentos[]; totais: { funcionarios: number; semDocumentos: number; totalDocs: number; vencidos: number; vencendo: number } }
+interface Assinatura { funcionario_nome: string; mes_referencia: string; status: 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO'; titulo_avulso?: string | null; }
 
 const REGRA_PADRAO: RegraContrato = {
   nome_regra: 'PADRÃO', paga_salario_base: true, calcula_extras_padrao: true,
@@ -186,13 +207,17 @@ const CardKPI = ({ titulo, valor, cor, sub }: { titulo: string; valor: string; c
 // GRÁFICO DE BARRAS HORIZONTAIS (SVG puro, sem dependências)
 // ============================================================================
 const BarrasHorizontais = ({ dados, cor, formato }: {
-  dados: { label: string; valor: number }[]; cor: string; formato: (n: number) => string;
+  dados: { label: string; valor: number; cor?: string }[]; cor: string; formato: (n: number) => string;
 }) => {
   const max = Math.max(...dados.map(d => d.valor), 1);
   const alturaLinha = 26;
   const altura = dados.length * alturaLinha + 10;
   const larguraLabel = 150;
   const larguraBarra = 420;
+
+  if (dados.length === 0) {
+    return <p className="text-xs text-center text-[#94A3B8] font-bold py-8">Sem dados suficientes para este gráfico.</p>;
+  }
 
   return (
     <svg viewBox={`0 0 ${larguraLabel + larguraBarra + 90} ${altura}`} className="w-full" style={{ maxHeight: `${altura}px` }}>
@@ -204,8 +229,8 @@ const BarrasHorizontais = ({ dados, cor, formato }: {
             <text x={larguraLabel - 8} y={y + 15} textAnchor="end" fontSize="11" fontWeight="700" fill="#334155">
               {d.label.length > 20 ? d.label.slice(0, 19) + '…' : d.label}
             </text>
-            <rect x={larguraLabel} y={y + 4} width={larguraBarra} height={16} rx="3" fill="#F1F5F9" />
-            <rect x={larguraLabel} y={y + 4} width={Math.max(w, d.valor > 0 ? 2 : 0)} height={16} rx="3" fill={cor} />
+            <rect x={larguraLabel} y={y + 4} width={larguraBarra} height={16} rx="4" fill="#F1F5F9" />
+            <rect x={larguraLabel} y={y + 4} width={Math.max(w, d.valor > 0 ? 2 : 0)} height={16} rx="4" fill={d.cor || cor} />
             <text x={larguraLabel + Math.max(w, 2) + 6} y={y + 16} fontSize="10" fontWeight="700" fill="#64748B">
               {formato(d.valor)}
             </text>
@@ -217,30 +242,37 @@ const BarrasHorizontais = ({ dados, cor, formato }: {
 };
 
 // ============================================================================
-// GRÁFICO CRÉDITO x DÉBITO (barras agrupadas por funcionário)
+// GRÁFICO DE PARES (duas barras por linha — usado em Créditos x Débitos e em
+// Admissões x Desligamentos). Cores fixas por papel (A/B), nunca por rank.
 // ============================================================================
-const BarrasCreditoDebito = ({ dados }: { dados: LinhaRelatorio[] }) => {
-  const max = Math.max(...dados.map(d => Math.max(d.totalCreditos, d.totalDebitos)), 1);
+const BarrasDuplas = ({ dados, corA, corB, formato }: {
+  dados: { label: string; a: number; b: number }[]; corA: string; corB: string; formato: (n: number) => string;
+}) => {
+  const max = Math.max(...dados.map(d => Math.max(d.a, d.b)), 1);
   const alturaLinha = 40;
   const altura = dados.length * alturaLinha + 10;
   const larguraLabel = 150;
   const larguraBarra = 420;
 
+  if (dados.length === 0) {
+    return <p className="text-xs text-center text-[#94A3B8] font-bold py-8">Sem dados suficientes para este gráfico.</p>;
+  }
+
   return (
     <svg viewBox={`0 0 ${larguraLabel + larguraBarra + 100} ${altura}`} className="w-full" style={{ maxHeight: `${altura}px` }}>
       {dados.map((d, i) => {
         const y = i * alturaLinha + 5;
-        const wC = (d.totalCreditos / max) * larguraBarra;
-        const wD = (d.totalDebitos / max) * larguraBarra;
+        const wA = (d.a / max) * larguraBarra;
+        const wB = (d.b / max) * larguraBarra;
         return (
           <g key={i}>
             <text x={larguraLabel - 8} y={y + 20} textAnchor="end" fontSize="11" fontWeight="700" fill="#334155">
-              {d.nome.length > 20 ? d.nome.slice(0, 19) + '…' : d.nome}
+              {d.label.length > 20 ? d.label.slice(0, 19) + '…' : d.label}
             </text>
-            <rect x={larguraLabel} y={y + 2} width={Math.max(wC, 2)} height={13} rx="3" fill="#16A34A" />
-            <text x={larguraLabel + Math.max(wC, 2) + 5} y={y + 12} fontSize="9" fontWeight="700" fill="#16A34A">{formatCurrency(d.totalCreditos)}</text>
-            <rect x={larguraLabel} y={y + 18} width={Math.max(wD, 2)} height={13} rx="3" fill="#DC2626" />
-            <text x={larguraLabel + Math.max(wD, 2) + 5} y={y + 28} fontSize="9" fontWeight="700" fill="#DC2626">{formatCurrency(d.totalDebitos)}</text>
+            <rect x={larguraLabel} y={y + 2} width={Math.max(wA, 2)} height={13} rx="4" fill={corA} />
+            <text x={larguraLabel + Math.max(wA, 2) + 5} y={y + 12} fontSize="9" fontWeight="700" fill={corA}>{formato(d.a)}</text>
+            <rect x={larguraLabel} y={y + 18} width={Math.max(wB, 2)} height={13} rx="4" fill={corB} />
+            <text x={larguraLabel + Math.max(wB, 2) + 5} y={y + 28} fontSize="9" fontWeight="700" fill={corB}>{formato(d.b)}</text>
           </g>
         );
       })}
@@ -311,9 +343,16 @@ export default function RelatoriosRH() {
   const [loading, setLoading] = useState(true);
   const [linhas, setLinhas] = useState<LinhaRelatorio[]>([]);
   const [ordenacao, setOrdenacao] = useState<'nome' | 'liquido' | 'extras' | 'faltas'>('nome');
-  const [modoRelatorio, setModoRelatorio] = useState<'folha' | 'financeiro' | 'beneficios'>('folha');
+  const [modoRelatorio, setModoRelatorio] = useState<'folha' | 'financeiro' | 'beneficios' | 'quadro' | 'compliance'>('folha');
   const modoFinanceiro = modoRelatorio === 'financeiro'; // compat com o código existente
   const [beneficiosMes, setBeneficiosMes] = useState<{ diasUteis: number; colunas: string[]; funcionarios: any[]; totaisColuna: Record<string, number>; totalGeral: number }>({ diasUteis: 0, colunas: [], funcionarios: [], totaisColuna: {}, totalGeral: 0 });
+
+  // Quadro de Pessoal & Turnover — dados vivos, independentes do mês de competência selecionado
+  const [loadingQuadro, setLoadingQuadro] = useState(true);
+  const [todosFuncionarios, setTodosFuncionarios] = useState<FuncionarioResumo[]>([]);
+  const [movimentacoes, setMovimentacoes] = useState<Movimentacao[]>([]);
+  const [documentosPanel, setDocumentosPanel] = useState<PainelDocumentos>({ linhas: [], totais: { funcionarios: 0, semDocumentos: 0, totalDocs: 0, vencidos: 0, vencendo: 0 } });
+  const [assinaturasMes, setAssinaturasMes] = useState<Assinatura[]>([]);
 
   const [mesReferencia, setMesReferencia] = useState(() => {
     // Competência = mês anterior ao corrente (o mês corrente é o de pagamento)
@@ -332,6 +371,40 @@ export default function RelatoriosRH() {
     let vivo = true;
     gridBeneficiosAction({ mesReferencia }).then(res => {
       if (vivo && res.ok) setBeneficiosMes(res.info);
+    });
+    return () => { vivo = false; };
+  }, [mesReferencia, authLoading, acessoNegado]);
+
+  // Carrega o Quadro de Pessoal (movimentações + funcionários) e o Painel de Documentos.
+  // Não depende do mês de competência — é uma fotografia viva do quadro atual.
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    let vivo = true;
+
+    const carregarQuadro = async () => {
+      setLoadingQuadro(true);
+      const [{ data: funcsData }, { data: movsData }, docsRes] = await Promise.all([
+        supabase.from('folha_funcionarios').select('nome_completo, cargo, ativo, data_admissao, data_desligamento'),
+        supabase.from('folha_movimentacoes').select('funcionario_nome, motivo, cargo, data_movimentacao').order('data_movimentacao', { ascending: false }),
+        painelDocumentosAction(),
+      ]);
+      if (!vivo) return;
+      setTodosFuncionarios(funcsData || []);
+      setMovimentacoes(movsData || []);
+      if (docsRes.ok) setDocumentosPanel(docsRes.info);
+      setLoadingQuadro(false);
+    };
+    carregarQuadro();
+
+    return () => { vivo = false; };
+  }, [authLoading, acessoNegado]);
+
+  // Carrega as assinaturas (holerites + avulsos) do mês selecionado
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    let vivo = true;
+    listarAssinaturasAction({ mesReferencia }).then(res => {
+      if (vivo && res.ok) setAssinaturasMes(res.info.assinaturas || []);
     });
     return () => { vivo = false; };
   }, [mesReferencia, authLoading, acessoNegado]);
@@ -459,6 +532,86 @@ export default function RelatoriosRH() {
     .sort((a, b) => b.liquido - a.liquido).slice(0, 8), [linhas]);
   const comFaltas = useMemo(() => linhas.filter(l => l.faltas > 0).length, [linhas]);
 
+  // ============================================================================
+  // AGREGAÇÕES — QUADRO DE PESSOAL & TURNOVER (janela móvel de 12 meses)
+  // ============================================================================
+  const ativos = useMemo(() => todosFuncionarios.filter(f => f.ativo), [todosFuncionarios]);
+
+  const cargosOrdenados = useMemo(() => Array.from(new Set(ativos.map(f => f.cargo || 'SEM CARGO'))).sort(), [ativos]);
+  const quadroPorCargo = useMemo(() => {
+    const contagem: Record<string, number> = {};
+    ativos.forEach(f => { const c = f.cargo || 'SEM CARGO'; contagem[c] = (contagem[c] || 0) + 1; });
+    const ordenado = [...cargosOrdenados].sort((a, b) => contagem[b] - contagem[a]);
+    const principais = ordenado.slice(0, 8);
+    const outros = ordenado.slice(8).reduce((s, c) => s + contagem[c], 0);
+    const dados = principais.map(c => ({ label: c, valor: contagem[c], cor: corPorCategoria(c, cargosOrdenados) }));
+    if (outros > 0) dados.push({ label: 'OUTROS', valor: outros, cor: '#94A3B8' });
+    return dados;
+  }, [ativos, cargosOrdenados]);
+
+  const movimentacoesPorMes = useMemo(() => {
+    const hoje = new Date();
+    const meses: { chave: string; label: string }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
+      meses.push({ chave: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }) });
+    }
+    const admissoesPorMes: Record<string, number> = {};
+    const desligamentosPorMes: Record<string, number> = {};
+    movimentacoes.forEach(m => {
+      const chave = (m.data_movimentacao || '').slice(0, 7);
+      if (m.motivo === 'ADMISSAO') admissoesPorMes[chave] = (admissoesPorMes[chave] || 0) + 1;
+      if (m.motivo === 'DEMISSAO') desligamentosPorMes[chave] = (desligamentosPorMes[chave] || 0) + 1;
+    });
+    return meses.map(m => ({ label: m.label, a: admissoesPorMes[m.chave] || 0, b: desligamentosPorMes[m.chave] || 0 }));
+  }, [movimentacoes]);
+
+  const kpisQuadro = useMemo(() => {
+    const hoje = new Date();
+    const ha12Meses = new Date(hoje.getFullYear(), hoje.getMonth() - 12, hoje.getDate());
+    const mov12 = movimentacoes.filter(m => new Date(`${m.data_movimentacao}T00:00:00`) >= ha12Meses);
+    const admissoes12 = mov12.filter(m => m.motivo === 'ADMISSAO').length;
+    const desligamentos12 = mov12.filter(m => m.motivo === 'DEMISSAO').length;
+    const quadroAtual = ativos.length;
+    const quadroInicio = Math.max(0, quadroAtual - admissoes12 + desligamentos12);
+    const mediaQuadro = (quadroAtual + quadroInicio) / 2;
+    const turnoverPct = mediaQuadro > 0 ? (desligamentos12 / mediaQuadro) * 100 : 0;
+
+    const tenures = ativos
+      .filter(f => f.data_admissao)
+      .map(f => (hoje.getTime() - new Date(`${f.data_admissao}T00:00:00`).getTime()) / (1000 * 60 * 60 * 24 * 30.44));
+    const tempoMedioMeses = tenures.length > 0 ? tenures.reduce((s, t) => s + t, 0) / tenures.length : 0;
+
+    return { quadroAtual, admissoes12, desligamentos12, turnoverPct, tempoMedioMeses };
+  }, [movimentacoes, ativos]);
+
+  const movimentacoesRecentes = useMemo(() => movimentacoes.slice(0, 30), [movimentacoes]);
+
+  // ============================================================================
+  // AGREGAÇÕES — COMPLIANCE (Documentos & Assinaturas)
+  // ============================================================================
+  const documentosCriticos = useMemo(() => [...documentosPanel.linhas]
+    .filter(l => l.vencidos + l.vencendo > 0)
+    .sort((a, b) => (b.vencidos + b.vencendo) - (a.vencidos + a.vencendo)), [documentosPanel]);
+
+  const documentosTopGrafico = useMemo(() => documentosCriticos.slice(0, 8)
+    .map(l => ({ label: l.nome, valor: l.vencidos + l.vencendo, cor: l.vencidos > 0 ? '#DC2626' : '#D97706' })), [documentosCriticos]);
+
+  const assinaturasPorStatus = useMemo(() => {
+    const contagem: Record<string, number> = { 'ENVIADO': 0, 'VISUALIZADO': 0, 'ASSINADO': 0, 'REJEITADO': 0 };
+    assinaturasMes.forEach(a => { contagem[a.status] = (contagem[a.status] || 0) + 1; });
+    return Object.entries(contagem).filter(([, v]) => v > 0)
+      .map(([status, valor]) => ({ label: status.charAt(0) + status.slice(1).toLowerCase(), valor, cor: COR_STATUS_ASSINATURA[status] || '#94A3B8' }));
+  }, [assinaturasMes]);
+
+  const kpisAssinaturas = useMemo(() => {
+    const total = assinaturasMes.length;
+    const assinadas = assinaturasMes.filter(a => a.status === 'ASSINADO').length;
+    const pendentes = assinaturasMes.filter(a => a.status === 'ENVIADO' || a.status === 'VISUALIZADO').length;
+    const rejeitadas = assinaturasMes.filter(a => a.status === 'REJEITADO').length;
+    return { total, assinadas, pendentes, rejeitadas, pct: total > 0 ? (assinadas / total) * 100 : 0 };
+  }, [assinaturasMes]);
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center pt-16">
@@ -511,13 +664,19 @@ export default function RelatoriosRH() {
             <h1 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Relatório da Folha — {formatarMesAnoBR(mesReferencia)}</h1>
             <p className="text-sm text-[#64748B]">{linhas.length} funcionário(s) ativo(s) • {totais.fechados} folha(s) fechada(s)</p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
             <button onClick={() => setModoRelatorio('financeiro')} disabled={linhas.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">
               💵 Relatório Financeiro
             </button>
             <button onClick={() => setModoRelatorio('beneficios')} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-indigo-700 transition-all">
               🎁 Benefícios
+            </button>
+            <button onClick={() => setModoRelatorio('quadro')} className="bg-[#336699] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all">
+              🔄 Quadro & Turnover
+            </button>
+            <button onClick={() => setModoRelatorio('compliance')} className="bg-teal-600 text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-teal-700 transition-all">
+              🪪 Compliance
             </button>
             <button onClick={() => window.print()} disabled={linhas.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
               🖨️ Imprimir / PDF
@@ -674,6 +833,217 @@ export default function RelatoriosRH() {
           </div>
         )}
 
+        {/* ==================== QUADRO DE PESSOAL & TURNOVER ==================== */}
+        {modoRelatorio === 'quadro' && (
+          <div>
+            <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-4 mb-6 no-print">
+              <div>
+                <h2 className="text-lg font-black text-[#336699] uppercase tracking-wider">🔄 Quadro de Pessoal & Turnover</h2>
+                <p className="text-sm text-[#64748B]">Fotografia viva do quadro atual — não depende do mês selecionado acima.</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={() => setModoRelatorio('folha')} className="text-[#64748B] font-bold text-sm hover:text-[#0C1D4D] transition-colors flex items-center gap-2">⬅ Relatório Completo</button>
+                <button onClick={() => window.print()} className="bg-[#336699] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all">
+                  🖨️ Imprimir
+                </button>
+              </div>
+            </div>
+
+            <div className="hidden print:block mb-4 border-b-2 border-black pb-2">
+              <h1 className="text-xl font-black uppercase">Quadro de Pessoal & Turnover</h1>
+              <p className="text-sm">Emitido em {new Date().toLocaleDateString('pt-BR')} • {kpisQuadro.quadroAtual} colaborador(es) ativo(s)</p>
+            </div>
+
+            {loadingQuadro ? (
+              <div className="bg-white border-2 border-dashed border-gray-300 rounded-2xl p-16 text-center text-gray-400 font-bold uppercase tracking-wider">
+                Montando o quadro de pessoal...
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6 print-break">
+                  <CardKPI titulo="Quadro Atual" valor={String(kpisQuadro.quadroAtual)} cor="#0C1D4D" sub="Colaboradores ativos" />
+                  <CardKPI titulo="Admissões (12 meses)" valor={String(kpisQuadro.admissoes12)} cor="#16A34A" />
+                  <CardKPI titulo="Desligamentos (12 meses)" valor={String(kpisQuadro.desligamentos12)} cor="#DC2626" />
+                  <CardKPI titulo="Turnover (12 meses)" valor={`${kpisQuadro.turnoverPct.toFixed(1)}%`} cor="#D97706" sub="Desligamentos / quadro médio" />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6 print-break">
+                  <CardKPI titulo="Tempo Médio de Casa" valor={kpisQuadro.tempoMedioMeses >= 12 ? `${(kpisQuadro.tempoMedioMeses / 12).toFixed(1)} anos` : `${kpisQuadro.tempoMedioMeses.toFixed(0)} meses`} cor="#336699" sub="Entre colaboradores ativos" />
+                  <CardKPI titulo="Cargos Distintos" valor={String(cargosOrdenados.length)} cor="#336699" />
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
+                  <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-5 print-break">
+                    <div className="flex items-center gap-4 mb-4 border-b border-[#E2E8F0] pb-2">
+                      <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-sm">Admissões x Desligamentos — 6 Meses</h3>
+                      <div className="flex items-center gap-3 text-[10px] font-black uppercase">
+                        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-[#16A34A] inline-block"></span> Admissões</span>
+                        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-[#DC2626] inline-block"></span> Desligamentos</span>
+                      </div>
+                    </div>
+                    <BarrasDuplas dados={movimentacoesPorMes} corA="#16A34A" corB="#DC2626" formato={(n) => String(n)} />
+                  </div>
+                  <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-5 print-break">
+                    <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-sm mb-4 border-b border-[#E2E8F0] pb-2">Quadro Ativo por Cargo</h3>
+                    <BarrasHorizontais dados={quadroPorCargo} cor="#336699" formato={(n) => String(n)} />
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden print-break">
+                  <div className="p-5 border-b border-[#E2E8F0] bg-[#F8FAFC]">
+                    <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-sm">Movimentações Recentes</h3>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left border-collapse">
+                      <thead className="bg-white border-b-2 border-[#E2E8F0]">
+                        <tr className="text-[9px] uppercase font-black tracking-widest text-[#64748B]">
+                          <th className="p-3">Data</th>
+                          <th className="p-3">Colaborador</th>
+                          <th className="p-3">Movimentação</th>
+                          <th className="p-3">Cargo</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#E2E8F0]">
+                        {movimentacoesRecentes.length === 0 ? (
+                          <tr><td colSpan={4} className="text-center py-12 text-[#94A3B8] font-bold">Nenhuma movimentação registrada.</td></tr>
+                        ) : movimentacoesRecentes.map((m, i) => (
+                          <tr key={i} className="hover:bg-[#F8FAFC] transition-colors">
+                            <td className="p-3 font-bold">{new Date(`${m.data_movimentacao}T00:00:00`).toLocaleDateString('pt-BR')}</td>
+                            <td className="p-3 font-black text-[#0C1D4D]">{m.funcionario_nome}</td>
+                            <td className="p-3">
+                              <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full border" style={{ color: COR_MOTIVO[m.motivo], borderColor: COR_MOTIVO[m.motivo] }}>{LABEL_MOTIVO[m.motivo] || m.motivo}</span>
+                            </td>
+                            <td className="p-3 text-[#475569]">{m.cargo || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ==================== COMPLIANCE (DOCUMENTOS & ASSINATURAS) ==================== */}
+        {modoRelatorio === 'compliance' && (
+          <div>
+            <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-4 mb-6 no-print">
+              <div>
+                <h2 className="text-lg font-black text-teal-700 uppercase tracking-wider">🪪 Compliance — Documentos & Assinaturas</h2>
+                <p className="text-sm text-[#64748B]">Documentos: fotografia viva. Assinaturas: referentes a {formatarMesAnoBR(mesReferencia)}.</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={() => setModoRelatorio('folha')} className="text-[#64748B] font-bold text-sm hover:text-[#0C1D4D] transition-colors flex items-center gap-2">⬅ Relatório Completo</button>
+                <button onClick={() => window.print()} className="bg-teal-600 text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-teal-700 transition-all">
+                  🖨️ Imprimir
+                </button>
+              </div>
+            </div>
+
+            <div className="hidden print:block mb-4 border-b-2 border-black pb-2">
+              <h1 className="text-xl font-black uppercase">Compliance — Documentos & Assinaturas</h1>
+              <p className="text-sm">Emitido em {new Date().toLocaleDateString('pt-BR')} • Assinaturas de {formatarMesAnoBR(mesReferencia)}</p>
+            </div>
+
+            {loadingQuadro ? (
+              <div className="bg-white border-2 border-dashed border-gray-300 rounded-2xl p-16 text-center text-gray-400 font-bold uppercase tracking-wider">
+                Montando o painel de compliance...
+              </div>
+            ) : (
+              <>
+                <h3 className="text-xs font-black text-[#64748B] uppercase tracking-widest mb-3">📁 Documentos Cadastrais</h3>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6 print-break">
+                  <CardKPI titulo="Colaboradores" valor={String(documentosPanel.totais.funcionarios)} cor="#0C1D4D" />
+                  <CardKPI titulo="Sem Nenhum Documento" valor={String(documentosPanel.totais.semDocumentos)} cor="#DC2626" />
+                  <CardKPI titulo="Documentos Vencidos" valor={String(documentosPanel.totais.vencidos)} cor="#DC2626" />
+                  <CardKPI titulo="Vencendo em 30 Dias" valor={String(documentosPanel.totais.vencendo)} cor="#D97706" />
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
+                  <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-5 print-break">
+                    <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-sm mb-4 border-b border-[#E2E8F0] pb-2">Documentos Vencidos/Vencendo — Top 8</h3>
+                    <BarrasHorizontais dados={documentosTopGrafico} cor="#DC2626" formato={(n) => String(n)} />
+                  </div>
+                  <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-5 print-break">
+                    <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-sm mb-4 border-b border-[#E2E8F0] pb-2">Funil de Assinaturas — {formatarMesAnoBR(mesReferencia)}</h3>
+                    <BarrasHorizontais dados={assinaturasPorStatus} cor="#336699" formato={(n) => String(n)} />
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden mb-8 print-break">
+                  <div className="p-5 border-b border-[#E2E8F0] bg-[#F8FAFC]">
+                    <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-sm">Colaboradores com Pendência Documental</h3>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left border-collapse">
+                      <thead className="bg-white border-b-2 border-[#E2E8F0]">
+                        <tr className="text-[9px] uppercase font-black tracking-widest text-[#64748B]">
+                          <th className="p-3">Colaborador</th>
+                          <th className="p-3">Cargo</th>
+                          <th className="p-3 text-center">Total Docs.</th>
+                          <th className="p-3 text-center text-red-600">Vencidos</th>
+                          <th className="p-3 text-center text-amber-600">Vencendo (30d)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#E2E8F0]">
+                        {documentosCriticos.length === 0 ? (
+                          <tr><td colSpan={5} className="text-center py-12 text-[#94A3B8] font-bold">Nenhuma pendência documental encontrada.</td></tr>
+                        ) : documentosCriticos.map((l, i) => (
+                          <tr key={i} className="hover:bg-[#F8FAFC] transition-colors">
+                            <td className="p-3 font-black text-[#0C1D4D]">{l.nome}</td>
+                            <td className="p-3 text-[#475569] text-xs uppercase">{l.cargo}</td>
+                            <td className="p-3 text-center font-bold">{l.totalDocs}</td>
+                            <td className="p-3 text-center font-black text-red-600">{l.vencidos || '—'}</td>
+                            <td className="p-3 text-center font-black text-amber-600">{l.vencendo || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <h3 className="text-xs font-black text-[#64748B] uppercase tracking-widest mb-3">✍️ Assinaturas do Mês</h3>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6 print-break">
+                  <CardKPI titulo="Documentos Enviados" valor={String(kpisAssinaturas.total)} cor="#0C1D4D" />
+                  <CardKPI titulo="Assinados" valor={String(kpisAssinaturas.assinadas)} cor="#16A34A" sub={`${kpisAssinaturas.pct.toFixed(0)}% do total`} />
+                  <CardKPI titulo="Pendentes" valor={String(kpisAssinaturas.pendentes)} cor="#D97706" sub="Enviado ou visualizado" />
+                  <CardKPI titulo="Rejeitados" valor={String(kpisAssinaturas.rejeitadas)} cor="#DC2626" />
+                </div>
+
+                <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden print-break">
+                  <div className="p-5 border-b border-[#E2E8F0] bg-[#F8FAFC]">
+                    <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-sm">Assinaturas — {formatarMesAnoBR(mesReferencia)}</h3>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left border-collapse">
+                      <thead className="bg-white border-b-2 border-[#E2E8F0]">
+                        <tr className="text-[9px] uppercase font-black tracking-widest text-[#64748B]">
+                          <th className="p-3">Colaborador</th>
+                          <th className="p-3">Documento</th>
+                          <th className="p-3 text-center">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#E2E8F0]">
+                        {assinaturasMes.length === 0 ? (
+                          <tr><td colSpan={3} className="text-center py-12 text-[#94A3B8] font-bold">Nenhuma assinatura enviada neste mês.</td></tr>
+                        ) : [...assinaturasMes].sort((a, b) => a.funcionario_nome.localeCompare(b.funcionario_nome)).map((a, i) => (
+                          <tr key={i} className="hover:bg-[#F8FAFC] transition-colors">
+                            <td className="p-3 font-black text-[#0C1D4D]">{a.funcionario_nome}</td>
+                            <td className="p-3 text-[#475569]">{a.titulo_avulso || 'Holerite'}</td>
+                            <td className="p-3 text-center">
+                              <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full border" style={{ color: COR_STATUS_ASSINATURA[a.status], borderColor: COR_STATUS_ASSINATURA[a.status] }}>{a.status}</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {/* ==================== RELATÓRIO COMPLETO ==================== */}
         {modoRelatorio === 'folha' && (
         <>
@@ -724,7 +1094,7 @@ export default function RelatoriosRH() {
                   <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-[#DC2626] inline-block"></span> Débitos</span>
                 </div>
               </div>
-              <BarrasCreditoDebito dados={linhasOrdenadas} />
+              <BarrasDuplas dados={linhasOrdenadas.map(l => ({ label: l.nome, a: l.totalCreditos, b: l.totalDebitos }))} corA="#16A34A" corB="#DC2626" formato={formatCurrency} />
             </div>
 
             {/* TABELA DETALHADA */}

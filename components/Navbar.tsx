@@ -126,58 +126,64 @@ export default function Navbar() {
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
             </Link>
             {/* Dropdown de Simuladores */}
-            <div className="absolute top-full left-0 mt-4 w-56 bg-[#0C1D4D] border border-[#284B8C] rounded-md shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
-              {simuladores.map((s, i) => (
-                <Link
-                  key={s.href}
-                  href={s.href}
-                  className={`block px-4 py-3 text-xs text-[#B3B3B3] hover:bg-[#284B8C]/30 hover:text-white ${i < simuladores.length - 1 ? 'border-b border-[#284B8C]/30' : ''}`}
-                >
-                  {s.label}
-                </Link>
-              ))}
+            <div className="absolute top-full left-0 pt-3 w-56 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+              <div className="bg-[#0C1D4D] border border-[#284B8C] rounded-md shadow-xl overflow-hidden">
+                {simuladores.map((s, i) => (
+                  <Link
+                    key={s.href}
+                    href={s.href}
+                    className={`block px-4 py-3 text-xs text-[#B3B3B3] hover:bg-[#284B8C]/30 hover:text-white ${i < simuladores.length - 1 ? 'border-b border-[#284B8C]/30' : ''}`}
+                  >
+                    {s.label}
+                  </Link>
+                ))}
+              </div>
             </div>
           </div>
 
           {/* Links do Ecossistema Ferramentas */}
           <div className="relative group">
-            <Link href="" className="flex items-center gap-1 hover:text-[#336699] transition-colors">
+            <span className="flex items-center gap-1 cursor-default hover:text-[#336699] transition-colors">
               Ferramentas
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-            </Link>
+            </span>
             {/* Dropdown de Ferramentas */}
-            <div className="absolute top-full left-0 mt-4 w-56 bg-[#0C1D4D] border border-[#284B8C] rounded-md shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
-              {ferramentas.map((f, i) => (
-                <Link
-                  key={f.href}
-                  href={f.href}
-                  target={f.target}
-                  className={`block px-4 py-3 text-xs text-[#B3B3B3] hover:bg-[#284B8C]/30 hover:text-white ${i < ferramentas.length - 1 ? 'border-b border-[#284B8C]/30' : ''}`}
-                >
-                  {f.label}
-                </Link>
-              ))}
+            <div className="absolute top-full left-0 pt-3 w-56 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+              <div className="bg-[#0C1D4D] border border-[#284B8C] rounded-md shadow-xl overflow-hidden">
+                {ferramentas.map((f, i) => (
+                  <Link
+                    key={f.href}
+                    href={f.href}
+                    target={f.target}
+                    className={`block px-4 py-3 text-xs text-[#B3B3B3] hover:bg-[#284B8C]/30 hover:text-white ${i < ferramentas.length - 1 ? 'border-b border-[#284B8C]/30' : ''}`}
+                  >
+                    {f.label}
+                  </Link>
+                ))}
+              </div>
             </div>
           </div>
 
           {/* Links do Ecossistema Social Media */}
           <div className="relative group">
-            <Link href="" className="flex items-center gap-1 hover:text-[#336699] transition-colors">
+            <span className="flex items-center gap-1 cursor-default hover:text-[#336699] transition-colors">
               Social Media
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-            </Link>
+            </span>
             {/* Dropdown de Social Media */}
-            <div className="absolute top-full left-0 mt-4 w-56 bg-[#0C1D4D] border border-[#284B8C] rounded-md shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
-              {socialmedia.map((s, i) => (
-                <Link
-                  key={s.href}
-                  href={s.href}
-                  target={s.target}
-                  className={`block px-4 py-3 text-xs text-[#B3B3B3] hover:bg-[#284B8C]/30 hover:text-white ${i < socialmedia.length - 1 ? 'border-b border-[#284B8C]/30' : ''}`}
-                >
-                  {s.label}
-                </Link>
-              ))}
+            <div className="absolute top-full left-0 pt-3 w-56 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+              <div className="bg-[#0C1D4D] border border-[#284B8C] rounded-md shadow-xl overflow-hidden">
+                {socialmedia.map((s, i) => (
+                  <Link
+                    key={s.href}
+                    href={s.href}
+                    target={s.target}
+                    className={`block px-4 py-3 text-xs text-[#B3B3B3] hover:bg-[#284B8C]/30 hover:text-white ${i < socialmedia.length - 1 ? 'border-b border-[#284B8C]/30' : ''}`}
+                  >
+                    {s.label}
+                  </Link>
+                ))}
+              </div>
             </div>
           </div>
 

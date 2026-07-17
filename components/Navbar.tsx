@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
@@ -17,6 +17,21 @@ export default function Navbar() {
   const [menuOpen3, setMenuOpen3] = useState(false);
   const [simOpen3, setSimOpen3] = useState(false);
 
+  // Submenu do desktop (abre por hover no mouse E por tap/clique em telas touch, como tablets)
+  const [openDesktop, setOpenDesktop] = useState<'sim' | 'tools' | 'social' | null>(null);
+  const desktopNavRef = useRef<HTMLDivElement>(null);
+
+  // Fecha o submenu ao tocar/clicar fora dele (necessário em touch, que não dispara mouseleave)
+  useEffect(() => {
+    if (!openDesktop) return;
+    const handlePointerDown = (e: PointerEvent) => {
+      if (desktopNavRef.current && !desktopNavRef.current.contains(e.target as Node)) {
+        setOpenDesktop(null);
+      }
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [openDesktop]);
 
   useEffect(() => {
     // Se o Supabase não estiver configurado, mantém o estado deslogado e evita chamadas que falhariam.
@@ -117,21 +132,38 @@ export default function Navbar() {
         </Link>
 
         {/* ===================== NAVEGAÇÃO DESKTOP ===================== */}
-        <div className="hidden lg:flex items-center space-x-8 text-sm font-bold text-[#B3B3B3]">
+        <div ref={desktopNavRef} className="hidden lg:flex items-center space-x-8 text-sm font-bold text-[#B3B3B3]">
 
           {/* Links do Ecossistema Simuladores */}
-          <div className="relative group">
-            <Link href="/simulador" className="flex items-center gap-1 hover:text-[#336699] transition-colors">
+          <div
+            className="relative"
+            onPointerEnter={(e) => { if (e.pointerType === 'mouse') setOpenDesktop('sim'); }}
+            onPointerLeave={(e) => { if (e.pointerType === 'mouse') setOpenDesktop((prev) => (prev === 'sim' ? null : prev)); }}
+          >
+            <button
+              type="button"
+              onClick={() => setOpenDesktop((prev) => (prev === 'sim' ? null : 'sim'))}
+              aria-expanded={openDesktop === 'sim'}
+              className="flex items-center gap-1 hover:text-[#336699] transition-colors"
+            >
               Simuladores
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-            </Link>
+              <svg className={`w-4 h-4 transition-transform duration-200 ${openDesktop === 'sim' ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+            </button>
             {/* Dropdown de Simuladores */}
-            <div className="absolute top-full left-0 pt-3 w-56 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+            <div className={`absolute top-full left-0 pt-3 w-56 transition-all duration-200 ${openDesktop === 'sim' ? 'opacity-100 visible' : 'opacity-0 invisible'}`}>
               <div className="bg-[#0C1D4D] border border-[#284B8C] rounded-md shadow-xl overflow-hidden">
+                <Link
+                  href="/simulador"
+                  onClick={() => setOpenDesktop(null)}
+                  className="block px-4 py-3 text-xs font-black text-white hover:bg-[#284B8C]/30 border-b border-[#284B8C]/30"
+                >
+                  Ver todos os simuladores
+                </Link>
                 {simuladores.map((s, i) => (
                   <Link
                     key={s.href}
                     href={s.href}
+                    onClick={() => setOpenDesktop(null)}
                     className={`block px-4 py-3 text-xs text-[#B3B3B3] hover:bg-[#284B8C]/30 hover:text-white ${i < simuladores.length - 1 ? 'border-b border-[#284B8C]/30' : ''}`}
                   >
                     {s.label}
@@ -142,19 +174,29 @@ export default function Navbar() {
           </div>
 
           {/* Links do Ecossistema Ferramentas */}
-          <div className="relative group">
-            <span className="flex items-center gap-1 cursor-default hover:text-[#336699] transition-colors">
+          <div
+            className="relative"
+            onPointerEnter={(e) => { if (e.pointerType === 'mouse') setOpenDesktop('tools'); }}
+            onPointerLeave={(e) => { if (e.pointerType === 'mouse') setOpenDesktop((prev) => (prev === 'tools' ? null : prev)); }}
+          >
+            <button
+              type="button"
+              onClick={() => setOpenDesktop((prev) => (prev === 'tools' ? null : 'tools'))}
+              aria-expanded={openDesktop === 'tools'}
+              className="flex items-center gap-1 hover:text-[#336699] transition-colors"
+            >
               Ferramentas
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-            </span>
+              <svg className={`w-4 h-4 transition-transform duration-200 ${openDesktop === 'tools' ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+            </button>
             {/* Dropdown de Ferramentas */}
-            <div className="absolute top-full left-0 pt-3 w-56 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+            <div className={`absolute top-full left-0 pt-3 w-56 transition-all duration-200 ${openDesktop === 'tools' ? 'opacity-100 visible' : 'opacity-0 invisible'}`}>
               <div className="bg-[#0C1D4D] border border-[#284B8C] rounded-md shadow-xl overflow-hidden">
                 {ferramentas.map((f, i) => (
                   <Link
                     key={f.href}
                     href={f.href}
                     target={f.target}
+                    onClick={() => setOpenDesktop(null)}
                     className={`block px-4 py-3 text-xs text-[#B3B3B3] hover:bg-[#284B8C]/30 hover:text-white ${i < ferramentas.length - 1 ? 'border-b border-[#284B8C]/30' : ''}`}
                   >
                     {f.label}
@@ -165,19 +207,29 @@ export default function Navbar() {
           </div>
 
           {/* Links do Ecossistema Social Media */}
-          <div className="relative group">
-            <span className="flex items-center gap-1 cursor-default hover:text-[#336699] transition-colors">
+          <div
+            className="relative"
+            onPointerEnter={(e) => { if (e.pointerType === 'mouse') setOpenDesktop('social'); }}
+            onPointerLeave={(e) => { if (e.pointerType === 'mouse') setOpenDesktop((prev) => (prev === 'social' ? null : prev)); }}
+          >
+            <button
+              type="button"
+              onClick={() => setOpenDesktop((prev) => (prev === 'social' ? null : 'social'))}
+              aria-expanded={openDesktop === 'social'}
+              className="flex items-center gap-1 hover:text-[#336699] transition-colors"
+            >
               Social Media
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-            </span>
+              <svg className={`w-4 h-4 transition-transform duration-200 ${openDesktop === 'social' ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+            </button>
             {/* Dropdown de Social Media */}
-            <div className="absolute top-full left-0 pt-3 w-56 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+            <div className={`absolute top-full left-0 pt-3 w-56 transition-all duration-200 ${openDesktop === 'social' ? 'opacity-100 visible' : 'opacity-0 invisible'}`}>
               <div className="bg-[#0C1D4D] border border-[#284B8C] rounded-md shadow-xl overflow-hidden">
                 {socialmedia.map((s, i) => (
                   <Link
                     key={s.href}
                     href={s.href}
                     target={s.target}
+                    onClick={() => setOpenDesktop(null)}
                     className={`block px-4 py-3 text-xs text-[#B3B3B3] hover:bg-[#284B8C]/30 hover:text-white ${i < socialmedia.length - 1 ? 'border-b border-[#284B8C]/30' : ''}`}
                   >
                     {s.label}

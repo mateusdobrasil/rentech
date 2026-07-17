@@ -204,6 +204,11 @@ interface ItemLote {
   soDocumental: boolean;
 }
 
+interface RegistroDiaPonto {
+  trabalhados: number; abonados: number;
+  entrada_1: string | null; saida_1: string | null; entrada_2: string | null; saida_2: string | null;
+}
+
 const REGRA_PADRAO: RegraContrato = {
   nome_regra: 'PADRÃO',
   paga_salario_base: true, calcula_extras_padrao: true, percentual_extra_semana: 60,
@@ -274,6 +279,47 @@ const apurarPonto = (
   }
 
   return { mins60, mins100, diasFds, faltas, qtdVr, qtdVt };
+};
+
+// ============================================================================
+// VALIDAÇÃO DAS BATIDAS DE PONTO — usada antes de fechar a folha do mês
+// Um dia só é considerado OK se tiver: nenhuma batida (dia sem registro, a
+// falta é tratada à parte), ENTRADA+SAÍDA, ou ENTRADA+SAÍDA ALMOÇO+RETORNO
+// ALMOÇO+SAÍDA. Qualquer combinação parcial (ex: só entrada, ou só a volta
+// do almoço sem saída) é uma batida incompleta e bloqueia o fechamento.
+// ============================================================================
+const diaComBatidasOk = (r?: RegistroDiaPonto): boolean => {
+  if (!r) return true;
+  const { entrada_1: e1, saida_1: s1, entrada_2: e2, saida_2: s2 } = r;
+  if (!e1 && !s1 && !e2 && !s2) return true;
+  if (e1 && s1 && !e2 && !s2) return true;
+  if (e1 && s1 && e2 && s2) return true;
+  return false;
+};
+
+const encontrarBatidasIncompletas = (
+  dias: Record<string, RegistroDiaPonto>,
+  mesAno: string,
+  dataAdmissao?: string | null,
+  dataDesligamento?: string | null
+): string[] => {
+  const [ano, mes] = mesAno.split('-').map(Number);
+  const diasNoMes = new Date(ano, mes, 0).getDate();
+  const hoje = new Date(); hoje.setHours(23, 59, 59, 999);
+  const problemas: string[] = [];
+
+  for (let d = 1; d <= diasNoMes; d++) {
+    const data = new Date(ano, mes - 1, d);
+    if (data > hoje) break;
+    const dataIso = `${ano}-${String(mes).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    if (dataAdmissao && dataIso < dataAdmissao) continue;
+    if (dataDesligamento && dataIso > dataDesligamento) continue;
+
+    if (!diaComBatidasOk(dias[dataIso])) {
+      problemas.push(dataIso.split('-').reverse().join('/'));
+    }
+  }
+  return problemas;
 };
 
 // ============================================================================
@@ -670,7 +716,7 @@ export default function HoleritePage() {
     const dataFim = `${ano}-${mes}-${new Date(Number(ano), Number(mes), 0).getDate()}`;
 
     let queryPonto = supabase.from('folha_ponto_diaria')
-      .select('funcionario_nome, data_registro, minutos_trabalhados')
+      .select('funcionario_nome, data_registro, minutos_trabalhados, entrada_1, saida_1, entrada_2, saida_2')
       .gte('data_registro', dataInicio).lte('data_registro', dataFim);
     let queryAbono = supabase.from('folha_ponto_abono')
       .select('funcionario_nome, data_abono, minutos_abonados')
@@ -686,15 +732,19 @@ export default function HoleritePage() {
 
     const feriados = fData ? fData.map(f => f.data_feriado) : [];
 
-    const porFuncionario: Record<string, Record<string, { trabalhados: number; abonados: number }>> = {};
+    const porFuncionario: Record<string, Record<string, RegistroDiaPonto>> = {};
     (pontoData || []).forEach(p => {
       if (!porFuncionario[p.funcionario_nome]) porFuncionario[p.funcionario_nome] = {};
-      if (!porFuncionario[p.funcionario_nome][p.data_registro]) porFuncionario[p.funcionario_nome][p.data_registro] = { trabalhados: 0, abonados: 0 };
+      if (!porFuncionario[p.funcionario_nome][p.data_registro]) porFuncionario[p.funcionario_nome][p.data_registro] = { trabalhados: 0, abonados: 0, entrada_1: null, saida_1: null, entrada_2: null, saida_2: null };
       porFuncionario[p.funcionario_nome][p.data_registro].trabalhados = p.minutos_trabalhados;
+      porFuncionario[p.funcionario_nome][p.data_registro].entrada_1 = p.entrada_1;
+      porFuncionario[p.funcionario_nome][p.data_registro].saida_1 = p.saida_1;
+      porFuncionario[p.funcionario_nome][p.data_registro].entrada_2 = p.entrada_2;
+      porFuncionario[p.funcionario_nome][p.data_registro].saida_2 = p.saida_2;
     });
     (abonoData || []).forEach(a => {
       if (!porFuncionario[a.funcionario_nome]) porFuncionario[a.funcionario_nome] = {};
-      if (!porFuncionario[a.funcionario_nome][a.data_abono]) porFuncionario[a.funcionario_nome][a.data_abono] = { trabalhados: 0, abonados: 0 };
+      if (!porFuncionario[a.funcionario_nome][a.data_abono]) porFuncionario[a.funcionario_nome][a.data_abono] = { trabalhados: 0, abonados: 0, entrada_1: null, saida_1: null, entrada_2: null, saida_2: null };
       porFuncionario[a.funcionario_nome][a.data_abono].abonados = a.minutos_abonados;
     });
 
@@ -906,6 +956,38 @@ export default function HoleritePage() {
     if (abertos.length === 0) {
       alert('Todos os funcionários deste mês já estão com a folha fechada.');
       return;
+    }
+
+    setLoadingLote(true);
+    try {
+      // Antes de fechar, revalida as batidas de ponto ao vivo (podem ter
+      // mudado desde que o lote foi carregado). Cada dia trabalhado precisa
+      // ter ENTRADA+SAÍDA ou ENTRADA+SAÍDA ALMOÇO+RETORNO ALMOÇO+SAÍDA.
+      const { porFuncionario } = await buscarPontoDoMes(mesReferencia);
+      const relatorioProblemas = abertos
+        .map(item => ({
+          nome: item.func.nome_completo,
+          dias: encontrarBatidasIncompletas(
+            porFuncionario[item.func.nome_completo] || {},
+            mesReferencia, item.func.data_admissao, item.func.data_desligamento
+          )
+        }))
+        .filter(r => r.dias.length > 0);
+
+      if (relatorioProblemas.length > 0) {
+        alert(
+          `Não é possível fechar a folha: há batidas de ponto incompletas.\n\n` +
+          `Cada dia trabalhado precisa ter ENTRADA e SAÍDA, ou ENTRADA, SAÍDA ALMOÇO, RETORNO ALMOÇO e SAÍDA.\n\n` +
+          relatorioProblemas.map(r => `• ${r.nome}: ${r.dias.join(', ')}`).join('\n') +
+          `\n\nCorrija essas batidas na tela de Ponto e tente fechar a folha novamente.`
+        );
+        return;
+      }
+    } catch (e: any) {
+      alert('Erro ao validar as batidas de ponto: ' + e.message);
+      return;
+    } finally {
+      setLoadingLote(false);
     }
 
     const totalLiquido = abertos.reduce((acc, l) => acc + l.dados.valorLiquidoReceber, 0);

@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
-import { importarPontoAction, importarAbonosAction } from '../actions/actions-ponto';
+import { importarPontoAction, importarAbonosAction, lancarPontoManualAction } from '../actions/actions-ponto';
 import {
   estatisticasPontoWhatsappAction, listarLedgerPontoWhatsappAction,
   listarSolicitacoesPendentesAction, aprovarSolicitacaoAction, rejeitarSolicitacaoAction,
@@ -142,6 +142,20 @@ export default function GestaoDePonto() {
   const [abonosConsolidado, setAbonosConsolidado] = useState(false);
   const [elegiveisContabilidade, setElegiveisContabilidade] = useState<{ nome_completo: string; tipo_contrato: string }[]>([]);
 
+  // Lançamento manual de ponto pelo RH (sem depender de CSV ou WhatsApp)
+  const [listaFuncionariosAtivos, setListaFuncionariosAtivos] = useState<string[]>([]);
+  const [manualFuncionario, setManualFuncionario] = useState('');
+  const [manualData, setManualData] = useState('');
+  const [manualE1, setManualE1] = useState('');
+  const [manualS1, setManualS1] = useState('');
+  const [manualE2, setManualE2] = useState('');
+  const [manualS2, setManualS2] = useState('');
+  const [lancandoManual, setLancandoManual] = useState(false);
+  // Ponto já lançado nesse dia, consultado ao vivo ao escolher funcionário +
+  // data — evita que o RH sobreponha uma batida sem perceber.
+  const [registroExistente, setRegistroExistente] = useState<{ origem: string; entrada_1: string | null; saida_1: string | null; entrada_2: string | null; saida_2: string | null } | null | undefined>(undefined);
+  const [verificandoExistente, setVerificandoExistente] = useState(false);
+
   const [mesAnoSelecionado, setMesAnoSelecionado] = useState(() => {
     // Competência = mês anterior ao corrente (o mês corrente é o de pagamento)
     const hoje = new Date();
@@ -152,6 +166,38 @@ export default function GestaoDePonto() {
   useEffect(() => {
     if (!authLoading && !acessoNegado) carregarAcessoEDados();
   }, [mesAnoSelecionado, authLoading, acessoNegado]);
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    supabase.from('folha_funcionarios').select('nome_completo').eq('ativo', true).order('nome_completo')
+      .then(({ data }) => setListaFuncionariosAtivos((data || []).map(f => f.nome_completo)));
+  }, [authLoading, acessoNegado]);
+
+  const verificarRegistroExistente = async (funcionario: string, data: string) => {
+    setVerificandoExistente(true);
+    const { data: reg } = await supabase.from('folha_ponto_diaria')
+      .select('origem, entrada_1, saida_1, entrada_2, saida_2')
+      .eq('funcionario_nome', funcionario)
+      .eq('data_registro', data)
+      .maybeSingle();
+    setRegistroExistente(reg || null);
+    setManualE1(reg?.entrada_1 || '');
+    setManualS1(reg?.saida_1 || '');
+    setManualE2(reg?.entrada_2 || '');
+    setManualS2(reg?.saida_2 || '');
+    setVerificandoExistente(false);
+  };
+
+  // Sempre que o RH escolhe funcionário + data, busca ao vivo se já existe
+  // ponto lançado nesse dia — pré-preenche os campos com o que já está
+  // gravado, pra ele nunca sobrepor uma batida sem ver o que tinha antes.
+  useEffect(() => {
+    if (!manualFuncionario || !manualData) {
+      setRegistroExistente(undefined);
+      return;
+    }
+    verificarRegistroExistente(manualFuncionario, manualData);
+  }, [manualFuncionario, manualData]);
 
   const carregarAcessoEDados = async (mesAnoAlvo?: string) => {
     setLoading(true);
@@ -457,6 +503,63 @@ export default function GestaoDePonto() {
       finally { setIsProcessing(false); if (abonoFileInputRef.current) abonoFileInputRef.current.value = ''; }
     };
     reader.readAsText(file, 'UTF-8');
+  };
+
+  const handleLancarPontoManual = async () => {
+    if (!manualFuncionario) { alert('Selecione o funcionário.'); return; }
+    if (!manualData) { alert('Selecione a data.'); return; }
+    if (!manualE1 && !manualS1 && !manualE2 && !manualS2) { alert('Informe ao menos a Entrada e a Saída.'); return; }
+
+    const resumoBatidas = (manualE2 || manualS2)
+      ? `Entrada ${manualE1 || '--:--'} · Saída Almoço ${manualS1 || '--:--'} · Retorno Almoço ${manualE2 || '--:--'} · Saída ${manualS2 || '--:--'}`
+      : `Entrada ${manualE1 || '--:--'} · Saída ${manualS1 || '--:--'}`;
+
+    const sobrepondoWhatsapp = registroExistente?.origem === 'WHATSAPP';
+
+    if (sobrepondoWhatsapp) {
+      // O ledger via WhatsApp em si nunca é apagado (fica intacto para
+      // auditoria) — esta ação só corrige o retrato do dia usado no
+      // cálculo da folha, então pede uma confirmação à parte, mais explícita.
+      if (!confirm(
+        `⚠ Este dia tem batida confirmada via WhatsApp (ledger legal, nunca é apagado).\n\n` +
+        `Você está corrigindo apenas a versão usada no CÁLCULO DA FOLHA de ${manualFuncionario} em ${manualData.split('-').reverse().join('/')} — por exemplo, para remover uma batida a mais feita sem querer.\n\n` +
+        `O ledger original do WhatsApp permanece intacto para auditoria. Deseja continuar?`
+      )) return;
+    }
+
+    const avisoSobreposicao = registroExistente
+      ? `\n\n⚠ Já existe ponto lançado nesse dia (origem: ${registroExistente.origem}) — os valores acima vão SUBSTITUIR o que está gravado.`
+      : '';
+
+    if (!confirm(
+      `Lançar ponto de ${manualFuncionario} em ${manualData.split('-').reverse().join('/')}?\n\n${resumoBatidas}${avisoSobreposicao}`
+    )) return;
+
+    setLancandoManual(true);
+    try {
+      const res = await lancarPontoManualAction({
+        funcionarioNome: manualFuncionario,
+        dataRegistro: manualData,
+        entrada1: manualE1 || null,
+        saida1: manualS1 || null,
+        entrada2: manualE2 || null,
+        saida2: manualS2 || null,
+        usuarioNome: usuarioAtual,
+        confirmarSobreposicaoWhatsapp: sobrepondoWhatsapp
+      });
+      if (!res.ok) throw new Error(res.erro);
+
+      alert(sobrepondoWhatsapp
+        ? 'Ponto corrigido! O ledger original do WhatsApp continua intacto para auditoria — só o valor usado na folha foi ajustado.'
+        : 'Ponto lançado com sucesso!');
+      await verificarRegistroExistente(manualFuncionario, manualData);
+      setMesAnoSelecionado(manualData.slice(0, 7));
+      carregarAcessoEDados(manualData.slice(0, 7));
+    } catch (e: any) {
+      alert('Erro ao lançar o ponto: ' + e.message);
+    } finally {
+      setLancandoManual(false);
+    }
   };
 
   const resumoGeral = useMemo(() => {
@@ -845,6 +948,54 @@ export default function GestaoDePonto() {
                   <input type="file" accept=".csv" className="hidden" ref={abonoFileInputRef} onChange={handleAbonoUpload} />
                   <button onClick={() => abonoFileInputRef.current?.click()} disabled={isProcessing} className="w-full border-2 border-dashed border-green-600 text-green-600 font-black uppercase tracking-widest text-xs py-4 rounded-xl hover:bg-green-50 transition-colors disabled:opacity-50">
                     {isProcessing ? '⏳ Processando...' : '➕ ABONOS (AUSÊNCIAS)'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
+                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">Lançar Ponto Manual</h3>
+                <p className="text-xs text-[#64748B] mb-4">O RH pode lançar a batida de um dia direto por aqui, sem depender do CSV ou do WhatsApp.</p>
+                <div className="flex flex-col gap-2">
+                  <select value={manualFuncionario} onChange={e => setManualFuncionario(e.target.value)} className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]">
+                    <option value="">Selecione o funcionário...</option>
+                    {listaFuncionariosAtivos.map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                  <input type="date" value={manualData} onChange={e => setManualData(e.target.value)} className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]" />
+
+                  {verificandoExistente && (
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider">🔎 Verificando batidas já lançadas...</p>
+                  )}
+                  {!verificandoExistente && registroExistente === null && manualFuncionario && manualData && (
+                    <p className="text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 uppercase">✅ Nenhum ponto lançado neste dia ainda.</p>
+                  )}
+                  {!verificandoExistente && registroExistente && registroExistente.origem === 'WHATSAPP' && (
+                    <p className="text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 uppercase">⚠ Batida confirmada via WhatsApp (ledger legal, nunca é apagado). Editar aqui corrige só a versão usada no cálculo da folha — ex: remover uma batida a mais feita sem querer.</p>
+                  )}
+                  {!verificandoExistente && registroExistente && registroExistente.origem !== 'WHATSAPP' && (
+                    <p className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 uppercase">⚠ Já existe ponto lançado nesse dia (origem: {registroExistente.origem}). Campos pré-preenchidos abaixo — editar e salvar SUBSTITUI a batida atual.</p>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Entrada</label>
+                      <input type="time" value={manualE1} onChange={e => setManualE1(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Saída{(manualE2 || manualS2) ? ' (Almoço)' : ''}</label>
+                      <input type="time" value={manualS1} onChange={e => setManualS1(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Retorno Almoço</label>
+                      <input type="time" value={manualE2} onChange={e => setManualE2(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Saída</label>
+                      <input type="time" value={manualS2} onChange={e => setManualS2(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
+                    </div>
+                  </div>
+                  <p className="text-[9px] text-gray-400 font-bold uppercase">Deixe Retorno/Saída em branco para lançar só Entrada + Saída.</p>
+                  <button onClick={handleLancarPontoManual} disabled={lancandoManual} className="w-full bg-[#336699] hover:bg-[#284B8C] text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors disabled:opacity-50">
+                    {lancandoManual ? '⏳ Lançando...' : registroExistente ? '💾 SUBSTITUIR PONTO' : '💾 LANÇAR PONTO'}
                   </button>
                 </div>
               </div>

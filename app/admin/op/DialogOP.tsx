@@ -48,13 +48,16 @@ export function DialogOP({ dialog, onClose }: DialogOPProps) {
 
 // Botão "Link Assinatura" das tabelas de OP — antes era o mesmo bloco
 // (JSX + handler de clipboard) duplicado em "responsavel" e "financeiro".
+// Ícone-only (com tooltip) para caber lado a lado com os outros botões de
+// ação na mesma célula, em vez de empilhar botões de texto cheio.
 export function BotaoLinkAssinatura({ opId }: { opId: string }) {
   return (
     <button
       onClick={() => copiarLinkAssinatura(opId)}
-      className="w-full bg-[#E0F2FE] hover:bg-[#BAE6FD] border border-[#7DD3FC] text-[#0369A1] font-bold text-[9px] uppercase tracking-wider py-1.5 rounded transition-colors shadow-sm"
+      title="Link Assinatura"
+      className="w-8 h-8 flex items-center justify-center bg-[#E0F2FE] hover:bg-[#BAE6FD] border border-[#7DD3FC] text-[#0369A1] rounded transition-colors shadow-sm shrink-0"
     >
-      🔗 Link Assinatura
+      🔗
     </button>
   );
 }

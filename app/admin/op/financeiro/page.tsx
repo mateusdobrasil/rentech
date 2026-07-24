@@ -386,20 +386,20 @@ export default function PainelFinanceiro() {
         {/* Tabela de Dados */}
         <div className="px-4 md:px-8 pb-8 flex-grow overflow-hidden flex flex-col mt-2">
           <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto">
-            <table className="w-full text-left border-collapse min-w-[1200px]">
+            <table className="w-full text-left border-collapse min-w-[1000px]">
               <thead className="bg-[#F8FAFC] sticky top-0 z-10 shadow-sm">
                 <tr className="text-[#64748B] text-[10px] uppercase tracking-wider font-bold">
-                  <th className="p-4 border-b-2 border-[#E2E8F0] w-24">Data OP</th>
-                  <th className="p-4 border-b-2 border-[#E2E8F0] w-20">Nº OP</th>
-                  <th className="p-4 border-b-2 border-[#E2E8F0] min-w-[130px] max-w-[150px]">OS / Evento / Período</th>
-                  <th className="p-4 border-b-2 border-[#E2E8F0] w-32">Solicitante</th>
-                  <th className="p-4 border-b-2 border-[#E2E8F0] min-w-[120px] max-w-[140px]">Cliente</th>
-                  <th className="p-4 border-b-2 border-[#E2E8F0] min-w-[160px] max-w-[180px]">Descrição Resumida</th>
-                  <th className="p-4 border-b-2 border-[#E2E8F0] min-w-[140px] max-w-[160px]">Favorecido</th>
-                  <th className="p-4 border-b-2 border-[#E2E8F0] w-32">Valor Total</th>
-                  <th className="p-4 border-b-2 border-[#E2E8F0] w-28">Vencimento</th>
-                  <th className="p-4 border-b-2 border-[#E2E8F0] w-24">Status</th>
-                  <th className="p-4 border-b-2 border-[#E2E8F0] w-40 text-center">Ações</th>
+                  <th className="p-2.5 border-b-2 border-[#E2E8F0] w-20">Data OP</th>
+                  <th className="p-2.5 border-b-2 border-[#E2E8F0] w-16">Nº OP</th>
+                  <th className="p-2.5 border-b-2 border-[#E2E8F0] min-w-[120px] max-w-[135px]">OS / Evento / Período</th>
+                  <th className="p-2.5 border-b-2 border-[#E2E8F0] w-28">Solicitante</th>
+                  <th className="p-2.5 border-b-2 border-[#E2E8F0] min-w-[100px] max-w-[115px]">Cliente</th>
+                  <th className="p-2.5 border-b-2 border-[#E2E8F0] min-w-[130px] max-w-[150px]">Descrição Resumida</th>
+                  <th className="p-2.5 border-b-2 border-[#E2E8F0] min-w-[110px] max-w-[130px]">Favorecido</th>
+                  <th className="p-2.5 border-b-2 border-[#E2E8F0] w-24">Valor Total</th>
+                  <th className="p-2.5 border-b-2 border-[#E2E8F0] w-20">Vencimento</th>
+                  <th className="p-2.5 border-b-2 border-[#E2E8F0] w-20">Status</th>
+                  <th className="p-2.5 border-b-2 border-[#E2E8F0] w-32 text-center">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E2E8F0] text-xs">
@@ -412,60 +412,63 @@ export default function PainelFinanceiro() {
                     const statusAtual = op.status;
                     return (
                       <tr key={op.id} className="hover:bg-[#F8FAFC] transition-colors">
-                        <td className="p-4 font-semibold text-[#94A3B8] whitespace-nowrap">{formatarData(op.data_criacao)}</td>
-                        <td className="p-4 font-black text-[#0C1D4D]">#{op.numero_op}</td>
-                        <td className="p-4">
+                        <td className="p-2.5 font-semibold text-[#94A3B8] whitespace-nowrap">{formatarData(op.data_criacao)}</td>
+                        <td className="p-2.5 font-black text-[#0C1D4D]">#{op.numero_op}</td>
+                        <td className="p-2.5">
                           <div className="whitespace-nowrap mb-1">
                             <span className="bg-[#E0F2FE] text-[#0369A1] font-bold px-2 py-1 rounded-md text-xs mr-1.5 inline-block">{op.os_numero || 'S/N'}</span>
                             {op.file_url && <a href={op.file_url} target="_blank" rel="noreferrer" className="text-base hover:scale-110 transition-transform inline-block" title="Ver Comprovante">📎</a>}
                           </div>
-                          <div className="text-xs text-[#64748B] font-semibold truncate max-w-[140px]" title={op.os_evento}>{op.os_evento || '—'}</div>
-                          <div className="text-xs text-[#94A3B8] truncate max-w-[140px]" title={op.os_periodo}>{op.os_periodo || '—'}</div>
+                          <div className="text-xs text-[#64748B] font-semibold truncate max-w-[120px]" title={op.os_evento}>{op.os_evento || '—'}</div>
+                          <div className="text-xs text-[#94A3B8] truncate max-w-[120px]" title={op.os_periodo}>{op.os_periodo || '—'}</div>
                         </td>
-                        <td className="p-4 font-bold text-[#336699] truncate max-w-[120px]" title={op.responsavel_nome}>{op.responsavel_nome}</td>
-                        <td className="p-4 font-bold truncate max-w-[140px]" title={op.os_cliente}>{op.os_cliente}</td>
-                        <td className="p-4">
-                          <div className="truncate max-w-[180px] font-semibold text-[#64748B] mb-1">
+                        <td className="p-2.5 font-bold text-[#336699] truncate max-w-[110px]" title={op.responsavel_nome}>{op.responsavel_nome}</td>
+                        <td className="p-2.5 font-bold truncate max-w-[115px]" title={op.os_cliente}>{op.os_cliente}</td>
+                        <td className="p-2.5">
+                          <div className="truncate max-w-[150px] font-semibold text-[#64748B] mb-1">
                             {op.itens && op.itens.length > 0 ? op.itens[0].descricao : 'Sem descrição'}
                           </div>
                           <button onClick={() => setModalDetalhes({ open: true, op })} className="text-[9px] font-black uppercase tracking-wider text-[#336699] hover:underline">
                             Ver Detalhes ({op.itens?.length || 0})
                           </button>
                         </td>
-                        <td className="p-4 font-bold truncate max-w-[160px]" title={op.empresa_recebedora}>{op.empresa_recebedora}</td>
-                        <td className="p-4 font-black text-[#0C1D4D] whitespace-nowrap">{formatarMoeda(op.total_geral)}</td>
-                        <td className="p-4 font-bold text-red-500 whitespace-nowrap">{formatarData(op.data_vencimento)}</td>
-                        <td className="p-4">
+                        <td className="p-2.5 font-bold truncate max-w-[130px]" title={op.empresa_recebedora}>{op.empresa_recebedora}</td>
+                        <td className="p-2.5 font-black text-[#0C1D4D] whitespace-nowrap">{formatarMoeda(op.total_geral)}</td>
+                        <td className="p-2.5 font-bold text-red-500 whitespace-nowrap">{formatarData(op.data_vencimento)}</td>
+                        <td className="p-2.5">
                           <span className={`px-2 py-1 rounded-full text-[9px] font-black tracking-wider whitespace-nowrap ${statusAtual.includes('ASSINADO') ? 'bg-purple-100 text-purple-700 border border-purple-200' : statusAtual === 'PAGO' ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-amber-100 text-amber-700 border border-amber-200'}`}>
                             {statusAtual}
                           </span>
                         </td>
 
-                        {/* Ações Inteligentes e Modulares */}
-                        <td className="p-4 text-center space-y-1.5">
-                          {statusAtual !== 'PENDENTE' ? (
-                            <span className="block text-[10px] font-black text-green-600 uppercase tracking-widest bg-green-50 py-1.5 rounded">✅ Pago</span>
-                          ) : (
-                            <button onClick={() => confirmarBaixa(op.id, op.os_numero)} className="w-full bg-green-600 hover:bg-green-500 text-white font-bold text-[9px] uppercase tracking-wider py-1.5 rounded transition-colors shadow-sm">
-                              Baixar OP
+                        {/* Ações Inteligentes e Modulares — ícones lado a lado em vez de
+                            botões de texto empilhados, pra caber sem estourar a largura */}
+                        <td className="p-2.5">
+                          <div className="flex items-center justify-center gap-1 flex-wrap">
+                            {statusAtual !== 'PENDENTE' ? (
+                              <span title="Pago" className="w-8 h-8 flex items-center justify-center bg-green-50 text-green-600 rounded shrink-0">✅</span>
+                            ) : (
+                              <button onClick={() => confirmarBaixa(op.id, op.os_numero)} title="Baixar OP" className="w-8 h-8 flex items-center justify-center bg-green-600 hover:bg-green-500 text-white rounded transition-colors shadow-sm shrink-0">
+                                ✅
+                              </button>
+                            )}
+
+                            <button onClick={() => setModalRecibo({ open: true, op })} title="Gerar Recibo" className="w-8 h-8 flex items-center justify-center bg-white hover:bg-gray-50 border border-[#CBD5E1] text-[#0C1D4D] rounded transition-colors shadow-sm shrink-0">
+                              📄
                             </button>
-                          )}
 
-                          <button onClick={() => setModalRecibo({ open: true, op })} className="w-full bg-white hover:bg-gray-50 border border-[#CBD5E1] text-[#0C1D4D] font-bold text-[9px] uppercase tracking-wider py-1.5 rounded transition-colors shadow-sm">
-                            📄 Gerar Recibo
-                          </button>
+                            <BotaoLinkAssinatura opId={op.id} />
 
-                          <BotaoLinkAssinatura opId={op.id} />
+                            {op.recibo_url && (
+                              <a href={op.recibo_url} target="_blank" rel="noreferrer" title="Ver Assinatura" className="w-8 h-8 flex items-center justify-center bg-purple-100 hover:bg-purple-200 border border-purple-300 text-purple-700 rounded transition-colors shadow-sm shrink-0">
+                                👁️
+                              </a>
+                            )}
 
-                          {op.recibo_url && (
-                            <a href={op.recibo_url} target="_blank" rel="noreferrer" className="w-full block text-center bg-purple-100 hover:bg-purple-200 border border-purple-300 text-purple-700 font-bold text-[9px] uppercase tracking-wider py-1.5 rounded transition-colors shadow-sm">
-                              👁️ Ver Assinatura
-                            </a>
-                          )}
-
-                          <button onClick={() => dispararReenvio(op)} className="w-full bg-orange-50 hover:bg-orange-100 border border-orange-200 text-orange-600 font-bold text-[9px] uppercase tracking-wider py-1 rounded transition-colors">
-                            🔄 Reenviar
-                          </button>
+                            <button onClick={() => dispararReenvio(op)} title="Reenviar" className="w-8 h-8 flex items-center justify-center bg-orange-50 hover:bg-orange-100 border border-orange-200 text-orange-600 rounded transition-colors shrink-0">
+                              🔄
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );

@@ -1,36 +1,20 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { listarOPs, atualizarStatus, dispararEmailOP } from '../actions';
 import { registrarLogAuditoria } from '../../../actions';
-import { supabase } from '../../../lib/supabase'; 
 import { Analytics } from "@vercel/analytics/next";
 import logoColorido from '../../../../app/imgs/logo.png';
+import { useAcessoRota } from '../useAcessoRota';
+import { normalizarItensOP, ItemOPNormalizado } from '../utils';
+import { DialogOP, DialogOPState, BotaoLinkAssinatura } from '../DialogOP';
 
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  return 'USUARIO'; 
-};
-
-interface ItemOP {
-  descricao: string;
-  qtd: number;
-  valor_unitario: number;
-  total: number;
-  description?: string; 
-  quantity?: string | number; 
-}
+// Os itens em memória já chegam normalizados (ver normalizarItensOP) — não há
+// mais motivo para este tipo carregar os campos legados (description/quantity)
+// de OPs antigas, então reaproveitamos o mesmo tipo canônico de utils.ts.
+type ItemOP = ItemOPNormalizado;
 
 interface OP {
   id: string;
@@ -40,6 +24,8 @@ interface OP {
   natureza_pagamento: string;
   os_numero: string;
   os_cliente: string;
+  os_evento: string;
+  os_periodo: string;
   empresa_recebedora: string;
   cnpj_cpf_recebedora?: string;
   tipo_pagamento: string;
@@ -55,115 +41,48 @@ interface OP {
 
 export default function PainelFinanceiro() {
   const router = useRouter();
-  const pathname = usePathname();
 
-  // Estados de Segurança e Autenticação
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
-  const [usuarioNome, setUsuarioNome] = useState('Usuário');
-  
-  // Estados de Autenticação
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [emailUsuario, setEmailUsuario] = useState(''); 
+  // Sessão + permissão da rota, resolvidas pelo hook compartilhado do módulo.
+  const { authLoading, acessoNegado, perfil } = useAcessoRota('/admin/op/financeiro');
 
   // Estados de Dados
   const [ops, setOps] = useState<OP[]>([]);
   const [loading, setLoading] = useState(true);
-  
+
   // Estados de Filtro
   const [busca, setBusca] = useState('');
-  const [tipoFiltroData, setTipoFiltroData] = useState<'DIA' | 'MES' | 'ANO'>('MES'); 
+  const [tipoFiltroData, setTipoFiltroData] = useState<'DIA' | 'MES' | 'ANO'>('MES');
   const [filtroData, setFiltroData] = useState('');
   const [filtroResponsavel, setFiltroResponsavel] = useState('');
   const [filtroFavorecido, setFiltroFavorecido] = useState('');
 
   // Estados de UI (Modais)
   const [modalDetalhes, setModalDetalhes] = useState<{ open: boolean; op: OP | null }>({ open: false, op: null });
-  const [modalRecibo, setModalRecibo] = useState<{ open: boolean; op: OP | null }>({ open: false, op: null }); 
-  const [dialog, setDialog] = useState<{ open: boolean; type: 'loading' | 'confirm' | 'success' | 'error'; title: string; msg: string; onConfirm?: () => void }>({ 
-    open: false, type: 'loading', title: '', msg: '' 
-  });
+  const [modalRecibo, setModalRecibo] = useState<{ open: boolean; op: OP | null }>({ open: false, op: null });
+  const [dialog, setDialog] = useState<DialogOPState>({ open: false, type: 'loading', title: '', msg: '' });
 
-  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) { 
-        router.push('/login'); 
-        return; 
-      }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-      
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      // Consulta no banco de dados quem pode aceder a esta rota
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      // Normaliza o perfil logado e verifica contra o banco
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      // Aprovado
-      setUsuarioNome(perfil.nome || 'Usuário');
-      setUsuarioAtual(perfil.nome || 'Equipe Financeira');
-      setEmailUsuario(perfil.email || session.user.email || '');
-      setAuthLoading(false);
-      carregarDados();
-    }
-    
-    checkAuth();
-  }, [router, pathname]);
-
-  // 2. Busca os dados iniciais do banco
-  const carregarDados = async () => {
+  // Busca os dados iniciais do banco — só executa depois que o hook resolve
+  // sessão + permissão.
+  const carregarDados = async (tokenOverride?: string) => {
+    const token = tokenOverride || perfil?.accessToken;
+    if (!token) return;
     setLoading(true);
-    const res = await listarOPs('DIR', usuarioAtual);
+    const res = await listarOPs(token, '/admin/op/financeiro');
     if (res.success && res.data) {
-      const opsNormalizadas = res.data.map((op: any) => {
-        const itensCorrigidos = Array.isArray(op.itens) ? op.itens.map((it: any) => {
-          const quantidade = Number(it.qtd || it.quantity || 1);
-          const total = Number(it.total || 0);
-          const unitario = Number(it.valor_unitario || (total / quantidade) || 0);
-          
-          return {
-            descricao: it.descricao || it.description || '',
-            qtd: quantidade,
-            valor_unitario: unitario,
-            total: total
-          };
-        }) : [];
-
-        return { ...op, itens: itensCorrigidos };
-      });
-
+      const opsNormalizadas = res.data.map((op: any) => ({ ...op, itens: normalizarItensOP(op.itens) }));
       setOps(opsNormalizadas);
+    } else if (!res.success) {
+      // Antes uma falha aqui (sessão expirada, permissão negada etc.) ficava
+      // muda — a tela só mostrava a tabela vazia, indistinguível de realmente
+      // não haver OPs.
+      setDialog({ open: true, type: 'error', title: 'Erro ao Carregar', msg: res.message || 'Não foi possível carregar as Ordens de Pagamento.' });
     }
     setLoading(false);
   };
+
+  useEffect(() => {
+    if (!authLoading && perfil) carregarDados(perfil.accessToken);
+  }, [authLoading, perfil]);
 
   const responsaveisUnicos = useMemo(() => {
     const nomes = ops.map(op => (op.responsavel_nome || '').toUpperCase().trim()).filter(Boolean);
@@ -186,12 +105,14 @@ export default function PainelFinanceiro() {
   // Filtro Dinâmico Multi-Critérios
   const opsFiltradas = useMemo(() => {
     const termoBusca = busca.toLowerCase().trim();
-    
+
     return ops.filter(op => {
       const matchBusca = !termoBusca || [
         String(op.numero_op), // Adicionado número da OP na busca
         op.os_numero,
         op.os_cliente,
+        op.os_evento,
+        op.os_periodo,
         op.responsavel_nome,
         op.natureza_pagamento,
         op.empresa_recebedora
@@ -241,6 +162,7 @@ export default function PainelFinanceiro() {
 
   // Baixa de Pagamento
   const confirmarBaixa = (id: string, osNum: string) => {
+    if (!perfil) return;
     setDialog({
       open: true,
       type: 'confirm',
@@ -248,10 +170,10 @@ export default function PainelFinanceiro() {
       msg: `Confirma o pagamento e a baixa da OS ${osNum} no sistema?`,
       onConfirm: async () => {
         setDialog({ open: true, type: 'loading', title: 'Aguarde...', msg: 'Atualizando o banco de dados...' });
-        const res = await atualizarStatus(id, 'PAGO', usuarioAtual);
+        const res = await atualizarStatus(id, 'PAGO', perfil.accessToken);
         if (res.success) {
           await carregarDados();
-          setDialog({ ...dialog, open: false });
+          setDialog(d => ({ ...d, open: false }));
         } else {
           setDialog({ open: true, type: 'error', title: 'Erro', msg: res.message });
         }
@@ -260,18 +182,19 @@ export default function PainelFinanceiro() {
   };
 
   const dispararReenvio = (op: OP) => {
+    if (!perfil) return;
     setDialog({
       open: true,
       type: 'confirm',
       title: 'Reenviar E-mail',
-      msg: `Deseja enviar a OP ${op.os_numero || 'S/N'} para o seu e-mail (${emailUsuario}) e para o Financeiro?`,
+      msg: `Deseja enviar a OP ${op.os_numero || 'S/N'} para o seu e-mail (${perfil.email}) e para o Financeiro?`,
       onConfirm: async () => {
         setDialog({ open: true, type: 'loading', title: 'Enviando E-mail...', msg: 'Isso pode levar alguns segundos.' });
         try {
-          const res = await dispararEmailOP(op, emailUsuario);
+          const res = await dispararEmailOP(op.id, perfil.accessToken);
           if (res.success) {
             registrarLogAuditoria({
-              usuario_nome: usuarioAtual,
+              usuario_nome: perfil.nome,
               acao: 'REENVIO DE E-MAIL DA OP',
               setor: 'OP',
               equipamento_id: op.id,
@@ -296,7 +219,7 @@ export default function PainelFinanceiro() {
     );
   }
 
-  if (acessoNegado) {
+  if (acessoNegado || !perfil) {
     return (
       <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
         <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200">
@@ -324,7 +247,7 @@ export default function PainelFinanceiro() {
         <div className="text-right">
           <h1 className="text-3xl font-black uppercase tracking-wider">RECIBO</h1>
           <p className="text-lg font-bold text-gray-700">
-            Nº da OP: <span className="text-black">#{op.numero_op}</span> 
+            Nº da OP: <span className="text-black">#{op.numero_op}</span>
             <span className="text-sm font-normal ml-2">/ OS: {op.os_numero || 'S/N'}</span>
           </p>
         </div>
@@ -384,11 +307,11 @@ export default function PainelFinanceiro() {
       {/* Interface Admin (Escondida na hora de imprimir) */}
       <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-16 print:hidden">
         <Analytics />
-        
+
         {/* Hub Topo */}
         <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex-shrink-0 flex justify-between items-center shadow-sm">
           <p className="text-[#0369A1] font-medium text-sm">
-            💳 <strong>Olá, {usuarioAtual}</strong>. Bem-vindo ao painel financeiro de aprovação de OPs.
+            💳 <strong>Olá, {perfil.nome || 'Equipe Financeira'}</strong>. Bem-vindo ao painel financeiro de aprovação de OPs.
           </p>
           <button onClick={() => router.push('/admin/op')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
             ⬅ VOLTAR AO OP
@@ -419,7 +342,7 @@ export default function PainelFinanceiro() {
         <div className="px-4 md:px-8 py-2 flex-shrink-0">
           <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col lg:flex-row gap-3 items-center">
             <div className="flex-1 w-full">
-              <input type="text" placeholder="🔍 Busca livre (Nº OP, OS, Cliente, etc)..." className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0A2A4A] focus:border-[#336699] outline-none transition-all" value={busca} onChange={(e) => setBusca(e.target.value)} />
+              <input type="text" placeholder="🔍 Busca livre (Nº OP, OS, Cliente, Evento, Período, etc)..." className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0A2A4A] focus:border-[#336699] outline-none transition-all" value={busca} onChange={(e) => setBusca(e.target.value)} />
             </div>
 
             <div className="w-full lg:w-auto flex relative shadow-sm rounded-lg">
@@ -468,7 +391,7 @@ export default function PainelFinanceiro() {
                 <tr className="text-[#64748B] text-[10px] uppercase tracking-wider font-bold">
                   <th className="p-4 border-b-2 border-[#E2E8F0] w-24">Data OP</th>
                   <th className="p-4 border-b-2 border-[#E2E8F0] w-20">Nº OP</th>
-                  <th className="p-4 border-b-2 border-[#E2E8F0] w-28">OS / Anexo</th>
+                  <th className="p-4 border-b-2 border-[#E2E8F0] min-w-[130px] max-w-[150px]">OS / Evento / Período</th>
                   <th className="p-4 border-b-2 border-[#E2E8F0] w-32">Solicitante</th>
                   <th className="p-4 border-b-2 border-[#E2E8F0] min-w-[120px] max-w-[140px]">Cliente</th>
                   <th className="p-4 border-b-2 border-[#E2E8F0] min-w-[160px] max-w-[180px]">Descrição Resumida</th>
@@ -491,9 +414,13 @@ export default function PainelFinanceiro() {
                       <tr key={op.id} className="hover:bg-[#F8FAFC] transition-colors">
                         <td className="p-4 font-semibold text-[#94A3B8] whitespace-nowrap">{formatarData(op.data_criacao)}</td>
                         <td className="p-4 font-black text-[#0C1D4D]">#{op.numero_op}</td>
-                        <td className="p-4 whitespace-nowrap">
-                          <span className="bg-[#E0F2FE] text-[#0369A1] font-bold px-2 py-1 rounded-md text-[10px] mr-1.5 inline-block">{op.os_numero || 'S/N'}</span>
-                          {op.file_url && <a href={op.file_url} target="_blank" rel="noreferrer" className="text-base hover:scale-110 transition-transform inline-block" title="Ver Comprovante">📎</a>}
+                        <td className="p-4">
+                          <div className="whitespace-nowrap mb-1">
+                            <span className="bg-[#E0F2FE] text-[#0369A1] font-bold px-2 py-1 rounded-md text-xs mr-1.5 inline-block">{op.os_numero || 'S/N'}</span>
+                            {op.file_url && <a href={op.file_url} target="_blank" rel="noreferrer" className="text-base hover:scale-110 transition-transform inline-block" title="Ver Comprovante">📎</a>}
+                          </div>
+                          <div className="text-xs text-[#64748B] font-semibold truncate max-w-[140px]" title={op.os_evento}>{op.os_evento || '—'}</div>
+                          <div className="text-xs text-[#94A3B8] truncate max-w-[140px]" title={op.os_periodo}>{op.os_periodo || '—'}</div>
                         </td>
                         <td className="p-4 font-bold text-[#336699] truncate max-w-[120px]" title={op.responsavel_nome}>{op.responsavel_nome}</td>
                         <td className="p-4 font-bold truncate max-w-[140px]" title={op.os_cliente}>{op.os_cliente}</td>
@@ -513,7 +440,7 @@ export default function PainelFinanceiro() {
                             {statusAtual}
                           </span>
                         </td>
-                        
+
                         {/* Ações Inteligentes e Modulares */}
                         <td className="p-4 text-center space-y-1.5">
                           {statusAtual !== 'PENDENTE' ? (
@@ -523,21 +450,12 @@ export default function PainelFinanceiro() {
                               Baixar OP
                             </button>
                           )}
-                          
+
                           <button onClick={() => setModalRecibo({ open: true, op })} className="w-full bg-white hover:bg-gray-50 border border-[#CBD5E1] text-[#0C1D4D] font-bold text-[9px] uppercase tracking-wider py-1.5 rounded transition-colors shadow-sm">
                             📄 Gerar Recibo
                           </button>
 
-                          <button 
-                            onClick={() => {
-                              const link = `${window.location.origin}/recibo/${op.id}`;
-                              navigator.clipboard.writeText(`Olá! Confirme o recebimento do seu pagamento assinando o recibo digital da Rentech pelo telemóvel aqui: ${link}`);
-                              alert('Link de assinatura digital copiado! Pronto para enviar no WhatsApp.');
-                            }} 
-                            className="w-full bg-[#E0F2FE] hover:bg-[#BAE6FD] border border-[#7DD3FC] text-[#0369A1] font-bold text-[9px] uppercase tracking-wider py-1.5 rounded transition-colors shadow-sm"
-                          >
-                            🔗 Link Assinatura
-                          </button>
+                          <BotaoLinkAssinatura opId={op.id} />
 
                           {op.recibo_url && (
                             <a href={op.recibo_url} target="_blank" rel="noreferrer" className="w-full block text-center bg-purple-100 hover:bg-purple-200 border border-purple-300 text-purple-700 font-bold text-[9px] uppercase tracking-wider py-1.5 rounded transition-colors shadow-sm">
@@ -614,30 +532,7 @@ export default function PainelFinanceiro() {
           </div>
         )}
 
-        {/* Diálogos Globais */}
-        {dialog.open && (
-          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div className="bg-white p-8 rounded-2xl shadow-2xl text-center max-w-sm w-full mx-4 transform transition-all">
-              <div className="text-5xl mb-4">
-                {dialog.type === 'loading' ? '⏳' : dialog.type === 'success' ? '✅' : dialog.type === 'error' ? '❌' : '❓'}
-              </div>
-              <h3 className={`text-xl font-black uppercase tracking-wider mb-2 ${dialog.type === 'error' ? 'text-red-600' : 'text-[#0C1D4D]'}`}>
-                {dialog.title}
-              </h3>
-              <p className="text-sm text-[#64748B] mb-8 font-medium">{dialog.msg}</p>
-              <div className="flex gap-3 justify-center">
-                {dialog.type === 'confirm' ? (
-                  <>
-                    <button onClick={() => setDialog({ ...dialog, open: false })} className="flex-1 py-3 bg-[#F0F4F8] text-[#64748B] font-bold text-xs uppercase tracking-wider rounded-lg hover:bg-[#E2E8F0]">Voltar</button>
-                    <button onClick={dialog.onConfirm} className="flex-1 py-3 bg-[#0C1D4D] text-white font-bold text-xs uppercase tracking-wider rounded-lg hover:bg-[#284B8C] shadow-lg">Sim, Confirmar</button>
-                  </>
-                ) : dialog.type !== 'loading' ? (
-                  <button onClick={() => setDialog({ ...dialog, open: false })} className={`w-full py-3 text-white font-bold text-xs uppercase tracking-wider rounded-lg ${dialog.type === 'error' ? 'bg-red-600' : 'bg-[#0C1D4D]'}`}>OK, Entendido</button>
-                ) : null}
-              </div>
-            </div>
-          </div>
-        )}
+        <DialogOP dialog={dialog} onClose={() => setDialog(d => ({ ...d, open: false }))} />
       </div>
 
       {/* Visão de Impressão (Fica ativa estritamente na folha do papel) */}

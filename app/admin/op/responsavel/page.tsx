@@ -1,34 +1,18 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { listarOPs, atualizarOP, dispararEmailOP } from '../actions';
 import { registrarLogAuditoria } from '../../../actions';
-import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next"
+import { useAcessoRota } from '../useAcessoRota';
+import { normalizarItensOP, ItemOPNormalizado } from '../utils';
+import { DialogOP, DialogOPState, BotaoLinkAssinatura } from '../DialogOP';
 
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  return 'USUARIO'; 
-};
-
-interface ItemOP {
-  descricao: string;
-  qtd: number;
-  valor_unitario: number;
-  total: number;
-  description?: string;
-  quantity?: string | number;
-}
+// Os itens em memória já chegam normalizados (ver normalizarItensOP) — não há
+// mais motivo para este tipo carregar os campos legados (description/quantity)
+// de OPs antigas, então reaproveitamos o mesmo tipo canônico de utils.ts.
+type ItemOP = ItemOPNormalizado;
 
 interface OP {
   id: string;
@@ -54,17 +38,9 @@ interface OP {
 
 export default function PainelResponsavel() {
   const router = useRouter();
-  const pathname = usePathname();
 
-  // Estados de Segurança e Autenticação
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
-  const [usuarioNome, setUsuarioNome] = useState('Usuário');
-
-  // Estados de Autenticação
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [usuarioEmail, setUsuarioEmail] = useState('');
-  const [nivelAcesso, setNivelAcesso] = useState<'DIR' | 'USU'>('USU');
+  // Sessão + permissão da rota, resolvidas pelo hook compartilhado do módulo.
+  const { authLoading, acessoNegado, perfil } = useAcessoRota('/admin/op/responsavel');
 
   // Estados Principais
   const [ops, setOps] = useState<OP[]>([]);
@@ -78,111 +54,29 @@ export default function PainelResponsavel() {
   // Estados de Modais
   const [modalDetalhes, setModalDetalhes] = useState<{ open: boolean; op: OP | null }>({ open: false, op: null });
   const [modalEdit, setModalEdit] = useState<{ open: boolean; op: Partial<OP> | null }>({ open: false, op: null });
-  const [dialog, setDialog] = useState<{ open: boolean; type: 'loading' | 'confirm' | 'success' | 'error'; title: string; msg: string; onConfirm?: () => void }>({ open: false, type: 'loading', title: '', msg: '' });
+  const [dialog, setDialog] = useState<DialogOPState>({ open: false, type: 'loading', title: '', msg: '' });
 
-  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) { 
-        router.push('/login'); 
-        return; 
-      }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-      
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      // Consulta no banco de dados quem pode aceder a esta rota
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      // Normaliza o perfil logado e verifica contra o banco
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-      
-      
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      // Aprovado
-      setUsuarioNome(perfil.nome || 'Usuário');
-      setAuthLoading(false);
-      carregarDados();
-    }
-    
-    checkAuth();
-  }, [router, pathname]);
-
-  // 1. Autenticação
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.push('/login'); return; }
-
-      const { data: perfil } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-
-      if (perfil) {
-        setUsuarioAtual(perfil.nome || 'Usuário');
-        setUsuarioEmail(session.user.email || '');
-        const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
-        const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
-        setNivelAcesso(cargosAltaGestao.includes(permissaoBanco) ? 'DIR' : 'USU');
-      } else {
-        setUsuarioAtual(session.user.email?.split('@')[0] || 'Usuário');
-        setUsuarioEmail(session.user.email || '');
-      }
-      setAuthLoading(false);
-    }
-    checkAuth();
-  }, [router]);
-
-  // 2. Busca de dados
-  const carregarDados = async () => {
-    if (!usuarioAtual) return;
+  // Busca de dados — só executa depois que o hook resolve sessão + permissão.
+  const carregarDados = async (tokenOverride?: string) => {
+    const token = tokenOverride || perfil?.accessToken;
+    if (!token) return;
     setLoading(true);
-    const res = await listarOPs(nivelAcesso, usuarioAtual);
+    const res = await listarOPs(token, '/admin/op/responsavel');
     if (res.success && res.data) {
-      const opsNormalizadas = res.data.map((op: any) => {
-        const itensCorrigidos = Array.isArray(op.itens) ? op.itens.map((it: any) => {
-          const quantidade = Number(it.qtd || it.quantity || 1);
-          const total = Number(it.total || 0);
-          const unitario = Number(it.valor_unitario || (total / quantidade) || 0);
-          return { descricao: it.descricao || it.description || '', qtd: quantidade, valor_unitario: unitario, total };
-        }) : [];
-        return { ...op, itens: itensCorrigidos };
-      });
+      const opsNormalizadas = res.data.map((op: any) => ({ ...op, itens: normalizarItensOP(op.itens) }));
       setOps(opsNormalizadas);
+    } else if (!res.success) {
+      // Antes uma falha aqui (sessão expirada, permissão negada etc.) ficava
+      // muda — a tela só mostrava "Nenhuma OP encontrada", indistinguível de
+      // realmente não haver OPs.
+      setDialog({ open: true, type: 'error', title: 'Erro ao Carregar', msg: res.message || 'Não foi possível carregar as suas Ordens de Pagamento.' });
     }
     setLoading(false);
   };
 
   useEffect(() => {
-    if (!authLoading && usuarioAtual) carregarDados();
-  }, [authLoading, usuarioAtual, nivelAcesso]);
+    if (!authLoading && perfil) carregarDados(perfil.accessToken);
+  }, [authLoading, perfil]);
 
   // Listas únicas para dropdowns
   const responsaveisUnicos = useMemo(() => {
@@ -202,12 +96,13 @@ export default function PainelResponsavel() {
       const matchBusca = !termo || [
         String(op.numero_op),
         op.os_numero, op.os_cliente, op.responsavel_nome,
+        op.os_evento, op.os_periodo,
         op.natureza_pagamento, op.empresa_recebedora, op.status,
       ].some((campo) => (campo || '').toLowerCase().includes(termo));
 
       const nomeResponsavelLimpo = (op.responsavel_nome || '').toUpperCase().trim();
       const matchResponsavel = !filtroResponsavel || nomeResponsavelLimpo === filtroResponsavel;
-      
+
       const nomeClienteLimpo = (op.os_cliente || '').toUpperCase().trim();
       const matchCliente = !filtroCliente || nomeClienteLimpo === filtroCliente;
 
@@ -265,11 +160,16 @@ export default function PainelResponsavel() {
   , [modalEdit.op?.itens]);
 
   const salvarEdicao = async () => {
-    if (!modalEdit.op?.id) return;
+    if (!modalEdit.op?.id || !perfil) return;
+    // Grava só os campos canônicos (descricao/qtd/valor_unitario/total) — os
+    // nomes legados em inglês (description/quantity) de OPs antigas não
+    // precisam mais ser replicados a cada edição; normalizarItensOP já sabe
+    // ler ambos os formatos na leitura.
     const itensValidos = modalEdit.op.itens?.filter(i => i.descricao.trim() !== '' && i.qtd > 0).map(i => ({
-      descricao: i.descricao, description: i.descricao,
-      qtd: i.qtd, quantity: String(i.qtd),
-      valor_unitario: i.valor_unitario, total: i.total,
+      descricao: i.descricao,
+      qtd: i.qtd,
+      valor_unitario: i.valor_unitario,
+      total: i.total,
     }));
     if (!itensValidos || itensValidos.length === 0) {
       setDialog({ open: true, type: 'error', title: 'Atenção', msg: 'A OP precisa ter pelo menos um item válido com quantidade e valor.' });
@@ -283,7 +183,7 @@ export default function PainelResponsavel() {
       dados_pagamento: modalEdit.op.dados_pagamento, data_vencimento: modalEdit.op.data_vencimento,
       observacao: modalEdit.op.observacao, itens: itensValidos, total_geral: totalEdit,
     };
-    const res = await atualizarOP(modalEdit.op.id, payloadAtualizacao, usuarioAtual);
+    const res = await atualizarOP(modalEdit.op.id, payloadAtualizacao, perfil.accessToken);
     if (res.success) {
       setModalEdit({ open: false, op: null });
       setDialog({ open: true, type: 'success', title: 'Concluído!', msg: 'Ordem de Pagamento atualizada com sucesso.' });
@@ -294,33 +194,45 @@ export default function PainelResponsavel() {
   };
 
   const solicitarCopia = async (op: OP) => {
+    if (!perfil) return;
     setDialog({ open: true, type: 'loading', title: 'Enviando...', msg: 'Enviando cópia para o seu e-mail.' });
-    const emailDestino = (op as any).responsavel_email || usuarioEmail;
-    
-    if (!emailDestino) {
-      setDialog({ open: true, type: 'error', title: 'Erro', msg: 'Não foi possível identificar o e-mail de destino.' });
-      return;
-    }
 
-    const res = await dispararEmailOP(op, emailDestino, true);
+    // O destinatário agora é sempre decidido no servidor (e-mail do usuário
+    // autenticado que fez a chamada) — nunca de um valor vindo do cliente.
+    const res = await dispararEmailOP(op.id, perfil.accessToken, true);
     if (res.success) {
       registrarLogAuditoria({
-        usuario_nome: usuarioAtual,
+        usuario_nome: perfil.nome,
         acao: 'SOLICITOU CÓPIA DA OP POR E-MAIL',
         setor: 'OP',
         equipamento_id: op.id,
         equipamento_nome: `OP #${op.numero_op} — OS ${op.os_numero || 'S/N'}`,
       });
-      setDialog({ open: true, type: 'success', title: 'Cópia Enviada', msg: `A cópia foi enviada para ${emailDestino}.` });
+      setDialog({ open: true, type: 'success', title: 'Cópia Enviada', msg: `A cópia foi enviada para ${perfil.email || 'o seu e-mail cadastrado'}.` });
     } else {
       setDialog({ open: true, type: 'error', title: 'Erro', msg: res.message || 'Falha ao enviar e-mail.' });
     }
   };
 
   if (authLoading) {
-    return ( 
+    return (
       <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center pt-16">
         <div className="w-10 h-10 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin shadow-sm"></div>
+      </div>
+    );
+  }
+
+  if (acessoNegado || !perfil) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200">
+          <div className="text-5xl mb-4">⛔</div>
+          <h2 className="text-xl font-black text-red-600 uppercase tracking-wider mb-2">Acesso Restrito</h2>
+          <p className="text-sm text-gray-500 mb-6">Você não possui permissão para acessar o painel de Minhas OPs.</p>
+          <button onClick={() => router.push('/admin')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
+            Voltar ao Menu Principal
+          </button>
+        </div>
       </div>
     );
   }
@@ -332,8 +244,8 @@ export default function PainelResponsavel() {
       {/* HEADER */}
       <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex-shrink-0 flex justify-between items-center shadow-sm">
         <p className="text-[#0369A1] font-medium text-sm">
-          👤 <strong>Olá, {usuarioAtual}</strong>.{' '}
-          {nivelAcesso === 'DIR'
+          👤 <strong>Olá, {perfil.nome || 'Usuário'}</strong>.{' '}
+          {perfil.altaGestao
             ? 'Você tem visão administrativa sobre todas as OPs do sistema.'
             : 'Estas são as solicitações sob sua responsabilidade.'}
         </p>
@@ -356,7 +268,7 @@ export default function PainelResponsavel() {
             </span>
             <input
               type="text"
-              placeholder="Buscar por Nº da OP, OS, cliente, natureza..."
+              placeholder="Buscar por Nº da OP, OS, cliente, evento, período, natureza..."
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
               className="w-full pl-9 pr-4 py-2.5 border border-[#CBD5E1] rounded-lg text-sm outline-none focus:border-[#336699] focus:ring-1 focus:ring-[#336699]/30 transition-all placeholder:text-[#94A3B8]"
@@ -409,7 +321,7 @@ export default function PainelResponsavel() {
               <tr className="text-[#64748B] text-[10px] uppercase tracking-wider font-bold">
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-24">Data OP</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-20">Nº OP</th>
-                <th className="p-4 border-b-2 border-[#E2E8F0] w-24">OS</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] min-w-[130px] max-w-[150px]">OS / Evento / Período</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-32">Responsável</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] min-w-[120px] max-w-[150px]">Cliente</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] min-w-[150px] max-w-[180px]">Natureza / Descrição</th>
@@ -440,7 +352,11 @@ export default function PainelResponsavel() {
                     <tr key={op.id} className="hover:bg-[#F8FAFC] transition-colors">
                       <td className="p-4 font-semibold text-[#94A3B8] whitespace-nowrap">{formatarData(op.data_criacao)}</td>
                       <td className="p-4 font-black text-[#0C1D4D]">#{op.numero_op}</td>
-                      <td className="p-4"><span className="bg-[#E0F2FE] text-[#0369A1] font-bold px-2 py-1 rounded-md text-[10px] whitespace-nowrap">{op.os_numero || 'S/N'}</span></td>
+                      <td className="p-4">
+                        <span className="bg-[#E0F2FE] text-[#0369A1] font-bold px-2 py-1 rounded-md text-xs whitespace-nowrap inline-block mb-1">{op.os_numero || 'S/N'}</span>
+                        <div className="text-xs text-[#64748B] font-semibold truncate max-w-[140px]" title={op.os_evento}>{op.os_evento || '—'}</div>
+                        <div className="text-xs text-[#94A3B8] truncate max-w-[140px]" title={op.os_periodo}>{op.os_periodo || '—'}</div>
+                      </td>
                       <td className="p-4 font-bold text-[#336699] truncate max-w-[120px]" title={op.responsavel_nome}>{op.responsavel_nome}</td>
                       <td className="p-4 font-bold truncate max-w-[150px]" title={op.os_cliente}>{op.os_cliente}</td>
                       <td className="p-4">
@@ -462,17 +378,8 @@ export default function PainelResponsavel() {
                         >
                           ✏️ Editar
                         </button>
-                        
-                        <button 
-                          onClick={() => {
-                            const link = `${window.location.origin}/recibo/${op.id}`;
-                            navigator.clipboard.writeText(`Olá! Confirme o recebimento do seu pagamento assinando o recibo digital da Rentech pelo telemóvel aqui: ${link}`);
-                            alert('Link de assinatura digital copiado! Pronto para enviar no WhatsApp.');
-                          }} 
-                          className="w-full bg-[#E0F2FE] hover:bg-[#BAE6FD] border border-[#7DD3FC] text-[#0369A1] font-bold text-[9px] uppercase tracking-wider py-1.5 rounded transition-colors shadow-sm"
-                        >
-                          🔗 Link Assinatura
-                        </button>
+
+                        <BotaoLinkAssinatura opId={op.id} />
 
                         {op.recibo_url && (
                           <a href={op.recibo_url} target="_blank" rel="noreferrer" className="w-full block text-center bg-purple-100 hover:bg-purple-200 border border-purple-300 text-purple-700 font-bold text-[9px] uppercase tracking-wider py-1.5 rounded transition-colors shadow-sm">
@@ -600,30 +507,7 @@ export default function PainelResponsavel() {
         </div>
       )}
 
-      {/* DIALOG */}
-      {dialog.open && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white p-8 rounded-2xl shadow-2xl text-center max-w-sm w-full mx-4">
-            <div className="text-5xl mb-4">
-              {dialog.type === 'loading' ? '⏳' : dialog.type === 'success' ? '✅' : dialog.type === 'error' ? '❌' : '❓'}
-            </div>
-            <h3 className={`text-xl font-black uppercase tracking-wider mb-2 ${dialog.type === 'error' ? 'text-red-600' : 'text-[#0C1D4D]'}`}>
-              {dialog.title}
-            </h3>
-            <p className="text-sm text-[#64748B] mb-8 font-medium">{dialog.msg}</p>
-            <div className="flex gap-3 justify-center">
-              {dialog.type === 'confirm' ? (
-                <>
-                  <button onClick={() => setDialog({ ...dialog, open: false })} className="flex-1 py-3 bg-[#F0F4F8] text-[#64748B] font-bold text-xs uppercase rounded-lg">Voltar</button>
-                  <button onClick={dialog.onConfirm} className="flex-1 py-3 bg-[#0C1D4D] text-white font-bold text-xs uppercase rounded-lg shadow-lg">Confirmar</button>
-                </>
-              ) : dialog.type !== 'loading' ? (
-                <button onClick={() => setDialog({ ...dialog, open: false })} className="w-full py-3 bg-[#0C1D4D] text-white font-bold text-xs uppercase rounded-lg shadow-lg">OK, Entendido</button>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      )}
+      <DialogOP dialog={dialog} onClose={() => setDialog({ ...dialog, open: false })} />
 
     </div>
   );

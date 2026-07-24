@@ -2,25 +2,12 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import Image from 'next/image';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import logoColorido from '../../../../app/imgs/logo.png';
-import { criarOP, NovaOPData } from '../actions'; 
+import { criarOP, NovaOPData } from '../actions';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  return 'USUARIO'; 
-};
+import { useAcessoRota } from '../useAcessoRota';
 
 interface ItemOP {
   id: number;
@@ -43,19 +30,16 @@ interface FreelancerBusca {
 
 export default function NovaOrdemPagamento() {
   const router = useRouter();
-  const pathname = usePathname();
-  
-  // Estados de Segurança e Autenticação
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
-  const [usuarioNome, setUsuarioNome] = useState('Usuário');
+
+  // Sessão + permissão da rota, resolvidas pelo hook compartilhado do módulo.
+  const { authLoading, acessoNegado, perfil } = useAcessoRota('/admin/op/nova');
 
   const [loading, setLoading] = useState(false);
   const [modal, setModal] = useState<{ open: boolean; success: boolean; msg: string; title: string }>({ open: false, success: false, msg: '', title: '' });
 
   // Estado dos Dados Pessoais / Projeto
-  const [responsavelNome, setResponsavelNome] = useState(''); 
-  const [responsavelEmail, setResponsavelEmail] = useState(''); 
+  const [responsavelNome, setResponsavelNome] = useState('');
+  const [responsavelEmail, setResponsavelEmail] = useState('');
   const [carregandoUsuario, setCarregandoUsuario] = useState(true);
   const [natureza, setNatureza] = useState('SUBLOCAÇÃO');
   const [osNum, setOsNum] = useState('');
@@ -90,62 +74,18 @@ export default function NovaOrdemPagamento() {
     Array.from({ length: 3 }, (_, i) => ({ id: i, descricao: '', qtd: 0, valorUnitario: 0 }))
   );
 
-  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
+  // Deriva os dados de exibição do responsável a partir do perfil já
+  // validado pelo hook (nome cadastrado > nome dos metadados de auth > nome
+  // "bonito" extraído do e-mail).
   useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) { 
-        router.push('/login'); 
-        return; 
-      }
+    if (!perfil) return;
 
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-      
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      // Consulta no banco de dados quem pode aceder a esta rota
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      // Normaliza o perfil logado e verifica contra o banco
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      // Aprovado
-      setUsuarioNome(perfil.nome || 'Usuário');
-      setResponsavelEmail(session.user.email ?? '');
-      const metadados = session.user.user_metadata ?? {};
-      const nomeMetadados = metadados.full_name || metadados.nome || metadados.name;
-      const nome = perfil.nome || nomeMetadados || (session.user.email ? session.user.email.split('@')[0].replace(/[._-]/g, ' ') : '');
-      setResponsavelNome((nome as string).toUpperCase());
-      setCarregandoUsuario(false);
-      setAuthLoading(false);
-    }
-
-    checkAuth();
-  }, [router, pathname]);
+    setResponsavelEmail(perfil.email);
+    const nomeMetadados = perfil.userMetadata.full_name || perfil.userMetadata.nome || perfil.userMetadata.name;
+    const nome = perfil.nome || nomeMetadados || (perfil.email ? perfil.email.split('@')[0].replace(/[._-]/g, ' ') : '');
+    setResponsavelNome((nome as string).toUpperCase());
+    setCarregandoUsuario(false);
+  }, [perfil]);
 
 
 
@@ -318,7 +258,6 @@ export default function NovaOrdemPagamento() {
       empresa_recebedora: empresaRecebedora.toUpperCase(),
       cnpj_cpf_recebedora: cnpjCpf,
       endereco_recebedora: endereco.toUpperCase(),
-      telefone_recebedora: '', 
       tipo_pagamento: tipoPagamento,
       chave_pix: tipoPagamento === 'PIX' ? chavePix : '',
       dados_pagamento: dadosPagamento, 
@@ -329,7 +268,7 @@ export default function NovaOrdemPagamento() {
       file_url: urlFinalAnexo 
     };
 
-    const resposta = await criarOP(payload);
+    const resposta = await criarOP(payload, perfil?.accessToken || '');
 
     if (resposta.success) {
       setModal({ open: true, success: true, title: 'Sucesso!', msg: 'A Ordem de Pagamento foi registrada e enviada ao Financeiro.' });

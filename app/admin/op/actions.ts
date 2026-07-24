@@ -1,11 +1,13 @@
 "use server";
 
 import { createClient } from '@supabase/supabase-js';
-import { supabase } from '../../lib/supabase';
 import { registrarLogAuditoria } from '../../actions';
 import { revalidatePath } from 'next/cache';
 import nodemailer from 'nodemailer';
 import { dispararAutomacaoWhatsApp } from '../../lib/automacoes';
+import { normalizarPermissao, ehAltaGestaoOP } from '../../lib/permissoes';
+import { gerarHtmlEmailOP } from './emailTemplate';
+import { ItemOPNormalizado, validarNovaOP, validarItensOP } from './utils';
 
 // ============================================================================
 // CLIENTE ADMIN: IGNORA RLS PARA OPERAÇÕES DO SERVIDOR
@@ -28,23 +30,120 @@ export interface NovaOPData {
   empresa_recebedora: string;
   cnpj_cpf_recebedora: string;
   endereco_recebedora: string;
-  telefone_recebedora: string;
+  // Nenhuma tela do módulo coleta este dado hoje — opcional para não fingir
+  // uma obrigatoriedade que não existe no formulário.
+  telefone_recebedora?: string;
   tipo_pagamento: string;
   chave_pix: string;
   dados_pagamento: string;
-  itens: any[]; 
+  itens: ItemOPNormalizado[];
   total_geral: number;
   data_vencimento: string; // YYYY-MM-DD
   observacao: string;
   file_url: string;
 }
 
-// 1. Criar Nova OP (Usa supabaseAdmin para garantir a gravação)
-export async function criarOP(data: NovaOPData) {
+// ============================================================================
+// VALIDAÇÃO DE SESSÃO E PERMISSÃO — SEMPRE NO SERVIDOR
+// ----------------------------------------------------------------------------
+// Antes, cada Server Action confiava cegamente em parâmetros vindos do cliente
+// (nivelAcesso, usuarioAtual, usuarioAlteracao...) para decidir o que mostrar
+// ou quem "fez" a ação. Como Server Actions são endpoints HTTP de verdade, dava
+// para chamá-las diretamente pulando toda a checagem de permissão que só
+// existia na tela (useEffect). Agora cada action abaixo recebe o access_token
+// da sessão Supabase do chamador e revalida, aqui no servidor, contra a mesma
+// tabela folha_paginas_permissoes que já controlava o acesso às páginas.
+// ============================================================================
+interface PerfilValidado {
+  id: string;
+  nome: string;
+  email: string;
+  permissaoBruta: string;
+  permissaoNormalizada: string;
+}
+
+async function obterPerfilValidado(accessToken: string): Promise<PerfilValidado | null> {
+  if (!accessToken) return null;
+
+  const { data: userData, error: userError } = await supabaseAdmin.auth.getUser(accessToken);
+  if (userError || !userData?.user) return null;
+
+  // select('*') de propósito: o resto do app nunca lista colunas específicas
+  // aqui, e sim acessa perfil.permissao / perfil.nivel como propriedades
+  // opcionais do objeto retornado. Nomear as colunas explicitamente quebra a
+  // consulta inteira (erro do Postgrest) se alguma delas não existir na tabela
+  // em algum ambiente — e como este é o único perfil de acesso usado por TODA
+  // Server Action do módulo, isso derruba a leitura/gravação de OPs inteira
+  // silenciosamente (a action só retorna { success: false }, sem aviso na UI).
+  const { data: perfil, error: perfilError } = await supabaseAdmin
+    .from('perfis_usuarios')
+    .select('*')
+    .eq('id', userData.user.id)
+    .single();
+
+  if (perfilError || !perfil) return null;
+
+  const permissaoBruta = perfil.permissao || perfil.nivel || '';
+  return {
+    id: userData.user.id,
+    nome: (perfil.nome || userData.user.email || 'Usuário') as string,
+    email: (perfil.email || userData.user.email || '') as string,
+    permissaoBruta,
+    permissaoNormalizada: normalizarPermissao(permissaoBruta),
+  };
+}
+
+async function possuiAcessoRota(permissaoNormalizada: string, rota: string): Promise<boolean> {
+  const { data } = await supabaseAdmin
+    .from('folha_paginas_permissoes')
+    .select('permissoes_permitidas')
+    .eq('endereco_route', rota)
+    .single();
+
+  return ((data?.permissoes_permitidas as string[]) || []).includes(permissaoNormalizada);
+}
+
+type ResultadoAcesso =
+  | { ok: true; perfil: PerfilValidado }
+  | { ok: false; message: string };
+
+async function validarAcesso(accessToken: string, rota: string): Promise<ResultadoAcesso> {
+  const perfil = await obterPerfilValidado(accessToken);
+  if (!perfil) return { ok: false, message: 'Sessão inválida ou expirada. Faça login novamente.' };
+
+  const autorizado = await possuiAcessoRota(perfil.permissaoNormalizada, rota);
+  if (!autorizado) return { ok: false, message: 'Você não tem permissão para executar esta ação.' };
+
+  return { ok: true, perfil };
+}
+
+// 1. Criar Nova OP (exige acesso à rota /admin/op/nova)
+export async function criarOP(data: NovaOPData, accessToken: string) {
+  const acesso = await validarAcesso(accessToken, '/admin/op/nova');
+  if (!acesso.ok) return { success: false, message: acesso.message };
+  const { perfil } = acesso;
+
+  // A validação no formulário (nova/page.tsx) já barra a maioria destes casos,
+  // mas como a action é um endpoint HTTP de verdade, precisa revalidar aqui —
+  // senão uma chamada direta, sem passar pela tela, grava OPs com itens vazios,
+  // valores inválidos ou sem data de vencimento.
+  const erroValidacao = validarNovaOP(data);
+  if (erroValidacao) return { success: false, message: erroValidacao };
+
   try {
+    // O solicitante vem sempre do perfil validado no servidor — nunca do que o
+    // cliente mandar no payload — para impedir que alguém crie uma OP em nome
+    // de outra pessoa manipulando a chamada.
+    const payload: NovaOPData = {
+      ...data,
+      responsavel_nome: perfil.nome.toUpperCase(),
+      responsavel_email: perfil.email,
+      telefone_recebedora: data.telefone_recebedora || '',
+    };
+
     const { data: novaOp, error } = await supabaseAdmin
       .from('ordens_pagamento')
-      .insert([data])
+      .insert([payload])
       .select('id, numero_op')
       .single();
 
@@ -53,23 +152,23 @@ export async function criarOP(data: NovaOPData) {
     // Registra a criação no histórico de auditoria
     await supabaseAdmin.from('historico_op').insert([{
       op_id: novaOp.id,
-      usuario_nome: data.responsavel_nome,
+      usuario_nome: payload.responsavel_nome,
       acao: 'CRIOU OP'
     }]);
 
     registrarLogAuditoria({
-      usuario_nome: data.responsavel_nome,
+      usuario_nome: payload.responsavel_nome,
       acao: 'CRIOU OP',
       setor: 'OP',
       equipamento_id: novaOp.id,
-      equipamento_nome: `OS ${data.os_numero || 'S/N'} — ${data.empresa_recebedora}`,
+      equipamento_nome: `OS ${payload.os_numero || 'S/N'} — ${payload.empresa_recebedora}`,
     });
 
     // =========================================================
     // DISPARO AUTOMÁTICO DE E-MAIL NA CRIAÇÃO
     // =========================================================
     try {
-      await dispararEmailOP(data, data.responsavel_email);
+      await enviarEmailOPInterno(payload, payload.responsavel_email);
     } catch (emailError) {
       console.error("A OP foi criada, mas houve um erro no disparo do e-mail:", emailError);
     }
@@ -84,10 +183,10 @@ export async function criarOP(data: NovaOPData) {
       const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
       await dispararAutomacaoWhatsApp('nova-op', {
         numero_op: novaOp.numero_op || novaOp.id,
-        os_numero: data.os_numero || 'S/N',
-        solicitante: data.responsavel_nome,
-        favorecido: data.empresa_recebedora,
-        valor: Number(data.total_geral || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+        os_numero: payload.os_numero || 'S/N',
+        solicitante: payload.responsavel_nome,
+        favorecido: payload.empresa_recebedora,
+        valor: Number(payload.total_geral || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
         link: `${baseUrl}/api/baixar-op?id=${novaOp.id}`,
       });
     } catch (whatsappError) {
@@ -101,17 +200,25 @@ export async function criarOP(data: NovaOPData) {
   }
 }
 
-// 2. Listar OPs (Usa supabaseAdmin para não ser barrado pelo RLS)
-export async function listarOPs(nivelAcesso: string, usuarioAtual: string) {
+// 2. Listar OPs — a rota chamada define o que a página tem direito de ver.
+// "Minhas OPs" (responsavel) só mostra tudo para cargos de alta gestão; os
+// demais só veem as OPs que ELES MESMOS solicitaram, e esse "eles mesmos" vem
+// do perfil validado no servidor — não de um parâmetro enviado pelo cliente.
+export async function listarOPs(accessToken: string, rota: '/admin/op/responsavel' | '/admin/op/financeiro') {
+  const acesso = await validarAcesso(accessToken, rota);
+  if (!acesso.ok) return { success: false, message: acesso.message, data: [] };
+  const { perfil } = acesso;
+
+  const verTodas = rota === '/admin/op/financeiro' || ehAltaGestaoOP(perfil.permissaoBruta);
+
   try {
     let query = supabaseAdmin
       .from('ordens_pagamento')
       .select('*')
       .order('data_criacao', { ascending: false }); // Traz as mais recentes primeiro
 
-    // Se o nível NÃO for 'DIR', trava a busca para trazer apenas as OPs do usuário.
-    if (nivelAcesso !== 'DIR') {
-      query = query.ilike('responsavel_nome', usuarioAtual);
+    if (!verTodas) {
+      query = query.ilike('responsavel_nome', perfil.nome);
     }
 
     const { data, error } = await query;
@@ -125,8 +232,12 @@ export async function listarOPs(nivelAcesso: string, usuarioAtual: string) {
   }
 }
 
-// 3. Atualizar Status (Usa supabaseAdmin)
-export async function atualizarStatus(opId: string, novoStatus: string, usuarioAlteracao: string) {
+// 3. Atualizar Status (exclusivo do Painel Financeiro)
+export async function atualizarStatus(opId: string, novoStatus: string, accessToken: string) {
+  const acesso = await validarAcesso(accessToken, '/admin/op/financeiro');
+  if (!acesso.ok) return { success: false, message: acesso.message };
+  const { perfil } = acesso;
+
   try {
     const { error } = await supabaseAdmin
       .from('ordens_pagamento')
@@ -135,15 +246,16 @@ export async function atualizarStatus(opId: string, novoStatus: string, usuarioA
 
     if (error) throw error;
 
-    // Salva na Caixa Preta / Histórico quem mexeu na OP
+    // Salva na Caixa Preta / Histórico quem mexeu na OP (nome vem do perfil
+    // validado no servidor, não de texto livre enviado pelo cliente)
     await supabaseAdmin.from('historico_op').insert([{
       op_id: opId,
-      usuario_nome: usuarioAlteracao,
+      usuario_nome: perfil.nome,
       acao: `MUDOU STATUS PARA ${novoStatus}`
     }]);
 
     registrarLogAuditoria({
-      usuario_nome: usuarioAlteracao,
+      usuario_nome: perfil.nome,
       acao: `BAIXOU OP — STATUS: ${novoStatus}`,
       setor: 'OP',
       equipamento_id: opId,
@@ -156,8 +268,19 @@ export async function atualizarStatus(opId: string, novoStatus: string, usuarioA
   }
 }
 
-// 4. Buscar OP Específica para Edição (Usa supabaseAdmin)
-export async function buscarOP(opId: string) {
+// 4. Buscar OP Específica para Edição
+export async function buscarOP(opId: string, accessToken: string) {
+  const perfil = await obterPerfilValidado(accessToken);
+  if (!perfil) return { success: false, message: 'Sessão inválida ou expirada. Faça login novamente.' };
+
+  const [temResponsavel, temFinanceiro] = await Promise.all([
+    possuiAcessoRota(perfil.permissaoNormalizada, '/admin/op/responsavel'),
+    possuiAcessoRota(perfil.permissaoNormalizada, '/admin/op/financeiro'),
+  ]);
+  if (!temResponsavel && !temFinanceiro) {
+    return { success: false, message: 'Você não tem permissão para executar esta ação.' };
+  }
+
   try {
     const { data: op, error } = await supabaseAdmin
       .from('ordens_pagamento')
@@ -166,15 +289,51 @@ export async function buscarOP(opId: string) {
       .single();
 
     if (error) throw error;
+
+    const podeVerTudo = temFinanceiro || ehAltaGestaoOP(perfil.permissaoBruta);
+    if (!podeVerTudo && (op.responsavel_nome || '').toUpperCase().trim() !== perfil.nome.toUpperCase().trim()) {
+      return { success: false, message: 'Você não tem permissão para ver esta OP.' };
+    }
+
     return { success: true, data: op };
   } catch (error: any) {
     return { success: false, message: error.message };
   }
 }
 
-// 5. Atualizar Dados da OP (Usa supabaseAdmin)
-export async function atualizarOP(opId: string, dadosAtualizados: Partial<NovaOPData>, usuarioAlteracao: string) {
+// 5. Atualizar Dados da OP (exclusivo da página "Minhas OPs")
+export async function atualizarOP(opId: string, dadosAtualizados: Partial<NovaOPData>, accessToken: string) {
+  const acesso = await validarAcesso(accessToken, '/admin/op/responsavel');
+  if (!acesso.ok) return { success: false, message: acesso.message };
+  const { perfil } = acesso;
+
+  // Mesma lógica de validação de criarOP, mas só para os campos que de fato
+  // vieram na atualização (a edição é parcial).
+  if (dadosAtualizados.itens) {
+    const erroItens = validarItensOP(dadosAtualizados.itens);
+    if (erroItens) return { success: false, message: erroItens };
+  }
+  if (dadosAtualizados.data_vencimento !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(dadosAtualizados.data_vencimento)) {
+    return { success: false, message: 'Informe uma data de vencimento válida.' };
+  }
+
   try {
+    // Defesa em profundidade: mesmo a listagem já filtrando o que cada usuário
+    // vê, revalidamos aqui que a OP pertence a ele antes de gravar (cargos de
+    // alta gestão podem editar qualquer OP, como já podiam ver todas).
+    if (!ehAltaGestaoOP(perfil.permissaoBruta)) {
+      const { data: opAtual, error: opError } = await supabaseAdmin
+        .from('ordens_pagamento')
+        .select('responsavel_nome')
+        .eq('id', opId)
+        .single();
+
+      if (opError) throw opError;
+      if ((opAtual?.responsavel_nome || '').toUpperCase().trim() !== perfil.nome.toUpperCase().trim()) {
+        return { success: false, message: 'Você não tem permissão para editar esta OP.' };
+      }
+    }
+
     const { error } = await supabaseAdmin
       .from('ordens_pagamento')
       .update({ ...dadosAtualizados, updated_at: new Date().toISOString() })
@@ -184,12 +343,12 @@ export async function atualizarOP(opId: string, dadosAtualizados: Partial<NovaOP
 
     await supabaseAdmin.from('historico_op').insert([{
       op_id: opId,
-      usuario_nome: usuarioAlteracao,
+      usuario_nome: perfil.nome,
       acao: 'EDITOU DADOS DA OP'
     }]);
 
     registrarLogAuditoria({
-      usuario_nome: usuarioAlteracao,
+      usuario_nome: perfil.nome,
       acao: 'EDITOU OP',
       setor: 'OP',
       equipamento_id: opId,
@@ -204,8 +363,12 @@ export async function atualizarOP(opId: string, dadosAtualizados: Partial<NovaOP
 
 // ============================================================================
 // DISPARO DE E-MAIL VIA SMTP COM MAGIC LINK E DATA TRATADA (PT-BR)
+// ----------------------------------------------------------------------------
+// enviarEmailOPInterno() faz o trabalho de fato e só é chamada a partir deste
+// arquivo (por criarOP, já validado, e pela action pública abaixo) — não tem
+// checagem de sessão própria porque não é, e não deve ser, exposta ao cliente.
 // ============================================================================
-export async function dispararEmailOP(op: any, emailSolicitante: string, apenasCopia: boolean = false) {
+async function enviarEmailOPInterno(op: any, emailSolicitante: string, apenasCopia: boolean = false) {
   try {
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
@@ -217,161 +380,90 @@ export async function dispararEmailOP(op: any, emailSolicitante: string, apenasC
       },
     });
 
-    // TRATAMENTO DA DATA: Converte YYYY-MM-DD para DD/MM/YYYY de forma segura
-    let dataVencimentoFormatada = 'Não informada';
-    if (op.data_vencimento) {
-      const partesData = op.data_vencimento.split('-');
-      if (partesData.length === 3) {
-        const [ano, mes, dia] = partesData;
-        dataVencimentoFormatada = `${dia}/${mes}/${ano}`;
-      } else {
-        dataVencimentoFormatada = op.data_vencimento;
-      }
-    }
-
-    const totalGeral = Number(op.total_geral || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-    
-    const itensHtml = op.itens.map((it: any) => {
-      const unitario = Number(it.valor_unitario || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-      const total = Number(it.total || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-      return `
-        <tr>
-          <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; color: #0C1D4D; font-weight: bold; font-size: 12px;">${it.descricao || it.description}</td>
-          <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; text-align: center; color: #64748B; font-size: 12px;">${it.qtd || it.quantity || 1}</td>
-          <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; text-align: right; color: #64748B; font-size: 12px;">${unitario}</td>
-          <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; text-align: right; color: #336699; font-weight: bold; font-size: 12px;">${total}</td>
-        </tr>
-      `;
-    }).join('');
-
-    const anexoHtml = op.file_url 
-      ? `<a href="${op.file_url}" style="display: inline-block; padding: 12px 24px; background-color: #336699; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 12px;">📎 Visualizar Comprovante / Anexo</a>`
-      : `<span style="color: #94A3B8; font-style: italic; font-size: 12px;">Nenhum anexo enviado.</span>`;
-
-    // Base do E-mail (com a variável da data corrigida)
-    const htmlBase = `
-        <div style="font-family: Arial, sans-serif; max-width: 650px; margin: 0 auto; border: 1px solid #E2E8F0; border-radius: 12px; overflow: hidden; background-color: #ffffff;">
-          
-          <div style="background-color: #0C1D4D; padding: 20px; text-align: center; color: white;">
-            <h2 style="margin: 0; font-size: 20px; letter-spacing: 1px; text-transform: uppercase;">Ordem de Pagamento</h2>
-            <p style="margin: 5px 0 0 0; color: #94A3B8; font-size: 13px;">Nº da OS: <strong>${op.os_numero || 'S/N'}</strong></p>
-          </div>
-
-          <div style="padding: 20px; border-bottom: 1px solid #E2E8F0;">
-            <table style="width: 100%; font-size: 13px; line-height: 1.5;">
-              <tr>
-                <td style="padding-bottom: 10px; width: 50%;">
-                  <strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Solicitante</strong><br/>
-                  <span style="color:#0C1D4D; font-weight: bold;">${op.responsavel_nome}</span>
-                </td>
-                <td style="padding-bottom: 10px; width: 50%;">
-                  <strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Natureza</strong><br/>
-                  <span style="color:#0C1D4D; font-weight: bold;">${op.natureza_pagamento || 'Não informada'}</span>
-                </td>
-              </tr>
-            </table>
-          </div>
-
-          <div style="padding: 20px; border-bottom: 1px solid #E2E8F0; background-color: #F8FAFC;">
-            <h3 style="color: #336699; font-size: 14px; text-transform: uppercase; margin-top: 0; margin-bottom: 15px;">🏢 Dados do Favorecido</h3>
-            <table style="width: 100%; font-size: 13px; line-height: 1.5;">
-              <tr>
-                <td style="padding-bottom: 10px; width: 50%;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Empresa / Nome</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${op.empresa_recebedora}</span></td>
-                <td style="padding-bottom: 10px; width: 50%;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">CNPJ / CPF</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${op.cnpj_cpf_recebedora || 'Não informado'}</span></td>
-              </tr>
-            </table>
-          </div>
-
-          <div style="padding: 20px; border-bottom: 1px solid #E2E8F0;">
-            <h3 style="color: #336699; font-size: 14px; text-transform: uppercase; margin-top: 0; margin-bottom: 15px;">💳 Informações de Pagamento</h3>
-            <table style="width: 100%; font-size: 13px; line-height: 1.5;">
-              <tr>
-                <td style="padding-bottom: 10px; width: 50%;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Forma / Banco</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${op.tipo_pagamento} - ${op.dados_pagamento}</span></td>
-                <td style="padding-bottom: 10px; width: 50%;"><strong style="color:red; font-size: 10px; text-transform: uppercase;">Data de Vencimento</strong><br/><span style="color:red; font-weight: bold;">${dataVencimentoFormatada}</span></td>
-              </tr>
-              <tr>
-                <td colspan="2" style="padding-bottom: 10px;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Chave PIX</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${op.chave_pix || 'Não informada'}</span></td>
-              </tr>
-            </table>
-          </div>
-
-          <div style="padding: 20px;">
-            <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 20px;">
-              <thead>
-                <tr style="background-color: #F8FAFC; color: #64748B; text-transform: uppercase;">
-                  <th style="padding: 10px; text-align: left; font-size: 10px;">Descrição</th>
-                  <th style="padding: 10px; text-align: center; font-size: 10px;">Qtd</th>
-                  <th style="padding: 10px; text-align: right; font-size: 10px;">Unitário</th>
-                  <th style="padding: 10px; text-align: right; font-size: 10px;">Total</th>
-                </tr>
-              </thead>
-              <tbody>${itensHtml}</tbody>
-            </table>
-            
-            <div style="background-color: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #E2E8F0;">
-              ${anexoHtml}
-            </div>
-          </div>
-
-          <div style="background-color: #E0F2FE; padding: 25px 20px; text-align: right; border-top: 2px solid #BAE6FD;">
-            <span style="color: #0369A1; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">Valor Total a Pagar</span><br/>
-            <strong style="color: #0C1D4D; font-size: 28px;">${totalGeral}</strong>
-          </div>
-
-          {{BOTAO_MÁGICO}}
-
-          <div style="padding: 15px; text-align: center; background-color: #F1F5F9; color: #94A3B8; font-size: 10px;">
-            <p style="margin:0;">Este é um e-mail automático gerado pelo Sistema Rentech.</p>
-          </div>
-        </div>
-    `;
-
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
-    const linkBaixa = `${baseUrl}/api/baixar-op?id=${op.id || op.numero_op}`;
-
-    const blocoBotao = `
-      <div style="background-color: #ffffff; padding: 30px 20px; text-align: center; border-top: 1px solid #E2E8F0;">
-        <a href="${linkBaixa}" style="background-color: #16A34A; color: white; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 15px; display: inline-block; text-transform: uppercase; letter-spacing: 1px;">
-          ✅ Confirmar Pagamento (Baixar OP)
-        </a>
-        <p style="color: #94A3B8; font-size: 11px; margin-top: 12px; margin-bottom: 0;">Clique apenas após efetuar o pagamento. A ação refletirá instantaneamente no sistema.</p>
-      </div>
-    `;
-
     // 1. Envio para o Solicitante (Sem o Botão)
     await transporter.sendMail({
       from: `"Sistema Rentech" <${process.env.SMTP_USER}>`,
       to: emailSolicitante,
       subject: apenasCopia ? `[Segunda Via] Cópia da OP - OS: ${op.os_numero || 'S/N'}` : `[Cópia] Sua OP foi enviada - OS: ${op.os_numero || 'S/N'}`,
-      html: htmlBase.replace('{{BOTAO_MÁGICO}}', '')
+      html: gerarHtmlEmailOP(op, false)
     });
 
     // 2. Envio para o Financeiro (COM o Botão)
     if (!apenasCopia) {
       await transporter.sendMail({
         from: `"Sistema Rentech" <${process.env.SMTP_USER}>`,
-        to: 'financeiro@locadorarentech.com.br',
+        to: process.env.FINANCEIRO_EMAIL || 'financeiro@locadorarentech.com.br',
         subject: `[APROVAÇÃO] Nova OP Recebida - OS: ${op.os_numero || 'S/N'}`,
-        html: htmlBase.replace('{{BOTAO_MÁGICO}}', blocoBotao)
+        html: gerarHtmlEmailOP(op, true)
       });
     }
 
     return { success: true };
-    
+
   } catch (error: any) {
     console.error("Erro crítico no envio de email via SMTP:", error);
     return { success: false, message: error.message || "Falha na conexão com o servidor de e-mail." };
   }
 }
 
-// Assinatura das Ordens de Pagamento
+// Versão exposta como Server Action (usada pelos botões "Receber Cópia" e
+// "Reenviar" nas páginas responsavel/financeiro). Exige um access_token válido,
+// busca a OP direto do banco pelo id (nunca confia num objeto "op" vindo do
+// cliente) e envia sempre para o e-mail do próprio usuário autenticado — nunca
+// para um destinatário arbitrário informado na chamada — para que esta action
+// não possa virar um "relay" de e-mails para terceiros.
+export async function dispararEmailOP(opId: string, accessToken: string, apenasCopia: boolean = false) {
+  const perfil = await obterPerfilValidado(accessToken);
+  if (!perfil) return { success: false, message: 'Sessão inválida ou expirada. Faça login novamente.' };
 
+  const [temResponsavel, temFinanceiro] = await Promise.all([
+    possuiAcessoRota(perfil.permissaoNormalizada, '/admin/op/responsavel'),
+    possuiAcessoRota(perfil.permissaoNormalizada, '/admin/op/financeiro'),
+  ]);
+  if (!temResponsavel && !temFinanceiro) {
+    return { success: false, message: 'Você não tem permissão para executar esta ação.' };
+  }
+
+  try {
+    const { data: op, error } = await supabaseAdmin
+      .from('ordens_pagamento')
+      .select('*')
+      .eq('id', opId)
+      .single();
+
+    if (error) throw error;
+
+    const podeVerTudo = temFinanceiro || ehAltaGestaoOP(perfil.permissaoBruta);
+    if (!podeVerTudo && (op.responsavel_nome || '').toUpperCase().trim() !== perfil.nome.toUpperCase().trim()) {
+      return { success: false, message: 'Você não tem permissão para ver esta OP.' };
+    }
+
+    if (!perfil.email) {
+      return { success: false, message: 'Não foi possível identificar o seu e-mail cadastrado.' };
+    }
+
+    return await enviarEmailOPInterno(op, perfil.email, apenasCopia);
+  } catch (error: any) {
+    console.error("Erro ao localizar OP para envio de e-mail:", error);
+    return { success: false, message: error.message };
+  }
+}
+
+// Assinatura das Ordens de Pagamento
+// ----------------------------------------------------------------------------
+// Ao contrário das actions acima, esta é chamada por /recibo/[id] — uma página
+// pública acessada pelo favorecido (freelancer/fornecedor) via link enviado no
+// WhatsApp/e-mail, que nunca faz login no painel administrativo. Por isso não
+// exige access_token: a "autorização" aqui é o próprio link/id da OP, e a ação
+// (desenhar e confirmar a assinatura) exige um gesto explícito do usuário —
+// diferente do problema corrigido em /api/baixar-op, que mudava o status só
+// com uma requisição GET passiva.
 export async function salvarAssinaturaRecibo(opId: string, assinaturaBase64: string, ip: string = '0.0.0.0') {
   try {
     // 1. Converter Base64 para Buffer (Ficheiro de Imagem)
     const base64Data = assinaturaBase64.replace(/^data:image\/\w+;base64,/, "");
     const buffer = Buffer.from(base64Data, 'base64');
-    
+
     const fileName = `assinatura_${opId}_${Date.now()}.png`;
 
     // 2. Fazer Upload para o Supabase Storage (no bucket 'recibos_assinados')
@@ -393,7 +485,7 @@ export async function salvarAssinaturaRecibo(opId: string, assinaturaBase64: str
 
     // 4. Atualizar a OP no Banco de Dados
     const dataHoraAssinatura = new Date().toISOString();
-    
+
     const { error: updateError } = await supabaseAdmin
       .from('ordens_pagamento')
       .update({

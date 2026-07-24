@@ -7,6 +7,7 @@ import { supabase } from '../../lib/supabase';
 import Image from 'next/image';
 import Link from 'next/link';
 import logoColorido from '../../../app/imgs/logo.png';
+import { normalizarPermissao } from '../../lib/permissoes';
 
 // Tipagem do Perfil
 interface PerfilUsuario {
@@ -15,28 +16,6 @@ interface PerfilUsuario {
   permissao: string;
   permissaoNormalizada?: string;
 }
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-
-  // 1. ADMINISTRATIVO deve vir ANTES de ADMIN para evitar a colisão de texto
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  
-  // 2. ALTA GESTÃO (Acesso Total)
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  
-  // 3. DEMAIS DEPARTAMENTOS
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  
-  // PADRÃO
-  return 'USUARIO'; 
-};
 
 // Lista de módulos do hub. As permissões de cada um NÃO ficam mais aqui —
 // vêm da tabela folha_paginas_permissoes (gerida em /admin/permissoes),

@@ -149,13 +149,6 @@ export async function criarOP(data: NovaOPData, accessToken: string) {
 
     if (error) throw error;
 
-    // Registra a criação no histórico de auditoria
-    await supabaseAdmin.from('historico_op').insert([{
-      op_id: novaOp.id,
-      usuario_nome: payload.responsavel_nome,
-      acao: 'CRIOU OP'
-    }]);
-
     registrarLogAuditoria({
       usuario_nome: payload.responsavel_nome,
       acao: 'CRIOU OP',
@@ -246,14 +239,8 @@ export async function atualizarStatus(opId: string, novoStatus: string, accessTo
 
     if (error) throw error;
 
-    // Salva na Caixa Preta / Histórico quem mexeu na OP (nome vem do perfil
-    // validado no servidor, não de texto livre enviado pelo cliente)
-    await supabaseAdmin.from('historico_op').insert([{
-      op_id: opId,
-      usuario_nome: perfil.nome,
-      acao: `MUDOU STATUS PARA ${novoStatus}`
-    }]);
-
+    // Nome vem do perfil validado no servidor, não de texto livre enviado
+    // pelo cliente.
     registrarLogAuditoria({
       usuario_nome: perfil.nome,
       acao: `BAIXOU OP — STATUS: ${novoStatus}`,
@@ -340,12 +327,6 @@ export async function atualizarOP(opId: string, dadosAtualizados: Partial<NovaOP
       .eq('id', opId);
 
     if (error) throw error;
-
-    await supabaseAdmin.from('historico_op').insert([{
-      op_id: opId,
-      usuario_nome: perfil.nome,
-      acao: 'EDITOU DADOS DA OP'
-    }]);
 
     registrarLogAuditoria({
       usuario_nome: perfil.nome,
@@ -486,7 +467,7 @@ export async function salvarAssinaturaRecibo(opId: string, assinaturaBase64: str
     // 4. Atualizar a OP no Banco de Dados
     const dataHoraAssinatura = new Date().toISOString();
 
-    const { error: updateError } = await supabaseAdmin
+    const { data: opAtualizada, error: updateError } = await supabaseAdmin
       .from('ordens_pagamento')
       .update({
         recibo_url: imageUrl,
@@ -494,16 +475,23 @@ export async function salvarAssinaturaRecibo(opId: string, assinaturaBase64: str
         status: 'PAGO E ASSINADO', // Muda o status automaticamente!
         updated_at: dataHoraAssinatura
       })
-      .eq('id', opId);
+      .eq('id', opId)
+      .select('os_numero, os_cliente, empresa_recebedora, total_geral')
+      .single();
 
     if (updateError) throw updateError;
 
-    // 5. Registar na auditoria interna da OP
-    await supabaseAdmin.from('historico_op').insert([{
-      op_id: opId,
-      usuario_nome: 'SISTEMA (AUTOMAÇÃO)',
-      acao: `RECIBO ASSINADO DIGITALMENTE (IP: ${ip})`
-    }]);
+    // 5. Registra na auditoria central (feito aqui, no servidor, para garantir
+    // que o registro exista sempre que a assinatura for salva — antes isso
+    // dependia da página pública /recibo/[id] lembrar de chamar depois).
+    const valorFormatado = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(opAtualizada?.total_geral || 0);
+    registrarLogAuditoria({
+      usuario_nome: opAtualizada?.empresa_recebedora || 'DESCONHECIDO',
+      acao: `RECIBO ASSINADO DIGITALMENTE (IP: ${ip})`,
+      setor: 'OP',
+      equipamento_id: opId,
+      equipamento_nome: `OS ${opAtualizada?.os_numero || 'S/N'} — ${opAtualizada?.os_cliente || ''} | Valor: ${valorFormatado}`,
+    });
 
     revalidatePath('/admin');
     return { success: true, url: imageUrl };

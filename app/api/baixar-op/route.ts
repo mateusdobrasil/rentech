@@ -49,8 +49,8 @@ export async function GET(request: Request) {
 
 // ============================================================================
 // POST: dá a baixa de fato, com cliente admin, checagem de idempotência e
-// registro em auditoria (historico_op + logs_auditoria) — igual ao que já
-// acontece quando o Financeiro baixa a OP manualmente pelo painel.
+// registro em logs_auditoria — igual ao que já acontece quando o Financeiro
+// baixa a OP manualmente pelo painel.
 // ============================================================================
 export async function POST(request: Request) {
   const formData = await request.formData();
@@ -92,12 +92,6 @@ export async function POST(request: Request) {
   if (error) {
     return new NextResponse(`Erro ao tentar baixar a OP: ${error.message}`, { status: 500 });
   }
-
-  await admin.from('historico_op').insert([{
-    op_id: id,
-    usuario_nome: 'FINANCEIRO (LINK DE E-MAIL)',
-    acao: 'MUDOU STATUS PARA PAGO'
-  }]);
 
   await registrarLogAuditoria({
     usuario_nome: 'FINANCEIRO (LINK DE E-MAIL)',

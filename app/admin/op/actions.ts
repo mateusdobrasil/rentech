@@ -30,9 +30,13 @@ export interface NovaOPData {
   empresa_recebedora: string;
   cnpj_cpf_recebedora: string;
   endereco_recebedora: string;
-  // Nenhuma tela do módulo coleta este dado hoje — opcional para não fingir
-  // uma obrigatoriedade que não existe no formulário.
-  telefone_recebedora?: string;
+  // Celular do signatário (E.164 ou BR cru) — obrigatório: é o canal usado
+  // pela Autentique para enviar o recibo para assinatura via WhatsApp.
+  telefone_recebedora: string;
+  // CPF de quem vai assinar o recibo — obrigatório mesmo quando o favorecido
+  // é PJ (cnpj_cpf_recebedora pode ser um CNPJ), pois a Autentique valida o
+  // signatário por CPF, nunca por CNPJ.
+  cpf_signatario: string;
   tipo_pagamento: string;
   chave_pix: string;
   dados_pagamento: string;
@@ -62,7 +66,7 @@ interface PerfilValidado {
   permissaoNormalizada: string;
 }
 
-async function obterPerfilValidado(accessToken: string): Promise<PerfilValidado | null> {
+export async function obterPerfilValidado(accessToken: string): Promise<PerfilValidado | null> {
   if (!accessToken) return null;
 
   const { data: userData, error: userError } = await supabaseAdmin.auth.getUser(accessToken);
@@ -93,7 +97,7 @@ async function obterPerfilValidado(accessToken: string): Promise<PerfilValidado 
   };
 }
 
-async function possuiAcessoRota(permissaoNormalizada: string, rota: string): Promise<boolean> {
+export async function possuiAcessoRota(permissaoNormalizada: string, rota: string): Promise<boolean> {
   const { data } = await supabaseAdmin
     .from('folha_paginas_permissoes')
     .select('permissoes_permitidas')
@@ -433,73 +437,6 @@ export async function dispararEmailOP(opId: string, accessToken: string, apenasC
   }
 }
 
-// Assinatura das Ordens de Pagamento
-// ----------------------------------------------------------------------------
-// Ao contrário das actions acima, esta é chamada por /recibo/[id] — uma página
-// pública acessada pelo favorecido (freelancer/fornecedor) via link enviado no
-// WhatsApp/e-mail, que nunca faz login no painel administrativo. Por isso não
-// exige access_token: a "autorização" aqui é o próprio link/id da OP, e a ação
-// (desenhar e confirmar a assinatura) exige um gesto explícito do usuário —
-// diferente do problema corrigido em /api/baixar-op, que mudava o status só
-// com uma requisição GET passiva.
-export async function salvarAssinaturaRecibo(opId: string, assinaturaBase64: string, ip: string = '0.0.0.0') {
-  try {
-    // 1. Converter Base64 para Buffer (Ficheiro de Imagem)
-    const base64Data = assinaturaBase64.replace(/^data:image\/\w+;base64,/, "");
-    const buffer = Buffer.from(base64Data, 'base64');
-
-    const fileName = `assinatura_${opId}_${Date.now()}.png`;
-
-    // 2. Fazer Upload para o Supabase Storage (no bucket 'recibos_assinados')
-    const { error: uploadError } = await supabaseAdmin.storage
-      .from('recibos_assinados')
-      .upload(fileName, buffer, {
-        contentType: 'image/png',
-        upsert: true
-      });
-
-    if (uploadError) throw uploadError;
-
-    // 3. Obter o Link Público da Assinatura
-    const { data: publicUrlData } = supabaseAdmin.storage
-      .from('recibos_assinados')
-      .getPublicUrl(fileName);
-
-    const imageUrl = publicUrlData.publicUrl;
-
-    // 4. Atualizar a OP no Banco de Dados
-    const dataHoraAssinatura = new Date().toISOString();
-
-    const { data: opAtualizada, error: updateError } = await supabaseAdmin
-      .from('ordens_pagamento')
-      .update({
-        recibo_url: imageUrl,
-        data_assinatura: dataHoraAssinatura,
-        status: 'PAGO E ASSINADO', // Muda o status automaticamente!
-        updated_at: dataHoraAssinatura
-      })
-      .eq('id', opId)
-      .select('os_numero, os_cliente, empresa_recebedora, total_geral')
-      .single();
-
-    if (updateError) throw updateError;
-
-    // 5. Registra na auditoria central (feito aqui, no servidor, para garantir
-    // que o registro exista sempre que a assinatura for salva — antes isso
-    // dependia da página pública /recibo/[id] lembrar de chamar depois).
-    const valorFormatado = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(opAtualizada?.total_geral || 0);
-    registrarLogAuditoria({
-      usuario_nome: opAtualizada?.empresa_recebedora || 'DESCONHECIDO',
-      acao: `RECIBO ASSINADO DIGITALMENTE (IP: ${ip})`,
-      setor: 'OP',
-      equipamento_id: opId,
-      equipamento_nome: `OS ${opAtualizada?.os_numero || 'S/N'} — ${opAtualizada?.os_cliente || ''} | Valor: ${valorFormatado}`,
-    });
-
-    revalidatePath('/admin');
-    return { success: true, url: imageUrl };
-  } catch (error: any) {
-    console.error("Erro ao salvar assinatura:", error);
-    return { success: false, message: error.message };
-  }
-}
+// Assinatura das Ordens de Pagamento agora é feita via Autentique — ver
+// app/admin/op/actions-assinatura.ts (envio, consulta e arquivamento do PDF
+// assinado) e app/api/webhooks/autentique/route.ts (atualização de status).

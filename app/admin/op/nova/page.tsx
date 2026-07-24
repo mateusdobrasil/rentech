@@ -51,6 +51,11 @@ export default function NovaOrdemPagamento() {
   const [empresaRecebedora, setEmpresaRecebedora] = useState('');
   const [cnpjCpf, setCnpjCpf] = useState('');
   const [endereco, setEndereco] = useState('');
+  // CPF e celular de quem vai assinar o recibo digitalmente — obrigatórios:
+  // é o que a Autentique exige para validar o signatário e enviar o link por
+  // WhatsApp (mesmo quando o favorecido acima é PJ, cnpjCpf pode ser um CNPJ).
+  const [cpfSignatario, setCpfSignatario] = useState('');
+  const [celularSignatario, setCelularSignatario] = useState('');
   
   // Estado Financeiro
   const [tipoPagamento, setTipoPagamento] = useState('PIX');
@@ -101,6 +106,18 @@ export default function NovaOrdemPagamento() {
       v = v.replace(/^(\d{2})(\d)/, "$1.$2").replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3").replace(/\.(\d{3})(\d)/, ".$1/$2").replace(/(\d{4})(\d)/, "$1-$2");
     }
     setCnpjCpf(v);
+  };
+
+  const aplicarMascaraCpfSignatario = (valor: string) => {
+    const v = valor.replace(/\D/g, "").slice(0, 11)
+      .replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d{1,2})$/, "$1-$2");
+    setCpfSignatario(v);
+  };
+
+  const aplicarMascaraCelularSignatario = (valor: string) => {
+    const v = valor.replace(/\D/g, "").slice(0, 11)
+      .replace(/(\d{2})(\d)/, "($1) $2").replace(/(\d{5})(\d)/, "$1-$2");
+    setCelularSignatario(v);
   };
 
   // ============================================================================
@@ -181,6 +198,8 @@ export default function NovaOrdemPagamento() {
     setCnpjCpf(free.cpf || '');
     aplicarMascaraCpfCnpj(free.cpf || '');
     setEndereco(free.endereco || '');
+    aplicarMascaraCpfSignatario(free.cpf || '');
+    aplicarMascaraCelularSignatario(free.telefone || '');
     setTipoPagamento('PIX');
     
     let tipoMapeado = 'CELULAR';
@@ -226,6 +245,17 @@ export default function NovaOrdemPagamento() {
       return;
     }
 
+    if (cpfSignatario.replace(/\D/g, '').length !== 11) {
+      setModal({ open: true, success: false, title: 'Atenção', msg: 'Informe um CPF válido do signatário — é obrigatório para o envio da assinatura digital.' });
+      setLoading(false);
+      return;
+    }
+    if (celularSignatario.replace(/\D/g, '').length < 10) {
+      setModal({ open: true, success: false, title: 'Atenção', msg: 'Informe um celular válido do signatário (com DDD) — é obrigatório para o envio da assinatura digital.' });
+      setLoading(false);
+      return;
+    }
+
     let urlFinalAnexo = '';
 
     if (arquivo) {
@@ -258,6 +288,8 @@ export default function NovaOrdemPagamento() {
       empresa_recebedora: empresaRecebedora.toUpperCase(),
       cnpj_cpf_recebedora: cnpjCpf,
       endereco_recebedora: endereco.toUpperCase(),
+      cpf_signatario: cpfSignatario,
+      telefone_recebedora: celularSignatario,
       tipo_pagamento: tipoPagamento,
       chave_pix: tipoPagamento === 'PIX' ? chavePix : '',
       dados_pagamento: dadosPagamento, 
@@ -471,6 +503,28 @@ export default function NovaOrdemPagamento() {
               />
             </div>
             <input type="text" placeholder="ENDEREÇO COMPLETO (OPCIONAL)" className="w-full p-3 bg-white border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] uppercase focus:border-[#336699] outline-none" value={endereco} onChange={(e) => setEndereco(e.target.value)} />
+
+            <div className="bg-[#F0F4F8] border border-[#CBD5E1] rounded-xl p-4 space-y-2">
+              <p className="text-[10px] font-black text-[#64748B] uppercase tracking-wider">
+                ✍️ Signatário do recibo digital (obrigatório — usado pela Autentique para validar e enviar por WhatsApp)
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <input
+                  type="text"
+                  placeholder="CPF DO SIGNATÁRIO"
+                  className="w-full p-3 bg-white border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] font-bold focus:border-[#336699] outline-none"
+                  value={cpfSignatario}
+                  onChange={(e) => aplicarMascaraCpfSignatario(e.target.value)}
+                />
+                <input
+                  type="text"
+                  placeholder="CELULAR DO SIGNATÁRIO (COM DDD)"
+                  className="w-full p-3 bg-white border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] font-bold focus:border-[#336699] outline-none"
+                  value={celularSignatario}
+                  onChange={(e) => aplicarMascaraCelularSignatario(e.target.value)}
+                />
+              </div>
+            </div>
           </section>
 
           {/* Sessão 4: Financeiro */}

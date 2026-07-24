@@ -39,6 +39,12 @@ const modulosOp = [
     descricao: 'Painel geral para aprovação, baixa e conferência de todas as Ordens de Pagamento.',
     icone: '💰', link: '/admin/op/financeiro',
     cor: 'bg-purple-50 border-purple-200 text-purple-700', hover: 'hover:border-purple-500'
+  },
+  {
+    titulo: 'Gestão de Assinaturas',
+    descricao: 'Gestão de Assinaturas de contratos e documentos.',
+    icone: '📃', link: '/admin/op/assinaturas',
+    cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
   }
 ];
 

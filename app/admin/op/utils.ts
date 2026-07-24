@@ -57,6 +57,8 @@ interface DadosOPValidaveis {
   data_vencimento?: string;
   itens?: any[];
   total_geral?: number;
+  cpf_signatario?: string;
+  telefone_recebedora?: string;
 }
 
 // Validação server-side dos dados essenciais de uma OP (usada por criarOP).
@@ -81,16 +83,17 @@ export function validarNovaOP(data: DadosOPValidaveis): string | null {
     return 'O valor total da OP deve ser maior que zero.';
   }
 
-  return null;
-}
+  // CPF e celular do signatário são obrigatórios: sem eles não dá para
+  // enviar o recibo para assinatura digital via Autentique (que valida o
+  // signatário por CPF e envia o link automaticamente por WhatsApp).
+  const cpfLimpo = (data.cpf_signatario || '').replace(/\D/g, '');
+  if (cpfLimpo.length !== 11) {
+    return 'Informe um CPF válido do signatário (obrigatório para assinatura digital).';
+  }
+  const celularLimpo = (data.telefone_recebedora || '').replace(/\D/g, '');
+  if (celularLimpo.length < 10) {
+    return 'Informe um celular válido do signatário (obrigatório para assinatura digital).';
+  }
 
-// Copia para a área de transferência o link de assinatura digital do recibo,
-// pronto para ser colado numa conversa de WhatsApp. Usado tanto no painel
-// "Minhas OPs" quanto no painel Financeiro.
-export function copiarLinkAssinatura(opId: string) {
-  const link = `${window.location.origin}/recibo/${opId}`;
-  navigator.clipboard.writeText(
-    `Olá! Confirme o recebimento do seu pagamento assinando o recibo digital da Rentech pelo telemóvel aqui: ${link}`
-  );
-  alert('Link de assinatura digital copiado! Pronto para enviar no WhatsApp.');
+  return null;
 }

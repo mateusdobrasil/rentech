@@ -1,6 +1,8 @@
 // app/api/webhooks/autentique/route.ts
-// Recebe os eventos da Autentique e atualiza folha_holerite_assinaturas.
-// Escrita via service role.
+// Recebe os eventos da Autentique e atualiza folha_holerite_assinaturas (RH)
+// ou op_assinaturas (Ordens de Pagamento) — um mesmo token da Autentique
+// serve os dois fluxos, então este endpoint tenta as duas tabelas pelo
+// autentique_doc_id (só um dos dois terá o documento). Escrita via service role.
 //
 // A Autentique tem DOIS formatos de webhook, e este endpoint aceita os dois:
 //  1) Clássico (painel): corpo em x-www-form-urlencoded, campos "partes[0][assinado][created]".
@@ -10,6 +12,7 @@
 // Configure a URL deste endpoint no painel da Autentique.
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
+import { finalizarAssinaturaOP } from '../../../admin/op/actions-assinatura';
 
 type Extraido = {
   docId: string | null;
@@ -92,20 +95,52 @@ export async function POST(req: NextRequest) {
       : 'ENVIADO';
 
     const db = supabaseAdmin();
-    const { error } = await db.from('folha_holerite_assinaturas').update({
-      status,
-      trilha,                                    // payload completo para auditoria
-      visualizado_em: dados.visualizadoEm || null,
-      assinado_em: dados.assinadoEm || null,
-      atualizado_em: new Date().toISOString()
-    }).eq('autentique_doc_id', dados.docId);
+    const atualizadoEm = new Date().toISOString();
 
-    if (error) {
-      console.error('Webhook Autentique — falha ao atualizar:', error.message);
-      return NextResponse.json({ ok: false, erro: error.message }, { status: 200 });
+    // 1) Tenta RH primeiro (folha_holerite_assinaturas) — .select() devolve as
+    // linhas afetadas, o que dá pra saber se o docId pertence a este fluxo.
+    const { data: folhaAtualizada, error: folhaError } = await db
+      .from('folha_holerite_assinaturas')
+      .update({ status, trilha, visualizado_em: dados.visualizadoEm || null, assinado_em: dados.assinadoEm || null, atualizado_em: atualizadoEm })
+      .eq('autentique_doc_id', dados.docId)
+      .select('id');
+
+    if (folhaError) {
+      console.error('Webhook Autentique — falha ao atualizar folha_holerite_assinaturas:', folhaError.message);
+      return NextResponse.json({ ok: false, erro: folhaError.message }, { status: 200 });
     }
 
-    return NextResponse.json({ ok: true, status });
+    if (folhaAtualizada && folhaAtualizada.length > 0) {
+      return NextResponse.json({ ok: true, status, origem: 'RH' });
+    }
+
+    // 2) Não é RH: tenta Ordens de Pagamento (op_assinaturas).
+    const { data: opAtualizada, error: opError } = await db
+      .from('op_assinaturas')
+      .update({ status, trilha, visualizado_em: dados.visualizadoEm || null, assinado_em: dados.assinadoEm || null, atualizado_em: atualizadoEm })
+      .eq('autentique_doc_id', dados.docId)
+      .select('op_id');
+
+    if (opError) {
+      console.error('Webhook Autentique — falha ao atualizar op_assinaturas:', opError.message);
+      return NextResponse.json({ ok: false, erro: opError.message }, { status: 200 });
+    }
+
+    if (opAtualizada && opAtualizada.length > 0) {
+      // Assinado: baixa o PDF, arquiva e atualiza a OP (recibo_url/status),
+      // igual ao que o canvas manuscrito fazia automaticamente antes.
+      if (status === 'ASSINADO') {
+        try {
+          await finalizarAssinaturaOP(opAtualizada[0].op_id, dados.docId);
+        } catch (e: any) {
+          console.error('Webhook Autentique — falha ao finalizar assinatura de OP:', e.message);
+        }
+      }
+      return NextResponse.json({ ok: true, status, origem: 'OP' });
+    }
+
+    // Nenhuma das duas tabelas tem esse docId — não há o que atualizar.
+    return NextResponse.json({ ok: false, motivo: 'docId não encontrado em nenhum fluxo de assinatura' }, { status: 200 });
   } catch (e: any) {
     console.error('Webhook Autentique — erro:', e.message);
     return NextResponse.json({ ok: false, erro: e.message }, { status: 200 });

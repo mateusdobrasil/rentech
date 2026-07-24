@@ -1,6 +1,6 @@
 "use client";
 
-import { copiarLinkAssinatura } from './utils';
+import { useRouter } from 'next/navigation';
 
 // Modal de feedback (loading/success/error/confirm) usado pelos painéis
 // "Minhas OPs" e "Financeiro" — antes era o mesmo bloco de JSX duplicado
@@ -46,18 +46,18 @@ export function DialogOP({ dialog, onClose }: DialogOPProps) {
   );
 }
 
-// Botão "Link Assinatura" das tabelas de OP — antes era o mesmo bloco
-// (JSX + handler de clipboard) duplicado em "responsavel" e "financeiro".
-// Ícone-only (com tooltip) para caber lado a lado com os outros botões de
-// ação na mesma célula, em vez de empilhar botões de texto cheio.
+// Botão "Assinatura" das tabelas de OP — antes copiava um link para o
+// clipboard (assinatura manuscrita via canvas); agora leva para o painel
+// dedicado de assinaturas via Autentique, onde o envio/consulta acontece.
 export function BotaoLinkAssinatura({ opId }: { opId: string }) {
+  const router = useRouter();
   return (
     <button
-      onClick={() => copiarLinkAssinatura(opId)}
-      title="Link Assinatura"
+      onClick={() => router.push('/admin/op/assinaturas')}
+      title="Assinatura Digital (Autentique)"
       className="w-8 h-8 flex items-center justify-center bg-[#E0F2FE] hover:bg-[#BAE6FD] border border-[#7DD3FC] text-[#0369A1] rounded transition-colors shadow-sm shrink-0"
     >
-      🔗
+      ✍️
     </button>
   );
 }

@@ -134,7 +134,6 @@ app/
 ├── login/                    → Login administrativo
 ├── freelance/                → Cadastro público de freelancers
 ├── downloads/                → Portal de downloads (protegido por senha)
-├── recibo/[id]/               → Assinatura pública de recibo de OP
 ├── simulador/                → Simuladores comerciais (videowall, tela, grid, curvatura)
 ├── admin/                    → Painel administrativo (ver seção 7)
 ├── api/                       → Rotas de API e webhooks (ver seção 8)
@@ -188,7 +187,6 @@ A gestão de quem tem qual permissão é feita na tela **Permissões** (seção 
 | **`/login`** | Login administrativo (e-mail/senha via Supabase Auth). |
 | **`/freelance`** | Cadastro público de freelancers (nome, CPF, chave PIX, nível de habilidade em LED/videowall/TV/áudio/luz), com termo de consentimento LGPD. Gravado direto no Supabase. |
 | **`/downloads`** | Portal de arquivos protegido por senha única (`DOWNLOADS_PASSWORD`). Lista arquivos/imagens/vídeos armazenados no Supabase Storage. |
-| **`/recibo/[id]`** | Página pública de assinatura de recibo de Ordem de Pagamento — a pessoa que recebeu o pagamento assina com o dedo/mouse (canvas) e a assinatura é salva no banco. Acessada via link enviado por e-mail. |
 | **`/simulador`** e subpáginas (`/videowall`, `/tela`, `/grid`, `/curvatura`) | Conjunto de simuladores técnicos/comerciais usados pela equipe de vendas para dimensionar telas de LED, videowall, TV e calcular curvatura/grid de painéis. |
 
 ---
@@ -237,8 +235,9 @@ Módulo de gestão de pagamentos a fornecedores/terceiros:
 | `/admin/op/nova` | Cria uma nova OP. |
 | `/admin/op/responsavel` | Visão da lista de OPs filtrada para o "responsável" designado. |
 | `/admin/op/financeiro` | Visão financeira das OPs. |
+| `/admin/op/assinaturas` | Painel de assinatura digital do recibo via Autentique: envia o recibo em PDF para o favorecido assinar (CPF + celular obrigatórios, cadastrados na criação da OP), consulta status, reenvia e baixa o documento assinado. |
 
-Fluxo típico: OP criada → e-mail disparado ao responsável/pagador → pagador confirma pagamento pelo link em `/api/baixar-op` (seção 8) → destinatário assina o recibo em `/recibo/[id]` (seção 6).
+Fluxo típico: OP criada (com CPF e celular do signatário) → e-mail disparado ao responsável/pagador → pagador confirma pagamento pelo link em `/api/baixar-op` (seção 8) → recibo é enviado para assinatura via Autentique em `/admin/op/assinaturas`, que valida o signatário por CPF e envia o link automaticamente por WhatsApp.
 
 ### 7.11 RH — Recursos Humanos / Folha
 `/admin/rh` — **o módulo mais complexo do sistema**, cobrindo o ciclo de folha de pagamento, ponto, benefícios e documentos dos funcionários.

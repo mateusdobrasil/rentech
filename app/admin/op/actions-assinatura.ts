@@ -48,7 +48,7 @@ export async function listarAssinaturasOPAction(payload: { accessToken: string }
   const db = supabaseAdmin();
   try {
     const [{ data: ops, error: opsError }, { data: assinaturas, error: assError }] = await Promise.all([
-      db.from('ordens_pagamento').select('*').order('data_criacao', { ascending: false }),
+      db.from('op_ordens_pagamento').select('*').order('data_criacao', { ascending: false }),
       db.from('op_assinaturas').select('*'),
     ]);
     if (opsError) throw new Error(opsError.message);
@@ -78,7 +78,7 @@ export async function enviarAssinaturaOPAction(payload: {
   const db = supabaseAdmin();
   try {
     const { data: op, error: opError } = await db
-      .from('ordens_pagamento')
+      .from('op_ordens_pagamento')
       .select('*')
       .eq('id', payload.opId)
       .single();
@@ -181,7 +181,7 @@ export async function finalizarAssinaturaOP(opId: string, autentiqueDocId: strin
   const { data: publicUrlData } = db.storage.from(BUCKET_RECIBOS).getPublicUrl(pathArquivado);
   const agora = new Date().toISOString();
 
-  const { data: opAtualizada } = await db.from('ordens_pagamento').update({
+  const { data: opAtualizada } = await db.from('op_ordens_pagamento').update({
     recibo_url: publicUrlData.publicUrl,
     data_assinatura: agora,
     status: 'PAGO E ASSINADO', // Muda o status automaticamente, como o canvas fazia antes
@@ -294,7 +294,7 @@ export async function baixarAssinadoOPAction(payload: { opId: string; accessToke
 
   const db = supabaseAdmin();
   try {
-    const { data: op } = await db.from('ordens_pagamento').select('recibo_url').eq('id', payload.opId).maybeSingle();
+    const { data: op } = await db.from('op_ordens_pagamento').select('recibo_url').eq('id', payload.opId).maybeSingle();
     if (!op?.recibo_url) return { ok: false, erro: 'O documento assinado ainda não está disponível. Use "Consultar" para verificar o status.' };
     return { ok: true, info: { url: op.recibo_url } };
   } catch (e: any) {

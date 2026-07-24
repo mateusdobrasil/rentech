@@ -21,7 +21,7 @@ export async function GET(request: Request) {
 
   const admin = supabaseAdmin();
   const { data: op, error } = await admin
-    .from('ordens_pagamento')
+    .from('op_ordens_pagamento')
     .select('id, numero_op, os_numero, empresa_recebedora, total_geral, status')
     .eq('id', id)
     .single();
@@ -63,7 +63,7 @@ export async function POST(request: Request) {
   const admin = supabaseAdmin();
 
   const { data: op, error: opError } = await admin
-    .from('ordens_pagamento')
+    .from('op_ordens_pagamento')
     .select('id, numero_op, os_numero, status')
     .eq('id', id)
     .single();
@@ -85,7 +85,7 @@ export async function POST(request: Request) {
   }
 
   const { error } = await admin
-    .from('ordens_pagamento')
+    .from('op_ordens_pagamento')
     .update({ status: 'PAGO', updated_at: new Date().toISOString() })
     .eq('id', id);
 

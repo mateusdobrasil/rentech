@@ -146,7 +146,7 @@ export async function criarOP(data: NovaOPData, accessToken: string) {
     };
 
     const { data: novaOp, error } = await supabaseAdmin
-      .from('ordens_pagamento')
+      .from('op_ordens_pagamento')
       .insert([payload])
       .select('id, numero_op')
       .single();
@@ -213,7 +213,7 @@ export async function listarOPs(accessToken: string, rota: '/admin/op/responsave
 
   try {
     let query = supabaseAdmin
-      .from('ordens_pagamento')
+      .from('op_ordens_pagamento')
       .select('*')
       .order('data_criacao', { ascending: false }); // Traz as mais recentes primeiro
 
@@ -240,7 +240,7 @@ export async function atualizarStatus(opId: string, novoStatus: string, accessTo
 
   try {
     const { error } = await supabaseAdmin
-      .from('ordens_pagamento')
+      .from('op_ordens_pagamento')
       .update({ status: novoStatus, updated_at: new Date().toISOString() })
       .eq('id', opId);
 
@@ -277,7 +277,7 @@ export async function buscarOP(opId: string, accessToken: string) {
 
   try {
     const { data: op, error } = await supabaseAdmin
-      .from('ordens_pagamento')
+      .from('op_ordens_pagamento')
       .select('*')
       .eq('id', opId)
       .single();
@@ -317,7 +317,7 @@ export async function atualizarOP(opId: string, dadosAtualizados: Partial<NovaOP
     // alta gestão podem editar qualquer OP, como já podiam ver todas).
     if (!ehAltaGestaoOP(perfil.permissaoBruta)) {
       const { data: opAtual, error: opError } = await supabaseAdmin
-        .from('ordens_pagamento')
+        .from('op_ordens_pagamento')
         .select('responsavel_nome')
         .eq('id', opId)
         .single();
@@ -329,7 +329,7 @@ export async function atualizarOP(opId: string, dadosAtualizados: Partial<NovaOP
     }
 
     const { error } = await supabaseAdmin
-      .from('ordens_pagamento')
+      .from('op_ordens_pagamento')
       .update({ ...dadosAtualizados, updated_at: new Date().toISOString() })
       .eq('id', opId);
 
@@ -414,7 +414,7 @@ export async function dispararEmailOP(opId: string, accessToken: string, apenasC
 
   try {
     const { data: op, error } = await supabaseAdmin
-      .from('ordens_pagamento')
+      .from('op_ordens_pagamento')
       .select('*')
       .eq('id', opId)
       .single();

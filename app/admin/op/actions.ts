@@ -161,7 +161,10 @@ export async function criarOP(data: NovaOPData, accessToken: string) {
     // DISPARO AUTOMÁTICO DE E-MAIL NA CRIAÇÃO
     // =========================================================
     try {
-      await enviarEmailOPInterno(payload, payload.responsavel_email);
+      // "payload" é o objeto ANTES do insert — nunca teve id/numero_op (quem
+      // gera isso é o banco). Sem mesclar novaOp aqui, o link de baixa do
+      // e-mail saía como ".../api/baixar-op?id=undefined".
+      await enviarEmailOPInterno({ ...payload, id: novaOp.id, numero_op: novaOp.numero_op }, payload.responsavel_email);
     } catch (emailError) {
       console.error("A OP foi criada, mas houve um erro no disparo do e-mail:", emailError);
     }

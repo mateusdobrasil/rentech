@@ -7,6 +7,7 @@
 // app/admin/rh/actions/actions-financeiro.ts (tela RH → Financeiro).
 import { supabaseAdmin } from '../../lib/supabase';
 import { enviarComProvedor, type ProvedorWhatsApp } from '../../lib/whatsapp';
+import { enviarWhatsAppMetaTemplate } from '../../lib/metaWhatsapp';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -146,6 +147,20 @@ export async function enviarTesteWhatsAppAction(provedor: ProvedorWhatsApp, celu
   // provedor aceitou a mensagem, não que o WhatsApp já entregou no aparelho;
   // é o que dá pra conferir de fato (ex: o wamid da Meta) quando o "ok"
   // sozinho não explica por que a mensagem não chegou.
+  return res.ok ? { ok: true, info: { detalhe: res.detalhe } } : { ok: false, erro: res.erro };
+}
+
+// Testa um Message Template da Meta diretamente (sem passar pelo roteamento
+// nem pela checagem de janela de 24h) — serve tanto pra validar o
+// `hello_world` (template padrão, sempre aprovado, sem variáveis) quanto
+// os templates próprios depois de aprovados no Business Manager.
+export async function enviarTesteTemplateWhatsAppAction(templateNome: string, idioma: string, parametros: string, celular: string): Promise<Resultado> {
+  const celularLimpo = (celular || '').replace(/\D/g, '');
+  if (!celularLimpo) return { ok: false, erro: 'Informe um celular válido (com DDD).' };
+  if (!templateNome.trim()) return { ok: false, erro: 'Informe o nome do template.' };
+
+  const listaParametros = (parametros || '').split(',').map(s => s.trim()).filter(Boolean);
+  const res = await enviarWhatsAppMetaTemplate(celularLimpo, templateNome.trim(), idioma.trim() || 'en_US', listaParametros);
   return res.ok ? { ok: true, info: { detalhe: res.detalhe } } : { ok: false, erro: res.erro };
 }
 

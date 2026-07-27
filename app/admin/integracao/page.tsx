@@ -9,7 +9,7 @@ import {
   statusTokenAutentiqueAction, estatisticasAutentiqueAction,
   statusZapiAction, estatisticasZapiAction, statusMetaAction,
   obterRoteamentoWhatsAppAction, salvarRoteamentoWhatsAppAction,
-  enviarTesteWhatsAppAction,
+  enviarTesteWhatsAppAction, enviarTesteTemplateWhatsAppAction,
   type ConfigRoteamentoWhatsApp
 } from './actions';
 
@@ -85,6 +85,12 @@ export default function IntegracaoPage() {
   const [testeCelular, setTesteCelular] = useState('');
   const [testeEnviando, setTesteEnviando] = useState(false);
   const [testeResultado, setTesteResultado] = useState<{ ok: boolean; msg: string; detalhe?: string } | null>(null);
+
+  const [testeTemplateNome, setTesteTemplateNome] = useState('hello_world');
+  const [testeTemplateIdioma, setTesteTemplateIdioma] = useState('en_US');
+  const [testeTemplateParametros, setTesteTemplateParametros] = useState('');
+  const [testeTemplateEnviando, setTesteTemplateEnviando] = useState(false);
+  const [testeTemplateResultado, setTesteTemplateResultado] = useState<{ ok: boolean; msg: string; detalhe?: string } | null>(null);
 
   // Valida a sessão e a permissão (dinâmica, via banco) antes de liberar a página
   useEffect(() => {
@@ -162,6 +168,7 @@ export default function IntegracaoPage() {
     setEdAgencia(i.config?.agencia_debito || ''); setEdConta(i.config?.conta_debito || '');
     setEdCnpj(i.config?.cnpj || ''); setEdRazaoSocial(i.config?.razao_social || '');
     setTesteCelular(''); setTesteResultado(null);
+    setTesteTemplateNome('hello_world'); setTesteTemplateIdioma('en_US'); setTesteTemplateParametros(''); setTesteTemplateResultado(null);
     if (i.parceiro === 'WHATSAPP_ROTEAMENTO' && roteamento) {
       setEdModoRoteamento(roteamento.modo); setEdProvedorGlobal(roteamento.provedor_global);
       setEdProvedorEnvio(roteamento.provedor_envio); setEdProvedorRecebimento(roteamento.provedor_recebimento);
@@ -190,6 +197,16 @@ export default function IntegracaoPage() {
         ? { ok: true, msg: 'Aceito pelo provedor — isso ainda não confirma a entrega no aparelho.', detalhe: res.info?.detalhe }
         : { ok: false, msg: res.erro || 'Falha ao enviar.' });
     } finally { setTesteEnviando(false); }
+  };
+
+  const enviarTesteTemplate = async () => {
+    setTesteTemplateEnviando(true); setTesteTemplateResultado(null);
+    try {
+      const res = await enviarTesteTemplateWhatsAppAction(testeTemplateNome, testeTemplateIdioma, testeTemplateParametros, testeCelular);
+      setTesteTemplateResultado(res.ok
+        ? { ok: true, msg: 'Template aceito pela Meta.', detalhe: res.info?.detalhe }
+        : { ok: false, msg: res.erro || 'Falha ao enviar.' });
+    } finally { setTesteTemplateEnviando(false); }
   };
 
   const salvarRoteamento = async () => {
@@ -449,6 +466,34 @@ export default function IntegracaoPage() {
                   )}
                   <p className="text-[10px] text-gray-400 font-semibold leading-snug">
                     Se o número ainda estiver em modo de teste no painel da Meta, ele precisa constar na lista de "Recipient numbers" do App para receber.
+                  </p>
+                </div>
+              )}
+
+              {editParceiro.parceiro === 'META' && (
+                <div className="p-3 bg-[#F8FAFC] rounded-xl space-y-2">
+                  <label className="block text-[10px] font-black text-gray-500 uppercase">Testar Message Template</label>
+                  <p className="text-[10px] text-gray-400 font-semibold leading-snug">
+                    Ignora a janela de 24h e o roteamento — manda o template direto. Use <code>hello_world</code> / <code>en_US</code> (sem parâmetros) pra validar o envio de template mesmo antes dos nossos templates saírem aprovados.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="text" value={testeTemplateNome} onChange={e => setTesteTemplateNome(e.target.value)} placeholder="Nome do template" className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold" />
+                    <input type="text" value={testeTemplateIdioma} onChange={e => setTesteTemplateIdioma(e.target.value)} placeholder="Idioma (ex: en_US)" className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold" />
+                  </div>
+                  <input type="text" value={testeTemplateParametros} onChange={e => setTesteTemplateParametros(e.target.value)} placeholder="Parâmetros, separados por vírgula (opcional)" className="w-full p-2 border border-gray-300 rounded-lg text-sm font-mono" />
+                  <button onClick={enviarTesteTemplate} disabled={testeTemplateEnviando} className="w-full bg-[#0C1D4D] hover:bg-[#284B8C] disabled:opacity-50 text-white font-black uppercase tracking-wider text-[11px] py-2.5 rounded-lg transition-colors">
+                    {testeTemplateEnviando ? 'Enviando...' : '📨 Testar template'}
+                  </button>
+                  {testeTemplateResultado && (
+                    <div>
+                      <p className={`text-[10px] font-bold ${testeTemplateResultado.ok ? 'text-emerald-600' : 'text-red-600'}`}>{testeTemplateResultado.msg}</p>
+                      {testeTemplateResultado.detalhe && (
+                        <p className="text-[9px] text-gray-400 font-mono break-all mt-1">{testeTemplateResultado.detalhe}</p>
+                      )}
+                    </div>
+                  )}
+                  <p className="text-[10px] text-gray-400 font-semibold leading-snug">
+                    Usa o celular informado no teste de texto livre acima.
                   </p>
                 </div>
               )}

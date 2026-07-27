@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from 'react';
-import { salvarDocumentosContabeisAction } from '../actions/actions-documentos';
+import { salvarDocumentosContabeisAction, identificarFuncionarioOcrAction } from '../actions/actions-documentos';
 
 // pdf-lib e pdfjs são carregados dinamicamente (client-side) para separar e
 // renderizar as páginas. Nada disso depende do servidor/Vercel.
@@ -16,6 +16,7 @@ interface PaginaSeparada {
   imagemDataUrl: string;     // preview renderizado
   pdfBase64: string;         // a página isolada em PDF
   funcionarioNome: string;   // associação (editável); '' = ignorar
+  confianca: 'ALTA' | 'MEDIA' | 'MANUAL'; // ALTA/MEDIA = achado pelo OCR; MANUAL = chute posicional, precisa conferir
 }
 
 interface Props {
@@ -134,10 +135,29 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
         const bytes = await novoPdf.save();
         const pdfBase64 = bytesParaBase64(bytes);
 
-        // pré-associação por ordem alfabética: página i → i-ésimo elegível
-        const funcionarioNome = elegiveis[i - 1]?.nome_completo || '';
+        // Identifica o funcionário lendo o texto da página via AWS Textract
+        // (mesmo OCR usado no Financeiro). Se não achar com segurança, cai
+        // para o chute posicional (ordem alfabética) marcado como MANUAL,
+        // para o usuário conferir.
+        setProgresso(`Lendo página ${i} de ${totalPaginas} com OCR (AWS)...`);
+        let funcionarioNome = '';
+        let confianca: 'ALTA' | 'MEDIA' | 'MANUAL' = 'MANUAL';
+        try {
+          const ocr = await identificarFuncionarioOcrAction({
+            pdfBase64, nomesElegiveis: elegiveis.map(f => f.nome_completo)
+          });
+          if (ocr.ok && ocr.info?.nome) {
+            funcionarioNome = ocr.info.nome;
+            confianca = ocr.info.confianca;
+          }
+        } catch { /* segue para o fallback abaixo */ }
 
-        novas.push({ paginaOrigem: i, imagemDataUrl, pdfBase64, funcionarioNome });
+        if (!funcionarioNome) {
+          // fallback: pré-associação por ordem alfabética (página i → i-ésimo elegível)
+          funcionarioNome = elegiveis[i - 1]?.nome_completo || '';
+        }
+
+        novas.push({ paginaOrigem: i, imagemDataUrl, pdfBase64, funcionarioNome, confianca });
       }
 
       setPaginas(novas);
@@ -151,17 +171,21 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
   };
 
   const alterarAssociacao = (idx: number, nome: string) => {
-    setPaginas(prev => prev.map((p, i) => i === idx ? { ...p, funcionarioNome: nome } : p));
+    // Troca manual sobrescreve o que o OCR achou — deixa de ser ALTA/MEDIA
+    setPaginas(prev => prev.map((p, i) => i === idx ? { ...p, funcionarioNome: nome, confianca: 'MANUAL' } : p));
   };
 
   // Nomes já usados (para sinalizar duplicidade)
   const nomesUsados = paginas.filter(p => p.funcionarioNome).map(p => p.funcionarioNome);
   const duplicados = new Set(nomesUsados.filter((n, i) => nomesUsados.indexOf(n) !== i));
   const semAssociacao = paginas.filter(p => !p.funcionarioNome).length;
+  const achadasPeloOcr = paginas.filter(p => p.confianca === 'ALTA' || p.confianca === 'MEDIA').length;
+  const precisamRevisao = paginas.filter(p => p.funcionarioNome && p.confianca === 'MANUAL').length;
 
   const salvar = async () => {
     const itens = paginas.filter(p => p.funcionarioNome).map(p => ({
-      funcionarioNome: p.funcionarioNome, pdfBase64: p.pdfBase64, paginaOrigem: p.paginaOrigem
+      funcionarioNome: p.funcionarioNome, pdfBase64: p.pdfBase64, paginaOrigem: p.paginaOrigem,
+      confiancaMatch: p.confianca
     }));
     if (itens.length === 0) { alert('Associe pelo menos uma página a um funcionário.'); return; }
     if (duplicados.size > 0) {
@@ -253,6 +277,8 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
               </span>
               {semAssociacao > 0 && <span className="text-amber-600">· {semAssociacao} sem associação</span>}
               {duplicados.size > 0 && <span className="text-red-600">· {duplicados.size} duplicado(s)</span>}
+              <span className="text-emerald-600">· {achadasPeloOcr} identificado(s) por OCR</span>
+              {precisamRevisao > 0 && <span className="text-amber-600">· {precisamRevisao} sem leitura (revisar manualmente)</span>}
             </div>
             <button onClick={salvar} disabled={salvando} className="bg-[#16A34A] hover:bg-[#15803D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md transition-all disabled:opacity-50">
               {salvando ? '⏳ Salvando...' : '💾 Salvar Documentos'}
@@ -260,7 +286,7 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
           </div>
 
           <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 mb-4 font-medium">
-            ⚠ A pré-associação segue a ordem alfabética. Como alguns contratos não têm holerite, confira cada página pelo nome visível e ajuste no dropdown onde necessário — um erro desloca os seguintes.
+            ⚠ O nome de cada página foi lido automaticamente por OCR (AWS Textract). Onde o OCR não conseguiu ler com segurança, a página cai para a ordem alfabética e fica marcada como &ldquo;revisar&rdquo; — confira essas pelo nome visível e ajuste no dropdown se necessário.
           </p>
 
           {/* Grade de revisão: imagem da página + dropdown */}
@@ -268,11 +294,16 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
             {paginas.map((p, idx) => {
               const dup = p.funcionarioNome && duplicados.has(p.funcionarioNome);
               return (
-                <div key={idx} className={`border rounded-xl overflow-hidden ${!p.funcionarioNome ? 'border-amber-300' : dup ? 'border-red-300' : 'border-gray-200'}`}>
+                <div key={idx} className={`border rounded-xl overflow-hidden ${!p.funcionarioNome ? 'border-amber-300' : dup ? 'border-red-300' : p.confianca === 'MANUAL' ? 'border-blue-200' : 'border-gray-200'}`}>
                   <div className="bg-gray-50 px-3 py-2 flex items-center justify-between border-b border-gray-200">
                     <span className="text-[10px] font-black text-gray-500 uppercase">Página {p.paginaOrigem}</span>
-                    {dup && <span className="text-[9px] font-black text-red-600 uppercase">⚠ duplicado</span>}
-                    {!p.funcionarioNome && <span className="text-[9px] font-black text-amber-600 uppercase">ignorada</span>}
+                    <div className="flex items-center gap-1.5">
+                      {p.confianca === 'ALTA' && <span className="text-[9px] font-black text-emerald-600 uppercase">✓ OCR</span>}
+                      {p.confianca === 'MEDIA' && <span className="text-[9px] font-black text-blue-600 uppercase">OCR (conferir)</span>}
+                      {p.funcionarioNome && p.confianca === 'MANUAL' && <span className="text-[9px] font-black text-amber-600 uppercase">⚠ revisar</span>}
+                      {dup && <span className="text-[9px] font-black text-red-600 uppercase">⚠ duplicado</span>}
+                      {!p.funcionarioNome && <span className="text-[9px] font-black text-amber-600 uppercase">ignorada</span>}
+                    </div>
                   </div>
                   <img src={p.imagemDataUrl} alt={`Cabeçalho da página ${p.paginaOrigem}`} className="w-full object-contain bg-white border-b border-gray-100" />
                   <div className="p-2 border-t border-gray-200">

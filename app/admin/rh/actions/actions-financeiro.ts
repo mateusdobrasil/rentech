@@ -10,7 +10,7 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { calcularBeneficiosMes } from './actions-beneficios';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
-import { TextractClient, DetectDocumentTextCommand } from "@aws-sdk/client-textract";
+import { extrairTextoPdf } from '../../../lib/textract';
 
 type Resultado = {
   ok: boolean;
@@ -193,31 +193,16 @@ export async function montarLoteSalariosAction(payload: {
 // ============================================================================
 // OCR AWS TEXTRACT (SERVER-SIDE)
 // Envia o PDF digitalizado diretamente para a AWS para leitura limpa e precisa.
+// A chamada ao Textract em si vive em app/lib/textract.ts (compartilhada com
+// o reconhecimento de funcionário em actions-documentos.ts).
 // ============================================================================
-const textractClient = new TextractClient({
-  region: process.env.AWS_REGION || "us-east-1"
-});
-
 export async function processarOcrAwsAction(pdfBase64: string, tipo: string): Promise<Resultado> {
   try {
-    const documentBytes = Buffer.from(pdfBase64, 'base64');
+    const linhas = await extrairTextoPdf(pdfBase64);
 
-    const command = new DetectDocumentTextCommand({
-      Document: {
-        Bytes: documentBytes,
-      },
-    });
-
-    const response = await textractClient.send(command);
-
-    if (!response.Blocks) {
+    if (!linhas) {
       return { ok: false, erro: 'Nenhum texto detectado pela AWS.' };
     }
-
-    const linhas = response.Blocks
-      .filter(block => block.BlockType === 'LINE' && block.Text)
-      .map(block => block.Text)
-      .join('\n');
 
     const t = linhas.toUpperCase().replace(/\s+/g, ' ');
     const rx = /VALOR\s*L[IÍ]QUIDO[^\d,]{0,30}(\d{1,3}(?:\.\d{3})*,\d{2})/;

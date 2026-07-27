@@ -6,6 +6,7 @@
 // A separação por página é feita no CLIENTE (pdf-lib); aqui recebemos cada
 // pedaço já em base64 e persistimos.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { extrairTextoPdf, identificarFuncionarioNoTexto } from '../../../lib/textract';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -23,7 +24,7 @@ export async function salvarDocumentosContabeisAction(payload: {
   tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL';
   nomeArquivoOrigem: string;
   importadoPor: string;
-  itens: { funcionarioNome: string; pdfBase64: string; paginaOrigem: number }[];
+  itens: { funcionarioNome: string; pdfBase64: string; paginaOrigem: number; confiancaMatch?: 'ALTA' | 'MEDIA' | 'MANUAL' }[];
 }): Promise<Resultado> {
   const db = supabaseAdmin();
   const { mesReferencia, tipo, nomeArquivoOrigem, importadoPor, itens } = payload;
@@ -52,7 +53,7 @@ export async function salvarDocumentosContabeisAction(payload: {
         storage_path: path,
         pagina_origem: item.paginaOrigem,
         nome_arquivo_origem: nomeArquivoOrigem,
-        confianca_match: 'MANUAL',
+        confianca_match: item.confiancaMatch || 'MANUAL',
         importado_por: importadoPor || null,
         importado_em: new Date().toISOString()
       }, { onConflict: 'funcionario_nome,mes_referencia,tipo' });
@@ -64,6 +65,31 @@ export async function salvarDocumentosContabeisAction(payload: {
     return { ok: salvos.length > 0, info: { salvos: salvos.length, total: itens.length, falhas } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// OCR — IDENTIFICAR FUNCIONÁRIO NA PÁGINA (AWS Textract)
+// Lê o texto da página isolada e tenta casar com um dos nomes elegíveis.
+// Mesmo mecanismo (app/lib/textract.ts) usado para ler valores no Financeiro.
+// Nunca "chuta": se o nome não aparecer com segurança, devolve nome: null e
+// a tela mantém a associação manual/posicional para revisão.
+// ============================================================================
+export async function identificarFuncionarioOcrAction(payload: {
+  pdfBase64: string;
+  nomesElegiveis: string[];
+}): Promise<Resultado> {
+  try {
+    const texto = await extrairTextoPdf(payload.pdfBase64);
+    if (!texto) return { ok: false, erro: 'Nenhum texto detectado pela AWS.' };
+
+    const match = identificarFuncionarioNoTexto(texto, payload.nomesElegiveis);
+    if (!match) {
+      return { ok: false, erro: 'Não foi possível identificar o funcionário com segurança.', info: { _textoLido: texto.substring(0, 500) } };
+    }
+    return { ok: true, info: { nome: match.nome, confianca: match.confianca, _textoLido: texto.substring(0, 500) } };
+  } catch (e: any) {
+    return { ok: false, erro: 'Falha na comunicação com a AWS: ' + e.message };
   }
 }
 

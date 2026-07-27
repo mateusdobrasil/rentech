@@ -4,7 +4,7 @@
 // com celular; com nomes = só eles) e usa o template salvo em `mensagem`,
 // substituindo placeholders {{assim}} — nada disso depende mais de código.
 import { supabaseAdmin } from './supabase';
-import { resolverProvedor, enviarComProvedor } from './whatsapp';
+import { resolverProvedorAutomacao, enviarComJanela, type ProvedorAutomacao, type TemplateMeta } from './whatsapp';
 
 interface ResultadoDisparoAutomacao {
   disparado: boolean; // false se a automação está desativada, sem canal WhatsApp ou sem mensagem configurada
@@ -24,7 +24,7 @@ export async function dispararAutomacaoWhatsApp(chave: string, contexto: Record<
 
   const { data: automacao } = await db
     .from('folha_automacoes')
-    .select('ativo, canais, destinatarios, mensagem')
+    .select('ativo, canais, destinatarios, mensagem, provedor_whatsapp, meta_template_nome, meta_template_idioma, meta_template_variaveis')
     .eq('chave', chave)
     .maybeSingle();
 
@@ -50,14 +50,25 @@ export async function dispararAutomacaoWhatsApp(chave: string, contexto: Record<
 
   // Resolve o provedor (Z-API ou Meta) uma única vez antes do loop — evita
   // uma leitura no banco por funcionário quando o disparo é em lote.
-  const provedor = await resolverProvedor('ENVIO');
+  // 'PADRAO' (default) segue o interruptor global de Envio; a automação
+  // pode fixar Z-API ou Meta explicitamente, ignorando o global.
+  const provedor = await resolverProvedorAutomacao((automacao.provedor_whatsapp as ProvedorAutomacao) || 'PADRAO');
 
   let disparos = 0;
   const erros: string[] = [];
   for (const f of (funcionarios || []) as { nome_completo: string; celular: string }[]) {
-    const vars = { primeiro_nome: f.nome_completo.split(' ')[0], nome_completo: f.nome_completo, ...contexto };
+    const vars: Record<string, string | number> = { primeiro_nome: f.nome_completo.split(' ')[0], nome_completo: f.nome_completo, ...contexto };
     const texto = preencherTemplate(automacao.mensagem, vars);
-    const res = await enviarComProvedor(provedor, f.celular, texto);
+
+    // Template da Meta (se configurado) — os parâmetros variam por
+    // funcionário porque dependem de `vars` (ex: primeiro_nome).
+    const templateMeta: TemplateMeta | null = automacao.meta_template_nome ? {
+      nome: automacao.meta_template_nome,
+      idioma: automacao.meta_template_idioma || 'pt_BR',
+      parametros: ((automacao.meta_template_variaveis as string[]) || ['primeiro_nome']).map(v => String(vars[v] ?? '')),
+    } : null;
+
+    const res = await enviarComJanela(provedor, f.celular, texto, templateMeta);
     if (res.ok) disparos++; else erros.push(f.nome_completo);
     await new Promise(resolve => setTimeout(resolve, 1000));
   }

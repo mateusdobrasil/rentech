@@ -82,7 +82,10 @@ export default function GestaoAgendamentos() {
   }, {});
 
   // Modal de criação/edição de automação
-  const formVazio: FormAutomacao = { nome: '', descricao: '', tipo: 'CRON', gatilho: '', canais: [], publico_alvo: '', destinatarios: [], mensagem: '', horario: '08:00', dias_semana: [1, 2, 3, 4, 5] };
+  const formVazio: FormAutomacao = {
+    nome: '', descricao: '', tipo: 'CRON', gatilho: '', canais: [], publico_alvo: '', destinatarios: [], mensagem: '', horario: '08:00', dias_semana: [1, 2, 3, 4, 5],
+    provedor_whatsapp: 'PADRAO', meta_template_nome: '', meta_template_idioma: 'pt_BR', meta_template_variaveis: 'primeiro_nome',
+  };
   const [modalAutomacao, setModalAutomacao] = useState<{ open: boolean; isNew: boolean; id: number | null; chave?: string; modoTodos: boolean; form: FormAutomacao } | null>(null);
   const [salvandoAutomacao, setSalvandoAutomacao] = useState(false);
 
@@ -105,6 +108,10 @@ export default function GestaoAgendamentos() {
       mensagem: rotina.mensagem || '',
       horario: rotina.horario || '08:00',
       dias_semana: (rotina.dias_semana && rotina.dias_semana.length > 0) ? rotina.dias_semana : [1, 2, 3, 4, 5],
+      provedor_whatsapp: rotina.provedor_whatsapp || 'PADRAO',
+      meta_template_nome: rotina.meta_template_nome || '',
+      meta_template_idioma: rotina.meta_template_idioma || 'pt_BR',
+      meta_template_variaveis: (rotina.meta_template_variaveis || ['primeiro_nome']).join(', '),
     }
   });
 
@@ -513,6 +520,59 @@ export default function GestaoAgendamentos() {
                   </label>
                 </div>
               </div>
+
+              {modalAutomacao.form.canais.includes('WhatsApp') && (
+                <div className="p-3 bg-[#F8FAFC] rounded-xl space-y-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-2">Provedor WhatsApp</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(['PADRAO', 'ZAPI', 'META'] as const).map(p => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setModalAutomacao({ ...modalAutomacao, form: { ...modalAutomacao.form, provedor_whatsapp: p } })}
+                          className={`p-2 rounded-lg text-[10px] font-black uppercase border-2 ${modalAutomacao.form.provedor_whatsapp === p ? 'border-[#336699] bg-blue-50 text-[#336699]' : 'border-gray-200 text-gray-400'}`}
+                        >
+                          {p === 'PADRAO' ? 'Padrão do sistema' : p === 'ZAPI' ? 'Z-API' : 'Meta'}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-[#94A3B8] mt-1">
+                      "Padrão" segue o interruptor global de Envio em /admin/integração. Z-API ou Meta forçam esse provedor só para esta automação.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Template da Meta (opcional)</label>
+                    <div className="grid grid-cols-2 gap-2 mb-2">
+                      <input
+                        type="text"
+                        className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm"
+                        value={modalAutomacao.form.meta_template_nome}
+                        onChange={e => setModalAutomacao({ ...modalAutomacao, form: { ...modalAutomacao.form, meta_template_nome: e.target.value } })}
+                        placeholder="Nome do template (ex: lembrete_ponto_entrada)"
+                      />
+                      <input
+                        type="text"
+                        className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm"
+                        value={modalAutomacao.form.meta_template_idioma}
+                        onChange={e => setModalAutomacao({ ...modalAutomacao, form: { ...modalAutomacao.form, meta_template_idioma: e.target.value } })}
+                        placeholder="Idioma (ex: pt_BR)"
+                      />
+                    </div>
+                    <input
+                      type="text"
+                      className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-mono"
+                      value={modalAutomacao.form.meta_template_variaveis}
+                      onChange={e => setModalAutomacao({ ...modalAutomacao, form: { ...modalAutomacao.form, meta_template_variaveis: e.target.value } })}
+                      placeholder="Variáveis, na ordem do template (ex: primeiro_nome)"
+                    />
+                    <p className="text-[10px] text-[#94A3B8] mt-1">
+                      Só é usado quando o provedor efetivo do disparo (Padrão ou explícito) for a Meta. Sem template configurado, tenta texto livre — só funciona se o destinatário tiver falado com o número nas últimas 24h.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-2">Destinatários do Disparo</label>

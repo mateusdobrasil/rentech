@@ -76,6 +76,23 @@ export interface TemplateMeta {
   parametros: string[]; // na ordem dos {{1}}, {{2}}... do corpo aprovado no Business Manager
 }
 
+// Decide texto livre vs. Message Template pré-aprovado: no Z-API sempre
+// texto livre; na Meta, texto livre só se a janela de 24h estiver aberta
+// (destinatário falou recentemente), senão cai no template (se houver) —
+// texto livre fora da janela seria aceito pela API mas nunca chegaria no
+// aparelho. Compartilhada por notificarPontoWhatsApp (aprovação/rejeição)
+// e por dispararAutomacaoWhatsApp (automacoes.ts).
+async function enviarConsiderandoJanela(provedor: ProvedorWhatsApp, celular: string, textoLivre: string, templateMeta: TemplateMeta | null): Promise<{ ok: boolean; erro?: string; detalhe?: string }> {
+  if (provedor === 'ZAPI') return enviarComProvedor('ZAPI', celular, textoLivre);
+  if (!templateMeta) return enviarComProvedor('META', celular, textoLivre);
+
+  const aberta = await janelaAbertaParaCelular(celular);
+  if (aberta) return enviarComProvedor('META', celular, textoLivre);
+  return enviarWhatsAppMetaTemplate(celular, templateMeta.nome, templateMeta.idioma, templateMeta.parametros);
+}
+
+export { enviarConsiderandoJanela as enviarComJanela };
+
 // Usado por automacoes.ts para disparos avulsos. Para disparar em lote
 // (loop de vários funcionários), prefira resolver o provedor uma vez com
 // resolverProvedor('ENVIO') e chamar enviarComProvedor diretamente —
@@ -85,20 +102,21 @@ export async function enviarWhatsApp(celular: string, mensagem: string): Promise
   return enviarComProvedor(provedor, celular, mensagem);
 }
 
+export type ProvedorAutomacao = 'PADRAO' | 'ZAPI' | 'META';
+
+// Override por automação (campo folha_automacoes.provedor_whatsapp):
+// 'PADRAO' segue o interruptor global de Envio; 'ZAPI'/'META' força aquele
+// provedor específico, ignorando o global — usado quando se quer testar ou
+// fixar uma automação num provedor sem afetar as demais.
+export async function resolverProvedorAutomacao(override: ProvedorAutomacao): Promise<ProvedorWhatsApp> {
+  return override === 'PADRAO' ? resolverProvedor('ENVIO') : override;
+}
+
 // Usado por actions-ponto-whatsapp.ts para notificar o funcionário sobre a
 // aprovação/rejeição de uma justificativa ou abono — segue o provedor de
 // RECEBIMENTO porque é resposta à conversa que o funcionário já está tendo
 // pelo WhatsApp, não um disparo de automação.
-//
-// `textoLivre` é usado sempre no Z-API, e na Meta quando a janela de 24h
-// ainda está aberta (RH que analisa no mesmo dia). Fora da janela, a Meta
-// só entrega via `templateMeta` (Message Template pré-aprovado) — texto
-// livre nesse caso seria aceito pela API mas nunca chegaria no aparelho.
 export async function notificarPontoWhatsApp(celular: string, textoLivre: string, templateMeta: TemplateMeta): Promise<{ ok: boolean; erro?: string; detalhe?: string }> {
   const provedor = await resolverProvedor('RECEBIMENTO');
-  if (provedor === 'ZAPI') return enviarComProvedor('ZAPI', celular, textoLivre);
-
-  const aberta = await janelaAbertaParaCelular(celular);
-  if (aberta) return enviarComProvedor('META', celular, textoLivre);
-  return enviarWhatsAppMetaTemplate(celular, templateMeta.nome, templateMeta.idioma, templateMeta.parametros);
+  return enviarConsiderandoJanela(provedor, celular, textoLivre, templateMeta);
 }

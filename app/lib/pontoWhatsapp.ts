@@ -618,6 +618,15 @@ export async function processarMensagemPontoWhatsApp(payload: {
   const texto = (payload.texto || '').trim();
 
   const db = supabaseAdmin();
+
+  // Registra que este número acabou de falar com a gente — é o que abre a
+  // janela de 24h de atendimento da Meta (ver janelaAbertaParaCelular em
+  // app/lib/whatsapp.ts), usada pelas notificações de aprovação/rejeição de
+  // ponto pra saber se pode mandar texto livre ou precisa de um Message
+  // Template aprovado. O client do Supabase não lança exceção em erro (só
+  // devolve `{ error }`), então isso nunca interrompe o fluxo de ponto.
+  await db.from('folha_whatsapp_janela').upsert({ celular: payload.telefone, ultima_mensagem_em: new Date().toISOString() });
+
   const funcionario = await buscarFuncionarioPorCelular(db, payload.telefone);
   if (!funcionario) {
     await registrarLogAuditoria({

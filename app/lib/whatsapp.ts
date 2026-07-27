@@ -8,7 +8,9 @@
 // deste roteador.
 import { supabaseAdmin } from './supabase';
 import { enviarWhatsApp as enviarWhatsAppZapi } from './zapi';
-import { enviarWhatsAppMeta } from './metaWhatsapp';
+import { enviarWhatsAppMeta, enviarWhatsAppMetaTemplate } from './metaWhatsapp';
+
+const JANELA_ATENDIMENTO_HORAS = 24;
 
 export type ProvedorWhatsApp = 'ZAPI' | 'META';
 export type EscopoWhatsApp = 'ENVIO' | 'RECEBIMENTO';
@@ -50,6 +52,30 @@ export async function enviarComProvedor(provedor: ProvedorWhatsApp, celular: str
   return provedor === 'META' ? enviarWhatsAppMeta(celular, mensagem) : enviarWhatsAppZapi(celular, mensagem);
 }
 
+// A Meta só entrega texto livre business-iniciado dentro da janela de 24h
+// que abre quando o funcionário manda mensagem (ver folha_whatsapp_janela,
+// atualizada por processarMensagemPontoWhatsApp a cada mensagem recebida,
+// nos dois webhooks). Sem registro (nunca conversou) conta como fechada —
+// degrada com segurança caso a tabela ainda não exista.
+export async function janelaAbertaParaCelular(celular: string): Promise<boolean> {
+  const db = supabaseAdmin();
+  const { data, error } = await db
+    .from('folha_whatsapp_janela')
+    .select('ultima_mensagem_em')
+    .eq('celular', celular)
+    .maybeSingle();
+
+  if (error || !data?.ultima_mensagem_em) return false;
+  const horasDesde = (Date.now() - new Date(data.ultima_mensagem_em).getTime()) / (1000 * 60 * 60);
+  return horasDesde < JANELA_ATENDIMENTO_HORAS;
+}
+
+export interface TemplateMeta {
+  nome: string;
+  idioma: string; // ex: 'pt_BR'
+  parametros: string[]; // na ordem dos {{1}}, {{2}}... do corpo aprovado no Business Manager
+}
+
 // Usado por automacoes.ts para disparos avulsos. Para disparar em lote
 // (loop de vários funcionários), prefira resolver o provedor uma vez com
 // resolverProvedor('ENVIO') e chamar enviarComProvedor diretamente —
@@ -63,7 +89,16 @@ export async function enviarWhatsApp(celular: string, mensagem: string): Promise
 // aprovação/rejeição de uma justificativa ou abono — segue o provedor de
 // RECEBIMENTO porque é resposta à conversa que o funcionário já está tendo
 // pelo WhatsApp, não um disparo de automação.
-export async function notificarPontoWhatsApp(celular: string, mensagem: string): Promise<{ ok: boolean; erro?: string }> {
+//
+// `textoLivre` é usado sempre no Z-API, e na Meta quando a janela de 24h
+// ainda está aberta (RH que analisa no mesmo dia). Fora da janela, a Meta
+// só entrega via `templateMeta` (Message Template pré-aprovado) — texto
+// livre nesse caso seria aceito pela API mas nunca chegaria no aparelho.
+export async function notificarPontoWhatsApp(celular: string, textoLivre: string, templateMeta: TemplateMeta): Promise<{ ok: boolean; erro?: string; detalhe?: string }> {
   const provedor = await resolverProvedor('RECEBIMENTO');
-  return enviarComProvedor(provedor, celular, mensagem);
+  if (provedor === 'ZAPI') return enviarComProvedor('ZAPI', celular, textoLivre);
+
+  const aberta = await janelaAbertaParaCelular(celular);
+  if (aberta) return enviarComProvedor('META', celular, textoLivre);
+  return enviarWhatsAppMetaTemplate(celular, templateMeta.nome, templateMeta.idioma, templateMeta.parametros);
 }

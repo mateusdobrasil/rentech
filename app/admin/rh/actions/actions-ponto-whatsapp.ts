@@ -226,7 +226,12 @@ export async function aprovarSolicitacaoAction(payload: { id: number; aprovadorN
     });
 
     const rotuloTipo = solicitacao.tipo === 'JUSTIFICATIVA_BATIDA' ? 'sua justificativa de ponto' : 'seu abono';
-    await notificarPontoWhatsApp(solicitacao.celular, `✅ O RH aprovou ${rotuloTipo} referente a ${String(solicitacao.data_referencia).split('-').reverse().join('/')}.`);
+    const dataBR = String(solicitacao.data_referencia).split('-').reverse().join('/');
+    await notificarPontoWhatsApp(
+      solicitacao.celular,
+      `✅ O RH aprovou ${rotuloTipo} referente a ${dataBR}.`,
+      { nome: 'ponto_solicitacao_aprovada', idioma: 'pt_BR', parametros: [rotuloTipo, dataBR] }
+    );
 
     return { ok: true };
   } catch (e: any) {
@@ -262,7 +267,12 @@ export async function rejeitarSolicitacaoAction(payload: { id: number; aprovador
     });
 
     const rotuloTipo = solicitacao.tipo === 'JUSTIFICATIVA_BATIDA' ? 'sua justificativa de ponto' : 'seu abono';
-    await notificarPontoWhatsApp(solicitacao.celular, `❌ O RH não aprovou ${rotuloTipo} referente a ${String(solicitacao.data_referencia).split('-').reverse().join('/')}. Motivo: ${motivoRejeicao}. Fale com o RH se tiver dúvidas.`);
+    const dataBR = String(solicitacao.data_referencia).split('-').reverse().join('/');
+    await notificarPontoWhatsApp(
+      solicitacao.celular,
+      `❌ O RH não aprovou ${rotuloTipo} referente a ${dataBR}. Motivo: ${motivoRejeicao}. Fale com o RH se tiver dúvidas.`,
+      { nome: 'ponto_solicitacao_rejeitada', idioma: 'pt_BR', parametros: [rotuloTipo, dataBR, motivoRejeicao] }
+    );
 
     return { ok: true };
   } catch (e: any) {

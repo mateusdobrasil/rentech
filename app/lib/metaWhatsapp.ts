@@ -51,6 +51,50 @@ export async function enviarWhatsAppMeta(celular: string, mensagem: string): Pro
   }
 }
 
+// Envia uma mensagem de Template (HSM) pré-aprovada — diferente do texto
+// livre, funciona a qualquer momento (não depende da janela de 24h de
+// atendimento). `parametros` preenche, na ordem, os {{1}}, {{2}}... do
+// corpo do template aprovado no Business Manager.
+export async function enviarWhatsAppMetaTemplate(celular: string, nomeTemplate: string, idioma: string, parametros: string[]): Promise<{ ok: boolean; erro?: string; detalhe?: string }> {
+  const token = process.env.META_WHATSAPP_TOKEN;
+  const phoneNumberId = process.env.META_WHATSAPP_PHONE_NUMBER_ID;
+
+  if (!token || !phoneNumberId) {
+    return { ok: false, erro: 'Credenciais da Meta Cloud API não configuradas nas variáveis de ambiente.' };
+  }
+
+  const celularLimpo = (celular || '').replace(/\D/g, '');
+  if (!celularLimpo) return { ok: false, erro: 'Celular vazio ou inválido.' };
+
+  try {
+    const response = await fetch(graphUrl(`${phoneNumberId}/messages`), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to: `55${celularLimpo}`,
+        type: 'template',
+        template: {
+          name: nomeTemplate,
+          language: { code: idioma },
+          components: [{ type: 'body', parameters: parametros.map(texto => ({ type: 'text', text: texto })) }],
+        },
+      }),
+    });
+
+    const texto = await response.text().catch(() => '');
+    if (!response.ok) {
+      return { ok: false, erro: texto || `HTTP ${response.status}` };
+    }
+    return { ok: true, detalhe: texto };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
 // Checa se as credenciais da Meta Cloud API respondem. Diferente da Z-API,
 // a Cloud API não tem conceito de sessão pareada por QR Code — uma vez
 // configurada, o número está sempre "conectado"; aqui só confirmamos que o

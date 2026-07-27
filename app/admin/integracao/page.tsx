@@ -440,7 +440,12 @@ export default function IntegracaoPage() {
                     {testeEnviando ? 'Enviando...' : '📨 Enviar teste'}
                   </button>
                   {testeResultado && (
-                    <p className={`text-[10px] font-bold ${testeResultado.ok ? 'text-emerald-600' : 'text-red-600'}`}>{testeResultado.msg}</p>
+                    <div>
+                      <p className={`text-[10px] font-bold ${testeResultado.ok ? 'text-emerald-600' : 'text-red-600'}`}>{testeResultado.msg}</p>
+                      {testeResultado.detalhe && (
+                        <p className="text-[9px] text-gray-400 font-mono break-all mt-1">{testeResultado.detalhe}</p>
+                      )}
+                    </div>
                   )}
                   <p className="text-[10px] text-gray-400 font-semibold leading-snug">
                     Se o número ainda estiver em modo de teste no painel da Meta, ele precisa constar na lista de "Recipient numbers" do App para receber.

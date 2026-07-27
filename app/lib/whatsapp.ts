@@ -46,7 +46,7 @@ export async function resolverProvedor(escopo: EscopoWhatsApp): Promise<Provedor
   return normalizarProvedor(config.provedor_global);
 }
 
-export async function enviarComProvedor(provedor: ProvedorWhatsApp, celular: string, mensagem: string): Promise<{ ok: boolean; erro?: string }> {
+export async function enviarComProvedor(provedor: ProvedorWhatsApp, celular: string, mensagem: string): Promise<{ ok: boolean; erro?: string; detalhe?: string }> {
   return provedor === 'META' ? enviarWhatsAppMeta(celular, mensagem) : enviarWhatsAppZapi(celular, mensagem);
 }
 

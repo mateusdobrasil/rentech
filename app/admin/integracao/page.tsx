@@ -84,7 +84,7 @@ export default function IntegracaoPage() {
 
   const [testeCelular, setTesteCelular] = useState('');
   const [testeEnviando, setTesteEnviando] = useState(false);
-  const [testeResultado, setTesteResultado] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [testeResultado, setTesteResultado] = useState<{ ok: boolean; msg: string; detalhe?: string } | null>(null);
 
   // Valida a sessão e a permissão (dinâmica, via banco) antes de liberar a página
   useEffect(() => {
@@ -186,7 +186,9 @@ export default function IntegracaoPage() {
     setTesteEnviando(true); setTesteResultado(null);
     try {
       const res = await enviarTesteWhatsAppAction(provedor, testeCelular);
-      setTesteResultado(res.ok ? { ok: true, msg: 'Enviado! Confira o celular informado.' } : { ok: false, msg: res.erro || 'Falha ao enviar.' });
+      setTesteResultado(res.ok
+        ? { ok: true, msg: 'Aceito pelo provedor — isso ainda não confirma a entrega no aparelho.', detalhe: res.info?.detalhe }
+        : { ok: false, msg: res.erro || 'Falha ao enviar.' });
     } finally { setTesteEnviando(false); }
   };
 
@@ -619,7 +621,12 @@ export default function IntegracaoPage() {
                       {testeEnviando ? 'Enviando...' : '📨 Enviar teste'}
                     </button>
                     {testeResultado && (
-                      <p className={`text-[10px] font-bold ${testeResultado.ok ? 'text-emerald-600' : 'text-red-600'}`}>{testeResultado.msg}</p>
+                      <div>
+                        <p className={`text-[10px] font-bold ${testeResultado.ok ? 'text-emerald-600' : 'text-red-600'}`}>{testeResultado.msg}</p>
+                        {testeResultado.detalhe && (
+                          <p className="text-[9px] text-gray-400 font-mono break-all mt-1">{testeResultado.detalhe}</p>
+                        )}
+                      </div>
                     )}
                   </div>
 

@@ -142,7 +142,11 @@ export async function enviarTesteWhatsAppAction(provedor: ProvedorWhatsApp, celu
 
   const mensagem = `✅ Mensagem de teste (${provedor === 'META' ? 'Meta Cloud API' : 'Z-API'}) — se você recebeu isso, a integração está funcionando.`;
   const res = await enviarComProvedor(provedor, celularLimpo, mensagem);
-  return res.ok ? { ok: true } : { ok: false, erro: res.erro };
+  // `detalhe` traz a resposta crua do provedor — HTTP 2xx só confirma que o
+  // provedor aceitou a mensagem, não que o WhatsApp já entregou no aparelho;
+  // é o que dá pra conferir de fato (ex: o wamid da Meta) quando o "ok"
+  // sozinho não explica por que a mensagem não chegou.
+  return res.ok ? { ok: true, info: { detalhe: res.detalhe } } : { ok: false, erro: res.erro };
 }
 
 // Quantas automações de Agendamentos e Disparos usam o canal WhatsApp hoje,

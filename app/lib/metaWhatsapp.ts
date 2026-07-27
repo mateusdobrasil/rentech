@@ -10,7 +10,12 @@ function graphUrl(path: string): string {
   return `https://graph.facebook.com/${GRAPH_API_VERSION}/${path}`;
 }
 
-export async function enviarWhatsAppMeta(celular: string, mensagem: string): Promise<{ ok: boolean; erro?: string }> {
+// `detalhe` no sucesso traz o corpo cru devolvido pela Graph API (contém o
+// wamid da mensagem) — HTTP 2xx aqui só significa que a Meta aceitou a
+// mensagem para processamento, não que o WhatsApp já entregou no aparelho;
+// esse `detalhe` é o que dá pra conferir de fato o que a Meta respondeu
+// (útil pro botão de teste em /admin/integracao).
+export async function enviarWhatsAppMeta(celular: string, mensagem: string): Promise<{ ok: boolean; erro?: string; detalhe?: string }> {
   const token = process.env.META_WHATSAPP_TOKEN;
   const phoneNumberId = process.env.META_WHATSAPP_PHONE_NUMBER_ID;
 
@@ -36,11 +41,11 @@ export async function enviarWhatsAppMeta(celular: string, mensagem: string): Pro
       }),
     });
 
+    const texto = await response.text().catch(() => '');
     if (!response.ok) {
-      const texto = await response.text().catch(() => '');
       return { ok: false, erro: texto || `HTTP ${response.status}` };
     }
-    return { ok: true };
+    return { ok: true, detalhe: texto };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

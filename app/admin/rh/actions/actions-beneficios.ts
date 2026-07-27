@@ -76,18 +76,22 @@ export async function calcularBeneficiosMes(db: ReturnType<typeof supabaseAdmin>
   // Dias úteis do mês cheio (referência para quem trabalhou o mês todo)
   const diasUteisMes = diasUteisNoPeriodo(ano, mes, feriados);
 
-  // Datas de admissão/desligamento de cada funcionário
+  // Datas de admissão/desligamento e status de cada funcionário
   const { data: funcs } = await db.from('folha_funcionarios')
-    .select('nome_completo, data_admissao, data_desligamento');
-  const dadosFunc: Record<string, { adm: string | null; deslig: string | null }> = {};
-  (funcs || []).forEach(f => { dadosFunc[f.nome_completo] = { adm: f.data_admissao, deslig: f.data_desligamento }; });
+    .select('nome_completo, data_admissao, data_desligamento, ativo');
+  const dadosFunc: Record<string, { adm: string | null; deslig: string | null; ativo: boolean }> = {};
+  (funcs || []).forEach(f => { dadosFunc[f.nome_completo] = { adm: f.data_admissao, deslig: f.data_desligamento, ativo: f.ativo !== false }; });
 
   // Dias úteis trabalhados no mês por funcionário (respeitando admissão/desligamento)
   const diasUteisTrabalhados = (nome: string): number => {
-    const d = dadosFunc[nome] || { adm: null, deslig: null };
+    const d = dadosFunc[nome];
+    if (!d) return 0; // funcionário não encontrado no cadastro atual
     // Se admitido depois do mês ou desligado antes, não trabalhou no mês
     if (d.adm && d.adm.slice(0, 7) > mesAno) return 0;
     if (d.deslig && d.deslig.slice(0, 7) < mesAno) return 0;
+    // Inativo sem desligamento cobrindo este mês (ex.: marcado inativo sem
+    // preencher a data) — não conta como trabalhado, evita aparecer no grid.
+    if (!d.ativo && !(d.deslig && d.deslig.slice(0, 7) >= mesAno)) return 0;
     const inicio = (d.adm && d.adm > primeiroDoMes) ? d.adm : null;
     const fim = (d.deslig && d.deslig < ultimoDoMes) ? d.deslig : null;
     return diasUteisNoPeriodo(ano, mes, feriados, inicio, fim);
@@ -101,35 +105,38 @@ export async function calcularBeneficiosMes(db: ReturnType<typeof supabaseAdmin>
   const nomeTipo = (id: number) => tipos?.find(t => t.id === id)?.nome || '—';
   const nomeMeio = (id: number) => meios?.find(m => m.id === id)?.nome || '—';
 
-  const itens = (beneficios || []).map(b => {
-    const diasTrab = diasUteisTrabalhados(b.funcionario_nome);
-    const parcial = diasTrab < diasUteisMes; // trabalhou só parte do mês
-    let valorMes: number;
-    let detalhe: string;
+  const itens = (beneficios || [])
+    .map(b => {
+      const diasTrab = diasUteisTrabalhados(b.funcionario_nome);
+      const parcial = diasTrab < diasUteisMes; // trabalhou só parte do mês
+      let valorMes: number;
+      let detalhe: string;
 
-    if (b.modalidade === 'POR_DIARIA') {
-      // Proporcional: dias úteis dentro do período trabalhado
-      valorMes = Number(b.valor_mensal) * diasTrab;
-      detalhe = `${BRLnum(Number(b.valor_mensal))}/dia × ${diasTrab} úteis${parcial ? ' (proporc.)' : ''}`;
-    } else if (b.modalidade === 'DIAS_FIXOS') {
-      // Teto: min(dias digitados, dias úteis trabalhados)
-      const digitados = Number(b.qtd_dias) || 0;
-      const diasPagos = Math.min(digitados, diasTrab);
-      valorMes = Number(b.valor_mensal) * diasPagos;
-      detalhe = `${BRLnum(Number(b.valor_mensal))}/dia × ${diasPagos} dias${diasPagos < digitados ? ` (teto ${digitados}, proporc.)` : ''}`;
-    } else {
-      // Valor único: não é proporcional
-      valorMes = Number(b.valor_mensal);
-      detalhe = 'valor único';
-    }
+      if (b.modalidade === 'POR_DIARIA') {
+        // Proporcional: dias úteis dentro do período trabalhado
+        valorMes = Number(b.valor_mensal) * diasTrab;
+        detalhe = `${BRLnum(Number(b.valor_mensal))}/dia × ${diasTrab} úteis${parcial ? ' (proporc.)' : ''}`;
+      } else if (b.modalidade === 'DIAS_FIXOS') {
+        // Teto: min(dias digitados, dias úteis trabalhados)
+        const digitados = Number(b.qtd_dias) || 0;
+        const diasPagos = Math.min(digitados, diasTrab);
+        valorMes = Number(b.valor_mensal) * diasPagos;
+        detalhe = `${BRLnum(Number(b.valor_mensal))}/dia × ${diasPagos} dias${diasPagos < digitados ? ` (teto ${digitados}, proporc.)` : ''}`;
+      } else {
+        // Valor único: não é proporcional, mas só é devido se trabalhou no mês
+        valorMes = diasTrab > 0 ? Number(b.valor_mensal) : 0;
+        detalhe = diasTrab > 0 ? 'valor único' : 'sem direito (inativo no mês)';
+      }
 
-    return {
-      funcionario_nome: b.funcionario_nome,
-      tipo: nomeTipo(b.tipo_id), meio: nomeMeio(b.meio_id),
-      modalidade: b.modalidade, valorBase: Number(b.valor_mensal), valorMes, detalhe,
-      diasTrab, parcial
-    };
-  });
+      return {
+        funcionario_nome: b.funcionario_nome,
+        tipo: nomeTipo(b.tipo_id), meio: nomeMeio(b.meio_id),
+        modalidade: b.modalidade, valorBase: Number(b.valor_mensal), valorMes, detalhe,
+        diasTrab, parcial
+      };
+    })
+    // Sem nenhum dia trabalhado no mês (inativo/desligado fora do período): não entra no grid
+    .filter(it => it.diasTrab > 0);
 
   return { ano, mes, diasUteisMes, itens };
 }

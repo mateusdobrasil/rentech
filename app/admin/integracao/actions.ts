@@ -71,8 +71,69 @@ export async function statusZapiAction(): Promise<Resultado> {
   };
 }
 
+// Confirma (sem nunca expor os valores) se as credenciais da Meta Cloud
+// API estão definidas no ambiente do servidor. Usadas pelo Cron (app/lib/
+// metaWhatsapp.ts) sempre que o roteamento (ver *RoteamentoWhatsAppAction)
+// apontar para META em vez de ZAPI.
+export async function statusMetaAction(): Promise<Resultado> {
+  return {
+    ok: true,
+    info: {
+      tokenConfigurado: !!process.env.META_WHATSAPP_TOKEN,
+      phoneNumberIdConfigurado: !!process.env.META_WHATSAPP_PHONE_NUMBER_ID,
+      appSecretConfigurado: !!process.env.META_APP_SECRET,
+      verifyTokenConfigurado: !!process.env.META_WEBHOOK_VERIFY_TOKEN,
+    }
+  };
+}
+
+export interface ConfigRoteamentoWhatsApp {
+  modo: 'GLOBAL' | 'INDEPENDENTE';
+  provedor_global: 'ZAPI' | 'META';
+  provedor_envio: 'ZAPI' | 'META';
+  provedor_recebimento: 'ZAPI' | 'META';
+}
+
+const ROTEAMENTO_PADRAO: ConfigRoteamentoWhatsApp = {
+  modo: 'GLOBAL', provedor_global: 'ZAPI', provedor_envio: 'ZAPI', provedor_recebimento: 'ZAPI',
+};
+
+// Lê o interruptor que decide, para o envio (automações/lembretes) e para o
+// recebimento (webhook do fluxo de Ponto), se o WhatsApp usa a Z-API ou a
+// Meta Cloud API — ver app/lib/whatsapp.ts (resolverProvedor), que é quem
+// realmente aplica essa config em tempo de execução.
+export async function obterRoteamentoWhatsAppAction(): Promise<Resultado> {
+  const db = supabaseAdmin();
+  try {
+    const { data, error } = await db
+      .from('folha_integracoes')
+      .select('config')
+      .eq('parceiro', 'WHATSAPP_ROTEAMENTO')
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return { ok: true, info: { ...ROTEAMENTO_PADRAO, ...(data?.config || {}) } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+export async function salvarRoteamentoWhatsAppAction(config: ConfigRoteamentoWhatsApp): Promise<Resultado> {
+  const db = supabaseAdmin();
+  try {
+    const { error } = await db.from('folha_integracoes').update({
+      config, atualizado_em: new Date().toISOString()
+    }).eq('parceiro', 'WHATSAPP_ROTEAMENTO');
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
 // Quantas automações de Agendamentos e Disparos usam o canal WhatsApp hoje,
-// para dar uma ideia de uso real da integração no card.
+// para dar uma ideia de uso real da integração no card. Serve tanto para o
+// card da Z-API quanto para o da Meta — o canal salvo em folha_automacoes
+// é genérico ("WhatsApp"), não por provedor.
 export async function estatisticasZapiAction(): Promise<Resultado> {
   const db = supabaseAdmin();
   try {

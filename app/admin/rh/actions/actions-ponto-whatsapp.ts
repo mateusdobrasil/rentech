@@ -10,7 +10,7 @@
 // própria exceção.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { consolidarDia, timestampBR } from '../../../lib/pontoWhatsapp';
-import { enviarWhatsApp } from '../../../lib/zapi';
+import { notificarPontoWhatsApp } from '../../../lib/whatsapp';
 import { registrarLogAuditoria } from '../../../actions';
 
 type Resultado<T> = { ok: boolean; erro?: string; info?: T };
@@ -226,7 +226,7 @@ export async function aprovarSolicitacaoAction(payload: { id: number; aprovadorN
     });
 
     const rotuloTipo = solicitacao.tipo === 'JUSTIFICATIVA_BATIDA' ? 'sua justificativa de ponto' : 'seu abono';
-    await enviarWhatsApp(solicitacao.celular, `✅ O RH aprovou ${rotuloTipo} referente a ${String(solicitacao.data_referencia).split('-').reverse().join('/')}.`);
+    await notificarPontoWhatsApp(solicitacao.celular, `✅ O RH aprovou ${rotuloTipo} referente a ${String(solicitacao.data_referencia).split('-').reverse().join('/')}.`);
 
     return { ok: true };
   } catch (e: any) {
@@ -262,7 +262,7 @@ export async function rejeitarSolicitacaoAction(payload: { id: number; aprovador
     });
 
     const rotuloTipo = solicitacao.tipo === 'JUSTIFICATIVA_BATIDA' ? 'sua justificativa de ponto' : 'seu abono';
-    await enviarWhatsApp(solicitacao.celular, `❌ O RH não aprovou ${rotuloTipo} referente a ${String(solicitacao.data_referencia).split('-').reverse().join('/')}. Motivo: ${motivoRejeicao}. Fale com o RH se tiver dúvidas.`);
+    await notificarPontoWhatsApp(solicitacao.celular, `❌ O RH não aprovou ${rotuloTipo} referente a ${String(solicitacao.data_referencia).split('-').reverse().join('/')}. Motivo: ${motivoRejeicao}. Fale com o RH se tiver dúvidas.`);
 
     return { ok: true };
   } catch (e: any) {

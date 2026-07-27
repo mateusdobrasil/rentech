@@ -7,7 +7,9 @@ import { supabase } from '../../lib/supabase';
 import {
   listarIntegracoesAction, salvarIntegracaoAction,
   statusTokenAutentiqueAction, estatisticasAutentiqueAction,
-  statusZapiAction, estatisticasZapiAction
+  statusZapiAction, estatisticasZapiAction, statusMetaAction,
+  obterRoteamentoWhatsAppAction, salvarRoteamentoWhatsAppAction,
+  type ConfigRoteamentoWhatsApp
 } from './actions';
 
 // ============================================================================
@@ -40,8 +42,12 @@ interface StatusZapi {
 interface EstatisticasZapi {
   total: number; ativas: number; ultimoDisparo: string | null;
 }
+interface StatusMeta {
+  tokenConfigurado: boolean; phoneNumberIdConfigurado: boolean; appSecretConfigurado: boolean; verifyTokenConfigurado: boolean;
+}
 
 const ICONE_TIPO: Record<string, string> = { BANCO: '🏦', BENEFICIO: '🎁', ASSINATURA: '✍️', MENSAGERIA: '💬' };
+const ROTULO_PROVEDOR: Record<'ZAPI' | 'META', string> = { ZAPI: 'Z-API', META: 'Meta (Cloud API)' };
 
 export default function IntegracaoPage() {
   const router = useRouter();
@@ -59,6 +65,8 @@ export default function IntegracaoPage() {
 
   const [statusZapi, setStatusZapi] = useState<StatusZapi | null>(null);
   const [statsZapi, setStatsZapi] = useState<EstatisticasZapi | null>(null);
+  const [statusMeta, setStatusMeta] = useState<StatusMeta | null>(null);
+  const [roteamento, setRoteamento] = useState<ConfigRoteamentoWhatsApp | null>(null);
 
   const [editParceiro, setEditParceiro] = useState<Integracao | null>(null);
   const [edAtivo, setEdAtivo] = useState(false);
@@ -67,6 +75,11 @@ export default function IntegracaoPage() {
   const [edConta, setEdConta] = useState('');
   const [edCnpj, setEdCnpj] = useState('');
   const [edRazaoSocial, setEdRazaoSocial] = useState('');
+  const [edModoRoteamento, setEdModoRoteamento] = useState<'GLOBAL' | 'INDEPENDENTE'>('GLOBAL');
+  const [edProvedorGlobal, setEdProvedorGlobal] = useState<'ZAPI' | 'META'>('ZAPI');
+  const [edProvedorEnvio, setEdProvedorEnvio] = useState<'ZAPI' | 'META'>('ZAPI');
+  const [edProvedorRecebimento, setEdProvedorRecebimento] = useState<'ZAPI' | 'META'>('ZAPI');
+  const [salvandoRoteamento, setSalvandoRoteamento] = useState(false);
 
   // Valida a sessão e a permissão (dinâmica, via banco) antes de liberar a página
   useEffect(() => {
@@ -123,16 +136,19 @@ export default function IntegracaoPage() {
   const carregar = async () => {
     setLoading(true);
     try {
-      const [integ, tokenRes, statsRes, zapiStatusRes, zapiStatsRes] = await Promise.all([
+      const [integ, tokenRes, statsRes, zapiStatusRes, zapiStatsRes, metaStatusRes, roteamentoRes] = await Promise.all([
         listarIntegracoesAction(),
         statusTokenAutentiqueAction(), estatisticasAutentiqueAction(),
-        statusZapiAction(), estatisticasZapiAction()
+        statusZapiAction(), estatisticasZapiAction(),
+        statusMetaAction(), obterRoteamentoWhatsAppAction()
       ]);
       if (integ.ok) setIntegracoes(integ.info.integracoes);
       if (tokenRes.ok) setTokenAutentiqueOk(tokenRes.info.configurado);
       if (statsRes.ok) setStatsAutentique(statsRes.info);
       if (zapiStatusRes.ok) setStatusZapi(zapiStatusRes.info);
       if (zapiStatsRes.ok) setStatsZapi(zapiStatsRes.info);
+      if (metaStatusRes.ok) setStatusMeta(metaStatusRes.info);
+      if (roteamentoRes.ok) setRoteamento(roteamentoRes.info);
     } finally { setLoading(false); }
   };
 
@@ -140,6 +156,10 @@ export default function IntegracaoPage() {
     setEditParceiro(i); setEdAtivo(i.ativo); setEdAmbiente(i.ambiente as any);
     setEdAgencia(i.config?.agencia_debito || ''); setEdConta(i.config?.conta_debito || '');
     setEdCnpj(i.config?.cnpj || ''); setEdRazaoSocial(i.config?.razao_social || '');
+    if (i.parceiro === 'WHATSAPP_ROTEAMENTO' && roteamento) {
+      setEdModoRoteamento(roteamento.modo); setEdProvedorGlobal(roteamento.provedor_global);
+      setEdProvedorEnvio(roteamento.provedor_envio); setEdProvedorRecebimento(roteamento.provedor_recebimento);
+    }
   };
 
   const salvarConfig = async () => {
@@ -154,6 +174,19 @@ export default function IntegracaoPage() {
     if (!res.ok) { alert(res.erro); return; }
     setEditParceiro(null);
     carregar();
+  };
+
+  const salvarRoteamento = async () => {
+    setSalvandoRoteamento(true);
+    try {
+      const res = await salvarRoteamentoWhatsAppAction({
+        modo: edModoRoteamento, provedor_global: edProvedorGlobal,
+        provedor_envio: edProvedorEnvio, provedor_recebimento: edProvedorRecebimento
+      });
+      if (!res.ok) { alert(res.erro); return; }
+      setEditParceiro(null);
+      carregar();
+    } finally { setSalvandoRoteamento(false); }
   };
 
   // Enquanto valida a sessão, mostra um estado de carregamento (evita piscar a
@@ -206,9 +239,11 @@ export default function IntegracaoPage() {
                     <p className="text-[10px] text-gray-400 font-bold uppercase">{i.tipo}</p>
                   </div>
                 </div>
-                <span className={`text-[9px] font-black px-2 py-1 rounded-full uppercase ${i.ativo ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-400'}`}>
-                  {i.ativo ? '● Ativo' : '○ Inativo'}
-                </span>
+                {i.parceiro !== 'WHATSAPP_ROTEAMENTO' && (
+                  <span className={`text-[9px] font-black px-2 py-1 rounded-full uppercase ${i.ativo ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-400'}`}>
+                    {i.ativo ? '● Ativo' : '○ Inativo'}
+                  </span>
+                )}
               </div>
 
               {i.parceiro === 'AUTENTIQUE' && (
@@ -258,6 +293,42 @@ export default function IntegracaoPage() {
                 </div>
               )}
 
+              {i.parceiro === 'META' && (
+                <div className="mb-3 pb-3 border-b border-gray-100 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-gray-500 font-bold uppercase">Credenciais no servidor</span>
+                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusMeta && statusMeta.tokenConfigurado && statusMeta.phoneNumberIdConfigurado && statusMeta.appSecretConfigurado && statusMeta.verifyTokenConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                      {!statusMeta ? '…' : (statusMeta.tokenConfigurado && statusMeta.phoneNumberIdConfigurado && statusMeta.appSecretConfigurado && statusMeta.verifyTokenConfigurado) ? '✓ Configuradas' : '✕ Incompletas'}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-gray-400 font-semibold leading-snug">API oficial do WhatsApp (Meta Cloud API) — alternativa à Z-API.</p>
+                </div>
+              )}
+
+              {i.parceiro === 'WHATSAPP_ROTEAMENTO' && (
+                <div className="mb-3 pb-3 border-b border-gray-100 space-y-2">
+                  {roteamento ? (
+                    roteamento.modo === 'GLOBAL' ? (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-gray-500 font-bold uppercase">Modo Global</span>
+                        <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-blue-100 text-blue-700">{ROTULO_PROVEDOR[roteamento.provedor_global]}</span>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] text-gray-500 font-bold uppercase">Envio</span>
+                          <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-blue-100 text-blue-700">{ROTULO_PROVEDOR[roteamento.provedor_envio]}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] text-gray-500 font-bold uppercase">Recebimento</span>
+                          <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-blue-100 text-blue-700">{ROTULO_PROVEDOR[roteamento.provedor_recebimento]}</span>
+                        </div>
+                      </>
+                    )
+                  ) : <p className="text-[10px] text-gray-400 font-semibold">…</p>}
+                </div>
+              )}
+
               {i.parceiro === 'ITAU' && (
                 <div className="mb-3 pb-3 border-b border-gray-100">
                   <span className="inline-block text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-blue-100 text-blue-700">📄 Arquivo manual (SISPAG)</span>
@@ -268,9 +339,11 @@ export default function IntegracaoPage() {
               )}
 
               <div className="flex items-center justify-between">
-                <span className={`text-[10px] font-black uppercase ${i.ambiente === 'PRODUCAO' ? 'text-[#0C1D4D]' : 'text-amber-600'}`}>
-                  {i.ambiente === 'PRODUCAO' ? '🟢 Produção' : '🟡 Sandbox'}
-                </span>
+                {i.parceiro === 'WHATSAPP_ROTEAMENTO' ? <span /> : (
+                  <span className={`text-[10px] font-black uppercase ${i.ambiente === 'PRODUCAO' ? 'text-[#0C1D4D]' : 'text-amber-600'}`}>
+                    {i.ambiente === 'PRODUCAO' ? '🟢 Produção' : '🟡 Sandbox'}
+                  </span>
+                )}
                 <button onClick={() => abrirConfig(i)} className="text-[10px] font-black text-[#0C1D4D] bg-white border border-[#0C1D4D] hover:bg-[#0C1D4D] hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors">⚙ Configurar</button>
               </div>
             </div>
@@ -291,21 +364,115 @@ export default function IntegracaoPage() {
             <p className="text-[11px] text-gray-400 font-bold uppercase mb-4">{editParceiro.tipo}</p>
 
             <div className="space-y-4">
-              <label className="flex items-center justify-between p-3 bg-[#F8FAFC] rounded-xl cursor-pointer">
-                <span className="text-xs font-black text-[#0C1D4D] uppercase">Integração ativa</span>
-                <input type="checkbox" checked={edAtivo} onChange={e => setEdAtivo(e.target.checked)} className="w-5 h-5" />
-              </label>
+              {editParceiro.parceiro !== 'WHATSAPP_ROTEAMENTO' && (
+                <>
+                  <label className="flex items-center justify-between p-3 bg-[#F8FAFC] rounded-xl cursor-pointer">
+                    <span className="text-xs font-black text-[#0C1D4D] uppercase">Integração ativa</span>
+                    <input type="checkbox" checked={edAtivo} onChange={e => setEdAtivo(e.target.checked)} className="w-5 h-5" />
+                  </label>
 
-              <div>
-                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Ambiente</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {(['SANDBOX', 'PRODUCAO'] as const).map(amb => (
-                    <button key={amb} onClick={() => setEdAmbiente(amb)} className={`p-2.5 rounded-lg text-[11px] font-black uppercase border-2 ${edAmbiente === amb ? (amb === 'PRODUCAO' ? 'border-slate-400 bg-slate-50 text-slate-600' : 'border-amber-400 bg-amber-50 text-amber-600') : 'border-gray-200 text-gray-400'}`}>
-                      {amb === 'SANDBOX' ? '🟡 Sandbox' : '🟢 Produção'}
-                    </button>
-                  ))}
+                  <div>
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Ambiente</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(['SANDBOX', 'PRODUCAO'] as const).map(amb => (
+                        <button key={amb} onClick={() => setEdAmbiente(amb)} className={`p-2.5 rounded-lg text-[11px] font-black uppercase border-2 ${edAmbiente === amb ? (amb === 'PRODUCAO' ? 'border-slate-400 bg-slate-50 text-slate-600' : 'border-amber-400 bg-amber-50 text-amber-600') : 'border-gray-200 text-gray-400'}`}>
+                          {amb === 'SANDBOX' ? '🟡 Sandbox' : '🟢 Produção'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {editParceiro.parceiro === 'META' && (
+                <div className="p-3 bg-[#F8FAFC] rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black text-gray-500 uppercase">Token de acesso</span>
+                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusMeta?.tokenConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                      {!statusMeta ? '…' : statusMeta.tokenConfigurado ? '✓ Configurado' : '✕ Ausente'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black text-gray-500 uppercase">Phone Number ID</span>
+                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusMeta?.phoneNumberIdConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                      {!statusMeta ? '…' : statusMeta.phoneNumberIdConfigurado ? '✓ Configurado' : '✕ Ausente'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black text-gray-500 uppercase">App Secret</span>
+                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusMeta?.appSecretConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                      {!statusMeta ? '…' : statusMeta.appSecretConfigurado ? '✓ Configurado' : '✕ Ausente'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black text-gray-500 uppercase">Verify Token do webhook</span>
+                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusMeta?.verifyTokenConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                      {!statusMeta ? '…' : statusMeta.verifyTokenConfigurado ? '✓ Configurado' : '✕ Ausente'}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-gray-400 font-semibold leading-snug">
+                    As credenciais (META_WHATSAPP_TOKEN, META_WHATSAPP_PHONE_NUMBER_ID, META_APP_SECRET, META_WEBHOOK_VERIFY_TOKEN) vivem só no ambiente do servidor — nunca são lidas, gravadas ou exibidas aqui.
+                  </p>
                 </div>
-              </div>
+              )}
+
+              {editParceiro.parceiro === 'WHATSAPP_ROTEAMENTO' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Modo</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(['GLOBAL', 'INDEPENDENTE'] as const).map(modo => (
+                        <button key={modo} onClick={() => setEdModoRoteamento(modo)} className={`p-2.5 rounded-lg text-[11px] font-black uppercase border-2 ${edModoRoteamento === modo ? 'border-[#0C1D4D] bg-blue-50 text-[#0C1D4D]' : 'border-gray-200 text-gray-400'}`}>
+                          {modo === 'GLOBAL' ? 'Global' : 'Independente'}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-gray-400 font-semibold mt-1.5 leading-snug">
+                      {edModoRoteamento === 'GLOBAL'
+                        ? 'Um único provedor cuida de envio (automações/lembretes) e recebimento (respostas dos funcionários no fluxo de Ponto).'
+                        : 'Envio e recebimento podem usar provedores diferentes.'}
+                    </p>
+                  </div>
+
+                  {edModoRoteamento === 'GLOBAL' ? (
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Provedor (envio + recebimento)</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {(['ZAPI', 'META'] as const).map(p => (
+                          <button key={p} onClick={() => setEdProvedorGlobal(p)} className={`p-2.5 rounded-lg text-[11px] font-black uppercase border-2 ${edProvedorGlobal === p ? 'border-[#0C1D4D] bg-blue-50 text-[#0C1D4D]' : 'border-gray-200 text-gray-400'}`}>
+                            {ROTULO_PROVEDOR[p]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div>
+                        <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Provedor de envio</label>
+                        <p className="text-[10px] text-gray-400 font-semibold mb-1.5 leading-snug">Mensagens dos nós de agendadores e lembretes.</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {(['ZAPI', 'META'] as const).map(p => (
+                            <button key={p} onClick={() => setEdProvedorEnvio(p)} className={`p-2.5 rounded-lg text-[11px] font-black uppercase border-2 ${edProvedorEnvio === p ? 'border-[#0C1D4D] bg-blue-50 text-[#0C1D4D]' : 'border-gray-200 text-gray-400'}`}>
+                              {ROTULO_PROVEDOR[p]}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Provedor de recebimento</label>
+                        <p className="text-[10px] text-gray-400 font-semibold mb-1.5 leading-snug">Mensagens recebidas dos colaboradores/funcionários (fluxo de Ponto via WhatsApp).</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {(['ZAPI', 'META'] as const).map(p => (
+                            <button key={p} onClick={() => setEdProvedorRecebimento(p)} className={`p-2.5 rounded-lg text-[11px] font-black uppercase border-2 ${edProvedorRecebimento === p ? 'border-[#0C1D4D] bg-blue-50 text-[#0C1D4D]' : 'border-gray-200 text-gray-400'}`}>
+                              {ROTULO_PROVEDOR[p]}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
 
               {editParceiro.parceiro === 'AUTENTIQUE' && (
                 <div className="space-y-3">
@@ -462,7 +629,13 @@ export default function IntegracaoPage() {
 
             <div className="flex gap-2 mt-5">
               <button onClick={() => setEditParceiro(null)} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 font-black uppercase tracking-wider text-xs py-3 rounded-xl">Cancelar</button>
-              <button onClick={salvarConfig} className="flex-1 bg-[#0C1D4D] hover:bg-[#284B8C] text-white font-black uppercase tracking-wider text-xs py-3 rounded-xl">Salvar</button>
+              {editParceiro.parceiro === 'WHATSAPP_ROTEAMENTO' ? (
+                <button onClick={salvarRoteamento} disabled={salvandoRoteamento} className="flex-1 bg-[#0C1D4D] hover:bg-[#284B8C] disabled:opacity-50 text-white font-black uppercase tracking-wider text-xs py-3 rounded-xl">
+                  {salvandoRoteamento ? 'Salvando...' : 'Salvar'}
+                </button>
+              ) : (
+                <button onClick={salvarConfig} className="flex-1 bg-[#0C1D4D] hover:bg-[#284B8C] text-white font-black uppercase tracking-wider text-xs py-3 rounded-xl">Salvar</button>
+              )}
             </div>
           </div>
         </div>

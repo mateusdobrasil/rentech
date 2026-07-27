@@ -4,7 +4,7 @@
 // com celular; com nomes = só eles) e usa o template salvo em `mensagem`,
 // substituindo placeholders {{assim}} — nada disso depende mais de código.
 import { supabaseAdmin } from './supabase';
-import { enviarWhatsApp } from './zapi';
+import { resolverProvedor, enviarComProvedor } from './whatsapp';
 
 interface ResultadoDisparoAutomacao {
   disparado: boolean; // false se a automação está desativada, sem canal WhatsApp ou sem mensagem configurada
@@ -48,12 +48,16 @@ export async function dispararAutomacaoWhatsApp(chave: string, contexto: Record<
 
   const { data: funcionarios } = await query;
 
+  // Resolve o provedor (Z-API ou Meta) uma única vez antes do loop — evita
+  // uma leitura no banco por funcionário quando o disparo é em lote.
+  const provedor = await resolverProvedor('ENVIO');
+
   let disparos = 0;
   const erros: string[] = [];
   for (const f of (funcionarios || []) as { nome_completo: string; celular: string }[]) {
     const vars = { primeiro_nome: f.nome_completo.split(' ')[0], nome_completo: f.nome_completo, ...contexto };
     const texto = preencherTemplate(automacao.mensagem, vars);
-    const res = await enviarWhatsApp(f.celular, texto);
+    const res = await enviarComProvedor(provedor, f.celular, texto);
     if (res.ok) disparos++; else erros.push(f.nome_completo);
     await new Promise(resolve => setTimeout(resolve, 1000));
   }

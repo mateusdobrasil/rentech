@@ -43,10 +43,13 @@ interface Contexto {
   motivo?: string;             // usado em ABONAR, entre INFORMAR_MOTIVO e ANEXAR_ATESTADO
 }
 
-export interface AnexoZapi {
+export interface AnexoWhatsApp {
   url: string;
   nomeArquivo: string;
   mimeType: string;
+  // Presente quando a URL exige autenticação para ser baixada (Meta Cloud
+  // API); a Z-API entrega uma URL pública direta, sem precisar disso.
+  authHeader?: string;
 }
 
 interface PendenciaPonto {
@@ -484,11 +487,11 @@ function slugTexto(s: string): string {
 
 const RESPOSTAS_SEM_ANEXO = ['SEM ANEXO', 'SEMANEXO', 'SEM', 'PULAR', 'NAO', 'NÃO', 'N'];
 
-// Baixa o anexo (foto/PDF) da URL temporária da Z-API e sobe para o Storage
-// privado do funcionário — a URL da Z-API expira, então precisa virar
-// arquivo nosso na hora que chega.
-async function salvarAnexoAbono(db: Db, funcionarioNome: string, anexo: AnexoZapi): Promise<{ path: string; nome: string }> {
-  const resposta = await fetch(anexo.url);
+// Baixa o anexo (foto/PDF) da URL temporária do provedor (Z-API ou Meta) e
+// sobe para o Storage privado do funcionário — a URL expira, então precisa
+// virar arquivo nosso na hora que chega.
+async function salvarAnexoAbono(db: Db, funcionarioNome: string, anexo: AnexoWhatsApp): Promise<{ path: string; nome: string }> {
+  const resposta = await fetch(anexo.url, anexo.authHeader ? { headers: { Authorization: anexo.authHeader } } : undefined);
   if (!resposta.ok) throw new Error(`Falha ao baixar o anexo (HTTP ${resposta.status}).`);
   const bytes = Buffer.from(await resposta.arrayBuffer());
 
@@ -514,7 +517,7 @@ async function iniciarFluxoAbonar(db: Db, funcionarioNome: string, celular: stri
   return { mensagem: `Para qual dia é o abono? Responda com o número:\n${montarMenuDias(itens)}\n\nOu envie CANCELAR para desistir.` };
 }
 
-async function avancarAbonar(db: Db, pendencia: PendenciaPonto, texto: string, agora: Date, anexo: AnexoZapi | null): Promise<ResultadoPonto> {
+async function avancarAbonar(db: Db, pendencia: PendenciaPonto, texto: string, agora: Date, anexo: AnexoWhatsApp | null): Promise<ResultadoPonto> {
   const contexto = pendencia.contexto;
 
   if (pendencia.etapa === 'ESCOLHER_DIA') {
@@ -609,7 +612,7 @@ export async function processarMensagemPontoWhatsApp(payload: {
   telefone: string;
   texto: string;
   messageId: string | null;
-  anexo?: AnexoZapi | null;
+  anexo?: AnexoWhatsApp | null;
   payloadBruto?: unknown;
 }): Promise<ResultadoPonto | null> {
   const texto = (payload.texto || '').trim();

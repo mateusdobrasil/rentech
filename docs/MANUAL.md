@@ -217,7 +217,16 @@ Acesso: `/admin` (requer login). O layout comum (`app/admin/layout.tsx`) confere
 `/admin/freelance` — revisão dos cadastros enviados pelo formulário público `/freelance`.
 
 ### 7.8 Integrações
-`/admin/integracao` — tela de status das integrações externas: cadastro de parceiros/bancos/assinatura eletrônica (tabela `folha_integracoes`), verificação se o token da Autentique está configurado (com estatísticas de uso) e status da conexão Z-API (com estatísticas de envio). **Nunca expõe segredos**, apenas indicadores (configurado/não configurado, contadores).
+`/admin/integracao` — tela de status das integrações externas: cadastro de parceiros/bancos/assinatura eletrônica (tabela `folha_integracoes`), verificação se o token da Autentique está configurado (com estatísticas de uso) e status das conexões de WhatsApp (Z-API e Meta Cloud API, com estatísticas de envio). **Nunca expõe segredos**, apenas indicadores (configurado/não configurado, contadores).
+
+**WhatsApp: Z-API vs Meta Cloud API.** O sistema suporta os dois provedores ao mesmo tempo, com um roteamento (linha `WHATSAPP_ROTEAMENTO` em `folha_integracoes`, lida/gravada por `obterRoteamentoWhatsAppAction`/`salvarRoteamentoWhatsAppAction` e aplicada por `resolverProvedor` em `app/lib/whatsapp.ts`) que decide qual API é usada em cada frente:
+- **Envio** — mensagens dos nós de agendadores/lembretes (`app/lib/automacoes.ts`).
+- **Recebimento** — mensagens dos colaboradores/funcionários no fluxo de Ponto via WhatsApp; controla qual dos dois webhooks (`app/api/webhooks/zapi-ponto` ou `app/api/webhooks/meta-ponto`) efetivamente processa a conversa (o outro responde `ignorado: true` sem agir).
+- **Modo Global** — um único provedor vale para envio e recebimento; no modo Independente, cada um pode usar um provedor diferente.
+
+Sem essa linha cadastrada (ou com o config incompleto), o sistema assume Z-API nos dois casos — o comportamento de antes da integração com a Meta.
+
+Credenciais da Meta Cloud API (variáveis de ambiente, nunca lidas/gravadas pela tela): `META_WHATSAPP_TOKEN`, `META_WHATSAPP_PHONE_NUMBER_ID`, `META_APP_SECRET` (valida a assinatura `x-hub-signature-256` do webhook) e `META_WEBHOOK_VERIFY_TOKEN` (handshake `GET` de verificação do webhook). Passo a passo para obtê-las: criar um App em developers.facebook.com (tipo Business) → adicionar o produto WhatsApp → em *API Setup*, copiar o Phone Number ID → gerar um token permanente via *Business Settings → System Users* (permissões `whatsapp_business_messaging` e `whatsapp_business_management`) → em *App Settings → Basic*, copiar o App Secret → escolher uma string própria para o Verify Token → em *WhatsApp → Configuration*, cadastrar o Webhook com Callback URL `https://SEU-DOMINIO/api/webhooks/meta-ponto`, o mesmo Verify Token, e assinar o campo `messages`.
 
 ### 7.9 Agendamentos e disparos (automações WhatsApp)
 `/admin/agendamentos` — CRUD de automações de disparo de WhatsApp (tabela `folha_automacoes`), que podem ser do tipo:

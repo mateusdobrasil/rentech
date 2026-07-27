@@ -11,9 +11,10 @@
 // proteção contra POSTs arbitrários vindos da internet.
 import { NextRequest, NextResponse } from 'next/server';
 import { enviarWhatsApp } from '../../../lib/zapi';
-import { processarMensagemPontoWhatsApp, type AnexoZapi } from '../../../lib/pontoWhatsapp';
+import { resolverProvedor } from '../../../lib/whatsapp';
+import { processarMensagemPontoWhatsApp, type AnexoWhatsApp } from '../../../lib/pontoWhatsapp';
 
-function extrairMensagem(body: any): { telefone: string | null; texto: string; messageId: string | null; fromMe: boolean; anexo: AnexoZapi | null } {
+function extrairMensagem(body: any): { telefone: string | null; texto: string; messageId: string | null; fromMe: boolean; anexo: AnexoWhatsApp | null } {
   const telefone = body?.phone || body?.telefone || null;
   const texto = body?.text?.message || body?.message?.text || body?.body || body?.image?.caption || '';
   const messageId = body?.messageId || body?.id || null;
@@ -21,7 +22,7 @@ function extrairMensagem(body: any): { telefone: string | null; texto: string; m
 
   // Foto ou PDF enviados pelo funcionário (ex: atestado, no fluxo ABONAR).
   // Formato conforme a documentação da Z-API para o webhook "ao receber".
-  let anexo: AnexoZapi | null = null;
+  let anexo: AnexoWhatsApp | null = null;
   if (body?.image?.imageUrl) {
     const extensao = (body.image.mimeType || 'image/jpeg').split('/')[1] || 'jpg';
     anexo = { url: body.image.imageUrl, nomeArquivo: `foto.${extensao}`, mimeType: body.image.mimeType || 'image/jpeg' };
@@ -37,6 +38,14 @@ export async function POST(req: NextRequest) {
     const token = req.nextUrl.searchParams.get('token');
     if (!process.env.ZAPI_WEBHOOK_SECRET || token !== process.env.ZAPI_WEBHOOK_SECRET) {
       return NextResponse.json({ ok: false, erro: 'Token inválido.' }, { status: 401 });
+    }
+
+    // Se o roteamento de WhatsApp estiver apontando o recebimento para a
+    // Meta, esta rota fica "desligada" — evita processar em duplicidade caso
+    // os dois webhooks estejam cadastrados nos respectivos painéis ao mesmo
+    // tempo (ex: durante uma migração gradual).
+    if ((await resolverProvedor('RECEBIMENTO')) !== 'ZAPI') {
+      return NextResponse.json({ ok: true, ignorado: true, motivo: 'canal Z-API inativo para recebimento' });
     }
 
     const body = await req.json().catch(() => null);

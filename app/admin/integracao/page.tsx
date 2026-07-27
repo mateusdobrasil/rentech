@@ -9,6 +9,7 @@ import {
   statusTokenAutentiqueAction, estatisticasAutentiqueAction,
   statusZapiAction, estatisticasZapiAction, statusMetaAction,
   obterRoteamentoWhatsAppAction, salvarRoteamentoWhatsAppAction,
+  enviarTesteWhatsAppAction,
   type ConfigRoteamentoWhatsApp
 } from './actions';
 
@@ -80,6 +81,10 @@ export default function IntegracaoPage() {
   const [edProvedorEnvio, setEdProvedorEnvio] = useState<'ZAPI' | 'META'>('ZAPI');
   const [edProvedorRecebimento, setEdProvedorRecebimento] = useState<'ZAPI' | 'META'>('ZAPI');
   const [salvandoRoteamento, setSalvandoRoteamento] = useState(false);
+
+  const [testeCelular, setTesteCelular] = useState('');
+  const [testeEnviando, setTesteEnviando] = useState(false);
+  const [testeResultado, setTesteResultado] = useState<{ ok: boolean; msg: string } | null>(null);
 
   // Valida a sessão e a permissão (dinâmica, via banco) antes de liberar a página
   useEffect(() => {
@@ -156,6 +161,7 @@ export default function IntegracaoPage() {
     setEditParceiro(i); setEdAtivo(i.ativo); setEdAmbiente(i.ambiente as any);
     setEdAgencia(i.config?.agencia_debito || ''); setEdConta(i.config?.conta_debito || '');
     setEdCnpj(i.config?.cnpj || ''); setEdRazaoSocial(i.config?.razao_social || '');
+    setTesteCelular(''); setTesteResultado(null);
     if (i.parceiro === 'WHATSAPP_ROTEAMENTO' && roteamento) {
       setEdModoRoteamento(roteamento.modo); setEdProvedorGlobal(roteamento.provedor_global);
       setEdProvedorEnvio(roteamento.provedor_envio); setEdProvedorRecebimento(roteamento.provedor_recebimento);
@@ -174,6 +180,14 @@ export default function IntegracaoPage() {
     if (!res.ok) { alert(res.erro); return; }
     setEditParceiro(null);
     carregar();
+  };
+
+  const enviarTeste = async (provedor: 'ZAPI' | 'META') => {
+    setTesteEnviando(true); setTesteResultado(null);
+    try {
+      const res = await enviarTesteWhatsAppAction(provedor, testeCelular);
+      setTesteResultado(res.ok ? { ok: true, msg: 'Enviado! Confira o celular informado.' } : { ok: false, msg: res.erro || 'Falha ao enviar.' });
+    } finally { setTesteEnviando(false); }
   };
 
   const salvarRoteamento = async () => {
@@ -416,6 +430,22 @@ export default function IntegracaoPage() {
                 </div>
               )}
 
+              {editParceiro.parceiro === 'META' && (
+                <div className="p-3 bg-[#F8FAFC] rounded-xl space-y-2">
+                  <label className="block text-[10px] font-black text-gray-500 uppercase">Enviar mensagem de teste (Meta Cloud API)</label>
+                  <input type="tel" value={testeCelular} onChange={e => setTesteCelular(e.target.value)} placeholder="DDD + celular (ex: 11987654321)" className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold" />
+                  <button onClick={() => enviarTeste('META')} disabled={testeEnviando} className="w-full bg-[#0C1D4D] hover:bg-[#284B8C] disabled:opacity-50 text-white font-black uppercase tracking-wider text-[11px] py-2.5 rounded-lg transition-colors">
+                    {testeEnviando ? 'Enviando...' : '📨 Enviar teste'}
+                  </button>
+                  {testeResultado && (
+                    <p className={`text-[10px] font-bold ${testeResultado.ok ? 'text-emerald-600' : 'text-red-600'}`}>{testeResultado.msg}</p>
+                  )}
+                  <p className="text-[10px] text-gray-400 font-semibold leading-snug">
+                    Se o número ainda estiver em modo de teste no painel da Meta, ele precisa constar na lista de "Recipient numbers" do App para receber.
+                  </p>
+                </div>
+              )}
+
               {editParceiro.parceiro === 'WHATSAPP_ROTEAMENTO' && (
                 <div className="space-y-4">
                   <div>
@@ -581,6 +611,17 @@ export default function IntegracaoPage() {
                       )}
                     </div>
                   )}
+
+                  <div className="p-3 bg-[#F8FAFC] rounded-xl space-y-2">
+                    <label className="block text-[10px] font-black text-gray-500 uppercase">Enviar mensagem de teste (Z-API)</label>
+                    <input type="tel" value={testeCelular} onChange={e => setTesteCelular(e.target.value)} placeholder="DDD + celular (ex: 11987654321)" className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold" />
+                    <button onClick={() => enviarTeste('ZAPI')} disabled={testeEnviando} className="w-full bg-[#0C1D4D] hover:bg-[#284B8C] disabled:opacity-50 text-white font-black uppercase tracking-wider text-[11px] py-2.5 rounded-lg transition-colors">
+                      {testeEnviando ? 'Enviando...' : '📨 Enviar teste'}
+                    </button>
+                    {testeResultado && (
+                      <p className={`text-[10px] font-bold ${testeResultado.ok ? 'text-emerald-600' : 'text-red-600'}`}>{testeResultado.msg}</p>
+                    )}
+                  </div>
 
                   <button
                     onClick={() => router.push('/admin/agendamentos')}

@@ -6,6 +6,7 @@
 // A montagem de lotes de pagamento e geração de arquivos CNAB vive em
 // app/admin/rh/actions/actions-financeiro.ts (tela RH → Financeiro).
 import { supabaseAdmin } from '../../lib/supabase';
+import { enviarComProvedor, type ProvedorWhatsApp } from '../../lib/whatsapp';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -128,6 +129,20 @@ export async function salvarRoteamentoWhatsAppAction(config: ConfigRoteamentoWha
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
+}
+
+// Dispara uma mensagem de teste direto pelo provedor escolhido (ignora o
+// roteamento de envio/recebimento — serve justamente para validar cada
+// provedor isoladamente, inclusive o que não está "no ar" no momento).
+// Usa o mesmo enviarComProvedor que automacoes.ts chama em produção, então
+// o teste exercita o caminho real de envio.
+export async function enviarTesteWhatsAppAction(provedor: ProvedorWhatsApp, celular: string): Promise<Resultado> {
+  const celularLimpo = (celular || '').replace(/\D/g, '');
+  if (!celularLimpo) return { ok: false, erro: 'Informe um celular válido (com DDD).' };
+
+  const mensagem = `✅ Mensagem de teste (${provedor === 'META' ? 'Meta Cloud API' : 'Z-API'}) — se você recebeu isso, a integração está funcionando.`;
+  const res = await enviarComProvedor(provedor, celularLimpo, mensagem);
+  return res.ok ? { ok: true } : { ok: false, erro: res.erro };
 }
 
 // Quantas automações de Agendamentos e Disparos usam o canal WhatsApp hoje,

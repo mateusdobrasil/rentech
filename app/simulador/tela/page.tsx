@@ -17,6 +17,10 @@ export default function SimuladorTela() {
   const [mode, setMode] = useState<'w' | 'h' | 'd'>('w');
   const [inputValue, setInputValue] = useState<number>(300);
 
+  // 4. Painel de LED (módulos de 50x50cm — largura e altura são "arredondadas"
+  // para o múltiplo de 50cm mais próximo, pois não dá para quebrar o módulo)
+  const [isPainelLed, setIsPainelLed] = useState(false);
+
   const [isPrintMode, setIsPrintMode] = useState(false);
 
   useEffect(() => {
@@ -67,6 +71,16 @@ export default function SimuladorTela() {
       w = h * ratio;
     }
 
+    // Painel de LED: módulo físico é 50x50cm, então largura e altura só
+    // existem em múltiplos de 50cm — arredonda para o mais próximo (pra
+    // mais ou pra menos) e recalcula diagonal/área a partir do tamanho real.
+    if (isPainelLed) {
+      w = Math.max(50, Math.round(w / 50) * 50);
+      h = Math.max(50, Math.round(h / 50) * 50);
+      d_cm = Math.sqrt(w * w + h * h);
+      d_pol = d_cm / 2.54;
+    }
+
     const area_m2 = (w / 100) * (h / 100);
 
     // Escalonamento Dinâmico para o Mockup Visual
@@ -95,7 +109,7 @@ export default function SimuladorTela() {
     const diagAngle = Math.atan(visH / visW) * (180 / Math.PI);
 
     return { w, h, d_pol, area_m2, visW, visH, diagAngle };
-  }, [ratio, mode, inputValue]);
+  }, [ratio, mode, inputValue, isPainelLed]);
 
   return (
     <div className="flex flex-col lg:flex-row gap-4 px-4 md:px-8 py-6 bg-[#F0F4F8] text-[#0F172A] min-h-screen font-sans print:bg-white print:text-black print:block print:p-0">
@@ -157,6 +171,23 @@ export default function SimuladorTela() {
             <input type="number" min="1" step="0.5" className="w-full p-2 bg-white border border-blue-300 rounded text-sm text-[#0C1D4D] font-black focus:border-[#0C1D4D] outline-none" value={inputValue} onChange={(e) => setInputValue(parseFloat(e.target.value) || 0)} />
           </div>
 
+          {/* Seção 4: Painel de LED */}
+          <div>
+            <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-xs border-b border-gray-100 pb-2 mb-3">4. Tipo de Tela</h3>
+            <button
+              onClick={() => setIsPainelLed(v => !v)}
+              className={`w-full flex items-center justify-between gap-2 p-3 rounded-xl border transition-colors ${isPainelLed ? 'bg-[#0C1D4D] border-[#0C1D4D] text-white' : 'bg-gray-50 border-gray-300 text-gray-600 hover:bg-gray-100'}`}
+            >
+              <span className="text-[10px] font-black uppercase tracking-wider text-left">
+                É Painel de LED?
+                <span className="block text-[9px] font-normal normal-case opacity-80 mt-0.5">Arredonda a medida para o módulo de 50x50cm mais próximo</span>
+              </span>
+              <span className={`flex-shrink-0 w-10 h-5 rounded-full relative transition-colors ${isPainelLed ? 'bg-[#F59E0B]' : 'bg-gray-300'}`}>
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${isPainelLed ? 'left-5' : 'left-0.5'}`} />
+              </span>
+            </button>
+          </div>
+
           <button onClick={() => window.print()} className="w-full bg-[#0C1D4D] text-white py-3 rounded-xl font-black uppercase text-[10px] tracking-widest hover:bg-[#284B8C] shadow-md transition-colors mt-4">
             🖨️ Gerar PDF / Imprimir
           </button>
@@ -191,6 +222,10 @@ export default function SimuladorTela() {
             <span className="block text-[10px] text-gray-500 uppercase font-bold">Medida Informada:</span>
             <strong className="text-base text-black">{modeLabels[mode]} ({inputValue}{mode === 'd' ? '"' : ' cm'})</strong>
           </div>
+          <div>
+            <span className="block text-[10px] text-gray-500 uppercase font-bold">Tipo de Tela:</span>
+            <strong className="text-base text-black">{isPainelLed ? 'Painel de LED (módulos 50×50cm)' : 'Tela / Projeção'}</strong>
+          </div>
         </div>
 
         {/* METRICS CARDS */}
@@ -198,12 +233,12 @@ export default function SimuladorTela() {
           <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#16A34A] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
             <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Largura Final</span>
             <strong className="block text-2xl text-[#16A34A] font-black print:text-black">{Math.round(medidas.w)} cm</strong>
-            <span className="text-[10px] font-bold text-gray-400">{(medidas.w / 100).toFixed(2)} Metros</span>
+            <span className="text-[10px] font-bold text-gray-400">{(medidas.w / 100).toFixed(2)} Metros{isPainelLed ? ' · ajustado' : ''}</span>
           </div>
           <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#336699] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
             <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Altura Final</span>
             <strong className="block text-2xl text-[#336699] font-black print:text-black">{Math.round(medidas.h)} cm</strong>
-            <span className="text-[10px] font-bold text-gray-400">{(medidas.h / 100).toFixed(2)} Metros</span>
+            <span className="text-[10px] font-bold text-gray-400">{(medidas.h / 100).toFixed(2)} Metros{isPainelLed ? ' · ajustado' : ''}</span>
           </div>
           <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#D97706] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
             <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Diagonal Efetiva</span>

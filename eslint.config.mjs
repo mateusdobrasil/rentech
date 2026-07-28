@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Outros workspaces do monorepo (RN/Expo, pacotes compartilhados) — não
+    // são código Next.js e têm suas próprias regras de lint.
+    "mobile/**",
+    "packages/**",
   ]),
 ]);
 

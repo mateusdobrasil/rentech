@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "Rentech",
+    "slug": "rentech-mobile",
+    "scheme": "rentech",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "br.com.rentech.mobile"
+    },
+    "android": {
+      "package": "br.com.rentech.mobile"
+    },
+    "plugins": [
+      "expo-router"
+    ]
+  }
+}

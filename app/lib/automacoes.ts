@@ -16,6 +16,35 @@ function preencherTemplate(template: string, vars: Record<string, string | numbe
   return template.replace(/\{\{(\w+)\}\}/g, (match, chave) => (vars[chave] !== undefined ? String(vars[chave]) : match));
 }
 
+// Brasil não observa mais horário de verão (abolido em 2019), então
+// America/Sao_Paulo é sempre UTC-3 fixo — mesmo cálculo usado em
+// app/api/cron/motor/route.ts e app/lib/documentos.ts.
+function hojeNoBrasil(): Date {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+}
+
+// Funcionários ativos, com celular, cujo mês/dia de nascimento batem com hoje
+// (o ano de nascimento é ignorado). Usado pelo público 'ANIVERSARIANTES_FUNCIONARIOS'.
+async function listarAniversariantesFuncionarios(db: ReturnType<typeof supabaseAdmin>): Promise<{ nome_completo: string; celular: string }[]> {
+  const hoje = hojeNoBrasil();
+  const mes = hoje.getMonth();
+  const dia = hoje.getDate();
+
+  const { data } = await db
+    .from('folha_funcionarios')
+    .select('nome_completo, celular, data_nascimento')
+    .eq('ativo', true)
+    .not('celular', 'is', null)
+    .not('data_nascimento', 'is', null);
+
+  return ((data || []) as { nome_completo: string; celular: string; data_nascimento: string }[])
+    .filter(f => {
+      const nascimento = new Date(`${f.data_nascimento}T00:00:00`);
+      return nascimento.getMonth() === mes && nascimento.getDate() === dia;
+    })
+    .map(f => ({ nome_completo: f.nome_completo, celular: f.celular }));
+}
+
 // `contexto` traz variáveis extras específicas do evento (ex: {{numero_op}}, {{valor}}
 // para o webhook de OP). {{primeiro_nome}} e {{nome_completo}} já vêm prontos do
 // cadastro do funcionário destinatário.
@@ -24,7 +53,7 @@ export async function dispararAutomacaoWhatsApp(chave: string, contexto: Record<
 
   const { data: automacao } = await db
     .from('folha_automacoes')
-    .select('ativo, canais, destinatarios, mensagem, provedor_whatsapp, meta_template_nome, meta_template_idioma, meta_template_variaveis')
+    .select('ativo, canais, destinatarios, mensagem, provedor_whatsapp, meta_template_nome, meta_template_idioma, meta_template_variaveis, publico_dinamico')
     .eq('chave', chave)
     .maybeSingle();
 
@@ -35,18 +64,25 @@ export async function dispararAutomacaoWhatsApp(chave: string, contexto: Record<
     return { disparado: false, disparos: 0, erros: ['Automação sem mensagem configurada.'] };
   }
 
-  const destinatarios: string[] = automacao.destinatarios || [];
-  let query = db
-    .from('folha_funcionarios')
-    .select('nome_completo, celular')
-    .eq('ativo', true)
-    .not('celular', 'is', null);
+  let funcionarios: { nome_completo: string; celular: string }[];
+  if (automacao.publico_dinamico === 'ANIVERSARIANTES_FUNCIONARIOS') {
+    // Destinatários calculados a cada execução — `destinatarios` não se aplica aqui.
+    funcionarios = await listarAniversariantesFuncionarios(db);
+  } else {
+    const destinatarios: string[] = automacao.destinatarios || [];
+    let query = db
+      .from('folha_funcionarios')
+      .select('nome_completo, celular')
+      .eq('ativo', true)
+      .not('celular', 'is', null);
 
-  if (destinatarios.length > 0) {
-    query = query.in('nome_completo', destinatarios);
+    if (destinatarios.length > 0) {
+      query = query.in('nome_completo', destinatarios);
+    }
+
+    const { data } = await query;
+    funcionarios = (data || []) as { nome_completo: string; celular: string }[];
   }
-
-  const { data: funcionarios } = await query;
 
   // Resolve o provedor (Z-API ou Meta) uma única vez antes do loop — evita
   // uma leitura no banco por funcionário quando o disparo é em lote.
@@ -56,7 +92,7 @@ export async function dispararAutomacaoWhatsApp(chave: string, contexto: Record<
 
   let disparos = 0;
   const erros: string[] = [];
-  for (const f of (funcionarios || []) as { nome_completo: string; celular: string }[]) {
+  for (const f of funcionarios) {
     const vars: Record<string, string | number> = { primeiro_nome: f.nome_completo.split(' ')[0], nome_completo: f.nome_completo, ...contexto };
     const texto = preencherTemplate(automacao.mensagem, vars);
 

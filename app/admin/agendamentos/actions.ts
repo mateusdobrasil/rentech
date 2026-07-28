@@ -26,6 +26,7 @@ export interface RotinaAutomacaoDB {
   meta_template_nome: string | null;
   meta_template_idioma: string;
   meta_template_variaveis: string[];
+  publico_dinamico: 'PADRAO' | 'ANIVERSARIANTES_FUNCIONARIOS';
 }
 
 export interface FormAutomacao {
@@ -43,6 +44,10 @@ export interface FormAutomacao {
   meta_template_nome: string; // vazio = sem template (texto livre, melhor esforço na Meta)
   meta_template_idioma: string;
   meta_template_variaveis: string; // separadas por vírgula na tela; convertido em array só ao salvar
+  // 'ANIVERSARIANTES_FUNCIONARIOS' ignora `destinatarios`: o disparo recalcula
+  // os destinatários a cada execução, com quem faz aniversário no dia (ver
+  // dispararAutomacaoWhatsApp em app/lib/automacoes.ts).
+  publico_dinamico: 'PADRAO' | 'ANIVERSARIANTES_FUNCIONARIOS';
 }
 
 export interface FuncionarioParaAutomacao {
@@ -161,6 +166,7 @@ export async function criarAutomacaoAction(payload: FormAutomacao): Promise<Resu
       meta_template_nome: payload.meta_template_nome?.trim() || null,
       meta_template_idioma: payload.meta_template_idioma?.trim() || 'pt_BR',
       meta_template_variaveis: parseVariaveisTemplate(payload.meta_template_variaveis),
+      publico_dinamico: payload.publico_dinamico || 'PADRAO',
       ativo: true,
     });
     if (error) throw new Error(error.message);
@@ -198,6 +204,7 @@ export async function atualizarAutomacaoAction(id: number, payload: FormAutomaca
       meta_template_nome: payload.meta_template_nome?.trim() || null,
       meta_template_idioma: payload.meta_template_idioma?.trim() || 'pt_BR',
       meta_template_variaveis: parseVariaveisTemplate(payload.meta_template_variaveis),
+      publico_dinamico: payload.publico_dinamico || 'PADRAO',
     }).eq('id', id);
     if (error) throw new Error(error.message);
     return { ok: true };

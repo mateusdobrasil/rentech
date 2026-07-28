@@ -3,6 +3,7 @@ import { supabaseAdmin } from '../../../lib/supabase';
 import { dispararAutomacaoWhatsApp } from '../../../lib/automacoes';
 import { montarContextoFrotaVencida } from '../../../lib/frota';
 import { montarContextoDocumentosVencidos } from '../../../lib/documentos';
+import { montarContextoAniversariantesSemana } from '../../../lib/aniversarios';
 
 // Automações cujo disparo depende de um contexto calculado em código (ex: uma
 // lista dinâmica), em vez de só {{primeiro_nome}}/{{nome_completo}}. Se a
@@ -15,6 +16,11 @@ const CONTEXTOS_ESPECIAIS: Record<string, () => Promise<Record<string, string | 
   },
   'documentos-vencidos': async () => {
     const resultado = await montarContextoDocumentosVencidos();
+    if (!resultado) return null;
+    return { lista: resultado.lista, quantidade: resultado.quantidade };
+  },
+  'aniversariantes-da-semana': async () => {
+    const resultado = await montarContextoAniversariantesSemana();
     if (!resultado) return null;
     return { lista: resultado.lista, quantidade: resultado.quantidade };
   }

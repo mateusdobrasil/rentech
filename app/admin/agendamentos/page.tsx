@@ -85,6 +85,7 @@ export default function GestaoAgendamentos() {
   const formVazio: FormAutomacao = {
     nome: '', descricao: '', tipo: 'CRON', gatilho: '', canais: [], publico_alvo: '', destinatarios: [], mensagem: '', horario: '08:00', dias_semana: [1, 2, 3, 4, 5],
     provedor_whatsapp: 'PADRAO', meta_template_nome: '', meta_template_idioma: 'pt_BR', meta_template_variaveis: 'primeiro_nome',
+    publico_dinamico: 'PADRAO',
   };
   const [modalAutomacao, setModalAutomacao] = useState<{ open: boolean; isNew: boolean; id: number | null; chave?: string; modoTodos: boolean; form: FormAutomacao } | null>(null);
   const [salvandoAutomacao, setSalvandoAutomacao] = useState(false);
@@ -112,6 +113,7 @@ export default function GestaoAgendamentos() {
       meta_template_nome: rotina.meta_template_nome || '',
       meta_template_idioma: rotina.meta_template_idioma || 'pt_BR',
       meta_template_variaveis: (rotina.meta_template_variaveis || ['primeiro_nome']).join(', '),
+      publico_dinamico: rotina.publico_dinamico || 'PADRAO',
     }
   });
 
@@ -147,7 +149,8 @@ export default function GestaoAgendamentos() {
 
   const salvarAutomacao = async () => {
     if (!modalAutomacao) return;
-    if (!modalAutomacao.modoTodos && modalAutomacao.form.destinatarios.length === 0) {
+    const modoAniversariantes = modalAutomacao.form.publico_dinamico === 'ANIVERSARIANTES_FUNCIONARIOS';
+    if (!modoAniversariantes && !modalAutomacao.modoTodos && modalAutomacao.form.destinatarios.length === 0) {
       alert('Selecione ao menos um funcionário, ou marque "Todos os funcionários ativos".');
       return;
     }
@@ -155,7 +158,7 @@ export default function GestaoAgendamentos() {
     setSalvandoAutomacao(true);
     const payload: FormAutomacao = {
       ...modalAutomacao.form,
-      destinatarios: modalAutomacao.modoTodos ? [] : modalAutomacao.form.destinatarios,
+      destinatarios: modoAniversariantes || modalAutomacao.modoTodos ? [] : modalAutomacao.form.destinatarios,
     };
     const res = modalAutomacao.isNew
       ? await criarAutomacaoAction(payload)
@@ -576,13 +579,13 @@ export default function GestaoAgendamentos() {
 
               <div>
                 <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-2">Destinatários do Disparo</label>
-                <div className="flex gap-4 mb-3">
+                <div className="flex flex-wrap gap-4 mb-3">
                   <label className="flex items-center gap-2 text-xs font-bold text-[#0A2A4A] cursor-pointer">
                     <input
                       type="radio"
                       name="modoDestinatarios"
-                      checked={modalAutomacao.modoTodos}
-                      onChange={() => setModalAutomacao({ ...modalAutomacao, modoTodos: true })}
+                      checked={modalAutomacao.modoTodos && modalAutomacao.form.publico_dinamico === 'PADRAO'}
+                      onChange={() => setModalAutomacao({ ...modalAutomacao, modoTodos: true, form: { ...modalAutomacao.form, publico_dinamico: 'PADRAO' } })}
                     />
                     Todos os funcionários ativos
                   </label>
@@ -590,14 +593,38 @@ export default function GestaoAgendamentos() {
                     <input
                       type="radio"
                       name="modoDestinatarios"
-                      checked={!modalAutomacao.modoTodos}
-                      onChange={() => setModalAutomacao({ ...modalAutomacao, modoTodos: false })}
+                      checked={!modalAutomacao.modoTodos && modalAutomacao.form.publico_dinamico === 'PADRAO'}
+                      onChange={() => setModalAutomacao({ ...modalAutomacao, modoTodos: false, form: { ...modalAutomacao.form, publico_dinamico: 'PADRAO' } })}
                     />
                     Selecionar funcionários específicos
                   </label>
+                  <label className="flex items-center gap-2 text-xs font-bold text-[#0A2A4A] cursor-pointer">
+                    <input
+                      type="radio"
+                      name="modoDestinatarios"
+                      checked={modalAutomacao.form.publico_dinamico === 'ANIVERSARIANTES_FUNCIONARIOS'}
+                      onChange={() => setModalAutomacao({
+                        ...modalAutomacao,
+                        modoTodos: true,
+                        form: {
+                          ...modalAutomacao.form,
+                          publico_dinamico: 'ANIVERSARIANTES_FUNCIONARIOS',
+                          destinatarios: [],
+                          mensagem: modalAutomacao.form.mensagem || '🎉 Feliz aniversário, {{primeiro_nome}}! Toda a equipe Rentech deseja um dia incrível! 🎂',
+                        }
+                      })}
+                    />
+                    🎂 Aniversariantes do dia (funcionários)
+                  </label>
                 </div>
 
-                {!modalAutomacao.modoTodos && (
+                {modalAutomacao.form.publico_dinamico === 'ANIVERSARIANTES_FUNCIONARIOS' && (
+                  <p className="text-[10px] text-[#64748B] bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-2 mb-1">
+                    Recalculado a cada execução: dispara só para quem faz aniversário no dia, com base na Data de Nascimento cadastrada em RH → Funcionários. Configure o horário/dias abaixo cobrindo todos os 7 dias da semana, já que aniversário não respeita dia útil.
+                  </p>
+                )}
+
+                {!modalAutomacao.modoTodos && modalAutomacao.form.publico_dinamico === 'PADRAO' && (
                   <div className="border border-[#CBD5E1] rounded-lg max-h-56 overflow-y-auto">
                     {Object.keys(gruposCargo).length === 0 ? (
                       <p className="text-xs text-center text-[#94A3B8] py-4">Nenhum funcionário ativo cadastrado.</p>
@@ -627,11 +654,13 @@ export default function GestaoAgendamentos() {
                     )}
                   </div>
                 )}
+                {modalAutomacao.form.publico_dinamico === 'PADRAO' && (
                 <p className="text-[10px] text-[#94A3B8] mt-1">
                   {modalAutomacao.modoTodos
                     ? 'Válido apenas para automações que disparam para a equipe interna cadastrada em Funcionários.'
                     : `${modalAutomacao.form.destinatarios.length} funcionário(s) selecionado(s).`}
                 </p>
+                )}
               </div>
 
               {!modalAutomacao.isNew && modalAutomacao.chave && (

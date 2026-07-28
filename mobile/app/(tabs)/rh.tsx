@@ -1,13 +1,14 @@
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { AcessoRestrito } from '../../components/AcessoRestrito';
 import { useAuth } from '../../context/AuthContext';
+import { colors } from '../../constants/theme';
 
 export default function RH() {
   const { session } = useAuth();
   if (!session) return <AcessoRestrito />;
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
       <Text style={styles.titulo}>RH</Text>
       {['Holerite', 'Ponto', 'Documentos'].map((item) => (
         <View key={item} style={styles.card}>
@@ -20,9 +21,17 @@ export default function RH() {
 }
 
 const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.background },
   container: { padding: 24, gap: 12 },
-  titulo: { fontSize: 24, fontWeight: '800', marginBottom: 8 },
-  card: { padding: 16, borderRadius: 12, backgroundColor: '#f2f2f2', gap: 4 },
-  cardTitulo: { fontSize: 15, fontWeight: '700' },
-  cardTexto: { fontSize: 13, color: '#555' },
+  titulo: { fontSize: 24, fontWeight: '800', color: colors.white, marginBottom: 8 },
+  card: {
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.surfaceBorder,
+    gap: 4,
+  },
+  cardTitulo: { fontSize: 15, fontWeight: '700', color: colors.white },
+  cardTexto: { fontSize: 13, color: colors.textSecondary },
 });

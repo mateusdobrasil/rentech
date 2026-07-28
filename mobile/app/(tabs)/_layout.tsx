@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
+import { colors } from '../../constants/theme';
 
 // Quem pode ver cada aba além de Início/Simuladores (que são públicas).
 // 'qualquer-autenticado' = todo funcionário logado (RH é holerite/ponto/docs,
@@ -27,7 +28,17 @@ export default function TabsLayout() {
   const autenticado = !!session;
 
   return (
-    <Tabs screenOptions={{ headerShown: true }}>
+    <Tabs
+      screenOptions={{
+        headerShown: true,
+        headerStyle: { backgroundColor: colors.surface },
+        headerTitleStyle: { color: colors.white },
+        headerTintColor: colors.white,
+        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.surfaceBorder },
+        tabBarActiveTintColor: colors.accent,
+        tabBarInactiveTintColor: colors.textMuted,
+      }}
+    >
       <Tabs.Screen name="index" options={{ title: 'Início' }} />
       <Tabs.Screen name="simuladores" options={{ title: 'Simuladores' }} />
       <Tabs.Screen

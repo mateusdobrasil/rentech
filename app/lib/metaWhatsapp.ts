@@ -56,12 +56,12 @@ export async function enviarWhatsAppMeta(celular: string, mensagem: string): Pro
 // atendimento). `parametros` preenche, na ordem, os {{1}}, {{2}}... do
 // corpo do template aprovado no Business Manager.
 //
-// `botaoCodigo`: só pra templates de categoria Authentication com o botão
-// "Copiar código" — a Meta exige um componente `button` além do `body`
-// nesse caso, com o mesmo código. Formato conforme a doc oficial de
-// Authentication templates (button sub_type "copy_code", parâmetro
-// "coupon_code"); se a Meta rejeitar o formato do botão, o erro devolvido
-// aqui (ver `erro`/`detalhe`) traz o motivo exato da Graph API.
+// `botaoCodigo`: só pra templates de categoria Authentication com botão de
+// autofill — a Meta exige um componente `button` além do `body` nesse caso,
+// com o mesmo código. O botão de autofill de Authentication é do tipo "Url"
+// (confirmado via erro 132018 "Button at index 0 must be of type Url" ao
+// testar com sub_type "copy_code" — a Meta usa uma URL dinâmica por trás do
+// autofill, não o botão de cupom).
 export async function enviarWhatsAppMetaTemplate(celular: string, nomeTemplate: string, idioma: string, parametros: string[], botaoCodigo?: string): Promise<{ ok: boolean; erro?: string; detalhe?: string }> {
   const token = process.env.META_WHATSAPP_TOKEN;
   const phoneNumberId = process.env.META_WHATSAPP_PHONE_NUMBER_ID;
@@ -79,9 +79,9 @@ export async function enviarWhatsAppMetaTemplate(celular: string, nomeTemplate: 
   if (botaoCodigo) {
     components.push({
       type: 'button',
-      sub_type: 'copy_code',
+      sub_type: 'url',
       index: '0',
-      parameters: [{ type: 'coupon_code', coupon_code: botaoCodigo }],
+      parameters: [{ type: 'text', text: botaoCodigo }],
     });
   }
 

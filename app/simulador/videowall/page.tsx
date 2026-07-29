@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import logoColorido from '../../../app/imgs/logo.png';
+import touchIcon from '../../../app/imgs/touch_icon.png';
 import { supabase } from '../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next"
 
@@ -59,8 +60,8 @@ function DesenhoTecnicoEquipamento({
   const hCm = (altura || 1) * 100;
   const dCm = (profundidade || 0) * 100;
 
-  const maxFw = 300;
-  const maxFh = 190;
+  const maxFw = 380;
+  const maxFh = 240;
   const scale = Math.min(maxFw / wCm, maxFh / hCm);
   const fw = wCm * scale;
   const fh = hCm * scale;
@@ -111,53 +112,71 @@ function DesenhoTecnicoEquipamento({
 
       {/* Corpo do equipamento - vista frontal */}
       <rect x={leftDim} y={topDim} width={fw} height={fh} rx={2} className="fill-[#0C1D4D] stroke-[#336699] print:fill-gray-100 print:stroke-black" strokeWidth={2} />
-      <rect x={leftDim + fw * 0.05} y={topDim + fh * 0.05} width={fw * 0.9} height={fh * 0.9} className="fill-[#1a3a7a] print:fill-gray-200" />
+      <rect x={leftDim + fw * 0.05} y={topDim + fh * 0.05} width={fw * 0.9} height={fh * 0.9} className="fill-[#5FA0D9] print:fill-gray-200" />
 
-      {/* Logo Rentech (branco) + nome do dispositivo, dentro da tela */}
+      {/* Logo Rentech (colorida) + nome do dispositivo, dentro da tela */}
       <foreignObject x={leftDim + fw * 0.05} y={topDim + fh * 0.05} width={fw * 0.9} height={fh * 0.9}>
         <div
           // @ts-expect-error - xmlns é necessário para conteúdo XHTML dentro de foreignObject
           xmlns="http://www.w3.org/1999/xhtml"
-          className="w-full h-full flex flex-col items-center justify-center gap-1 px-1 overflow-hidden"
+          className="w-full h-full flex flex-col items-center justify-center gap-1.5 px-1 overflow-hidden"
         >
           <img
             src={logoColorido.src}
             alt="Rentech"
-            className="w-[55%] max-h-[55%] object-contain opacity-95"
+            className="w-[68%] max-h-[65%] object-contain opacity-95"
           />
           <span
-            className="text-white font-black uppercase tracking-wider text-center leading-tight print:text-black"
-            style={{ fontSize: Math.max(7, Math.min(11, fw * 0.05)) }}
+            className="text-black font-black uppercase tracking-wider text-center leading-tight"
+            style={{ fontSize: Math.max(8, Math.min(13, fw * 0.055)) }}
           >
             {nome}
           </span>
         </div>
       </foreignObject>
 
-      {isTouch && (
-        <g transform={`translate(${leftDim + fw - 22}, ${topDim + fh - 22})`} className="stroke-white/70 print:stroke-black" strokeWidth={1.4} fill="none">
-          <circle cx={8} cy={8} r={7} />
-          <path d="M8 3 v10 M4 6 l4 -3 l4 3" />
-        </g>
-      )}
+      {isTouch && (() => {
+        const iconSize = Math.min(fw, fh) * 0.34;
+        const iconX = leftDim + fw * 0.95 - iconSize;
+        const iconY = topDim + fh * 0.06;
+        return (
+          <foreignObject x={iconX} y={iconY} width={iconSize} height={iconSize}>
+            <div
+              // @ts-expect-error - xmlns é necessário para conteúdo XHTML dentro de foreignObject
+              xmlns="http://www.w3.org/1999/xhtml"
+              className="w-full h-full"
+            >
+              <img src={touchIcon.src} alt="Toque" className="w-full h-full object-contain opacity-90" />
+            </div>
+          </foreignObject>
+        );
+      })()}
 
-      {/* Vista de perfil - profundidade */}
-      {hasSide && (
-        <>
-          <g className="stroke-[#336699] print:stroke-black" strokeWidth={1}>
-            <line x1={leftDim + fw + gap} y1={topDim - 10} x2={leftDim + fw + gap + sw} y2={topDim - 10} />
-            <line x1={leftDim + fw + gap} y1={topDim - 14} x2={leftDim + fw + gap} y2={topDim - 6} />
-            <line x1={leftDim + fw + gap + sw} y1={topDim - 14} x2={leftDim + fw + gap + sw} y2={topDim - 6} />
-          </g>
-          <text x={leftDim + fw + gap + sw / 2} y={topDim - 16} textAnchor="middle" className="fill-[#336699] print:fill-black" fontSize="9" fontWeight="700">
-            {fmt(dCm)} cm
-          </text>
-          <rect x={leftDim + fw + gap} y={topDim} width={sw} height={fh} className="fill-[#0C1D4D] stroke-[#336699] print:fill-gray-100 print:stroke-black" strokeWidth={2} />
-          <text x={leftDim + fw + gap + sw / 2} y={topDim + fh + 16} textAnchor="middle" className="fill-[#94A3B8] print:fill-black" fontSize="8" fontWeight="700">
-            PERFIL
-          </text>
-        </>
-      )}
+      {/* Vista de perfil - dá a entender a lateral de uma TV/monitor (fina na tela, mais espessa atrás) */}
+      {hasSide && (() => {
+        const X0 = leftDim + fw + gap;
+        const thin = Math.max(6, sw * 0.32);
+        const humpY = topDim + fh * 0.62;
+        const profilePath = `M ${X0} ${topDim} L ${X0 + thin} ${topDim} L ${X0 + thin} ${humpY} L ${X0 + sw} ${humpY + 6} L ${X0 + sw} ${topDim + fh} L ${X0} ${topDim + fh} Z`;
+        return (
+          <>
+            <g className="stroke-[#336699] print:stroke-black" strokeWidth={1}>
+              <line x1={X0} y1={topDim - 10} x2={X0 + sw} y2={topDim - 10} />
+              <line x1={X0} y1={topDim - 14} x2={X0} y2={topDim - 6} />
+              <line x1={X0 + sw} y1={topDim - 14} x2={X0 + sw} y2={topDim - 6} />
+            </g>
+            <text x={X0 + sw / 2} y={topDim - 16} textAnchor="middle" className="fill-[#336699] print:fill-black" fontSize="9" fontWeight="700">
+              {fmt(dCm)} cm
+            </text>
+            <path d={profilePath} className="fill-[#0C1D4D] stroke-[#336699] print:fill-gray-100 print:stroke-black" strokeWidth={2} strokeLinejoin="round" />
+            {/* Detalhe: conectores/base na parte mais espessa traseira */}
+            <rect x={X0 + thin + (sw - thin) * 0.15} y={humpY + (topDim + fh - humpY) * 0.35} width={(sw - thin) * 0.7} height={(topDim + fh - humpY) * 0.28} rx={1} className="fill-[#336699]/40" />
+            <text x={X0 + sw / 2} y={topDim + fh + 16} textAnchor="middle" className="fill-[#94A3B8] print:fill-black" fontSize="8" fontWeight="700">
+              PERFIL
+            </text>
+          </>
+        );
+      })()}
     </svg>
   );
 }

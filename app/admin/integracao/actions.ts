@@ -154,13 +154,13 @@ export async function enviarTesteWhatsAppAction(provedor: ProvedorWhatsApp, celu
 // nem pela checagem de janela de 24h) — serve tanto pra validar o
 // `hello_world` (template padrão, sempre aprovado, sem variáveis) quanto
 // os templates próprios depois de aprovados no Business Manager.
-export async function enviarTesteTemplateWhatsAppAction(templateNome: string, idioma: string, parametros: string, celular: string): Promise<Resultado> {
+export async function enviarTesteTemplateWhatsAppAction(templateNome: string, idioma: string, parametros: string, celular: string, botaoCodigo?: string): Promise<Resultado> {
   const celularLimpo = (celular || '').replace(/\D/g, '');
   if (!celularLimpo) return { ok: false, erro: 'Informe um celular válido (com DDD).' };
   if (!templateNome.trim()) return { ok: false, erro: 'Informe o nome do template.' };
 
   const listaParametros = (parametros || '').split(',').map(s => s.trim()).filter(Boolean);
-  const res = await enviarWhatsAppMetaTemplate(celularLimpo, templateNome.trim(), idioma.trim() || 'en_US', listaParametros);
+  const res = await enviarWhatsAppMetaTemplate(celularLimpo, templateNome.trim(), idioma.trim() || 'en_US', listaParametros, botaoCodigo?.trim() || undefined);
   return res.ok ? { ok: true, info: { detalhe: res.detalhe } } : { ok: false, erro: res.erro };
 }
 

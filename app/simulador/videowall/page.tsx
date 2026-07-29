@@ -506,7 +506,7 @@ export default function SimuladorVideoWall() {
                 <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                   <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Resolução Total</span>
                   <strong className="block text-base text-[#0C1D4D] font-black leading-none print:text-black">{resX} x {resY} px</strong>
-                  <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1 print:text-gray-600">Formato: MP4 / Codec: H.264</span>
+                  <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1 print:text-gray-600">Formato: MP4 · Codec: H.264</span>
                 </div>
                 
                 <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
@@ -544,7 +544,7 @@ export default function SimuladorVideoWall() {
                   <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                     <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Resolução / Vídeo</span>
                     <strong className="block text-base text-[#0C1D4D] font-black leading-none print:text-black">{selectedDeviceRaw?.resolucao || '1920 x 1080'} px</strong>
-                    <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1 print:text-gray-600">Sinal: HDMI/DP</span>
+                    <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1 print:text-gray-600">Formato: MP4 · Codec: H.264</span>
                   </div>
                 )}
                 {equipType === 'sound' && (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import logoColorido from '../../../app/imgs/logo.png';
@@ -208,6 +208,32 @@ export default function SimuladorVideoWall() {
   const ledCols = Math.max(1, Math.ceil(ledConfig.width / 0.5));
   const ledRows = Math.max(1, Math.ceil(ledConfig.height / 0.5));
   const totalModulosVisual = ledCols * ledRows;
+  const ledActualW = ledCols * 0.5;
+  const ledActualH = ledRows * 0.5;
+
+  // Mede o tamanho real da área de visualização para escalar o preview do painel
+  // (painéis maiores usam mais espaço disponível, em vez de uma caixa fixa arbitrária)
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+  const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const el = previewContainerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      setPreviewSize({ width, height });
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  let ledMaxW = previewSize.width - 40;
+  let ledMaxH = previewSize.height - 40;
+  if (ledMaxW <= 0) ledMaxW = 600;
+  if (ledMaxH <= 0) ledMaxH = 400;
+  const ledScale = Math.min(ledMaxW / ledActualW, ledMaxH / ledActualH, 250);
+  const ledPreviewW = ledActualW * ledScale;
+  const ledPreviewH = ledActualH * ledScale;
 
   // Estados do Modal de Acessórios Inteligentes
   const [modalOpen, setModalOpen] = useState(false);
@@ -573,7 +599,7 @@ export default function SimuladorVideoWall() {
           <div className="flex flex-col gap-3 flex-grow min-h-0">
             <h3 className="text-lg font-black text-[#0C1D4D] tracking-tight uppercase print:hidden flex-shrink-0">Monitoramento do Equipamento</h3>
                         
-            <div className="flex-grow bg-[#F8FAFC] border border-[#E2E8F0] rounded-2xl flex flex-col items-center justify-center p-4 relative overflow-hidden min-h-[300px] bg-[radial-gradient(#CBD5E1_1px,transparent_1px)] bg-[size:24px_24px] print:border-none print:h-[350px] shadow-inner">
+            <div ref={previewContainerRef} className="flex-grow bg-[#F8FAFC] border border-[#E2E8F0] rounded-2xl flex flex-col items-center justify-center p-4 relative overflow-hidden min-h-[300px] bg-[radial-gradient(#CBD5E1_1px,transparent_1px)] bg-[size:24px_24px] print:border-none print:h-[350px] shadow-inner">
               {loading && (
                 <div className="absolute inset-0 bg-white/80 z-50 flex flex-col items-center justify-center rounded-2xl backdrop-blur-sm">
                   <div className="w-8 h-8 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin mb-2 shadow-sm"></div>
@@ -581,30 +607,27 @@ export default function SimuladorVideoWall() {
                 </div>
               )}
 
-              {/* LÓGICA GRÁFICA DO PAINEL DE LED COM QUADRADINHOS GRANDES, LOGO E SEM BORDA EXTERNA */}
+              {/* LÓGICA GRÁFICA DO PAINEL DE LED - IMAGEM ÚNICA ESCALONADA NO PAINEL INTEIRO, COM GRADE DE MÓDULOS SOBREPOSTA */}
               {!loading && currentItemDraft && equipType === 'led' && (
                 <div className="flex flex-col items-center justify-center w-full h-full transition-all">
-                  <div 
-                    className="grid shadow-[0_15px_40px_rgba(12,29,77,0.25)]"
-                    style={{ 
+                  <div
+                    className="relative grid bg-[#0C1D4D] shadow-[0_15px_40px_rgba(12,29,77,0.25)] overflow-hidden"
+                    style={{
                       gridTemplateColumns: `repeat(${ledCols}, minmax(0, 1fr))`,
+                      gridTemplateRows: `repeat(${ledRows}, minmax(0, 1fr))`,
                       gap: '0px',
-                      width: `min(100%, calc(380px * ${ledCols / ledRows}))`,
+                      width: `${ledPreviewW}px`,
+                      height: `${ledPreviewH}px`,
                     }}
                   >
+                    <Image
+                      src={logoColorido}
+                      alt="Conteúdo exibido no Painel de LED"
+                      fill
+                      className="object-fill opacity-95 pointer-events-none"
+                    />
                     {Array.from({ length: Math.min(totalModulosVisual, 2000) }).map((_, i) => (
-                      <div key={i} className="relative bg-[#0C1D4D] border border-[#336699]/40 flex items-center justify-center overflow-hidden aspect-square">
-                        {totalModulosVisual <= 400 && (
-                          <div className="relative w-[70%] h-[70%]">
-                             <Image 
-                               src={logoColorido} 
-                               alt="Logo Rentech" 
-                               fill 
-                               className="object-contain opacity-90"
-                             />
-                          </div>
-                        )}
-                      </div>
+                      <div key={i} className="border border-[#336699]/40" />
                     ))}
                   </div>
                 </div>

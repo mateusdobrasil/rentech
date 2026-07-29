@@ -45,6 +45,12 @@ const modulosComercial = [
     descricao: 'Consulte e baixe certidões, cartão CNPJ, contrato social e demais documentos da Rentech.',
     icone: '📁', link: '/admin/comercial/documentos',
     cor: 'bg-slate-50 border-slate-200 text-slate-700', hover: 'hover:border-slate-500'
+  },
+  {
+    titulo: 'Documentos da Frota',
+    descricao: 'Ficha dos veículos e documentos dos veículos da empresa.',
+    icone: '🚚', link: '/admin/comercial/frota',
+    cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
   }
 ];
 

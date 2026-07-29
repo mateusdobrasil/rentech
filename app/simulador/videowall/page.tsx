@@ -41,6 +41,127 @@ interface ItemProjeto {
   image: string;
 }
 
+// Desenho técnico (frente + perfil) com cotas em cm, gerado a partir das dimensões cadastradas no banco
+function DesenhoTecnicoEquipamento({
+  nome,
+  largura,
+  altura,
+  profundidade,
+  isTouch,
+}: {
+  nome: string;
+  largura: number;
+  altura: number;
+  profundidade: number;
+  isTouch: boolean;
+}) {
+  const wCm = (largura || 1) * 100;
+  const hCm = (altura || 1) * 100;
+  const dCm = (profundidade || 0) * 100;
+
+  const maxFw = 300;
+  const maxFh = 190;
+  const scale = Math.min(maxFw / wCm, maxFh / hCm);
+  const fw = wCm * scale;
+  const fh = hCm * scale;
+
+  const hasSide = dCm > 0;
+  const sw = hasSide ? Math.max(14, dCm * scale) : 0;
+
+  const leftDim = 40;
+  const topDim = 24;
+  const gap = hasSide ? 46 : 0;
+  const rightPad = 12;
+  const bottomLabel = 22;
+
+  const svgW = leftDim + fw + gap + sw + rightPad;
+  const svgH = topDim + fh + bottomLabel;
+
+  const fmt = (n: number) => n.toFixed(1).replace('.', ',');
+
+  return (
+    <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`} className="max-w-full">
+      {/* Cota superior - largura da frente */}
+      <g className="stroke-[#336699] print:stroke-black" strokeWidth={1}>
+        <line x1={leftDim} y1={topDim - 10} x2={leftDim + fw} y2={topDim - 10} />
+        <line x1={leftDim} y1={topDim - 14} x2={leftDim} y2={topDim - 6} />
+        <line x1={leftDim + fw} y1={topDim - 14} x2={leftDim + fw} y2={topDim - 6} />
+      </g>
+      <text x={leftDim + fw / 2} y={topDim - 16} textAnchor="middle" className="fill-[#336699] print:fill-black" fontSize="9" fontWeight="700">
+        {fmt(wCm)} cm
+      </text>
+
+      {/* Cota lateral - altura da frente */}
+      <g className="stroke-[#336699] print:stroke-black" strokeWidth={1}>
+        <line x1={leftDim - 10} y1={topDim} x2={leftDim - 10} y2={topDim + fh} />
+        <line x1={leftDim - 14} y1={topDim} x2={leftDim - 6} y2={topDim} />
+        <line x1={leftDim - 14} y1={topDim + fh} x2={leftDim - 6} y2={topDim + fh} />
+      </g>
+      <text
+        x={leftDim - 18}
+        y={topDim + fh / 2}
+        textAnchor="middle"
+        className="fill-[#336699] print:fill-black"
+        fontSize="9"
+        fontWeight="700"
+        transform={`rotate(-90 ${leftDim - 18} ${topDim + fh / 2})`}
+      >
+        {fmt(hCm)} cm
+      </text>
+
+      {/* Corpo do equipamento - vista frontal */}
+      <rect x={leftDim} y={topDim} width={fw} height={fh} rx={2} className="fill-[#0C1D4D] stroke-[#336699] print:fill-gray-100 print:stroke-black" strokeWidth={2} />
+      <rect x={leftDim + fw * 0.05} y={topDim + fh * 0.05} width={fw * 0.9} height={fh * 0.9} className="fill-[#1a3a7a] print:fill-gray-200" />
+
+      {/* Logo Rentech (branco) + nome do dispositivo, dentro da tela */}
+      <foreignObject x={leftDim + fw * 0.05} y={topDim + fh * 0.05} width={fw * 0.9} height={fh * 0.9}>
+        <div
+          // @ts-expect-error - xmlns é necessário para conteúdo XHTML dentro de foreignObject
+          xmlns="http://www.w3.org/1999/xhtml"
+          className="w-full h-full flex flex-col items-center justify-center gap-1 px-1 overflow-hidden"
+        >
+          <img
+            src={logoColorido.src}
+            alt="Rentech"
+            className="w-[55%] max-h-[55%] object-contain opacity-95"
+          />
+          <span
+            className="text-white font-black uppercase tracking-wider text-center leading-tight print:text-black"
+            style={{ fontSize: Math.max(7, Math.min(11, fw * 0.05)) }}
+          >
+            {nome}
+          </span>
+        </div>
+      </foreignObject>
+
+      {isTouch && (
+        <g transform={`translate(${leftDim + fw - 22}, ${topDim + fh - 22})`} className="stroke-white/70 print:stroke-black" strokeWidth={1.4} fill="none">
+          <circle cx={8} cy={8} r={7} />
+          <path d="M8 3 v10 M4 6 l4 -3 l4 3" />
+        </g>
+      )}
+
+      {/* Vista de perfil - profundidade */}
+      {hasSide && (
+        <>
+          <g className="stroke-[#336699] print:stroke-black" strokeWidth={1}>
+            <line x1={leftDim + fw + gap} y1={topDim - 10} x2={leftDim + fw + gap + sw} y2={topDim - 10} />
+            <line x1={leftDim + fw + gap} y1={topDim - 14} x2={leftDim + fw + gap} y2={topDim - 6} />
+            <line x1={leftDim + fw + gap + sw} y1={topDim - 14} x2={leftDim + fw + gap + sw} y2={topDim - 6} />
+          </g>
+          <text x={leftDim + fw + gap + sw / 2} y={topDim - 16} textAnchor="middle" className="fill-[#336699] print:fill-black" fontSize="9" fontWeight="700">
+            {fmt(dCm)} cm
+          </text>
+          <rect x={leftDim + fw + gap} y={topDim} width={sw} height={fh} className="fill-[#0C1D4D] stroke-[#336699] print:fill-gray-100 print:stroke-black" strokeWidth={2} />
+          <text x={leftDim + fw + gap + sw / 2} y={topDim + fh + 16} textAnchor="middle" className="fill-[#94A3B8] print:fill-black" fontSize="8" fontWeight="700">
+            PERFIL
+          </text>
+        </>
+      )}
+    </svg>
+  );
+}
+
 export default function SimuladorVideoWall() {
   // Estados do Banco de Dados (Supabase)
   const [equipamentos, setEquipamentos] = useState<Equipamento[]>([]);
@@ -61,8 +182,7 @@ export default function SimuladorVideoWall() {
   const [ledConfig, setLedConfig] = useState({
     width: 1,
     height: 1,
-    shape: 'reto',
-    pitchId: '' 
+    pitchId: ''
   });
 
   // Cálculos em tempo real das colunas/linhas para renderização gráfica
@@ -352,14 +472,6 @@ export default function SimuladorVideoWall() {
               <input type="number" step="0.5" min="0.5" className="w-full p-2 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] font-semibold focus:border-[#336699] focus:bg-white outline-none transition-all" value={ledConfig.height} onChange={(e) => setLedConfig({ ...ledConfig, height: parseFloat(e.target.value) || 0.5 })} />
             </div>
             <div>
-              <label className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider mb-1 block">Formato Estrutural</label>
-              <select className="w-full p-2 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] font-semibold focus:border-[#336699] focus:bg-white outline-none transition-all cursor-pointer" value={ledConfig.shape} onChange={(e) => setLedConfig({ ...ledConfig, shape: e.target.value })}>
-                <option value="reto">Reto Padrão</option>
-                <option value="curvo">Curvo (Côncavo)</option>
-                <option value="quina">Quina (90 Graus)</option>
-              </select>
-            </div>
-            <div>
               <label className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider mb-1 block">Modelo da Placa (Pitch)</label>
               <select 
                 className="w-full p-2 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg text-xs text-[#0F172A] font-semibold focus:border-[#336699] focus:bg-white outline-none transition-all cursor-pointer" 
@@ -452,7 +564,7 @@ export default function SimuladorVideoWall() {
 
               {/* LÓGICA GRÁFICA DO PAINEL DE LED COM QUADRADINHOS GRANDES, LOGO E SEM BORDA EXTERNA */}
               {!loading && currentItemDraft && equipType === 'led' && (
-                <div className={`flex flex-col items-center justify-center w-full h-full transition-all ${ledConfig.shape === 'curvo' ? 'scale-x-95 rotate-y-[15deg]' : ''}`}>
+                <div className="flex flex-col items-center justify-center w-full h-full transition-all">
                   <div 
                     className="grid shadow-[0_15px_40px_rgba(12,29,77,0.25)]"
                     style={{ 
@@ -479,8 +591,19 @@ export default function SimuladorVideoWall() {
                 </div>
               )}
 
-              {/* LÓGICA DE CARD PARA OS DEMAIS EQUIPAMENTOS */}
-              {!loading && currentItemDraft && equipType !== 'led' && (
+              {/* DESENHO TÉCNICO (FRENTE + PERFIL) PARA TV, MONITOR E TOUCH */}
+              {!loading && currentItemDraft && ['tv', 'mon', 'touch'].includes(equipType) && selectedDeviceRaw && (
+                <DesenhoTecnicoEquipamento
+                  nome={selectedDeviceRaw.nome}
+                  largura={selectedDeviceRaw.largura}
+                  altura={selectedDeviceRaw.altura}
+                  profundidade={selectedDeviceRaw.profundidade}
+                  isTouch={equipType === 'touch'}
+                />
+              )}
+
+              {/* LÓGICA DE CARD PARA OS DEMAIS EQUIPAMENTOS (SOM, LUZ, ESTRUTURA, ACESSÓRIOS) */}
+              {!loading && currentItemDraft && !['led', 'tv', 'mon', 'touch'].includes(equipType) && (
                 <div className="w-56 h-36 bg-[#0C1D4D] border-2 border-[#336699] shadow-[0_10px_30px_rgba(12,29,77,0.25)] flex flex-col items-center justify-center p-3 transition-all rounded-xl text-center print:bg-gray-100 print:text-black print:border-black">
                   <span className="text-[8px] font-black text-[#60A5FA] tracking-widest uppercase mb-1.5 print:text-gray-500">Simulação Rentech</span>
                   <strong className="text-white text-sm font-black leading-tight mb-1.5 print:text-black">{currentItemDraft.name}</strong>

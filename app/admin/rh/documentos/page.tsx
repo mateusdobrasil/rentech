@@ -6,7 +6,8 @@ import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../../lib/supabase'; 
 import {
   listarCategoriasDocAction, criarCategoriaDocAction, uploadDocumentoAction,
-  listarDocumentosAction, urlDocumentoAction, excluirDocumentoAction, painelDocumentosAction
+  listarDocumentosAction, urlDocumentoAction, excluirDocumentoAction, painelDocumentosAction,
+  alternarVisivelPortalAction
 } from '../actions/actions-documentos-func';
 import {
   listarCategoriasDocEmpresaAction, criarCategoriaDocEmpresaAction, uploadDocumentoEmpresaAction,
@@ -27,6 +28,7 @@ interface Documento {
   titulo: string | null; nome_arquivo: string; tipo_mime: string | null;
   tamanho_bytes: number | null; data_validade: string | null; observacao: string | null;
   criado_em: string; statusValidade: 'SEM' | 'OK' | 'VENCENDO' | 'VENCIDO';
+  visivel_portal: boolean;
 }
 interface LinhaPainel {
   nome: string; cargo: string; totalDocs: number; vencidos: number; vencendo: number; semDocumentos: boolean;
@@ -62,6 +64,7 @@ export default function DocumentosPage() {
   const [upArquivo, setUpArquivo] = useState<File | null>(null);
   const [upValidade, setUpValidade] = useState('');
   const [upObs, setUpObs] = useState('');
+  const [upVisivelPortal, setUpVisivelPortal] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const upRef = useRef<HTMLInputElement>(null);
 
@@ -271,10 +274,11 @@ export default function DocumentosPage() {
       const res = await uploadDocumentoAction({
         funcionarioNome: funcSel!, categoriaId: Number(upCategoria), titulo: upTitulo || null,
         arquivoBase64: base64, nomeArquivo: upArquivo.name, tipoMime: upArquivo.type,
-        dataValidade: upValidade || null, observacao: upObs || null, enviadoPor: usuarioAtual
+        dataValidade: upValidade || null, observacao: upObs || null, enviadoPor: usuarioAtual,
+        visivelPortal: upVisivelPortal
       });
       if (!res.ok) throw new Error(res.erro);
-      setUpCategoria(''); setUpTitulo(''); setUpArquivo(null); setUpValidade(''); setUpObs('');
+      setUpCategoria(''); setUpTitulo(''); setUpArquivo(null); setUpValidade(''); setUpObs(''); setUpVisivelPortal(false);
       if (upRef.current) upRef.current.value = '';
       setMostrarUpload(false);
       abrirFuncionario(funcSel!); carregar();
@@ -296,6 +300,16 @@ export default function DocumentosPage() {
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
     } catch (e: any) { alert('Erro ao baixar: ' + e.message); }
+  };
+
+  const alternarVisivelPortal = async (doc: Documento) => {
+    const novoValor = !doc.visivel_portal;
+    setDocsFunc(prev => prev.map(d => d.id === doc.id ? { ...d, visivel_portal: novoValor } : d));
+    const res = await alternarVisivelPortalAction({ id: doc.id, visivel: novoValor });
+    if (!res.ok) {
+      setDocsFunc(prev => prev.map(d => d.id === doc.id ? { ...d, visivel_portal: !novoValor } : d));
+      alert('Erro ao atualizar: ' + res.erro);
+    }
   };
 
   const excluir = async (doc: Documento) => {
@@ -643,6 +657,10 @@ export default function DocumentosPage() {
                   <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Arquivo (PDF ou imagem)</label>
                   <input ref={upRef} type="file" accept="application/pdf,image/*" onChange={e => setUpArquivo(e.target.files?.[0] || null)} className="w-full text-sm file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-[#0C1D4D] file:text-white file:font-bold file:text-xs file:uppercase" />
                 </div>
+                <label className="flex items-center gap-2 text-[11px] font-black uppercase text-gray-600 cursor-pointer bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 w-fit">
+                  <input type="checkbox" checked={upVisivelPortal} onChange={e => setUpVisivelPortal(e.target.checked)} />
+                  👤 Visível no Portal do Funcionário
+                </label>
                 <button onClick={enviarUpload} disabled={enviando} className="w-full bg-[#16A34A] hover:bg-[#15803D] text-white font-black uppercase tracking-widest text-xs py-3 rounded-xl disabled:opacity-50">
                   {enviando ? '⏳ Enviando...' : '📤 Enviar Documento'}
                 </button>
@@ -670,6 +688,13 @@ export default function DocumentosPage() {
                     </p>
                   </div>
                   <div className="flex items-center gap-1">
+                    <label
+                      title="Visível no Portal do Funcionário"
+                      className={`flex items-center gap-1 text-[9px] font-black uppercase px-2 py-1.5 rounded-lg cursor-pointer transition-colors ${doc.visivel_portal ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-400'}`}
+                    >
+                      <input type="checkbox" className="hidden" checked={doc.visivel_portal} onChange={() => alternarVisivelPortal(doc)} />
+                      👤 Portal
+                    </label>
                     <button onClick={() => abrirPreview(doc)} title="Visualizar" className="text-gray-400 hover:text-[#0C1D4D] p-1.5">👁</button>
                     <button onClick={() => baixar(doc)} title="Baixar" className="text-gray-400 hover:text-emerald-600 p-1.5">⬇</button>
                     <button onClick={() => excluir(doc)} title="Excluir" className="text-gray-400 hover:text-red-600 p-1.5">🗑</button>

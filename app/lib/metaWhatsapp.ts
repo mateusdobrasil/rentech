@@ -55,7 +55,14 @@ export async function enviarWhatsAppMeta(celular: string, mensagem: string): Pro
 // livre, funciona a qualquer momento (não depende da janela de 24h de
 // atendimento). `parametros` preenche, na ordem, os {{1}}, {{2}}... do
 // corpo do template aprovado no Business Manager.
-export async function enviarWhatsAppMetaTemplate(celular: string, nomeTemplate: string, idioma: string, parametros: string[]): Promise<{ ok: boolean; erro?: string; detalhe?: string }> {
+//
+// `botaoCodigo`: só pra templates de categoria Authentication com o botão
+// "Copiar código" — a Meta exige um componente `button` além do `body`
+// nesse caso, com o mesmo código. Formato conforme a doc oficial de
+// Authentication templates (button sub_type "copy_code", parâmetro
+// "coupon_code"); se a Meta rejeitar o formato do botão, o erro devolvido
+// aqui (ver `erro`/`detalhe`) traz o motivo exato da Graph API.
+export async function enviarWhatsAppMetaTemplate(celular: string, nomeTemplate: string, idioma: string, parametros: string[], botaoCodigo?: string): Promise<{ ok: boolean; erro?: string; detalhe?: string }> {
   const token = process.env.META_WHATSAPP_TOKEN;
   const phoneNumberId = process.env.META_WHATSAPP_PHONE_NUMBER_ID;
 
@@ -65,6 +72,18 @@ export async function enviarWhatsAppMetaTemplate(celular: string, nomeTemplate: 
 
   const celularLimpo = (celular || '').replace(/\D/g, '');
   if (!celularLimpo) return { ok: false, erro: 'Celular vazio ou inválido.' };
+
+  const components: Record<string, unknown>[] = [
+    { type: 'body', parameters: parametros.map(texto => ({ type: 'text', text: texto })) },
+  ];
+  if (botaoCodigo) {
+    components.push({
+      type: 'button',
+      sub_type: 'copy_code',
+      index: '0',
+      parameters: [{ type: 'coupon_code', coupon_code: botaoCodigo }],
+    });
+  }
 
   try {
     const response = await fetch(graphUrl(`${phoneNumberId}/messages`), {
@@ -80,7 +99,7 @@ export async function enviarWhatsAppMetaTemplate(celular: string, nomeTemplate: 
         template: {
           name: nomeTemplate,
           language: { code: idioma },
-          components: [{ type: 'body', parameters: parametros.map(texto => ({ type: 'text', text: texto })) }],
+          components,
         },
       }),
     });

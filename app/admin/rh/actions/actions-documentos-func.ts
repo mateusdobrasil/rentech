@@ -56,9 +56,10 @@ export async function uploadDocumentoAction(payload: {
   dataValidade?: string | null;
   observacao?: string | null;
   enviadoPor: string;
+  visivelPortal?: boolean;
 }): Promise<Resultado> {
   const db = supabaseAdmin();
-  const { funcionarioNome, categoriaId, titulo, arquivoBase64, nomeArquivo, tipoMime, dataValidade, observacao, enviadoPor } = payload;
+  const { funcionarioNome, categoriaId, titulo, arquivoBase64, nomeArquivo, tipoMime, dataValidade, observacao, enviadoPor, visivelPortal } = payload;
 
   if (!funcionarioNome || !categoriaId || !arquivoBase64) {
     return { ok: false, erro: 'Funcionário, categoria e arquivo são obrigatórios.' };
@@ -87,7 +88,8 @@ export async function uploadDocumentoAction(payload: {
       tamanho_bytes: bytes.length,
       data_validade: dataValidade || null,
       observacao: observacao || null,
-      enviado_por: enviadoPor || null
+      enviado_por: enviadoPor || null,
+      visivel_portal: visivelPortal || false
     });
     if (dbErr) {
       // rollback do arquivo se o registro falhar
@@ -112,7 +114,7 @@ export async function listarDocumentosAction(payload: {
   const db = supabaseAdmin();
   try {
     let q = db.from('folha_documentos')
-      .select('id, funcionario_nome, categoria_id, titulo, storage_path, nome_arquivo, tipo_mime, tamanho_bytes, data_validade, observacao, criado_em')
+      .select('id, funcionario_nome, categoria_id, titulo, storage_path, nome_arquivo, tipo_mime, tamanho_bytes, data_validade, observacao, criado_em, visivel_portal')
       .order('criado_em', { ascending: false });
     if (payload.funcionarioNome) q = q.eq('funcionario_nome', payload.funcionarioNome);
     if (payload.categoriaId) q = q.eq('categoria_id', payload.categoriaId);
@@ -155,6 +157,23 @@ export async function urlDocumentoAction(payload: { id: number; download?: boole
     const { data, error } = await db.storage.from(BUCKET).createSignedUrl(doc.storage_path, 60 * 10, opts);
     if (error || !data?.signedUrl) throw new Error(error?.message || 'Falha ao gerar link.');
     return { ok: true, info: { url: data.signedUrl } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// ALTERNAR VISIBILIDADE NO PORTAL DO FUNCIONÁRIO
+// Controla folha_documentos.visivel_portal — só o que estiver marcado aqui
+// aparece pro próprio funcionário em /portal (ver app/portal/actions/actions-documentos.ts).
+// Default é sempre false: nada fica visível sem essa marcação explícita.
+// ============================================================================
+export async function alternarVisivelPortalAction(payload: { id: number; visivel: boolean }): Promise<Resultado> {
+  const db = supabaseAdmin();
+  try {
+    const { error } = await db.from('folha_documentos').update({ visivel_portal: payload.visivel }).eq('id', payload.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

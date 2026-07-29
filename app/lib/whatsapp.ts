@@ -74,6 +74,10 @@ export interface TemplateMeta {
   nome: string;
   idioma: string; // ex: 'pt_BR'
   parametros: string[]; // na ordem dos {{1}}, {{2}}... do corpo aprovado no Business Manager
+  // Preencher só quando o template for de categoria Authentication com botão
+  // "Copiar código"/autofill (a Meta exige o componente `button` além do
+  // `body` nesse caso) — ver enviarWhatsAppMetaTemplate em metaWhatsapp.ts.
+  botaoCodigo?: string;
 }
 
 // Decide texto livre vs. Message Template pré-aprovado: no Z-API sempre
@@ -88,7 +92,7 @@ async function enviarConsiderandoJanela(provedor: ProvedorWhatsApp, celular: str
 
   const aberta = await janelaAbertaParaCelular(celular);
   if (aberta) return enviarComProvedor('META', celular, textoLivre);
-  return enviarWhatsAppMetaTemplate(celular, templateMeta.nome, templateMeta.idioma, templateMeta.parametros);
+  return enviarWhatsAppMetaTemplate(celular, templateMeta.nome, templateMeta.idioma, templateMeta.parametros, templateMeta.botaoCodigo);
 }
 
 export { enviarConsiderandoJanela as enviarComJanela };

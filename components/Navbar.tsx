@@ -106,6 +106,7 @@ export default function Navbar() {
     { href: 'https://webmail.exchangecorp.com.br/', label: 'Webmail', target: '_blank' },
     { href: '/freelance', label: 'Freelancer' },
     { href: '/downloads', label: 'Downloads' },
+    { href: '/portal/login', label: 'Portal do Funcionário' },
   ];
 
   const socialmedia = [

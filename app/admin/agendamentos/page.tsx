@@ -377,11 +377,19 @@ export default function GestaoAgendamentos() {
               </div>
 
               <div className="bg-[#F8FAFC] border-t border-[#E2E8F0] p-4 flex justify-between items-center">
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   {rotina.canais.includes('WhatsApp') && (
-                    <span className="bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-md border border-emerald-200">
-                      WhatsApp
-                    </span>
+                    <>
+                      <span className="bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-md border border-emerald-200">
+                        WhatsApp
+                      </span>
+                      <span
+                        className="bg-sky-100 text-sky-700 text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-md border border-sky-200"
+                        title="Provedor usado para o disparo por WhatsApp desta automação"
+                      >
+                        {rotina.provedor_whatsapp === 'ZAPI' ? 'Z-API' : rotina.provedor_whatsapp === 'META' ? 'Meta' : 'Padrão'}
+                      </span>
+                    </>
                   )}
                   {rotina.canais.includes('E-mail') && (
                     <span className="bg-gray-200 text-gray-700 text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-md border border-gray-300">

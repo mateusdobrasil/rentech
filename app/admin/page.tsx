@@ -231,6 +231,9 @@ export default function HubAdministrativo() {
             <strong className="block text-sm text-[#336699] font-black uppercase tracking-wider" title={`Cargo Registado: ${perfil.permissao}`}>
               {perfil.permissaoNormalizada}
             </strong>
+            <Link href="/admin/conta" className="inline-block mt-2 text-[10px] font-black text-[#64748B] hover:text-[#336699] uppercase tracking-widest transition-colors">
+              ⚙️ Minha Conta
+            </Link>
           </div>
         </div>
       </div>

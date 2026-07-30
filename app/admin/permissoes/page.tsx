@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation'; // <-- CORRIGIDO: Import adicionado
 import { supabase } from '../../lib/supabase';
-import { registrarLogAuditoria } from '../../actions';
+import { registrarLogAuditoria, criarUsuarioAcesso } from '../../actions';
 import { Analytics } from "@vercel/analytics/next"; // <-- CORRIGIDO: Barra adicionada
 
 const normalizarPermissao = (permissaoBruta: string): string => {
@@ -61,6 +61,11 @@ export default function GestaoPermissoes() {
   // Estados da aba de Usuários
   const [usuarios, setUsuarios] = useState<UsuarioAuth[]>([]);
   const [modalEdicao, setModalEdicao] = useState<{ open: boolean; user: UsuarioAuth | null }>({ open: false, user: null });
+
+  // Estados do modal de registro de novo usuário
+  const [modalNovoUsuario, setModalNovoUsuario] = useState(false);
+  const [novoUsuario, setNovoUsuario] = useState({ nome: '', email: '', senha: '', permissao: '' });
+  const [criandoUsuario, setCriandoUsuario] = useState(false);
 
   // Estados da aba de Páginas
   const [paginas, setPaginas] = useState<PaginaPermissao[]>([]);
@@ -120,6 +125,7 @@ export default function GestaoPermissoes() {
 
       // Aprovado
       setUsuarioNome(perfil.nome || 'Usuário');
+      setUsuarioAtual(perfil.nome || perfil.email || 'Usuário');
       setAuthLoading(false);
       carregarUsuarios();
       carregarPaginas();
@@ -180,6 +186,48 @@ export default function GestaoPermissoes() {
       mostrarFeedback('Erro ao atualizar permissões no banco.', 'error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const gerarSenhaAleatoria = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
+    let senha = '';
+    for (let i = 0; i < 12; i++) senha += chars[Math.floor(Math.random() * chars.length)];
+    return senha;
+  };
+
+  const abrirModalNovoUsuario = () => {
+    setNovoUsuario({ nome: '', email: '', senha: gerarSenhaAleatoria(), permissao: setores[0]?.nome || '' });
+    setModalNovoUsuario(true);
+  };
+
+  const criarNovoUsuario = async () => {
+    if (!novoUsuario.nome.trim() || !novoUsuario.email.trim() || !novoUsuario.permissao) {
+      return mostrarFeedback('Preencha nome, e-mail e setor de permissão.', 'error');
+    }
+    if (novoUsuario.senha.length < 8) {
+      return mostrarFeedback('A senha precisa ter pelo menos 8 caracteres.', 'error');
+    }
+
+    setCriandoUsuario(true);
+    try {
+      const resultado = await criarUsuarioAcesso({
+        nome: novoUsuario.nome,
+        email: novoUsuario.email,
+        senha: novoUsuario.senha,
+        permissao: novoUsuario.permissao,
+        usuarioNome: usuarioAtual,
+      });
+
+      if (!resultado.success) throw new Error(resultado.message);
+
+      mostrarFeedback('Usuário registrado com sucesso!', 'success');
+      setModalNovoUsuario(false);
+      carregarUsuarios();
+    } catch (error: any) {
+      mostrarFeedback(error.message || 'Erro ao registrar usuário.', 'error');
+    } finally {
+      setCriandoUsuario(false);
     }
   };
 
@@ -456,8 +504,8 @@ export default function GestaoPermissoes() {
                 onChange={(e) => setBusca(e.target.value)}
               />
             </div>
-            <button 
-              onClick={() => alert("Crie as novas credenciais primeiro na aba 'Authentication' do painel do Supabase. Assim que o e-mail for registrado, ele constará nesta lista automaticamente para atribuição de perfil.")}
+            <button
+              onClick={abrirModalNovoUsuario}
               className="w-full md:w-auto bg-[#336699] text-white px-6 py-3.5 rounded-xl font-black uppercase tracking-widest text-xs hover:bg-[#284B8C] transition-colors shadow-sm text-center"
             >
               ➕ Registrar Novo Usuário
@@ -715,6 +763,79 @@ export default function GestaoPermissoes() {
             </div>
           </div>
 
+        </div>
+      )}
+
+      {/* MODAL DE REGISTRO DE NOVO USUÁRIO */}
+      {modalNovoUsuario && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden transform transition-all animate-none">
+            <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white">
+              <h3 className="font-black uppercase tracking-wider text-sm">Registrar Novo Usuário</h3>
+              <button onClick={() => setModalNovoUsuario(false)} className="text-white hover:text-red-400 text-2xl leading-none">&times;</button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-[10px] font-black text-[#64748B] uppercase tracking-widest mb-1">Nome Completo</label>
+                <input
+                  type="text"
+                  placeholder="Ex: João da Silva"
+                  value={novoUsuario.nome}
+                  onChange={e => setNovoUsuario({ ...novoUsuario, nome: e.target.value })}
+                  className="w-full p-3 bg-white border-2 border-[#CBD5E1] rounded-xl text-sm font-bold text-[#0A2A4A] outline-none focus:border-[#336699] shadow-sm transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-[#64748B] uppercase tracking-widest mb-1">E-mail de Acesso</label>
+                <input
+                  type="email"
+                  placeholder="Ex: joao@rentech.com.br"
+                  value={novoUsuario.email}
+                  onChange={e => setNovoUsuario({ ...novoUsuario, email: e.target.value })}
+                  className="w-full p-3 bg-white border-2 border-[#CBD5E1] rounded-xl text-sm font-bold text-[#0A2A4A] outline-none focus:border-[#336699] shadow-sm transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-[#64748B] uppercase tracking-widest mb-1">Senha Provisória</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={novoUsuario.senha}
+                    onChange={e => setNovoUsuario({ ...novoUsuario, senha: e.target.value })}
+                    className="w-full p-3 bg-white border-2 border-[#CBD5E1] rounded-xl text-sm font-bold text-[#0A2A4A] outline-none focus:border-[#336699] shadow-sm transition-all font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setNovoUsuario({ ...novoUsuario, senha: gerarSenhaAleatoria() })}
+                    className="shrink-0 bg-gray-100 hover:bg-gray-200 text-gray-600 font-black text-[10px] uppercase tracking-wider px-3 rounded-xl transition-colors"
+                  >
+                    🎲 Gerar
+                  </button>
+                </div>
+                <p className="text-[10px] text-[#94A3B8] font-bold uppercase mt-1 leading-tight">Compartilhe esta senha com o colaborador — ele poderá alterá-la depois do primeiro acesso.</p>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-[#64748B] uppercase tracking-widest mb-1">Setor de Permissão</label>
+                <select
+                  className="w-full p-3 bg-white border-2 border-[#CBD5E1] rounded-xl text-sm font-bold text-[#0A2A4A] outline-none focus:border-[#336699] shadow-sm transition-all cursor-pointer"
+                  value={novoUsuario.permissao}
+                  onChange={e => setNovoUsuario({ ...novoUsuario, permissao: e.target.value })}
+                >
+                  <option value="" disabled>Selecione um setor...</option>
+                  {setores.map(s => <option key={s.id} value={s.nome}>{s.nome}</option>)}
+                </select>
+              </div>
+
+              <div className="pt-4 border-t border-[#E2E8F0] flex gap-3">
+                <button onClick={() => setModalNovoUsuario(false)} className="flex-1 py-3.5 bg-gray-100 text-gray-500 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-gray-200 transition-colors">Cancelar</button>
+                <button onClick={criarNovoUsuario} disabled={criandoUsuario} className="flex-1 py-3.5 bg-[#0C1D4D] text-white font-black text-[10px] uppercase tracking-widest rounded-xl shadow-md hover:bg-[#284B8C] transition-colors disabled:opacity-50">{criandoUsuario ? '...' : 'Registrar Usuário'}</button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

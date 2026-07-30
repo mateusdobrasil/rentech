@@ -178,6 +178,68 @@ export async function removerArquivoDownload(formData: FormData) {
   }
 }
 
+// ============================================================================
+// 2.1 CRIAÇÃO DE NOVO USUÁRIO (GESTÃO DE ACESSOS)
+// ============================================================================
+export async function criarUsuarioAcesso(payload: {
+  nome: string;
+  email: string;
+  senha: string;
+  permissao: string;
+  usuarioNome: string;
+}) {
+  const nome = (payload.nome || '').trim();
+  const email = (payload.email || '').trim().toLowerCase();
+  const senha = payload.senha || '';
+  const permissao = (payload.permissao || '').trim();
+
+  if (!nome || !email || !permissao) {
+    return { success: false, message: 'Preencha nome, e-mail e setor de permissão.' };
+  }
+  if (senha.length < 8) {
+    return { success: false, message: 'A senha precisa ter pelo menos 8 caracteres.' };
+  }
+  if (!supabaseAdmin) {
+    return { success: false, message: 'Credenciais do Supabase ausentes.' };
+  }
+
+  const { data: criado, error: authError } = await supabaseAdmin.auth.admin.createUser({
+    email,
+    password: senha,
+    email_confirm: true,
+    user_metadata: { nome },
+  });
+
+  if (authError || !criado?.user) {
+    const jaExiste = authError?.status === 422 || (authError?.message || '').toLowerCase().includes('already');
+    return { success: false, message: jaExiste ? 'Já existe um usuário cadastrado com este e-mail.' : (authError?.message || 'Falha ao criar credenciais de acesso.') };
+  }
+
+  const { error: perfilError } = await supabaseAdmin.from('perfis_usuarios').insert([{
+    id: criado.user.id,
+    nome: nome.toUpperCase(),
+    email,
+    permissao,
+    ativo: true,
+  }]);
+
+  if (perfilError) {
+    await supabaseAdmin.auth.admin.deleteUser(criado.user.id);
+    return { success: false, message: perfilError.message || 'Falha ao gravar o perfil do usuário.' };
+  }
+
+  await registrarLogAuditoria({
+    usuario_nome: payload.usuarioNome,
+    acao: 'REGISTROU NOVO USUÁRIO',
+    setor: 'PERMISSÕES',
+    equipamento_id: criado.user.id,
+    equipamento_nome: `${nome.toUpperCase()} (${email}) → ${permissao}`,
+  });
+
+  revalidatePath('/admin/permissoes');
+  return { success: true };
+}
+
 export async function registrarLogAuditoria(payload: LogPayload) {
   try {
     if (!supabaseAdmin) {

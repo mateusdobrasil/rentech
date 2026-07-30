@@ -83,6 +83,12 @@ const modulosRh = [
     cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
   },
   {
+    titulo: 'Crédito Consignado',
+    descricao: 'Gestão de Empréstimos Consignados no GOV.BR.',
+    icone: '💸', link: '/admin/rh/consignado',
+    cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
+  },
+  {
     titulo: 'Parâmetros de Contrato',
     descricao: 'Motor de regras de cálculo (CLT, PJ, Temporário, etc).',
     icone: '⚙️', link: '/admin/rh/parametros',
@@ -91,7 +97,7 @@ const modulosRh = [
   {
     titulo: 'Financeiro',
     descricao: 'Lotes de pagamento, OCR de comprovantes e arquivos bancários (CNAB).',
-    icone: '💸', link: '/admin/rh/financeiro',
+    icone: '💰', link: '/admin/rh/financeiro',
     cor: 'bg-purple-50 border-purple-200 text-purple-700', hover: 'hover:border-purple-500'
   }
 ];

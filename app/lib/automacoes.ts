@@ -3,6 +3,7 @@
 // o canal, a lista de `destinatarios` (vazio = todos os funcionários ativos
 // com celular; com nomes = só eles) e usa o template salvo em `mensagem`,
 // substituindo placeholders {{assim}} — nada disso depende mais de código.
+import nodemailer from 'nodemailer';
 import { supabaseAdmin } from './supabase';
 import { resolverProvedorAutomacao, enviarComJanela, type ProvedorAutomacao, type TemplateMeta } from './whatsapp';
 
@@ -115,6 +116,79 @@ export async function dispararAutomacaoWhatsApp(chave: string, contexto: Record<
   // na tela Agendamentos e Disparos.
   if (disparos > 0) {
     await db.from('folha_automacoes_envios').insert({ chave, canal: 'WhatsApp', quantidade: disparos });
+  }
+
+  return { disparado: true, disparos, erros };
+}
+
+// Irmã de dispararAutomacaoWhatsApp para o canal "E-mail" — o checkbox de
+// E-mail já existia na tela Agendamentos e Disparos, mas nada em folha_automacoes
+// de fato disparava e-mail (só o WhatsApp). Mesma leitura de configuração
+// (ativo/canais/destinatarios/mensagem), mesmo `contexto`/placeholders, único
+// canal muda: usa `folha_funcionarios.email` em vez de `celular`, e envia via
+// SMTP (mesmo transporte usado em app/admin/op/actions.ts).
+//
+// Não cobre o público dinâmico de aniversariantes (só existe para WhatsApp
+// até aqui) — se alguém configurar Aniversariantes + E-mail, retorna erro
+// explícito em vez de silenciosamente não enviar nada.
+export async function dispararAutomacaoEmail(chave: string, contexto: Record<string, string | number> = {}, assunto?: string): Promise<ResultadoDisparoAutomacao> {
+  const db = supabaseAdmin();
+
+  const { data: automacao } = await db
+    .from('folha_automacoes')
+    .select('ativo, canais, destinatarios, mensagem, publico_dinamico')
+    .eq('chave', chave)
+    .maybeSingle();
+
+  if (!automacao || automacao.ativo === false || !(automacao.canais || []).includes('E-mail')) {
+    return { disparado: false, disparos: 0, erros: [] };
+  }
+  if (!automacao.mensagem) {
+    return { disparado: false, disparos: 0, erros: ['Automação sem mensagem configurada.'] };
+  }
+  if (automacao.publico_dinamico === 'ANIVERSARIANTES_FUNCIONARIOS') {
+    return { disparado: false, disparos: 0, erros: ['Público "Aniversariantes" ainda não é suportado no canal E-mail.'] };
+  }
+
+  const destinatarios: string[] = automacao.destinatarios || [];
+  let query = db.from('folha_funcionarios').select('nome_completo, email').eq('ativo', true).not('email', 'is', null);
+  if (destinatarios.length > 0) query = query.in('nome_completo', destinatarios);
+  const { data } = await query;
+  const funcionarios = (data || []) as { nome_completo: string; email: string }[];
+
+  if (funcionarios.length === 0) {
+    return { disparado: true, disparos: 0, erros: [] };
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT) || 465,
+    secure: Number(process.env.SMTP_PORT) === 465,
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  });
+
+  let disparos = 0;
+  const erros: string[] = [];
+  for (const f of funcionarios) {
+    const vars: Record<string, string | number> = { primeiro_nome: f.nome_completo.split(' ')[0], nome_completo: f.nome_completo, ...contexto };
+    const texto = preencherTemplate(automacao.mensagem, vars);
+
+    try {
+      await transporter.sendMail({
+        from: `"Sistema Rentech" <${process.env.SMTP_USER}>`,
+        to: f.email,
+        subject: assunto || 'Aviso do Sistema Rentech',
+        text: texto,
+      });
+      disparos++;
+    } catch {
+      erros.push(f.nome_completo);
+    }
+  }
+
+  await db.from('folha_automacoes').update({ ultima_execucao: new Date().toISOString() }).eq('chave', chave);
+  if (disparos > 0) {
+    await db.from('folha_automacoes_envios').insert({ chave, canal: 'E-mail', quantidade: disparos });
   }
 
   return { disparado: true, disparos, erros };

@@ -256,7 +256,7 @@ export default function PainelEstoque() {
     setModalEdit({
       open: true,
       isNew: true,
-      eq: { nome: '', categoria_id: '', peso: 0, consumo_watts: 0, largura: 0, altura: 0, profundidade: 0, resolucao: '', dmx: '', detalhes: '', ativo: true, visivel_simulador: true }
+      eq: { nome: '', categoria_id: '', peso: 0, consumo_watts: 0, largura: 0, altura: 0, profundidade: 0, resolucao: '', dmx: '', detalhes: '', ativo: true, visivel_simulador: false }
     });
   };
 

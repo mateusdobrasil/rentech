@@ -110,7 +110,7 @@ export default function BeneficiosPage() {
       const cab = ['CNPJ', 'NOME COMPLETO', 'CPF', 'MOBILIDADE (R$)', 'REFEICAO (R$)', 'ALIMENTACAO (R$)', 'PREMIACAO NO CARTAO (R$)', 'REFEICAO E ALIMENTACAO (R$)', 'PREMIACAO VIRTUAL (R$)'];
       const num = (v: number) => v.toFixed(2).replace('.', ',');
       const linhasCsv = linhas.map(l => [
-        l.cnpj, `"${l.nome}"`, l.cpf,
+        l.cnpj, l.nome, l.cpf,
         num(l.mobilidade), num(l.refeicao), num(l.alimentacao),
         num(l.premiacaoCartao), num(l.refeicaoEAlimentacao), num(l.premiacaoVirtual)
       ].join(';'));

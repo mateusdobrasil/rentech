@@ -151,7 +151,7 @@ const BRLnum = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimum
 // ============================================================================
 export async function gerarFlashAction(payload: { mesReferencia: string }): Promise<Resultado> {
   const db = supabaseAdmin();
-  const CNPJ_RENTECH = '22618891000187';
+  const CNPJ_RENTECH = '22.618.891/0001-87';
 
   try {
     // Reutiliza o núcleo de cálculo do mês (já aplica proporcionalidade)

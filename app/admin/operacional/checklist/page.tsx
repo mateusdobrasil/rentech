@@ -718,6 +718,68 @@ export default function ChecklistCargaRetorno() {
     return Array.from(mapa.entries());
   }, [itens]);
 
+  // Some itens acabam duplicados (mesmo item adicionado mais de uma vez, ou
+  // importado de várias OS's do evento) — "Unificar Duplicados" junta as linhas
+  // iguais (mesma seção + mesmo equipamento do catálogo, ou mesma descrição para
+  // itens livres) numa só, somando as quantidades.
+  const unificarItensDuplicados = () => {
+    const chaveGrupo = (i: ChecklistItem) => `${i.secao}::${i.equipamento_id || `LIVRE:${i.descricao.trim().toUpperCase()}`}`;
+    const grupos = new Map<string, ChecklistItem[]>();
+    itens.forEach(i => {
+      const chave = chaveGrupo(i);
+      if (!grupos.has(chave)) grupos.set(chave, []);
+      grupos.get(chave)!.push(i);
+    });
+
+    let qtdUnificada = 0;
+    const idsRemovidosNaUniao: string[] = [];
+    const novaLista: ChecklistItem[] = [];
+
+    grupos.forEach(grupo => {
+      if (grupo.length === 1) {
+        novaLista.push(grupo[0]);
+        return;
+      }
+      qtdUnificada += grupo.length - 1;
+
+      // Prefere manter um item já existente no banco (evita apagar+recriar à toa);
+      // na ausência de um, mantém o primeiro da lista.
+      const base = grupo.find(i => !ehItemNovo(i.id)) || grupo[0];
+
+      const valoresPrevistos = grupo.map(i => qtdNumericaPrevista(i.qtd_prevista));
+      const qtdPrevistaFinal = valoresPrevistos.every(v => v !== null)
+        ? String(valoresPrevistos.reduce((soma: number, v) => soma + (v as number), 0))
+        : base.qtd_prevista;
+
+      const todosSaidaOk = grupo.every(i => i.saida_ok);
+      const todosRetornoOk = grupo.every(i => i.retorno_ok);
+
+      novaLista.push({
+        ...base,
+        qtd_prevista: qtdPrevistaFinal,
+        saida_ok: todosSaidaOk,
+        saida_qtd: todosSaidaOk ? grupo.reduce((soma, i) => soma + (i.saida_qtd || 0), 0) : null,
+        retorno_ok: todosRetornoOk,
+        retorno_qtd: todosRetornoOk ? grupo.reduce((soma, i) => soma + (i.retorno_qtd || 0), 0) : null,
+      });
+
+      grupo.forEach(i => {
+        if (i.id !== base.id && !ehItemNovo(i.id)) idsRemovidosNaUniao.push(i.id);
+      });
+    });
+
+    if (qtdUnificada === 0) {
+      setDialog({ open: true, type: 'error', title: 'Nada para unificar', msg: 'Não há itens duplicados neste checklist.' });
+      return;
+    }
+
+    setItens(novaLista.sort((a, b) => a.ordem - b.ordem));
+    if (idsRemovidosNaUniao.length > 0) setItensRemovidos(prev => [...prev, ...idsRemovidosNaUniao]);
+
+    setDialog({ open: true, type: 'success', title: 'Unificado', msg: `${qtdUnificada} item(ns) duplicado(s) unificado(s). Clique em "Salvar Checklist" para confirmar.` });
+    setTimeout(() => setDialog(prev => ({ ...prev, open: false })), 2400);
+  };
+
   // Ao clicar em "+ Item" numa seção já existente, tenta pré-selecionar a categoria
   // do catálogo com o mesmo nome, para o novo item continuar naquela seção.
   const abrirModalAddItem = (secaoPreSelecionada: string) => {
@@ -1695,6 +1757,9 @@ export default function ChecklistCargaRetorno() {
                     </select>
                     <button onClick={abrirImportarOS} className="bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] font-black uppercase tracking-widest text-xs px-5 py-2.5 rounded-xl shadow-sm border border-[#CBD5E1] transition-colors">
                       📦 Importar das OS&apos;s
+                    </button>
+                    <button onClick={unificarItensDuplicados} title="Junta itens repetidos (mesma seção e mesmo item) somando as quantidades" className="bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] font-black uppercase tracking-widest text-xs px-5 py-2.5 rounded-xl shadow-sm border border-[#CBD5E1] transition-colors">
+                      🧩 Unificar Duplicados
                     </button>
                     <button onClick={() => window.print()} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-5 py-2.5 rounded-xl shadow-md hover:bg-[#284B8C] transition-all">
                       🖨️ Imprimir / PDF

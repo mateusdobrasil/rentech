@@ -104,6 +104,54 @@ export async function uploadDocumentoAction(payload: {
 }
 
 // ============================================================================
+// FOTO DE PERFIL (usada no Crachá do Portal do Funcionário)
+// Reaproveita o bucket de documentos com upsert: true, já que só existe uma
+// foto vigente por funcionário (a antiga é sobrescrita no mesmo caminho).
+// ============================================================================
+export async function uploadFotoFuncionarioAction(payload: {
+  funcionarioNome: string;
+  arquivoBase64: string;
+  nomeArquivo: string;
+  tipoMime: string;
+}): Promise<Resultado> {
+  const db = supabaseAdmin();
+  const { funcionarioNome, arquivoBase64, nomeArquivo, tipoMime } = payload;
+
+  if (!funcionarioNome || !arquivoBase64) {
+    return { ok: false, erro: 'Funcionário e arquivo são obrigatórios.' };
+  }
+
+  try {
+    const bytes = Buffer.from(arquivoBase64, 'base64');
+    const ext = (nomeArquivo.split('.').pop() || 'jpg').toLowerCase();
+    const path = `${slug(funcionarioNome)}/foto-perfil/foto.${ext}`;
+
+    const { error: upErr } = await db.storage.from(BUCKET).upload(path, bytes, {
+      contentType: tipoMime || 'image/jpeg', upsert: true
+    });
+    if (upErr) throw new Error(`Falha no upload: ${upErr.message}`);
+
+    const { error: dbErr } = await db.from('folha_funcionarios').update({ foto_path: path }).eq('nome_completo', funcionarioNome);
+    if (dbErr) throw new Error(dbErr.message);
+
+    return { ok: true, info: { path } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+export async function urlFotoFuncionarioAction(payload: { fotoPath: string }): Promise<Resultado> {
+  const db = supabaseAdmin();
+  try {
+    const { data, error } = await db.storage.from(BUCKET).createSignedUrl(payload.fotoPath, 60 * 10);
+    if (error || !data?.signedUrl) throw new Error(error?.message || 'Falha ao gerar link.');
+    return { ok: true, info: { url: data.signedUrl } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
 // LISTAR documentos (com filtro opcional por funcionário/categoria)
 // Anexa o status de validade calculado (OK / VENCENDO / VENCIDO).
 // ============================================================================

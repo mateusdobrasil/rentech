@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../lib/supabase';
 import { listarMeusDocumentosAction, urlMeuDocumentoAction, listarMeusHoleritesAction, urlMeuHoleriteAction } from './actions/actions-documentos';
+import { buscarMeuCrachaAction } from './actions/actions-cracha';
+import MeuCracha, { type DadosCracha } from './MeuCracha';
 
 interface DocumentoPortal {
   id: number; categoria: string; titulo: string | null; nome_arquivo: string;
@@ -30,6 +32,7 @@ export default function PortalDashboardPage() {
   const [aba, setAba] = useState<'documentos' | 'holerites'>('documentos');
   const [documentos, setDocumentos] = useState<DocumentoPortal[]>([]);
   const [holerites, setHolerites] = useState<HoleritePortal[]>([]);
+  const [cracha, setCracha] = useState<DadosCracha | null>(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState('');
 
@@ -46,13 +49,15 @@ export default function PortalDashboardPage() {
 
   const carregar = async (token: string) => {
     setLoading(true);
-    const [docsRes, holeritesRes] = await Promise.all([
+    const [docsRes, holeritesRes, crachaRes] = await Promise.all([
       listarMeusDocumentosAction(token),
       listarMeusHoleritesAction(token),
+      buscarMeuCrachaAction(token),
     ]);
     if (docsRes.ok) setDocumentos(docsRes.info.documentos);
     else setErro(docsRes.erro || 'Erro ao carregar documentos.');
     if (holeritesRes.ok) setHolerites(holeritesRes.info.holerites);
+    if (crachaRes.ok) setCracha(crachaRes.info);
     setLoading(false);
   };
 
@@ -91,6 +96,16 @@ export default function PortalDashboardPage() {
           Sair
         </button>
       </div>
+
+      {cracha && (
+        <div className="px-4 md:px-8 pt-6 flex justify-center">
+          <div className="w-full max-w-[1000px] overflow-x-auto pb-2">
+            <div className="min-w-fit flex justify-center">
+              <MeuCracha dados={cracha} />
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="px-4 md:px-8 pt-4 flex gap-2 border-b border-[#E2E8F0] bg-white">
         <button

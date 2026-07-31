@@ -7,6 +7,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { salvarColaboradorAction } from '../actions/actions-folha';
+import { uploadFotoFuncionarioAction, urlFotoFuncionarioAction } from '../actions/actions-documentos-func';
 
 // ============================================================================
 // MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
@@ -60,7 +61,7 @@ interface FuncionarioFin {
   recebe_fechamento: boolean | null; recebe_holerite: boolean | null;
 
   // Definições de registro
-  pis: string | null; matricula_esocial: string | null;
+  pis: string | null; matricula_esocial: string | null; foto_path: string | null;
 
   // Dados pessoais
   aposentado: boolean | null; pais_nascimento: string | null; cidade_nascimento: string | null;
@@ -117,7 +118,7 @@ export default function FuncionarioPage() {
     pix_tipo: null, pix_chave: null,
     recebe_fechamento: null, recebe_holerite: null,
 
-    pis: null, matricula_esocial: null,
+    pis: null, matricula_esocial: null, foto_path: null,
 
     aposentado: null, pais_nascimento: null, cidade_nascimento: null,
     estado_civil: null, genero: null, nome_mae: null, nome_pai: null,
@@ -143,6 +144,8 @@ export default function FuncionarioPage() {
   const [movimentacoes, setMovimentacoes] = useState<Movimentacao[]>([]);
 
   const [snapshotFicha, setSnapshotFicha] = useState('');
+  const [fotoPreviewUrl, setFotoPreviewUrl] = useState('');
+  const [enviandoFoto, setEnviandoFoto] = useState(false);
 
   const fichaAtualSerializada = useMemo(
     () => JSON.stringify({ form, dependentes, movimentacoes }),
@@ -256,6 +259,12 @@ export default function FuncionarioPage() {
     }
     setForm(funcData);
 
+    setFotoPreviewUrl('');
+    if (funcData.foto_path) {
+      const fotoRes = await urlFotoFuncionarioAction({ fotoPath: funcData.foto_path });
+      if (fotoRes.ok) setFotoPreviewUrl(fotoRes.info.url);
+    }
+
     const { data: depData } = await supabase.from('folha_dependentes').select('*').eq('funcionario_nome', nome);
     setDependentes(depData || []);
 
@@ -274,7 +283,41 @@ export default function FuncionarioPage() {
   const prepararNovo = () => {
     setFuncionarioSelecionado('NOVO'); setForm(defaultForm);
     setDependentes([]); setMovimentacoes([]);
+    setFotoPreviewUrl('');
     setAbaAtiva('ESSENCIAL');
+  };
+
+  const handleFotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const arquivo = e.target.files?.[0];
+    e.target.value = '';
+    if (!arquivo) return;
+    if (!form.nome_completo || funcionarioSelecionado === 'NOVO') { alert('Grave a ficha do colaborador antes de enviar a foto.'); return; }
+
+    setEnviandoFoto(true);
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+        reader.onerror = reject;
+        reader.readAsDataURL(arquivo);
+      });
+
+      const res = await uploadFotoFuncionarioAction({
+        funcionarioNome: form.nome_completo,
+        arquivoBase64: base64,
+        nomeArquivo: arquivo.name,
+        tipoMime: arquivo.type,
+      });
+      if (!res.ok) throw new Error(res.erro);
+
+      setForm(f => ({ ...f, foto_path: res.info.path }));
+      const fotoRes = await urlFotoFuncionarioAction({ fotoPath: res.info.path });
+      if (fotoRes.ok) setFotoPreviewUrl(fotoRes.info.url);
+    } catch (e: any) {
+      alert('Erro ao enviar foto: ' + e.message);
+    } finally {
+      setEnviandoFoto(false);
+    }
   };
 
   const salvarColaborador = async (): Promise<boolean> => {
@@ -448,9 +491,22 @@ export default function FuncionarioPage() {
               <div className="grid grid-cols-1 xl:grid-cols-1 gap-6">
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] space-y-4 h-fit">
                   <div className="flex justify-between items-center border-b border-[#E2E8F0] pb-2">
-                    <div>
-                      <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider">{form.nome_completo || 'Novo Colaborador'}</h3>
-                      <span className="text-[10px] text-gray-400 font-bold uppercase">{form.cargo || 'sem cargo'} • {form.tipo_contrato}</span>
+                    <div className="flex items-center gap-3">
+                      <label className="relative w-14 h-14 rounded-full flex-shrink-0 cursor-pointer group" title="Alterar foto (usada no Crachá do Portal)">
+                        {fotoPreviewUrl ? (
+                          <img src={fotoPreviewUrl} alt="Foto" className="w-14 h-14 rounded-full object-cover border border-[#E2E8F0]" />
+                        ) : (
+                          <div className="w-14 h-14 rounded-full bg-[#F0F4F8] border border-[#E2E8F0] flex items-center justify-center text-[9px] text-gray-400 font-bold uppercase text-center leading-tight">Foto 3x4</div>
+                        )}
+                        <span className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[9px] font-black uppercase">
+                          {enviandoFoto ? '...' : 'Editar'}
+                        </span>
+                        <input type="file" accept="image/*" onChange={handleFotoChange} disabled={enviandoFoto} className="hidden" />
+                      </label>
+                      <div>
+                        <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider">{form.nome_completo || 'Novo Colaborador'}</h3>
+                        <span className="text-[10px] text-gray-400 font-bold uppercase">{form.cargo || 'sem cargo'} • {form.tipo_contrato}</span>
+                      </div>
                     </div>
                     <button onClick={alternarStatusAtivo} className={`text-[10px] px-3 py-1 rounded font-black uppercase tracking-wider transition-colors flex-shrink-0 ${form.ativo ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-green-50 text-green-600 hover:bg-green-100'}`}>
                       {form.ativo ? 'SUSPENDER' : 'REATIVAR'}

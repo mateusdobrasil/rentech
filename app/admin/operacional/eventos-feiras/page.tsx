@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import * as XLSX from 'xlsx';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
@@ -99,6 +100,33 @@ function parseCSV(texto: string): string[][] {
   }
   if (campo.length > 0 || linhaAtual.length > 0) { linhaAtual.push(campo); linhas.push(linhaAtual); }
   return linhas;
+}
+
+// Converte o valor bruto de uma célula (número, data ou texto) para o mesmo formato de texto
+// que o CSV exportado traria: datas como "DD/MM/AAAA". Não dá pra confiar no texto formatado
+// pela própria célula (o SheetJS às vezes devolve datas em formato americano), então convertemos
+// a partir do valor cru.
+function celulaParaTexto(celula: unknown): string {
+  if (celula instanceof Date) {
+    // O SheetJS entrega datas de célula (cellDates: true) como um Date "ancorado em UTC" —
+    // usar getDate()/getMonth() locais aqui causaria erro de 1 dia em fusos negativos (ex: -03:00).
+    const dd = String(celula.getUTCDate()).padStart(2, '0');
+    const mm = String(celula.getUTCMonth() + 1).padStart(2, '0');
+    return `${dd}/${mm}/${celula.getUTCFullYear()}`;
+  }
+  if (typeof celula === 'number') {
+    return celula.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  return (celula ?? '').toString();
+}
+
+// Lê a primeira aba de um arquivo .xls/.xlsx e devolve no mesmo formato do parseCSV
+// (array de linhas de texto), reaproveitando toda a lógica de mapeamento de colunas abaixo.
+function planilhaParaLinhas(buffer: ArrayBuffer): string[][] {
+  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
+  const primeiraAba = workbook.Sheets[workbook.SheetNames[0]];
+  const linhas = XLSX.utils.sheet_to_json<unknown[]>(primeiraAba, { header: 1, raw: true, defval: '' });
+  return linhas.map(linha => linha.map(celulaParaTexto));
 }
 
 const normalizarCabecalho = (v: string): string =>
@@ -281,16 +309,24 @@ export default function ImportadorEventosFeiras() {
     setFeedback({ show: false, msg: '', tipo: 'success' });
     setNomeArquivo(arquivo.name);
 
+    const nomeMin = arquivo.name.toLowerCase();
+    const ehPlanilhaExcel = nomeMin.endsWith('.xls') || nomeMin.endsWith('.xlsx');
+
     const reader = new FileReader();
     reader.onload = () => {
-      const texto = reader.result as string;
-      const linhas = parseCSV(texto);
+      const linhas = ehPlanilhaExcel
+        ? planilhaParaLinhas(reader.result as ArrayBuffer)
+        : parseCSV(reader.result as string);
       const { processadas, erroGeral } = processarLinhas(linhas);
       if (erroGeral) { setErroArquivo(erroGeral); return; }
       setLinhasProcessadas(processadas);
     };
     reader.onerror = () => setErroArquivo('Não foi possível ler o arquivo.');
-    reader.readAsText(arquivo, 'utf-8');
+    if (ehPlanilhaExcel) {
+      reader.readAsArrayBuffer(arquivo);
+    } else {
+      reader.readAsText(arquivo, 'utf-8');
+    }
   };
 
   const validas = linhasProcessadas.filter(l => l.erros.length === 0);
@@ -385,11 +421,11 @@ export default function ImportadorEventosFeiras() {
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
             <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Importar planilha</h2>
             <p className="text-xs text-[#64748B] mb-4">
-              Arquivo CSV separado por ponto e vírgula ( ; ), com as colunas Data Inicial, Data Final, Nome, Tipo de Evento, Local Padrão, Status e demais campos do evento.
+              Arquivo CSV (separado por ponto e vírgula) ou Excel (.xls/.xlsx), com as colunas Data Inicial, Data Final, Nome, Tipo de Evento, Local Padrão, Status e demais campos do evento.
             </p>
             <input
               type="file"
-              accept=".csv"
+              accept=".csv,.xls,.xlsx"
               onChange={handleArquivo}
               className="block w-full text-sm text-[#64748B] file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-black file:uppercase file:tracking-wider file:bg-[#336699] file:text-white hover:file:bg-[#284B8C] file:cursor-pointer cursor-pointer"
             />

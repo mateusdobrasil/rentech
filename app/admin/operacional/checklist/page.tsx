@@ -1143,7 +1143,10 @@ export default function ChecklistCargaRetorno() {
     setDialog(erroDivergencia
       ? { open: true, type: 'error', title: 'Checklist salvo, mas...', msg: `Falhou ao atualizar a aba Divergências: ${erroDivergencia}` }
       : { open: true, type: 'success', title: 'Salvo', msg: qtdDivergenciasAtivas > 0 ? `Checklist atualizado com sucesso. ${qtdDivergenciasAtivas} item(ns) divergente(s) em Divergências.` : 'Checklist atualizado com sucesso.' });
-    if (!erroDivergencia) setTimeout(() => setDialog(prev => ({ ...prev, open: false })), qtdDivergenciasAtivas > 0 ? 2400 : 1800);
+    if (!erroDivergencia) {
+      setTimeout(() => setDialog(prev => ({ ...prev, open: false })), qtdDivergenciasAtivas > 0 ? 2400 : 1800);
+      voltarParaLista();
+    }
   };
 
   const excluirChecklist = async (c: ChecklistGridRow) => {

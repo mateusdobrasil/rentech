@@ -63,6 +63,18 @@ const modulosOperacional = [
     descricao: 'Importação e consulta das fichas de reserva vinculadas aos eventos e feiras.',
     icone: '📋', link: '/admin/operacional/fichas',
     cor: 'bg-emerald-50 border-emerald-200 text-emerald-700', hover: 'hover:border-emerald-500'
+  },
+  {
+    titulo: 'Eventos/Feiras',
+    descricao: 'Cadastro de eventos e feiras com local padrão, usado para localizar o calendário operacional.',
+    icone: '📍', link: '/admin/operacional/eventos-feiras',
+    cor: 'bg-cyan-50 border-cyan-200 text-cyan-700', hover: 'hover:border-cyan-500'
+  },
+  {
+    titulo: 'Checklist de Carga',
+    descricao: 'Checklist de saída e devolução de equipamentos por evento, vinculado às fichas de reserva.',
+    icone: '✅', link: '/admin/operacional/checklist',
+    cor: 'bg-teal-50 border-teal-200 text-teal-700', hover: 'hover:border-teal-500'
   }
 ];
 

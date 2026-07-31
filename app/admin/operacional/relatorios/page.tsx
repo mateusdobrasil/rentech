@@ -77,12 +77,13 @@ interface FichaCalendario {
   data_entrega_agenda: string | null;
 }
 
-type TipoOperacao = 'montagem' | 'desmontagem' | 'andamento';
+type TipoOperacao = 'montagem' | 'inicio' | 'desmontagem' | 'andamento';
 
-interface OperacaoDia { tipo: TipoOperacao; texto: string; }
+interface OperacaoDia { tipo: TipoOperacao; texto: string; local: string | null; }
 
 const COR_OPERACAO: Record<TipoOperacao, { bg: string; text: string; border: string; label: string }> = {
   montagem: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-300', label: 'Montagem / Entrega' },
+  inicio: { bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-300', label: 'Início Evento' },
   desmontagem: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-300', label: 'Desmontagem' },
   andamento: { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-300', label: 'Evento em Andamento' },
 };
@@ -98,13 +99,29 @@ const domingoDaSemana = (d: Date): Date => {
   return x;
 };
 
+// Soma/subtrai dias a uma data ISO (YYYY-MM-DD) sem cair em armadilha de fuso horário.
+const somarDiasISO = (iso: string, dias: number): string => {
+  const [ano, mes, dia] = iso.split('-').map(Number);
+  const d = new Date(ano, mes - 1, dia);
+  d.setDate(d.getDate() + dias);
+  return toISO(d);
+};
+
+// Dias de antecedência usados quando a planilha não trouxe uma data de entrega capturável.
+const DIAS_ANTECEDENCIA_MONTAGEM_PADRAO = 2;
+
 // Deriva as operações do dia a partir de data_inicial/data_final/data_entrega_agenda.
-// Sem dados de Pré-Montagem/Retirada no CSV de origem — só dá pra derivar estas 3 categorias.
-const PREFIXO_OPERACAO: Record<TipoOperacao, string> = { montagem: 'MONT/ENT', desmontagem: 'DESM', andamento: 'EM ANDAMENTO' };
+// Sem dados de Pré-Montagem/Retirada no CSV de origem — só dá pra derivar estas 4 categorias.
+const PREFIXO_OPERACAO: Record<TipoOperacao, string> = { montagem: 'MONT/ENT', inicio: 'INÍCIO', desmontagem: 'DESM', andamento: 'EM ANDAMENTO' };
+
+// Casa o nome do evento/feira (texto livre) com o cadastro eventos_feiras, ignorando
+// acentuação/maiúsculas — a mesma variação de digitação que já existe entre as duas planilhas.
+const normalizarNomeEvento = (s: string): string =>
+  s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().trim();
 
 // Várias fichas (clientes diferentes) costumam compartilhar o mesmo evento/feira e as
 // mesmas datas — sem agrupar, o nome do evento apareceria repetido uma vez por ficha.
-function operacoesDoDia(fichas: FichaCalendario[], iso: string): OperacaoDia[] {
+function operacoesDoDia(fichas: FichaCalendario[], iso: string, mapaLocais: Record<string, string>): OperacaoDia[] {
   const agrupado = new Map<string, { tipo: TipoOperacao; nome: string; qtd: number }>();
 
   const registrar = (tipo: TipoOperacao, nome: string) => {
@@ -116,11 +133,14 @@ function operacoesDoDia(fichas: FichaCalendario[], iso: string): OperacaoDia[] {
 
   fichas.forEach(f => {
     const nome = f.evento_feira || f.cliente;
-    const diaMontagem = f.data_entrega_agenda || f.data_inicial;
+    // Data de Montagem/Entrega: usa a data capturada do campo "Data de Entrega"; se não houver,
+    // considera 2 dias antes da Data Inicial (praxe operacional de antecedência de montagem).
+    const diaMontagem = f.data_entrega_agenda || (f.data_inicial ? somarDiasISO(f.data_inicial, -DIAS_ANTECEDENCIA_MONTAGEM_PADRAO) : null);
 
     if (diaMontagem === iso) registrar('montagem', nome);
+    if (f.data_inicial === iso) registrar('inicio', nome);
     if (f.data_final === iso) registrar('desmontagem', nome);
-    if (f.data_inicial && f.data_final && iso > f.data_inicial && iso < f.data_final && diaMontagem !== iso) {
+    if (f.data_inicial && f.data_final && iso > f.data_inicial && iso < f.data_final) {
       registrar('andamento', nome);
     }
   });
@@ -128,6 +148,7 @@ function operacoesDoDia(fichas: FichaCalendario[], iso: string): OperacaoDia[] {
   return Array.from(agrupado.values()).map(({ tipo, nome, qtd }) => ({
     tipo,
     texto: `${PREFIXO_OPERACAO[tipo]}: ${nome}${qtd > 1 ? ` (${qtd})` : ''}`,
+    local: mapaLocais[normalizarNomeEvento(nome)] || null,
   }));
 }
 
@@ -229,6 +250,10 @@ export default function RelatoriosOperacional() {
   const [calNumSemanas, setCalNumSemanas] = useState(3);
   const [fichasCalendario, setFichasCalendario] = useState<FichaCalendario[]>([]);
   const [calLoading, setCalLoading] = useState(false);
+  const [mapaLocaisEventos, setMapaLocaisEventos] = useState<Record<string, string>>({});
+  const [filtroOperacoes, setFiltroOperacoes] = useState<Record<TipoOperacao, boolean>>({
+    montagem: true, inicio: true, desmontagem: true, andamento: true,
+  });
 
   useEffect(() => {
     async function checkAuth() {
@@ -302,10 +327,13 @@ export default function RelatoriosOperacional() {
     if (aba !== 'calendario') return;
     (async () => {
       setCalLoading(true);
+      // A montagem pode cair até DIAS_ANTECEDENCIA_MONTAGEM_PADRAO dias antes da data_inicial,
+      // então busca um pouco além do fim visível pra não perder fichas nessa faixa de antecedência.
+      const limiteBuscaFim = somarDiasISO(toISO(calDataFim), DIAS_ANTECEDENCIA_MONTAGEM_PADRAO);
       const { data, error } = await supabase
         .from('fichas_reserva')
         .select('id, numero, cliente, evento_feira, status, data_inicial, data_final, data_entrega_agenda')
-        .lte('data_inicial', toISO(calDataFim))
+        .lte('data_inicial', limiteBuscaFim)
         .gte('data_final', toISO(calSemanaInicio))
         .order('data_inicial', { ascending: true });
 
@@ -315,6 +343,32 @@ export default function RelatoriosOperacional() {
       setCalLoading(false);
     })();
   }, [aba, calSemanaInicio, calDataFim]);
+
+  // Busca o local cadastrado em eventos_feiras para os eventos/feiras que aparecem no calendário.
+  useEffect(() => {
+    const nomes = Array.from(new Set(
+      fichasCalendario.map(f => f.evento_feira).filter((v): v is string => !!v)
+    ));
+
+    (async () => {
+      if (nomes.length === 0) { setMapaLocaisEventos({}); return; }
+
+      const { data, error } = await supabase
+        .from('eventos_feiras')
+        .select('nome, local')
+        .in('nome', nomes)
+        .not('local', 'is', null);
+
+      if (!error) {
+        const mapa: Record<string, string> = {};
+        (data || []).forEach(r => {
+          const chave = normalizarNomeEvento(r.nome);
+          if (r.local && !mapa[chave]) mapa[chave] = r.local;
+        });
+        setMapaLocaisEventos(mapa);
+      }
+    })();
+  }, [fichasCalendario]);
 
   const semanasCalendario = useMemo(() => {
     const linhas: Date[][] = [];
@@ -477,9 +531,15 @@ export default function RelatoriosOperacional() {
 
       <style jsx global>{`
         @media print {
-          @page { size: A4 landscape; margin: 10mm; }
+          @page { size: A4 landscape; margin: 8mm; }
           .no-print { display: none !important; }
           .print-break { page-break-inside: avoid; }
+          /* Calendário: o container pode quebrar entre páginas, mas o cabeçalho dos dias
+             da semana nunca fica sozinho (break-after: avoid) e cada semana não é cortada
+             ao meio (break-inside: avoid). */
+          .calendario-grid-print { break-inside: auto; }
+          .calendario-cabecalho-print { break-inside: avoid; break-after: avoid; }
+          .calendario-semana-print { break-inside: avoid; }
         }
       `}</style>
 
@@ -768,46 +828,62 @@ export default function RelatoriosOperacional() {
                   </div>
                 </div>
 
-                <div className="hidden print:block mb-4 border-b-2 border-black pb-2">
-                  <h1 className="text-xl font-black uppercase">Calendário Operacional de Logística</h1>
-                  <p className="text-sm">
+                <div className="hidden print:block mb-1 border-b-2 border-black pb-1">
+                  <h1 className="text-base font-black uppercase">Calendário Operacional de Logística</h1>
+                  <p className="text-xs">
                     Período: {toISO(calSemanaInicio).split('-').reverse().join('/')} a {toISO(calDataFim).split('-').reverse().join('/')}
                   </p>
                 </div>
 
-                <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden print-break relative">
+                <div className="mb-4 print:mb-1 bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 print:p-1.5 print-break flex flex-wrap items-center gap-4 print:gap-2">
+                  <span className="text-[10px] print:text-[8px] font-black text-[#64748B] uppercase tracking-wider">Filtrar por legenda:</span>
+                  {(Object.keys(COR_OPERACAO) as TipoOperacao[]).map(tipo => (
+                    <button
+                      key={tipo}
+                      onClick={() => setFiltroOperacoes(prev => ({ ...prev, [tipo]: !prev[tipo] }))}
+                      className={`text-[10px] print:text-[8px] font-black uppercase px-2.5 py-1 print:px-1.5 print:py-0.5 rounded border transition-opacity ${COR_OPERACAO[tipo].bg} ${COR_OPERACAO[tipo].text} ${COR_OPERACAO[tipo].border} ${filtroOperacoes[tipo] ? 'opacity-100' : 'opacity-30'}`}
+                    >
+                      {filtroOperacoes[tipo] ? '✓ ' : ''}{COR_OPERACAO[tipo].label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="calendario-grid-print bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden relative">
                   {calLoading && (
                     <div className="absolute inset-0 bg-white/70 flex items-center justify-center z-10 no-print">
                       <div className="w-8 h-8 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin"></div>
                     </div>
                   )}
 
-                  <div className="grid grid-cols-7 bg-[#0C1D4D] text-white">
+                  <div className="calendario-cabecalho-print grid grid-cols-7 bg-[#0C1D4D] text-white">
                     {DIAS_SEMANA.map(dia => (
-                      <div key={dia} className="p-2 text-center text-[10px] font-black uppercase tracking-wider">
+                      <div key={dia} className="p-2 print:p-1 text-center text-[10px] print:text-[8px] font-black uppercase tracking-wider">
                         {dia}
                       </div>
                     ))}
                   </div>
 
                   {semanasCalendario.map((semana, wi) => (
-                    <div key={wi} className="grid grid-cols-7 border-t border-[#E2E8F0]">
+                    <div key={wi} className="calendario-semana-print grid grid-cols-7 border-t border-[#E2E8F0]">
                       {semana.map((dia) => {
                         const iso = toISO(dia);
-                        const ops = operacoesDoDia(fichasCalendario, iso);
+                        const ops = operacoesDoDia(fichasCalendario, iso, mapaLocaisEventos).filter(op => filtroOperacoes[op.tipo]);
                         const ehHoje = iso === hojeISO;
                         return (
-                          <div key={iso} className={`min-h-[110px] p-2 border-r border-[#E2E8F0] last:border-r-0 ${ehHoje ? 'bg-blue-50/50' : ''}`}>
-                            <div className={`text-[11px] font-black mb-1 ${ehHoje ? 'text-[#336699]' : 'text-[#94A3B8]'}`}>
+                          <div key={iso} className={`min-h-[110px] print:min-h-0 p-2 print:p-1 border-r border-[#E2E8F0] last:border-r-0 ${ehHoje ? 'bg-blue-50/50' : ''}`}>
+                            <div className={`text-[11px] print:text-[8px] font-black mb-1 print:mb-0.5 ${ehHoje ? 'text-[#336699]' : 'text-[#94A3B8]'}`}>
                               {String(dia.getDate()).padStart(2, '0')}/{String(dia.getMonth() + 1).padStart(2, '0')}
-                              {ehHoje && <span className="ml-1 text-[9px] font-black text-[#336699]">(HOJE)</span>}
+                              {ehHoje && <span className="ml-1 text-[9px] print:text-[7px] font-black text-[#336699]">(HOJE)</span>}
                             </div>
-                            <div className="space-y-1">
+                            <div className="space-y-1 print:space-y-0.5">
                               {ops.map((op, oi) => {
                                 const cor = COR_OPERACAO[op.tipo];
                                 return (
-                                  <div key={oi} className={`text-[9px] leading-tight font-bold px-1.5 py-1 rounded border ${cor.bg} ${cor.text} ${cor.border}`}>
+                                  <div key={oi} className={`text-[9px] print:text-[6.5px] leading-tight font-bold px-1.5 py-1 print:px-1 print:py-0.5 rounded border ${cor.bg} ${cor.text} ${cor.border}`}>
                                     {op.texto}
+                                    {op.local && (
+                                      <div className="font-normal opacity-75 truncate">📍 {op.local}</div>
+                                    )}
                                   </div>
                                 );
                               })}
@@ -818,17 +894,9 @@ export default function RelatoriosOperacional() {
                     </div>
                   ))}
                 </div>
-
-                <div className="mt-4 bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 print-break flex flex-wrap items-center gap-4">
-                  <span className="text-[10px] font-black text-[#64748B] uppercase tracking-wider">Legenda:</span>
-                  {(Object.keys(COR_OPERACAO) as TipoOperacao[]).map(tipo => (
-                    <span key={tipo} className={`text-[10px] font-black uppercase px-2.5 py-1 rounded border ${COR_OPERACAO[tipo].bg} ${COR_OPERACAO[tipo].text} ${COR_OPERACAO[tipo].border}`}>
-                      {COR_OPERACAO[tipo].label}
-                    </span>
-                  ))}
-                </div>
               </>
             )}
+
           </>
         )}
       </div>

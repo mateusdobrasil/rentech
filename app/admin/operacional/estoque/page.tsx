@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
-import { registrarLogAuditoria, salvarRegistroEstoque, buscarEstoque } from '../../../actions';
+import { registrarLogAuditoria, salvarRegistroEstoque, buscarEstoque, criarVinculoAcessorio, removerVinculoAcessorio } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
 
 // ============================================================================
@@ -473,11 +473,11 @@ export default function PainelEstoque() {
       acessorio_id: novoAcessorioId
     };
 
-    const { data, error } = await supabase.from('gatilhos_acessorios').insert([payload]).select().single();
+    const resultado = await criarVinculoAcessorio(payload);
 
-    if (!error && data) {
-      const accInfo = equipamentos.find(e => e.id === data.acessorio_id);
-      const novoGatilho = { ...data, acessorio_nome: accInfo?.nome };
+    if (resultado.success && resultado.data) {
+      const accInfo = equipamentos.find(e => e.id === resultado.data.acessorio_id);
+      const novoGatilho = { ...resultado.data, acessorio_nome: accInfo?.nome };
       registrarLogAuditoria({
         usuario_nome: usuarioAtual,
         acao: 'VINCULOU ACESSÓRIO',
@@ -487,13 +487,15 @@ export default function PainelEstoque() {
       });
       setModalAcessorios(prev => ({ ...prev, gatilhos: [...prev.gatilhos, novoGatilho] }));
       setNovoAcessorioId('');
+    } else {
+      alert(`Erro: ${resultado.message}`);
     }
   };
 
   const desvincularAcessorio = async (gatilhoId: string) => {
     const gatilho = modalAcessorios.gatilhos.find(g => g.id === gatilhoId);
-    const { error } = await supabase.from('gatilhos_acessorios').delete().eq('id', gatilhoId);
-    if (!error) {
+    const resultado = await removerVinculoAcessorio(gatilhoId);
+    if (resultado.success) {
       registrarLogAuditoria({
         usuario_nome: usuarioAtual,
         acao: 'DESVINCULOU ACESSÓRIO',
@@ -502,6 +504,8 @@ export default function PainelEstoque() {
         equipamento_nome: `${modalAcessorios.eq?.nome} ← ${gatilho?.acessorio_nome ?? gatilhoId}`,
       });
       setModalAcessorios(prev => ({ ...prev, gatilhos: prev.gatilhos.filter(g => g.id !== gatilhoId) }));
+    } else {
+      alert(`Erro: ${resultado.message}`);
     }
   };
 
@@ -555,14 +559,14 @@ export default function PainelEstoque() {
       ? { categoria_alvo_id: categoriaAlvoSelecionada, equipamento_alvo_id: null, acessorio_id: acessorioCategoriaId, acessorio_categoria_id: null }
       : { categoria_alvo_id: categoriaAlvoSelecionada, equipamento_alvo_id: null, acessorio_id: null, acessorio_categoria_id: acessorioCategoriaAlvoId };
 
-    const { data, error } = await supabase.from('gatilhos_acessorios').insert([payload]).select().single();
+    const resultado = await criarVinculoAcessorio(payload);
 
-    if (!error && data) {
+    if (resultado.success && resultado.data) {
       const catNome = getNomeCategoria(categoriaAlvoSelecionada);
       const nomeAcessorio = modoAcessorioCategoria === 'item'
         ? (equipamentos.find(e => e.id === acessorioCategoriaId)?.nome ?? acessorioCategoriaId)
         : `Toda a categoria: ${getNomeCategoria(acessorioCategoriaAlvoId)}`;
-      const novoGatilho = { ...data, acessorio_nome: nomeAcessorio, categoria_nome: catNome };
+      const novoGatilho = { ...resultado.data, acessorio_nome: nomeAcessorio, categoria_nome: catNome };
       registrarLogAuditoria({
         usuario_nome: usuarioAtual,
         acao: 'VINCULOU ACESSÓRIO POR CATEGORIA',
@@ -573,15 +577,15 @@ export default function PainelEstoque() {
       setCategoriaAlvoSelecionada('');
       setAcessorioCategoriaId('');
       setAcessorioCategoriaAlvoId('');
-    } else if (error) {
-      alert(`Erro: ${error.message}`);
+    } else {
+      alert(`Erro: ${resultado.message}`);
     }
   };
 
   const desvincularAcessorioCategoria = async (gatilhoId: string) => {
     const gatilho = modalAcessoriosCategoria.gatilhos.find(g => g.id === gatilhoId);
-    const { error } = await supabase.from('gatilhos_acessorios').delete().eq('id', gatilhoId);
-    if (!error) {
+    const resultado = await removerVinculoAcessorio(gatilhoId);
+    if (resultado.success) {
       registrarLogAuditoria({
         usuario_nome: usuarioAtual,
         acao: 'DESVINCULOU ACESSÓRIO POR CATEGORIA',
@@ -589,6 +593,8 @@ export default function PainelEstoque() {
         equipamento_nome: `${gatilho?.categoria_nome ?? ''} ← ${gatilho?.acessorio_nome ?? gatilhoId}`,
       });
       setModalAcessoriosCategoria(prev => ({ ...prev, gatilhos: prev.gatilhos.filter(g => g.id !== gatilhoId) }));
+    } else {
+      alert(`Erro: ${resultado.message}`);
     }
   };
 

@@ -23,7 +23,7 @@ export async function buscarMeuCrachaAction(accessToken: string): Promise<Result
   try {
     const { data, error } = await db
       .from('folha_funcionarios')
-      .select('nome_completo, cargo, cpf, matricula_esocial, foto_path')
+      .select('nome_completo, cargo, cpf, foto_path, data_nascimento')
       .eq('nome_completo', func.funcionarioNome)
       .maybeSingle();
     if (error) throw new Error(error.message);
@@ -41,7 +41,7 @@ export async function buscarMeuCrachaAction(accessToken: string): Promise<Result
         nome: data.nome_completo,
         cargo: data.cargo,
         cpf: data.cpf,
-        matricula: data.matricula_esocial,
+        dataNascimento: data.data_nascimento,
         fotoUrl,
       },
     };

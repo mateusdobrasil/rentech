@@ -369,6 +369,49 @@ export async function salvarRegistroEstoque(payload: RegistroEstoquePayload) {
   }
 }
 
+// Cria/remove vínculos de acessórios (tabela `gatilhos_acessorios`, usada em
+// Estoque > Acessórios e Acessórios/Categoria). Mesma razão da service role acima:
+// sem uma policy de DELETE liberada para o cliente autenticado, a exclusão volta
+// sem erro mas não apaga nenhuma linha — parece removido na tela, mas continua no banco.
+interface VinculoAcessorioPayload {
+  equipamento_alvo_id?: string | null;
+  categoria_alvo_id?: string | null;
+  acessorio_id?: string | null;
+  acessorio_categoria_id?: string | null;
+}
+
+export async function criarVinculoAcessorio(payload: VinculoAcessorioPayload) {
+  try {
+    if (!supabaseAdmin) {
+      throw new Error('Credenciais do Supabase ausentes.');
+    }
+
+    const { data, error } = await supabaseAdmin.from('gatilhos_acessorios').insert([payload]).select().single();
+    if (error) throw error;
+
+    return { success: true, data };
+  } catch (error: any) {
+    console.error("Falha ao criar vínculo de acessório:", error.message);
+    return { success: false, message: error.message };
+  }
+}
+
+export async function removerVinculoAcessorio(gatilhoId: string) {
+  try {
+    if (!supabaseAdmin) {
+      throw new Error('Credenciais do Supabase ausentes.');
+    }
+
+    const { error } = await supabaseAdmin.from('gatilhos_acessorios').delete().eq('id', gatilhoId);
+    if (error) throw error;
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("Falha ao remover vínculo de acessório:", error.message);
+    return { success: false, message: error.message };
+  }
+}
+
 // ============================================================================
 // 4. VERIFICAÇÃO SEGURA DE SENHA DO PORTAL DE DOWNLOADS
 // ============================================================================

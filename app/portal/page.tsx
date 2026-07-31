@@ -97,72 +97,70 @@ export default function PortalDashboardPage() {
         </button>
       </div>
 
-      {cracha && (
-        <div className="px-4 md:px-8 pt-6 flex justify-center">
-          <div className="w-full max-w-[1000px] overflow-x-auto pb-2">
-            <div className="min-w-fit flex justify-center">
-              <MeuCracha dados={cracha} />
+      <div className="p-4 md:px-8 pt-6 max-w-[1200px] mx-auto w-full flex-grow flex flex-col lg:flex-row gap-6">
+        {cracha && (
+          <div className="flex-shrink-0 flex justify-center lg:justify-start lg:sticky lg:top-6 lg:self-start">
+            <MeuCracha dados={cracha} />
+          </div>
+        )}
+
+        <div className="flex flex-col gap-4 flex-grow min-w-0">
+          <div className="flex gap-2 border-b border-[#E2E8F0] bg-white rounded-t-xl">
+            <button
+              onClick={() => setAba('documentos')}
+              className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${aba === 'documentos' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
+            >
+              📁 Meus Documentos
+            </button>
+            <button
+              onClick={() => setAba('holerites')}
+              className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${aba === 'holerites' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
+            >
+              💰 Holerites
+            </button>
+          </div>
+
+          {erro && <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-bold px-4 py-3 rounded-lg">{erro}</div>}
+
+          {aba === 'documentos' && (
+            <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-3 md:p-4 space-y-2">
+              {loading ? (
+                <p className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Carregando...</p>
+              ) : documentos.length === 0 ? (
+                <p className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Nenhum documento disponível ainda.</p>
+              ) : documentos.map(doc => (
+                <button key={doc.id} onClick={() => abrirDocumento(doc)} className="w-full text-left bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] p-3 flex items-center gap-3 hover:bg-blue-50 transition-colors">
+                  <div className="text-2xl">📎</div>
+                  <div className="flex-1 min-w-0">
+                    <span className="font-black text-[#0C1D4D] text-[13px] uppercase">{doc.categoria}</span>
+                    {doc.titulo && <p className="text-[11px] text-gray-600">{doc.titulo}</p>}
+                    <p className="text-[10px] text-gray-400">{doc.nome_arquivo}{doc.data_validade && <> · vence {fmtData(doc.data_validade)}</>}</p>
+                  </div>
+                  <span className="text-gray-400">⬇</span>
+                </button>
+              ))}
             </div>
-          </div>
+          )}
+
+          {aba === 'holerites' && (
+            <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-3 md:p-4 space-y-2">
+              {loading ? (
+                <p className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Carregando...</p>
+              ) : holerites.length === 0 ? (
+                <p className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Nenhum holerite disponível ainda.</p>
+              ) : holerites.map(h => (
+                <button key={h.id} onClick={() => abrirHolerite(h)} className="w-full text-left bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] p-3 flex items-center gap-3 hover:bg-blue-50 transition-colors">
+                  <div className="text-2xl">💰</div>
+                  <div className="flex-1 min-w-0">
+                    <span className="font-black text-[#0C1D4D] text-[13px] uppercase">{fmtMesReferencia(h.mes_referencia)}</span>
+                    <p className="text-[10px] text-gray-400">Assinado em {h.assinado_em ? new Date(h.assinado_em).toLocaleDateString('pt-BR') : '—'}</p>
+                  </div>
+                  <span className="text-gray-400">⬇</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-      )}
-
-      <div className="px-4 md:px-8 pt-4 flex gap-2 border-b border-[#E2E8F0] bg-white">
-        <button
-          onClick={() => setAba('documentos')}
-          className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${aba === 'documentos' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
-        >
-          📁 Meus Documentos
-        </button>
-        <button
-          onClick={() => setAba('holerites')}
-          className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${aba === 'holerites' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
-        >
-          💰 Holerites
-        </button>
-      </div>
-
-      <div className="p-4 md:px-8 pt-6 max-w-[1000px] mx-auto w-full flex-grow">
-        {erro && <div className="mb-4 bg-red-50 border border-red-200 text-red-700 text-xs font-bold px-4 py-3 rounded-lg">{erro}</div>}
-
-        {aba === 'documentos' && (
-          <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-3 md:p-4 space-y-2">
-            {loading ? (
-              <p className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Carregando...</p>
-            ) : documentos.length === 0 ? (
-              <p className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Nenhum documento disponível ainda.</p>
-            ) : documentos.map(doc => (
-              <button key={doc.id} onClick={() => abrirDocumento(doc)} className="w-full text-left bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] p-3 flex items-center gap-3 hover:bg-blue-50 transition-colors">
-                <div className="text-2xl">📎</div>
-                <div className="flex-1 min-w-0">
-                  <span className="font-black text-[#0C1D4D] text-[13px] uppercase">{doc.categoria}</span>
-                  {doc.titulo && <p className="text-[11px] text-gray-600">{doc.titulo}</p>}
-                  <p className="text-[10px] text-gray-400">{doc.nome_arquivo}{doc.data_validade && <> · vence {fmtData(doc.data_validade)}</>}</p>
-                </div>
-                <span className="text-gray-400">⬇</span>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {aba === 'holerites' && (
-          <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-3 md:p-4 space-y-2">
-            {loading ? (
-              <p className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Carregando...</p>
-            ) : holerites.length === 0 ? (
-              <p className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Nenhum holerite disponível ainda.</p>
-            ) : holerites.map(h => (
-              <button key={h.id} onClick={() => abrirHolerite(h)} className="w-full text-left bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] p-3 flex items-center gap-3 hover:bg-blue-50 transition-colors">
-                <div className="text-2xl">💰</div>
-                <div className="flex-1 min-w-0">
-                  <span className="font-black text-[#0C1D4D] text-[13px] uppercase">{fmtMesReferencia(h.mes_referencia)}</span>
-                  <p className="text-[10px] text-gray-400">Assinado em {h.assinado_em ? new Date(h.assinado_em).toLocaleDateString('pt-BR') : '—'}</p>
-                </div>
-                <span className="text-gray-400">⬇</span>
-              </button>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );

@@ -57,6 +57,12 @@ const modulosOperacional = [
     descricao: 'Relatório completo da frota e controle de estoque, com indicadores e gráficos.',
     icone: '📊', link: '/admin/operacional/relatorios',
     cor: 'bg-indigo-50 border-indigo-200 text-indigo-700', hover: 'hover:border-indigo-500'
+  },
+  {
+    titulo: 'Fichas de Reserva',
+    descricao: 'Importação e consulta das fichas de reserva vinculadas aos eventos e feiras.',
+    icone: '📋', link: '/admin/operacional/fichas',
+    cor: 'bg-emerald-50 border-emerald-200 text-emerald-700', hover: 'hover:border-emerald-500'
   }
 ];
 

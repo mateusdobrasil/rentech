@@ -63,6 +63,74 @@ interface Equipamento {
 const formatCurrency = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 const formatNumero = (v: number) => new Intl.NumberFormat('pt-BR').format(v || 0);
 
+// ============================================================================
+// CALENDÁRIO OPERACIONAL DE LOGÍSTICA
+// ============================================================================
+interface FichaCalendario {
+  id: string;
+  numero: string;
+  cliente: string;
+  evento_feira: string | null;
+  status: string;
+  data_inicial: string | null;
+  data_final: string | null;
+  data_entrega_agenda: string | null;
+}
+
+type TipoOperacao = 'montagem' | 'desmontagem' | 'andamento';
+
+interface OperacaoDia { tipo: TipoOperacao; texto: string; }
+
+const COR_OPERACAO: Record<TipoOperacao, { bg: string; text: string; border: string; label: string }> = {
+  montagem: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-300', label: 'Montagem / Entrega' },
+  desmontagem: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-300', label: 'Desmontagem' },
+  andamento: { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-300', label: 'Evento em Andamento' },
+};
+
+const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+
+const toISO = (d: Date): string => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+const domingoDaSemana = (d: Date): Date => {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  x.setDate(x.getDate() - x.getDay());
+  return x;
+};
+
+// Deriva as operações do dia a partir de data_inicial/data_final/data_entrega_agenda.
+// Sem dados de Pré-Montagem/Retirada no CSV de origem — só dá pra derivar estas 3 categorias.
+const PREFIXO_OPERACAO: Record<TipoOperacao, string> = { montagem: 'MONT/ENT', desmontagem: 'DESM', andamento: 'EM ANDAMENTO' };
+
+// Várias fichas (clientes diferentes) costumam compartilhar o mesmo evento/feira e as
+// mesmas datas — sem agrupar, o nome do evento apareceria repetido uma vez por ficha.
+function operacoesDoDia(fichas: FichaCalendario[], iso: string): OperacaoDia[] {
+  const agrupado = new Map<string, { tipo: TipoOperacao; nome: string; qtd: number }>();
+
+  const registrar = (tipo: TipoOperacao, nome: string) => {
+    const chave = `${tipo}:${nome}`;
+    const atual = agrupado.get(chave);
+    if (atual) atual.qtd += 1;
+    else agrupado.set(chave, { tipo, nome, qtd: 1 });
+  };
+
+  fichas.forEach(f => {
+    const nome = f.evento_feira || f.cliente;
+    const diaMontagem = f.data_entrega_agenda || f.data_inicial;
+
+    if (diaMontagem === iso) registrar('montagem', nome);
+    if (f.data_final === iso) registrar('desmontagem', nome);
+    if (f.data_inicial && f.data_final && iso > f.data_inicial && iso < f.data_final && diaMontagem !== iso) {
+      registrar('andamento', nome);
+    }
+  });
+
+  return Array.from(agrupado.values()).map(({ tipo, nome, qtd }) => ({
+    tipo,
+    texto: `${PREFIXO_OPERACAO[tipo]}: ${nome}${qtd > 1 ? ` (${qtd})` : ''}`,
+  }));
+}
+
 function getStatusVencimento(dataStr?: string | null): { texto: string; cor: string; urgencia: 'vencido' | 'proximo' | 'ok' | null } {
   if (!dataStr) return { texto: 'Sem data cadastrada', cor: 'bg-gray-100 text-gray-500 border-gray-300', urgencia: null };
   const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
@@ -149,13 +217,18 @@ export default function RelatoriosOperacional() {
   const [authLoading, setAuthLoading] = useState(true);
   const [acessoNegado, setAcessoNegado] = useState(false);
 
-  const [aba, setAba] = useState<'frota' | 'estoque'>('frota');
+  const [aba, setAba] = useState<'frota' | 'estoque' | 'calendario'>('frota');
   const [loading, setLoading] = useState(true);
 
   const [veiculos, setVeiculos] = useState<Veiculo[]>([]);
   const [manutencoes, setManutencoes] = useState<Manutencao[]>([]);
   const [equipamentos, setEquipamentos] = useState<Equipamento[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
+
+  const [calSemanaInicio, setCalSemanaInicio] = useState<Date>(() => domingoDaSemana(new Date()));
+  const [calNumSemanas, setCalNumSemanas] = useState(3);
+  const [fichasCalendario, setFichasCalendario] = useState<FichaCalendario[]>([]);
+  const [calLoading, setCalLoading] = useState(false);
 
   useEffect(() => {
     async function checkAuth() {
@@ -217,6 +290,47 @@ export default function RelatoriosOperacional() {
     }
     setLoading(false);
   };
+
+  // Busca as fichas de reserva que se sobrepõem à janela de semanas visível no calendário.
+  const calDataFim = useMemo(() => {
+    const fim = new Date(calSemanaInicio);
+    fim.setDate(fim.getDate() + calNumSemanas * 7 - 1);
+    return fim;
+  }, [calSemanaInicio, calNumSemanas]);
+
+  useEffect(() => {
+    if (aba !== 'calendario') return;
+    (async () => {
+      setCalLoading(true);
+      const { data, error } = await supabase
+        .from('fichas_reserva')
+        .select('id, numero, cliente, evento_feira, status, data_inicial, data_final, data_entrega_agenda')
+        .lte('data_inicial', toISO(calDataFim))
+        .gte('data_final', toISO(calSemanaInicio))
+        .order('data_inicial', { ascending: true });
+
+      if (!error) {
+        setFichasCalendario((data || []).filter(f => f.status !== 'Cancelado' && f.status !== 'Reprovado'));
+      }
+      setCalLoading(false);
+    })();
+  }, [aba, calSemanaInicio, calDataFim]);
+
+  const semanasCalendario = useMemo(() => {
+    const linhas: Date[][] = [];
+    for (let w = 0; w < calNumSemanas; w++) {
+      const linha: Date[] = [];
+      for (let d = 0; d < 7; d++) {
+        const dia = new Date(calSemanaInicio);
+        dia.setDate(dia.getDate() + w * 7 + d);
+        linha.push(dia);
+      }
+      linhas.push(linha);
+    }
+    return linhas;
+  }, [calSemanaInicio, calNumSemanas]);
+
+  const hojeISO = toISO(new Date());
 
   // ==========================================================================
   // AGREGAÇÕES — FROTA
@@ -386,6 +500,9 @@ export default function RelatoriosOperacional() {
         </button>
         <button onClick={() => setAba('estoque')} className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${aba === 'estoque' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}>
           📦 Controle de Estoque
+        </button>
+        <button onClick={() => setAba('calendario')} className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${aba === 'calendario' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}>
+          📅 Calendário Operacional
         </button>
       </div>
 
@@ -612,6 +729,104 @@ export default function RelatoriosOperacional() {
                     </div>
                   </>
                 )}
+              </>
+            )}
+
+            {/* ==================== CALENDÁRIO OPERACIONAL DE LOGÍSTICA ==================== */}
+            {aba === 'calendario' && (
+              <>
+                <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-4 mb-6 no-print">
+                  <div>
+                    <h1 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Calendário Operacional de Logística</h1>
+                    <p className="text-sm text-[#64748B]">
+                      Período: {toISO(calSemanaInicio).split('-').reverse().join('/')} a {toISO(calDataFim).split('-').reverse().join('/')}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={calNumSemanas}
+                      onChange={(e) => setCalNumSemanas(Number(e.target.value))}
+                      className="border border-[#E2E8F0] rounded-lg px-3 py-2.5 text-xs font-bold text-[#0C1D4D] focus:outline-none focus:ring-2 focus:ring-[#336699]"
+                    >
+                      <option value={2}>2 semanas</option>
+                      <option value={3}>3 semanas</option>
+                      <option value={4}>4 semanas</option>
+                      <option value={6}>6 semanas</option>
+                    </select>
+                    <button onClick={() => setCalSemanaInicio(d => { const x = new Date(d); x.setDate(x.getDate() - 7); return x; })} className="bg-[#F0F4F8] hover:bg-[#E2E8F0] text-[#0C1D4D] font-black text-xs uppercase px-4 py-2.5 rounded-lg transition-colors">
+                      ⬅
+                    </button>
+                    <button onClick={() => setCalSemanaInicio(domingoDaSemana(new Date()))} className="bg-[#F0F4F8] hover:bg-[#E2E8F0] text-[#0C1D4D] font-black text-xs uppercase px-4 py-2.5 rounded-lg transition-colors">
+                      Hoje
+                    </button>
+                    <button onClick={() => setCalSemanaInicio(d => { const x = new Date(d); x.setDate(x.getDate() + 7); return x; })} className="bg-[#F0F4F8] hover:bg-[#E2E8F0] text-[#0C1D4D] font-black text-xs uppercase px-4 py-2.5 rounded-lg transition-colors">
+                      ➡
+                    </button>
+                    <button onClick={() => window.print()} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all">
+                      🖨️ Imprimir / PDF
+                    </button>
+                  </div>
+                </div>
+
+                <div className="hidden print:block mb-4 border-b-2 border-black pb-2">
+                  <h1 className="text-xl font-black uppercase">Calendário Operacional de Logística</h1>
+                  <p className="text-sm">
+                    Período: {toISO(calSemanaInicio).split('-').reverse().join('/')} a {toISO(calDataFim).split('-').reverse().join('/')}
+                  </p>
+                </div>
+
+                <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden print-break relative">
+                  {calLoading && (
+                    <div className="absolute inset-0 bg-white/70 flex items-center justify-center z-10 no-print">
+                      <div className="w-8 h-8 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin"></div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-7 bg-[#0C1D4D] text-white">
+                    {DIAS_SEMANA.map(dia => (
+                      <div key={dia} className="p-2 text-center text-[10px] font-black uppercase tracking-wider">
+                        {dia}
+                      </div>
+                    ))}
+                  </div>
+
+                  {semanasCalendario.map((semana, wi) => (
+                    <div key={wi} className="grid grid-cols-7 border-t border-[#E2E8F0]">
+                      {semana.map((dia) => {
+                        const iso = toISO(dia);
+                        const ops = operacoesDoDia(fichasCalendario, iso);
+                        const ehHoje = iso === hojeISO;
+                        return (
+                          <div key={iso} className={`min-h-[110px] p-2 border-r border-[#E2E8F0] last:border-r-0 ${ehHoje ? 'bg-blue-50/50' : ''}`}>
+                            <div className={`text-[11px] font-black mb-1 ${ehHoje ? 'text-[#336699]' : 'text-[#94A3B8]'}`}>
+                              {String(dia.getDate()).padStart(2, '0')}/{String(dia.getMonth() + 1).padStart(2, '0')}
+                              {ehHoje && <span className="ml-1 text-[9px] font-black text-[#336699]">(HOJE)</span>}
+                            </div>
+                            <div className="space-y-1">
+                              {ops.map((op, oi) => {
+                                const cor = COR_OPERACAO[op.tipo];
+                                return (
+                                  <div key={oi} className={`text-[9px] leading-tight font-bold px-1.5 py-1 rounded border ${cor.bg} ${cor.text} ${cor.border}`}>
+                                    {op.texto}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-4 bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 print-break flex flex-wrap items-center gap-4">
+                  <span className="text-[10px] font-black text-[#64748B] uppercase tracking-wider">Legenda:</span>
+                  {(Object.keys(COR_OPERACAO) as TipoOperacao[]).map(tipo => (
+                    <span key={tipo} className={`text-[10px] font-black uppercase px-2.5 py-1 rounded border ${COR_OPERACAO[tipo].bg} ${COR_OPERACAO[tipo].text} ${COR_OPERACAO[tipo].border}`}>
+                      {COR_OPERACAO[tipo].label}
+                    </span>
+                  ))}
+                </div>
               </>
             )}
           </>

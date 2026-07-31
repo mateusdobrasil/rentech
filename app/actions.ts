@@ -270,7 +270,107 @@ export async function registrarLogAuditoria(payload: LogPayload) {
 }
 
 // ============================================================================
-// 3. VERIFICAÇÃO SEGURA DE SENHA DO PORTAL DE DOWNLOADS
+// 3. SINCRONIZAÇÃO DE ESTOQUE "EM LOCAÇÃO" (Checklist de Carga/Retorno)
+// ============================================================================
+// Roda com a service role (bypassa RLS): a tabela `estoque` não libera INSERT
+// para o cliente anônimo/autenticado, e o checklist precisa criar a linha de
+// estoque na primeira vez que um equipamento sai (upsert), não só atualizar.
+interface DeltaEstoqueLocacao {
+  equipamento_id: string;
+  delta: number;
+}
+
+export async function sincronizarEstoqueEmLocacao(deltas: DeltaEstoqueLocacao[]) {
+  try {
+    if (!supabaseAdmin) {
+      throw new Error('Credenciais do Supabase ausentes.');
+    }
+    if (deltas.length === 0) {
+      return { success: true, afetados: 0 };
+    }
+
+    const ids = deltas.map(d => d.equipamento_id);
+    const { data: estoqueAtual, error: erroLeitura } = await supabaseAdmin
+      .from('estoque')
+      .select('equipamento_id, qtd_locacao')
+      .in('equipamento_id', ids);
+
+    if (erroLeitura) throw erroLeitura;
+
+    const qtdAtualMapa = new Map(
+      (estoqueAtual || []).map((e: { equipamento_id: string; qtd_locacao: number | null }) => [e.equipamento_id, e.qtd_locacao || 0])
+    );
+
+    const payload = deltas.map(d => ({
+      equipamento_id: d.equipamento_id,
+      qtd_locacao: Math.max(0, (qtdAtualMapa.get(d.equipamento_id) || 0) + d.delta),
+      updated_at: new Date().toISOString(),
+    }));
+
+    const { error: erroUpsert } = await supabaseAdmin.from('estoque').upsert(payload, { onConflict: 'equipamento_id' });
+    if (erroUpsert) throw erroUpsert;
+
+    return { success: true, afetados: payload.length };
+  } catch (error: any) {
+    console.error("Falha ao sincronizar estoque em locação:", error.message);
+    return { success: false, message: error.message };
+  }
+}
+
+// Lê todos os registros de estoque. Roda com a service role pelo mesmo motivo das
+// gravações acima: sem uma policy de SELECT liberada para `estoque`, o cliente
+// autenticado do navegador recebe lista vazia em silêncio (sem erro) e a tela some
+// com os valores, mesmo estando tudo salvo no banco.
+export async function buscarEstoque() {
+  try {
+    if (!supabaseAdmin) {
+      throw new Error('Credenciais do Supabase ausentes.');
+    }
+
+    const { data, error } = await supabaseAdmin.from('estoque').select('*');
+    if (error) throw error;
+
+    return { success: true, data: data || [] };
+  } catch (error: any) {
+    console.error("Falha ao buscar estoque:", error.message);
+    return { success: false, message: error.message, data: [] };
+  }
+}
+
+// Grava (cria ou atualiza) o registro completo de estoque de um equipamento — usado
+// pelo modal de edição manual em Estoque > Controle Estoque. Mesma razão da service
+// role acima: pode ser a primeira vez que esse equipamento ganha uma linha em `estoque`.
+interface RegistroEstoquePayload {
+  equipamento_id: string;
+  qtd_total: number;
+  qtd_manutencao: number;
+  qtd_locacao: number;
+  localizacao: string | null;
+  avarias: string | null;
+}
+
+export async function salvarRegistroEstoque(payload: RegistroEstoquePayload) {
+  try {
+    if (!supabaseAdmin) {
+      throw new Error('Credenciais do Supabase ausentes.');
+    }
+
+    const { error } = await supabaseAdmin.from('estoque').upsert({
+      ...payload,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'equipamento_id' });
+
+    if (error) throw error;
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("Falha ao salvar registro de estoque:", error.message);
+    return { success: false, message: error.message };
+  }
+}
+
+// ============================================================================
+// 4. VERIFICAÇÃO SEGURA DE SENHA DO PORTAL DE DOWNLOADS
 // ============================================================================
 export async function verificarSenhaDownloads(senhaDigitada: string) {
   const senhaCorreta = process.env.DOWNLOADS_PASSWORD;

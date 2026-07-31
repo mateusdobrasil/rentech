@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
-import { registrarLogAuditoria } from '../../../actions';
+import { registrarLogAuditoria, sincronizarEstoqueEmLocacao } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
 
 // ============================================================================
@@ -300,6 +300,10 @@ export default function ChecklistCargaRetorno() {
   // ------------------------------------------------------------------------
   const [checklistAtual, setChecklistAtual] = useState<ChecklistHeader>(cabecalhoVazio);
   const [itens, setItens] = useState<ChecklistItem[]>([]);
+  // Snapshot dos itens tal como estão gravados no banco (última leitura/gravação) —
+  // usado para calcular, na hora de salvar, a variação de "Em Locação" no estoque
+  // (o que mudou de saida_ok/retorno_ok desde a última vez), não o estado local editado.
+  const [itensOriginais, setItensOriginais] = useState<ChecklistItem[]>([]);
   const [itensRemovidos, setItensRemovidos] = useState<string[]>([]);
   const [salvando, setSalvando] = useState(false);
 
@@ -583,7 +587,9 @@ export default function ChecklistCargaRetorno() {
       responsavel_montagem: header.responsavel_montagem || '', responsavel_retorno: header.responsavel_retorno || '',
       status: header.status,
     });
-    setItens(itensCriados.map(i => ({ ...i, qtd_prevista: i.qtd_prevista || '' })));
+    const itensIniciais = itensCriados.map(i => ({ ...i, qtd_prevista: i.qtd_prevista || '' }));
+    setItens(itensIniciais);
+    setItensOriginais(itensIniciais);
     setItensRemovidos([]);
     setModalNovo(false);
     setView('editor');
@@ -618,7 +624,9 @@ export default function ChecklistCargaRetorno() {
       responsavel_montagem: header.responsavel_montagem || '', responsavel_retorno: header.responsavel_retorno || '',
       status: header.status,
     });
-    setItens((itensData || []).map((i: ChecklistItem) => ({ ...i, qtd_prevista: i.qtd_prevista || '' })));
+    const itensCarregados = (itensData || []).map((i: ChecklistItem) => ({ ...i, qtd_prevista: i.qtd_prevista || '' }));
+    setItens(itensCarregados);
+    setItensOriginais(itensCarregados);
     setItensRemovidos([]);
     setView('editor');
   };
@@ -687,6 +695,14 @@ export default function ChecklistCargaRetorno() {
   // Itens de retorno cuja quantidade real não bate com o que saiu.
   const itensDivergentesRetorno = (lista: ChecklistItem[]): ChecklistItem[] =>
     lista.filter(i => i.saida_qtd !== null && i.retorno_qtd !== null && i.retorno_qtd !== i.saida_qtd);
+
+  // Quanto um item contribui para "Em Locação" no estoque agora: só conta enquanto
+  // a Saída está conferida e o Retorno ainda não — depois do retorno, a peça volta
+  // a ficar disponível. Sem quantidade real informada, assume 1 unidade.
+  const contribuicaoEmLocacao = (item?: Pick<ChecklistItem, 'saida_ok' | 'retorno_ok' | 'saida_qtd'>): number => {
+    if (!item || !item.saida_ok || item.retorno_ok) return 0;
+    return item.saida_qtd && item.saida_qtd > 0 ? item.saida_qtd : 1;
+  };
 
   const removerItem = (item: ChecklistItem) => {
     setItens(prev => prev.filter(i => i.id !== item.id));
@@ -1127,11 +1143,56 @@ export default function ChecklistCargaRetorno() {
       equipamento_nome: `${gerarNumeroExibicao(checklistAtual.numero)} — ${checklistAtual.evento_feira || checklistAtual.cliente || ''}`,
     });
 
+    // ------------------------------------------------------------------------
+    // SINCRONIZAR "EM LOCAÇÃO" NO ESTOQUE
+    // Compara o que cada item contribuía para "Em Locação" antes (itensOriginais,
+    // última leitura/gravação do banco) contra agora (itens, estado local recém
+    // salvo) e aplica só a diferença por equipamento — assim funciona mesmo com
+    // vários checklists mexendo no mesmo equipamento ao mesmo tempo. Item excluído
+    // do checklist enquanto ainda estava "em locação" libera a peça de volta.
+    const deltasPorEquipamento: Record<string, number> = {};
+    const registrarDelta = (equipamentoId: string | null, delta: number) => {
+      if (!equipamentoId || delta === 0) return;
+      deltasPorEquipamento[equipamentoId] = (deltasPorEquipamento[equipamentoId] || 0) + delta;
+    };
+
+    itens.forEach(item => {
+      const original = itensOriginais.find(o => o.id === item.id);
+      registrarDelta(item.equipamento_id, contribuicaoEmLocacao(item) - contribuicaoEmLocacao(original));
+    });
+    itensRemovidos.forEach(id => {
+      const original = itensOriginais.find(o => o.id === id);
+      if (original) registrarDelta(original.equipamento_id, -contribuicaoEmLocacao(original));
+    });
+
+    let erroEstoque: string | null = null;
+    const idsEquipamentosAfetados = Object.keys(deltasPorEquipamento);
+    if (idsEquipamentosAfetados.length > 0) {
+      // Roda como Server Action com a service role: a tabela `estoque` não libera
+      // INSERT para o cliente autenticado via RLS, e aqui pode ser necessário criar
+      // a linha na primeira vez que o equipamento sai (ver app/actions.ts).
+      const resultado = await sincronizarEstoqueEmLocacao(
+        idsEquipamentosAfetados.map(id => ({ equipamento_id: id, delta: deltasPorEquipamento[id] }))
+      );
+
+      if (!resultado.success) {
+        erroEstoque = resultado.message || 'Falha desconhecida ao atualizar o estoque.';
+      } else {
+        registrarLogAuditoria({
+          usuario_nome: usuarioAtual,
+          acao: 'ATUALIZOU ESTOQUE (EM LOCAÇÃO) VIA CHECKLIST',
+          setor: 'ESTOQUE',
+          equipamento_nome: `${gerarNumeroExibicao(checklistAtual.numero)} — ${idsEquipamentosAfetados.length} equipamento(s)`,
+        });
+      }
+    }
+
     // Recarrega do banco para normalizar ids dos itens recém-criados (necessário
     // antes de reconciliar divergências, que usam o id real do item como chave)
     const { data: itensAtualizados } = await supabase.from('checklist_itens').select('*').eq('checklist_id', checklistAtual.id).order('ordem', { ascending: true });
     const itensSalvos: ChecklistItem[] = (itensAtualizados || []).map((i: ChecklistItem) => ({ ...i, qtd_prevista: i.qtd_prevista || '' }));
     setItens(itensSalvos);
+    setItensOriginais(itensSalvos);
     setItensRemovidos([]);
 
     // Reconcilia a aba Divergências apenas para o tipo do status salvo agora:
@@ -1188,11 +1249,17 @@ export default function ChecklistCargaRetorno() {
     }
 
     setSalvando(false);
-    setDialog(erroDivergencia
-      ? { open: true, type: 'error', title: 'Checklist salvo, mas...', msg: `Falhou ao atualizar a aba Divergências: ${erroDivergencia}` }
-      : { open: true, type: 'success', title: 'Salvo', msg: qtdDivergenciasAtivas > 0 ? `Checklist atualizado com sucesso. ${qtdDivergenciasAtivas} item(ns) divergente(s) em Divergências.` : 'Checklist atualizado com sucesso.' });
-    if (!erroDivergencia) {
-      setTimeout(() => setDialog(prev => ({ ...prev, open: false })), qtdDivergenciasAtivas > 0 ? 2400 : 1800);
+
+    const erroPosSalvamento = erroDivergencia || erroEstoque;
+    const avisoEstoque = idsEquipamentosAfetados.length > 0 && !erroEstoque
+      ? ` Estoque atualizado (${idsEquipamentosAfetados.length} equipamento(s) em locação/liberado(s)).`
+      : '';
+
+    setDialog(erroPosSalvamento
+      ? { open: true, type: 'error', title: 'Checklist salvo, mas...', msg: erroDivergencia ? `Falhou ao atualizar a aba Divergências: ${erroDivergencia}` : `Falhou ao atualizar o estoque: ${erroEstoque}` }
+      : { open: true, type: 'success', title: 'Salvo', msg: `Checklist atualizado com sucesso.${qtdDivergenciasAtivas > 0 ? ` ${qtdDivergenciasAtivas} item(ns) divergente(s) em Divergências.` : ''}${avisoEstoque}` });
+    if (!erroPosSalvamento) {
+      setTimeout(() => setDialog(prev => ({ ...prev, open: false })), qtdDivergenciasAtivas > 0 || avisoEstoque ? 2400 : 1800);
       voltarParaLista();
     }
   };

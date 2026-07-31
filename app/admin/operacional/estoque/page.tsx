@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
-import { registrarLogAuditoria } from '../../../actions';
+import { registrarLogAuditoria, salvarRegistroEstoque, buscarEstoque } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
 
 // ============================================================================
@@ -52,6 +52,17 @@ interface Gatilho {
   categoria_nome?: string;
 }
 
+interface EstoqueItem {
+  equipamento_id: string;
+  qtd_total: number;
+  qtd_manutencao: number;
+  qtd_locacao: number;
+  localizacao: string | null;
+  avarias: string | null;
+}
+
+const ESTOQUE_VAZIO: EstoqueItem = { equipamento_id: '', qtd_total: 0, qtd_manutencao: 0, qtd_locacao: 0, localizacao: '', avarias: '' };
+
 export default function PainelEstoque() {
   const router = useRouter();
   const pathname = usePathname();
@@ -64,8 +75,12 @@ export default function PainelEstoque() {
   // Estados de Dados
   const [equipamentos, setEquipamentos] = useState<Equipamento[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
+  const [estoqueMap, setEstoqueMap] = useState<Record<string, EstoqueItem>>({});
   const [loading, setLoading] = useState(true);
   
+  // Estado de Navegação por Abas
+  const [abaAtiva, setAbaAtiva] = useState<'equipamentos' | 'estoque'>('equipamentos');
+
   // Estados de Filtro
   const [busca, setBusca] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState('TODOS');
@@ -87,6 +102,9 @@ export default function PainelEstoque() {
   const [categoriaOrigemTroca, setCategoriaOrigemTroca] = useState('');
   const [categoriaDestinoTroca, setCategoriaDestinoTroca] = useState('');
   const [itensSelecionadosTroca, setItensSelecionadosTroca] = useState<string[]>([]);
+
+  // Estado Modal Controle de Estoque (Quantidades)
+  const [modalEstoque, setModalEstoque] = useState<{ open: boolean; eq: Equipamento | null; form: EstoqueItem }>({ open: false, eq: null, form: ESTOQUE_VAZIO });
 
   // Estados Modal Categorias
   const [modalCategorias, setModalCategorias] = useState(false);
@@ -150,16 +168,30 @@ export default function PainelEstoque() {
   const carregarDados = async () => {
     setLoading(true);
     
-    // Dispara as duas buscas em paralelo para ganhar performance
-    const [resEq, resCat] = await Promise.all([
+    // Dispara as três buscas em paralelo para ganhar performance. Estoque vem por
+    // Server Action (service role) — ver buscarEstoque em app/actions.ts: sem isso,
+    // o cliente autenticado do navegador pode não enxergar linhas de `estoque` por
+    // falta de policy de SELECT, mesmo com o dado salvo certinho no banco.
+    const [resEq, resCat, resEst] = await Promise.all([
       supabase.from('equipamentos').select('*').order('nome', { ascending: true }),
-      supabase.from('categorias').select('*').order('nome', { ascending: true })
+      supabase.from('categorias').select('*').order('nome', { ascending: true }),
+      buscarEstoque()
     ]);
 
     if (resCat.data) setCategorias(resCat.data);
     if (resEq.data) setEquipamentos(resEq.data);
-    
+    if (resEst.success) {
+      const mapa: Record<string, EstoqueItem> = {};
+      resEst.data.forEach((item: EstoqueItem) => { mapa[item.equipamento_id] = item; });
+      setEstoqueMap(mapa);
+    }
+
     setLoading(false);
+  };
+
+  // Retorna os dados de estoque de um equipamento, ou valores zerados se ainda não cadastrado
+  const getEstoque = (equipamentoId: string): EstoqueItem => {
+    return estoqueMap[equipamentoId] || { ...ESTOQUE_VAZIO, equipamento_id: equipamentoId };
   };
 
   // Filtro Dinâmico
@@ -260,6 +292,54 @@ export default function PainelEstoque() {
       setDialog({ open: true, type: 'success', title: 'Concluído', msg: 'Equipamento salvo com sucesso.' });
       setModalEdit({ open: false, isNew: false, eq: null });
       carregarDados();
+      setTimeout(() => setDialog(prev => ({ ...prev, open: false })), 2000);
+    }
+  };
+
+  // ============================================================================
+  // AÇÕES DE CONTROLE DE ESTOQUE (QUANTIDADES)
+  // ============================================================================
+
+  const abrirModalEstoque = (eq: Equipamento) => {
+    setModalEstoque({ open: true, eq, form: { ...getEstoque(eq.id) } });
+  };
+
+  const salvarEstoque = async () => {
+    if (!modalEstoque.eq) return;
+
+    const { qtd_total, qtd_manutencao, qtd_locacao, localizacao, avarias } = modalEstoque.form;
+
+    if (qtd_manutencao + qtd_locacao > qtd_total) {
+      setDialog({ open: true, type: 'error', title: 'Atenção', msg: 'A soma de "Em Manutenção" e "Em Locação" não pode ser maior que a quantidade total.' });
+      return;
+    }
+
+    setDialog({ open: true, type: 'loading', title: 'Salvando...', msg: 'Atualizando estoque.' });
+
+    const payload = {
+      equipamento_id: modalEstoque.eq.id,
+      qtd_total: qtd_total || 0,
+      qtd_manutencao: qtd_manutencao || 0,
+      qtd_locacao: qtd_locacao || 0,
+      localizacao: localizacao || null,
+      avarias: avarias || null,
+    };
+
+    const resultado = await salvarRegistroEstoque(payload);
+
+    if (!resultado.success) {
+      setDialog({ open: true, type: 'error', title: 'Erro', msg: resultado.message || 'Falha ao salvar estoque.' });
+    } else {
+      setEstoqueMap(prev => ({ ...prev, [payload.equipamento_id]: payload }));
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: 'ATUALIZOU ESTOQUE',
+        setor: 'ESTOQUE',
+        equipamento_id: modalEstoque.eq.id,
+        equipamento_nome: modalEstoque.eq.nome,
+      });
+      setDialog({ open: true, type: 'success', title: 'Concluído', msg: 'Estoque atualizado com sucesso.' });
+      setModalEstoque({ open: false, eq: null, form: ESTOQUE_VAZIO });
       setTimeout(() => setDialog(prev => ({ ...prev, open: false })), 2000);
     }
   };
@@ -553,18 +633,36 @@ export default function PainelEstoque() {
         </button>
       </div>
 
+      {/* NAVEGAÇÃO POR ABAS */}
+      <div className="px-4 md:px-8 pt-6 flex-shrink-0">
+        <div className="flex gap-2 border-b-2 border-[#E2E8F0]">
+          <button
+            onClick={() => setAbaAtiva('equipamentos')}
+            className={`px-5 py-3 font-black text-xs uppercase tracking-wider transition-colors border-b-2 -mb-0.5 ${abaAtiva === 'equipamentos' ? 'border-[#336699] text-[#336699]' : 'border-transparent text-[#94A3B8] hover:text-[#64748B]'}`}
+          >
+            🔧 Equipamentos/Periféricos
+          </button>
+          <button
+            onClick={() => setAbaAtiva('estoque')}
+            className={`px-5 py-3 font-black text-xs uppercase tracking-wider transition-colors border-b-2 -mb-0.5 ${abaAtiva === 'estoque' ? 'border-[#336699] text-[#336699]' : 'border-transparent text-[#94A3B8] hover:text-[#64748B]'}`}
+          >
+            📦 Controle Estoque
+          </button>
+        </div>
+      </div>
+
       {/* BARRA DE CONTROLE (BUSCA E AÇÕES) */}
       <div className="px-4 md:px-8 pt-6 flex-shrink-0">
         <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col md:flex-row gap-4 justify-between items-center">
           <div className="flex w-full md:w-auto gap-4 flex-grow max-w-2xl">
-            <input 
-              type="text" 
-              placeholder="🔍 Buscar equipamento..." 
+            <input
+              type="text"
+              placeholder="🔍 Buscar equipamento..."
               className="flex-grow p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-semibold text-[#0C1D4D] focus:border-[#336699] outline-none"
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
             />
-            <select 
+            <select
               className="p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer w-48"
               value={filtroCategoria}
               onChange={(e) => setFiltroCategoria(e.target.value)}
@@ -573,25 +671,28 @@ export default function PainelEstoque() {
               {categorias.map(cat => <option key={cat.id} value={cat.id}>{cat.nome}</option>)}
             </select>
           </div>
-          
-          <div className="flex w-full md:w-auto gap-2">
-            <button onClick={() => setModalCategorias(true)} className="flex-1 md:flex-none bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] px-4 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-[#CBD5E1]">
-              🏷️ Categorias
-            </button>
-            <button onClick={abrirModalAcessoriosCategoria} className="flex-1 md:flex-none bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] px-4 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-[#CBD5E1]">
-              🔗 Acessórios/Categoria
-            </button>
-            <button onClick={abrirModalTrocarCategoria} className="flex-1 md:flex-none bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] px-4 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-[#CBD5E1]">
-              🔄 Trocar Categoria
-            </button>
-            <button onClick={abrirModalNovo} className="flex-1 md:flex-none bg-[#336699] hover:bg-[#284B8C] text-white px-6 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-md hover:shadow-lg">
-              ➕ Adicionar Item
-            </button>
-          </div>
+
+          {abaAtiva === 'equipamentos' && (
+            <div className="flex w-full md:w-auto gap-2">
+              <button onClick={() => setModalCategorias(true)} className="flex-1 md:flex-none bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] px-4 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-[#CBD5E1]">
+                🏷️ Categorias
+              </button>
+              <button onClick={abrirModalAcessoriosCategoria} className="flex-1 md:flex-none bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] px-4 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-[#CBD5E1]">
+                🔗 Acessórios/Categoria
+              </button>
+              <button onClick={abrirModalTrocarCategoria} className="flex-1 md:flex-none bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] px-4 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-[#CBD5E1]">
+                🔄 Trocar Categoria
+              </button>
+              <button onClick={abrirModalNovo} className="flex-1 md:flex-none bg-[#336699] hover:bg-[#284B8C] text-white px-6 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-md hover:shadow-lg">
+                ➕ Adicionar Item
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* TABELA DE DADOS (Scrollável) */}
+      {/* TABELA DE DADOS: EQUIPAMENTOS/PERIFÉRICOS (Scrollável) */}
+      {abaAtiva === 'equipamentos' && (
       <div className="px-4 md:px-8 py-6 flex-grow overflow-hidden flex flex-col">
         <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto">
           <table className="w-full text-left border-collapse min-w-[1000px]">
@@ -661,6 +762,72 @@ export default function PainelEstoque() {
           </table>
         </div>
       </div>
+      )}
+
+      {/* TABELA DE DADOS: CONTROLE ESTOQUE (Scrollável) */}
+      {abaAtiva === 'estoque' && (
+      <div className="px-4 md:px-8 py-6 flex-grow overflow-hidden flex flex-col">
+        <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto">
+          <table className="w-full text-left border-collapse min-w-[1250px]">
+            <thead className="bg-[#F8FAFC] sticky top-0 shadow-sm z-10">
+              <tr className="text-[#64748B] text-[10px] uppercase tracking-wider font-bold">
+                <th className="p-4 border-b-2 border-[#E2E8F0] w-40">Categoria</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0]">Equipamento / Modelo</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] w-40">Localização</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] w-24 text-center">Qtd. Total</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] w-24 text-center">Manutenção</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] w-24 text-center">Em Locação</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] w-24 text-center">Disponível</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] w-40">Avarias</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] w-32 text-center">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#E2E8F0] text-xs">
+              {loading ? (
+                <tr><td colSpan={9} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Carregando estoque...</td></tr>
+              ) : equipamentosFiltrados.length === 0 ? (
+                <tr><td colSpan={9} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Nenhum equipamento encontrado.</td></tr>
+              ) : (
+                equipamentosFiltrados.map((eq) => {
+                  const est = getEstoque(eq.id);
+                  const disponivel = est.qtd_total - est.qtd_manutencao - est.qtd_locacao;
+                  const corDisponivel = disponivel <= 0 ? 'text-red-600' : disponivel <= 2 ? 'text-amber-600' : 'text-[#16A34A]';
+                  return (
+                    <tr key={eq.id} className={`transition-colors ${!eq.ativo ? 'bg-gray-50 opacity-60' : 'hover:bg-[#F8FAFC]'}`}>
+                      <td className="p-4">
+                        <span className="bg-[#E2E8F0] text-[#475569] font-black px-2 py-1 rounded text-[9px] uppercase tracking-widest block truncate" title={getNomeCategoria(eq.categoria_id)}>
+                          {getNomeCategoria(eq.categoria_id)}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <strong className="text-[#0C1D4D] text-sm block truncate max-w-[280px]">{eq.nome}</strong>
+                      </td>
+                      <td className="p-4 text-[#64748B] font-medium truncate max-w-[160px]">{est.localizacao || '-'}</td>
+                      <td className="p-4 text-center font-bold text-[#0A2A4A]">{est.qtd_total}</td>
+                      <td className="p-4 text-center font-bold text-[#D97706]">{est.qtd_manutencao}</td>
+                      <td className="p-4 text-center font-bold text-[#336699]">
+                        {est.qtd_locacao > 0 ? (
+                          <span className="bg-blue-50 text-[#336699] border border-blue-200 px-2 py-0.5 rounded text-[10px] uppercase tracking-wide">🚚 {est.qtd_locacao}</span>
+                        ) : (
+                          <span className="text-[#CBD5E1]">-</span>
+                        )}
+                      </td>
+                      <td className={`p-4 text-center font-black ${corDisponivel}`}>{disponivel}</td>
+                      <td className="p-4 text-[#64748B] truncate max-w-[220px]" title={est.avarias || ''}>{est.avarias || '-'}</td>
+                      <td className="p-4 text-center">
+                        <button onClick={() => abrirModalEstoque(eq)} className="bg-blue-50 text-[#336699] hover:bg-blue-100 border border-blue-200 font-bold text-[10px] uppercase px-3 py-2 rounded transition-colors">
+                          ✏️ Editar
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      )}
 
       {/* ============================================================================ */}
       {/* MODAL: CRIAR / EDITAR EQUIPAMENTO COMPLETADO */}
@@ -748,6 +915,94 @@ export default function PainelEstoque() {
             <div className="p-5 border-t border-[#E2E8F0] bg-white flex-shrink-0">
               <button onClick={salvarEquipamento} className="w-full bg-[#16A34A] hover:bg-[#15803D] text-white font-black text-sm uppercase tracking-widest py-4 rounded-xl shadow-lg transition-colors">
                 💾 Confirmar e Salvar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================================ */}
+      {/* MODAL: CONTROLE DE ESTOQUE (QUANTIDADES) */}
+      {/* ============================================================================ */}
+      {modalEstoque.open && modalEstoque.eq && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white flex-shrink-0">
+              <div>
+                <h3 className="font-black uppercase tracking-wider text-sm">📦 Controle de Estoque</h3>
+                <p className="text-[10px] text-blue-200 mt-0.5">{modalEstoque.eq.nome}</p>
+              </div>
+              <button onClick={() => setModalEstoque({ open: false, eq: null, form: ESTOQUE_VAZIO })} className="text-white hover:text-red-300 text-2xl leading-none">&times;</button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-4">
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Quantidade Total</label>
+                  <input
+                    type="number"
+                    min={0}
+                    className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-bold text-[#0C1D4D]"
+                    value={modalEstoque.form.qtd_total}
+                    onChange={e => setModalEstoque(prev => ({ ...prev, form: { ...prev.form, qtd_total: parseInt(e.target.value) || 0 } }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Em Manutenção</label>
+                  <input
+                    type="number"
+                    min={0}
+                    className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-bold text-[#D97706]"
+                    value={modalEstoque.form.qtd_manutencao}
+                    onChange={e => setModalEstoque(prev => ({ ...prev, form: { ...prev.form, qtd_manutencao: parseInt(e.target.value) || 0 } }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Em Locação</label>
+                  <input
+                    type="number"
+                    min={0}
+                    className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-bold text-[#336699]"
+                    value={modalEstoque.form.qtd_locacao}
+                    onChange={e => setModalEstoque(prev => ({ ...prev, form: { ...prev.form, qtd_locacao: parseInt(e.target.value) || 0 } }))}
+                  />
+                </div>
+              </div>
+              <p className="text-[10px] text-[#94A3B8] -mt-2">"Em Locação" é atualizado automaticamente pelo Checklist de Carga/Retorno quando a Saída (Separação) é conferida. Ajuste manual aqui só em caso de correção.</p>
+
+              <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4 flex justify-between items-center">
+                <span className="text-[10px] font-bold text-[#64748B] uppercase">Disponível para locação</span>
+                <span className={`text-lg font-black ${(modalEstoque.form.qtd_total - modalEstoque.form.qtd_manutencao - modalEstoque.form.qtd_locacao) <= 0 ? 'text-red-600' : 'text-[#16A34A]'}`}>
+                  {modalEstoque.form.qtd_total - modalEstoque.form.qtd_manutencao - modalEstoque.form.qtd_locacao}
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Localização</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Galpão 2 - Prateleira A3"
+                  className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold text-[#0C1D4D]"
+                  value={modalEstoque.form.localizacao || ''}
+                  onChange={e => setModalEstoque(prev => ({ ...prev, form: { ...prev.form, localizacao: e.target.value } }))}
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Avarias / Observações</label>
+                <textarea
+                  rows={3}
+                  placeholder="Descreva avarias, unidades quebradas, etc."
+                  className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm resize-none"
+                  value={modalEstoque.form.avarias || ''}
+                  onChange={e => setModalEstoque(prev => ({ ...prev, form: { ...prev.form, avarias: e.target.value } }))}
+                />
+              </div>
+            </div>
+
+            <div className="p-5 border-t border-[#E2E8F0] bg-white flex-shrink-0">
+              <button onClick={salvarEstoque} className="w-full bg-[#16A34A] hover:bg-[#15803D] text-white font-black text-sm uppercase tracking-widest py-4 rounded-xl shadow-lg transition-colors">
+                💾 Salvar Estoque
               </button>
             </div>
           </div>

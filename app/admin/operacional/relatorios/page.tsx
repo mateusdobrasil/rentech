@@ -81,6 +81,10 @@ type TipoOperacao = 'montagem' | 'inicio' | 'desmontagem' | 'andamento';
 
 interface OperacaoDia { tipo: TipoOperacao; texto: string; local: string | null; }
 
+interface AgendaCategoria { id: string; nome: string; cor: string; }
+
+interface AgendaManual { id: string; data: string; categoria_id: string; texto: string; local: string | null; }
+
 const COR_OPERACAO: Record<TipoOperacao, { bg: string; text: string; border: string; label: string }> = {
   montagem: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-300', label: 'Montagem / Entrega' },
   inicio: { bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-300', label: 'Início Evento' },
@@ -254,6 +258,15 @@ export default function RelatoriosOperacional() {
   const [filtroOperacoes, setFiltroOperacoes] = useState<Record<TipoOperacao, boolean>>({
     montagem: true, inicio: true, desmontagem: true, andamento: true,
   });
+  const [filtroCategoriasManual, setFiltroCategoriasManual] = useState<Record<string, boolean>>({});
+  const [agendaManual, setAgendaManual] = useState<AgendaManual[]>([]);
+  const [agendaCategorias, setAgendaCategorias] = useState<AgendaCategoria[]>([]);
+  const [modalAgenda, setModalAgenda] = useState<{ open: boolean; data: string; categoriaId: string; texto: string; local: string; salvando: boolean; erro: string | null }>({
+    open: false, data: '', categoriaId: '', texto: '', local: '', salvando: false, erro: null,
+  });
+  const [novaCategoria, setNovaCategoria] = useState<{ open: boolean; nome: string; cor: string; salvando: boolean; erro: string | null }>({
+    open: false, nome: '', cor: '#336699', salvando: false, erro: null,
+  });
 
   useEffect(() => {
     async function checkAuth() {
@@ -323,6 +336,24 @@ export default function RelatoriosOperacional() {
     return fim;
   }, [calSemanaInicio, calNumSemanas]);
 
+  // Recarrega os eventos manuais da janela de semanas visível — reutilizada após criar/excluir um evento.
+  const carregarAgendaManual = async () => {
+    const { data, error } = await supabase
+      .from('agenda_manual')
+      .select('id, data, categoria_id, texto, local')
+      .gte('data', toISO(calSemanaInicio))
+      .lte('data', toISO(calDataFim))
+      .order('data', { ascending: true });
+
+    if (!error) setAgendaManual(data || []);
+  };
+
+  // Recarrega as categorias cadastradas — reutilizada após criar uma categoria nova.
+  const carregarCategorias = async () => {
+    const { data, error } = await supabase.from('agenda_categorias').select('id, nome, cor').order('nome', { ascending: true });
+    if (!error) setAgendaCategorias(data || []);
+  };
+
   useEffect(() => {
     if (aba !== 'calendario') return;
     (async () => {
@@ -340,6 +371,7 @@ export default function RelatoriosOperacional() {
       if (!error) {
         setFichasCalendario((data || []).filter(f => f.status !== 'Cancelado' && f.status !== 'Reprovado'));
       }
+      await Promise.all([carregarAgendaManual(), carregarCategorias()]);
       setCalLoading(false);
     })();
   }, [aba, calSemanaInicio, calDataFim]);
@@ -370,6 +402,15 @@ export default function RelatoriosOperacional() {
     })();
   }, [fichasCalendario]);
 
+  // Categorias de eventos manuais efetivamente em uso na janela visível — só aparecem
+  // na legenda quando existe pelo menos um evento manual daquela categoria no período.
+  const categoriasManuaisEmUso = useMemo(() => {
+    const idsEmUso = new Set(agendaManual.map(e => e.categoria_id));
+    return agendaCategorias
+      .filter(cat => idsEmUso.has(cat.id))
+      .sort((a, b) => a.nome.localeCompare(b.nome));
+  }, [agendaManual, agendaCategorias]);
+
   const semanasCalendario = useMemo(() => {
     const linhas: Date[][] = [];
     for (let w = 0; w < calNumSemanas; w++) {
@@ -385,6 +426,57 @@ export default function RelatoriosOperacional() {
   }, [calSemanaInicio, calNumSemanas]);
 
   const hojeISO = toISO(new Date());
+
+  const abrirModalAgenda = (dataPreenchida?: string) => {
+    setModalAgenda({ open: true, data: dataPreenchida || hojeISO, categoriaId: agendaCategorias[0]?.id || '', texto: '', local: '', salvando: false, erro: null });
+    setNovaCategoria({ open: false, nome: '', cor: '#336699', salvando: false, erro: null });
+  };
+
+  const salvarAgendaManual = async () => {
+    if (!modalAgenda.data || !modalAgenda.categoriaId || !modalAgenda.texto.trim()) {
+      setModalAgenda(prev => ({ ...prev, erro: 'Preencha a data, a categoria e a descrição do evento.' }));
+      return;
+    }
+    setModalAgenda(prev => ({ ...prev, salvando: true, erro: null }));
+    const { data, error } = await supabase
+      .from('agenda_manual')
+      .insert([{ data: modalAgenda.data, categoria_id: modalAgenda.categoriaId, texto: modalAgenda.texto.trim(), local: modalAgenda.local.trim() || null, criado_por: usuarioAtual }])
+      .select()
+      .single();
+
+    if (error) {
+      setModalAgenda(prev => ({ ...prev, salvando: false, erro: error.message }));
+      return;
+    }
+    setAgendaManual(prev => [...prev, data]);
+    setModalAgenda({ open: false, data: '', categoriaId: '', texto: '', local: '', salvando: false, erro: null });
+  };
+
+  const excluirAgendaManual = async (id: string) => {
+    setAgendaManual(prev => prev.filter(e => e.id !== id));
+    await supabase.from('agenda_manual').delete().eq('id', id);
+  };
+
+  const salvarNovaCategoria = async () => {
+    if (!novaCategoria.nome.trim()) {
+      setNovaCategoria(prev => ({ ...prev, erro: 'Dê um nome para a categoria.' }));
+      return;
+    }
+    setNovaCategoria(prev => ({ ...prev, salvando: true, erro: null }));
+    const { data, error } = await supabase
+      .from('agenda_categorias')
+      .insert([{ nome: novaCategoria.nome.trim(), cor: novaCategoria.cor }])
+      .select()
+      .single();
+
+    if (error) {
+      setNovaCategoria(prev => ({ ...prev, salvando: false, erro: error.message }));
+      return;
+    }
+    setAgendaCategorias(prev => [...prev, data].sort((a, b) => a.nome.localeCompare(b.nome)));
+    setModalAgenda(prev => ({ ...prev, categoriaId: data.id }));
+    setNovaCategoria({ open: false, nome: '', cor: '#336699', salvando: false, erro: null });
+  };
 
   // ==========================================================================
   // AGREGAÇÕES — FROTA
@@ -822,6 +914,9 @@ export default function RelatoriosOperacional() {
                     <button onClick={() => setCalSemanaInicio(d => { const x = new Date(d); x.setDate(x.getDate() + 7); return x; })} className="bg-[#F0F4F8] hover:bg-[#E2E8F0] text-[#0C1D4D] font-black text-xs uppercase px-4 py-2.5 rounded-lg transition-colors">
                       ➡
                     </button>
+                    <button onClick={() => abrirModalAgenda()} className="bg-[#336699] text-white font-black uppercase tracking-widest text-xs px-4 py-2.5 rounded-lg shadow-md hover:bg-[#284B8C] transition-all">
+                      ➕ Nova Agenda
+                    </button>
                     <button onClick={() => window.print()} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all">
                       🖨️ Imprimir / PDF
                     </button>
@@ -846,6 +941,19 @@ export default function RelatoriosOperacional() {
                       {filtroOperacoes[tipo] ? '✓ ' : ''}{COR_OPERACAO[tipo].label}
                     </button>
                   ))}
+                  {categoriasManuaisEmUso.map(cat => {
+                    const ativo = filtroCategoriasManual[cat.id] ?? true;
+                    return (
+                      <button
+                        key={cat.id}
+                        onClick={() => setFiltroCategoriasManual(prev => ({ ...prev, [cat.id]: !ativo }))}
+                        className="text-[10px] print:text-[8px] font-black uppercase px-2.5 py-1 print:px-1.5 print:py-0.5 rounded border transition-opacity"
+                        style={{ backgroundColor: `${cat.cor}1A`, color: cat.cor, borderColor: `${cat.cor}4D`, opacity: ativo ? 1 : 0.3 }}
+                      >
+                        {ativo ? '✓ ' : ''}📌 {cat.nome}
+                      </button>
+                    );
+                  })}
                 </div>
 
                 <div className="calendario-grid-print bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden relative">
@@ -868,6 +976,7 @@ export default function RelatoriosOperacional() {
                       {semana.map((dia) => {
                         const iso = toISO(dia);
                         const ops = operacoesDoDia(fichasCalendario, iso, mapaLocaisEventos).filter(op => filtroOperacoes[op.tipo]);
+                        const eventosManuais = agendaManual.filter(e => e.data === iso && (filtroCategoriasManual[e.categoria_id] ?? true));
                         const ehHoje = iso === hojeISO;
                         return (
                           <div key={iso} className={`min-h-[110px] print:min-h-0 p-2 print:p-1 border-r border-[#E2E8F0] last:border-r-0 ${ehHoje ? 'bg-blue-50/50' : ''}`}>
@@ -887,6 +996,28 @@ export default function RelatoriosOperacional() {
                                   </div>
                                 );
                               })}
+                              {eventosManuais.map(e => {
+                                const catCor = agendaCategorias.find(c => c.id === e.categoria_id)?.cor || '#64748B';
+                                return (
+                                  <div
+                                    key={e.id}
+                                    className="group relative text-[9px] print:text-[6.5px] leading-tight font-bold px-1.5 py-1 print:px-1 print:py-0.5 rounded border"
+                                    style={{ backgroundColor: `${catCor}1A`, borderColor: `${catCor}4D`, color: catCor }}
+                                  >
+                                    <button
+                                      onClick={() => excluirAgendaManual(e.id)}
+                                      className="no-print absolute top-0 right-0.5 opacity-0 group-hover:opacity-100 text-[10px] leading-none px-1 hover:text-red-600 transition-opacity"
+                                      title="Excluir evento manual"
+                                    >
+                                      &times;
+                                    </button>
+                                    📌 {e.texto}
+                                    {e.local && (
+                                      <div className="font-normal opacity-75 truncate">📍 {e.local}</div>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         );
@@ -900,6 +1031,132 @@ export default function RelatoriosOperacional() {
           </>
         )}
       </div>
+
+      {modalAgenda.open && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="bg-[#336699] p-5 flex justify-between items-center text-white">
+              <h3 className="font-black uppercase tracking-wider text-sm">📌 Nova Agenda Manual</h3>
+              <button
+                onClick={() => setModalAgenda({ open: false, data: '', categoriaId: '', texto: '', local: '', salvando: false, erro: null })}
+                disabled={modalAgenda.salvando}
+                className="text-white hover:text-blue-200 text-2xl leading-none disabled:opacity-50"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-[10px] font-black text-[#64748B] uppercase tracking-wider mb-1">Data</label>
+                <input
+                  type="date"
+                  value={modalAgenda.data}
+                  onChange={(e) => setModalAgenda(prev => ({ ...prev, data: e.target.value }))}
+                  className="w-full border border-[#E2E8F0] rounded-lg px-3 py-2.5 text-sm font-bold text-[#0C1D4D] focus:outline-none focus:ring-2 focus:ring-[#336699]"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[10px] font-black text-[#64748B] uppercase tracking-wider">Categoria</label>
+                  <button
+                    type="button"
+                    onClick={() => setNovaCategoria(prev => ({ ...prev, open: !prev.open }))}
+                    className="text-[10px] font-black text-[#336699] uppercase tracking-wider hover:text-[#284B8C]"
+                  >
+                    {novaCategoria.open ? '✕ Cancelar' : '➕ Nova categoria'}
+                  </button>
+                </div>
+
+                {novaCategoria.open ? (
+                  <div className="border border-[#E2E8F0] rounded-lg p-3 space-y-2 bg-[#F8FAFC]">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={novaCategoria.nome}
+                        onChange={(e) => setNovaCategoria(prev => ({ ...prev, nome: e.target.value }))}
+                        placeholder="Nome da categoria"
+                        className="flex-1 border border-[#E2E8F0] rounded-lg px-3 py-2 text-sm font-medium text-[#0C1D4D] focus:outline-none focus:ring-2 focus:ring-[#336699]"
+                      />
+                      <input
+                        type="color"
+                        value={novaCategoria.cor}
+                        onChange={(e) => setNovaCategoria(prev => ({ ...prev, cor: e.target.value }))}
+                        className="w-11 h-10 border border-[#E2E8F0] rounded-lg cursor-pointer"
+                        title="Cor da categoria"
+                      />
+                    </div>
+                    {novaCategoria.erro && <p className="text-xs font-bold text-red-600">{novaCategoria.erro}</p>}
+                    <button
+                      type="button"
+                      onClick={salvarNovaCategoria}
+                      disabled={novaCategoria.salvando}
+                      className="w-full px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider bg-[#336699] text-white hover:bg-[#284B8C] transition-colors disabled:opacity-50"
+                    >
+                      {novaCategoria.salvando ? 'Salvando...' : 'Salvar categoria'}
+                    </button>
+                  </div>
+                ) : (
+                  <select
+                    value={modalAgenda.categoriaId}
+                    onChange={(e) => setModalAgenda(prev => ({ ...prev, categoriaId: e.target.value }))}
+                    className="w-full border border-[#E2E8F0] rounded-lg px-3 py-2.5 text-sm font-bold text-[#0C1D4D] focus:outline-none focus:ring-2 focus:ring-[#336699]"
+                  >
+                    {agendaCategorias.length === 0 && <option value="">Nenhuma categoria cadastrada</option>}
+                    {agendaCategorias.map(cat => (
+                      <option key={cat.id} value={cat.id}>{cat.nome}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-[#64748B] uppercase tracking-wider mb-1">Descrição</label>
+                <input
+                  type="text"
+                  value={modalAgenda.texto}
+                  onChange={(e) => setModalAgenda(prev => ({ ...prev, texto: e.target.value }))}
+                  placeholder="Ex: Manutenção preventiva - Galpão"
+                  className="w-full border border-[#E2E8F0] rounded-lg px-3 py-2.5 text-sm font-medium text-[#0C1D4D] focus:outline-none focus:ring-2 focus:ring-[#336699]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-[#64748B] uppercase tracking-wider mb-1">Local (opcional)</label>
+                <input
+                  type="text"
+                  value={modalAgenda.local}
+                  onChange={(e) => setModalAgenda(prev => ({ ...prev, local: e.target.value }))}
+                  placeholder="Ex: Galpão Central"
+                  className="w-full border border-[#E2E8F0] rounded-lg px-3 py-2.5 text-sm font-medium text-[#0C1D4D] focus:outline-none focus:ring-2 focus:ring-[#336699]"
+                />
+              </div>
+
+              {modalAgenda.erro && (
+                <p className="text-xs font-bold text-red-600">{modalAgenda.erro}</p>
+              )}
+            </div>
+
+            <div className="p-5 border-t border-[#E2E8F0] flex justify-end gap-3">
+              <button
+                onClick={() => setModalAgenda({ open: false, data: '', categoriaId: '', texto: '', local: '', salvando: false, erro: null })}
+                disabled={modalAgenda.salvando}
+                className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider bg-[#F0F4F8] text-[#0C1D4D] hover:bg-[#E2E8F0] transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={salvarAgendaManual}
+                disabled={modalAgenda.salvando}
+                className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider bg-[#336699] text-white hover:bg-[#284B8C] transition-colors disabled:opacity-50"
+              >
+                {modalAgenda.salvando ? 'Salvando...' : 'Salvar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

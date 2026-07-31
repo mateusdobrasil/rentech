@@ -44,7 +44,8 @@ interface EquipamentoLeve { id: string; categoria_id: string; nome: string; ativ
 // Estoque > Gatilhos/Acessórios e no Simulador de Videowall).
 interface GatilhoAcessorio {
   id: string;
-  acessorio_id: string;
+  acessorio_id: string | null;
+  acessorio_categoria_id: string | null;
   categoria_alvo_id: string | null;
   equipamento_alvo_id: string | null;
 }
@@ -270,6 +271,12 @@ export default function ChecklistCargaRetorno() {
   const [filtroTipoDivergencia, setFiltroTipoDivergencia] = useState<'' | TipoDivergencia>('');
   const [paginaDivergencias, setPaginaDivergencias] = useState(0);
   const [totalDivergencias, setTotalDivergencias] = useState(0);
+  // Contador exibido no botão "⚠️ Divergências" da lista — toda linha em
+  // checklist_divergencias é uma divergência em aberto (as resolvidas são
+  // removidas de lá ao salvar), então a contagem total já é a de "ativas".
+  const [totalDivergenciasAbertas, setTotalDivergenciasAbertas] = useState(0);
+  const [imprimindoDivergencias, setImprimindoDivergencias] = useState(false);
+  const [divergenciasImpressao, setDivergenciasImpressao] = useState<DivergenciaRow[]>([]);
 
   const [modalNovo, setModalNovo] = useState(false);
   const [camposManuais, setCamposManuais] = useState({ evento_feira: '', cliente: '', local: '', periodo_inicio: '', periodo_fim: '', data_entrega: '' });
@@ -341,7 +348,7 @@ export default function ChecklistCargaRetorno() {
         supabase.from('categorias').select('*').order('nome', { ascending: true }),
         supabase.from('equipamentos').select('id, categoria_id, nome, ativo').order('nome', { ascending: true }),
         supabase.from('eventos_feiras').select('nome, local').not('local', 'is', null),
-        supabase.from('gatilhos_acessorios').select('id, acessorio_id, categoria_alvo_id, equipamento_alvo_id'),
+        supabase.from('gatilhos_acessorios').select('id, acessorio_id, acessorio_categoria_id, categoria_alvo_id, equipamento_alvo_id'),
       ]);
       if (resCat.data) setCategorias(resCat.data);
       if (resEq.data) setEquipamentos(resEq.data);
@@ -410,6 +417,15 @@ export default function ChecklistCargaRetorno() {
       setDivergenciasLoading(false);
     })();
   }, [authLoading, acessoNegado, view, paginaDivergencias, filtroTipoDivergencia]);
+
+  // 2c. Contagem de divergências para o badge do botão "⚠️ Divergências" na lista
+  useEffect(() => {
+    if (authLoading || acessoNegado || view !== 'lista') return;
+    (async () => {
+      const { count } = await supabase.from('checklist_divergencias').select('id', { count: 'exact', head: true });
+      setTotalDivergenciasAbertas(count || 0);
+    })();
+  }, [authLoading, acessoNegado, view, refreshLista]);
 
   // ------------------------------------------------------------------------
   // Catálogo agrupado por categoria (para os selects de "Do catálogo")
@@ -612,6 +628,31 @@ export default function ChecklistCargaRetorno() {
     setRefreshLista(v => v + 1);
   };
 
+  // Busca todas as divergências (sem paginação, respeitando o filtro de tipo em
+  // tela) para gerar o relatório impresso/PDF — a tabela na tela mostra só a
+  // página atual, mas a impressão precisa do total.
+  const imprimirDivergencias = async () => {
+    setImprimindoDivergencias(true);
+
+    let query = supabase.from('checklist_divergencias').select('*').order('created_at', { ascending: false });
+    if (filtroTipoDivergencia) query = query.eq('tipo', filtroTipoDivergencia);
+    const { data, error } = await query;
+
+    setImprimindoDivergencias(false);
+
+    if (error) {
+      setDialog({ open: true, type: 'error', title: 'Erro', msg: error.message });
+      return;
+    }
+    if (!data || data.length === 0) {
+      setDialog({ open: true, type: 'error', title: 'Nada para imprimir', msg: 'Não há divergências para exportar.' });
+      return;
+    }
+
+    setDivergenciasImpressao(data);
+    setTimeout(() => window.print(), 150);
+  };
+
   // ------------------------------------------------------------------------
   // EDIÇÃO DE ITENS (estado local)
   // ------------------------------------------------------------------------
@@ -696,7 +737,12 @@ export default function ChecklistCargaRetorno() {
     const idsSugeridos = new Set(
       gatilhosAcessorios
         .filter(g => g.equipamento_alvo_id === equipamento.id || (g.categoria_alvo_id && limpar(g.categoria_alvo_id) === categoriaAtual))
-        .map(g => g.acessorio_id)
+        .flatMap(g => {
+          if (g.acessorio_categoria_id) {
+            return equipamentosAtivos.filter(e => limpar(e.categoria_id) === limpar(g.acessorio_categoria_id)).map(e => e.id);
+          }
+          return g.acessorio_id ? [g.acessorio_id] : [];
+        })
     );
     return equipamentosAtivos.filter(e => idsSugeridos.has(e.id) && e.id !== equipamento.id);
   };
@@ -735,7 +781,9 @@ export default function ChecklistCargaRetorno() {
         setModalSugestaoAcessorios({
           open: true,
           itemPrincipal: { secao, equipamentoId: equipamentoEscolhido.id, descricao, qtd: modalAddItem.qtdPrevista },
-          acessorios: sugestoes.map(a => ({ id: a.id, nome: a.nome, categoriaId: a.categoria_id, selecionado: true, qtd: modalAddItem.qtdPrevista || '1' })),
+          // Começa tudo desmarcado — evita inserir acessórios em massa por engano,
+          // principalmente quando a sugestão vem de uma categoria inteira vinculada.
+          acessorios: sugestoes.map(a => ({ id: a.id, nome: a.nome, categoriaId: a.categoria_id, selecionado: false, qtd: modalAddItem.qtdPrevista || '1' })),
         });
         setModalAddItem(modalAddItemFechado);
         return;
@@ -1329,7 +1377,7 @@ export default function ChecklistCargaRetorno() {
                 <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Checklists de Carga</h2>
                 <div className="flex gap-2">
                   <button onClick={() => setView('divergencias')} className="bg-orange-50 hover:bg-orange-100 text-orange-700 px-4 py-2.5 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-orange-200">
-                    ⚠️ Divergências
+                    ⚠️ Divergências{totalDivergenciasAbertas > 0 ? ` (${totalDivergenciasAbertas})` : ''}
                   </button>
                   <button onClick={abrirModalModelo} className="bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] px-4 py-2.5 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-[#CBD5E1]">
                     🛠️ Modelo Padrão
@@ -1427,21 +1475,26 @@ export default function ChecklistCargaRetorno() {
           {/* VIEW: DIVERGÊNCIAS */}
           {/* ==================================================================== */}
           {view === 'divergencias' && (
-            <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
+            <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6 no-print">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
                 <div>
                   <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">⚠️ Divergências</h2>
                   <p className="text-xs text-[#64748B] mt-0.5">Itens salvos com quantidade diferente da esperada na Saída ou no Retorno.</p>
                 </div>
-                <select
-                  value={filtroTipoDivergencia}
-                  onChange={(e) => { setFiltroTipoDivergencia(e.target.value as '' | TipoDivergencia); setPaginaDivergencias(0); }}
-                  className="border border-[#E2E8F0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#336699]"
-                >
-                  <option value="">Todos os tipos</option>
-                  <option value="SAIDA">Saída</option>
-                  <option value="RETORNO">Retorno</option>
-                </select>
+                <div className="flex gap-2 items-center">
+                  <select
+                    value={filtroTipoDivergencia}
+                    onChange={(e) => { setFiltroTipoDivergencia(e.target.value as '' | TipoDivergencia); setPaginaDivergencias(0); }}
+                    className="border border-[#E2E8F0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#336699]"
+                  >
+                    <option value="">Todos os tipos</option>
+                    <option value="SAIDA">Saída</option>
+                    <option value="RETORNO">Retorno</option>
+                  </select>
+                  <button onClick={imprimirDivergencias} disabled={imprimindoDivergencias} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-5 py-2.5 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
+                    {imprimindoDivergencias ? '⏳ Gerando...' : '🖨️ Imprimir / PDF'}
+                  </button>
+                </div>
               </div>
 
               <div className="overflow-x-auto border border-[#E2E8F0] rounded-xl relative min-h-[120px]">
@@ -1511,6 +1564,46 @@ export default function ChecklistCargaRetorno() {
                   Próxima ➡
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* Relatório de divergências — só existe/aparece na impressão, gerado pelo
+              botão Imprimir/PDF acima (busca todas as páginas, sem paginação). Preso
+              à view Divergências pra não vazar pro print do checklist em outra aba. */}
+          {view === 'divergencias' && divergenciasImpressao.length > 0 && (
+            <div className="hidden print:block bg-white p-4">
+              <h1 className="text-xl font-black uppercase">Relatório de Divergências</h1>
+              <p className="text-xs">
+                Gerado em {formatarDataHoraBR(new Date().toISOString())}
+                {filtroTipoDivergencia ? ` • Filtro: ${LABEL_TIPO_DIVERGENCIA[filtroTipoDivergencia]}` : ''}
+                {` • ${divergenciasImpressao.length} registro(s)`}
+              </p>
+              <table className="w-full text-xs mt-4 border-collapse">
+                <thead>
+                  <tr className="text-left border-b-2 border-black">
+                    <th className="p-1">Data</th>
+                    <th className="p-1">Checklist</th>
+                    <th className="p-1">Tipo</th>
+                    <th className="p-1">Item</th>
+                    <th className="p-1 text-center">Esperado</th>
+                    <th className="p-1 text-center">Real</th>
+                    <th className="p-1">Usuário</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {divergenciasImpressao.map(d => (
+                    <tr key={d.id} className="border-b border-gray-300">
+                      <td className="p-1 whitespace-nowrap">{formatarDataHoraBR(d.created_at)}</td>
+                      <td className="p-1">{gerarNumeroExibicao(d.checklist_numero)} — {d.evento_feira || d.cliente || '—'}</td>
+                      <td className="p-1">{LABEL_TIPO_DIVERGENCIA[d.tipo]}</td>
+                      <td className="p-1">{d.descricao} ({d.secao})</td>
+                      <td className="p-1 text-center">{d.qtd_esperada ?? '—'}</td>
+                      <td className="p-1 text-center">{d.qtd_real ?? '—'}</td>
+                      <td className="p-1">{d.usuario_nome}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
 

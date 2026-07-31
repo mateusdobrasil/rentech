@@ -27,7 +27,8 @@ interface Equipamento {
 
 interface Gatilho {
   id: string;
-  acessorio_id: string;
+  acessorio_id: string | null;
+  acessorio_categoria_id: string | null;
   categoria_alvo_id: string | null;
   equipamento_alvo_id: string | null;
 }
@@ -253,7 +254,7 @@ export default function SimuladorVideoWall() {
           .eq('visivel_simulador', true);
         const { data: gatilhosData, error: gatilhosError } = await supabase
           .from('gatilhos_acessorios')
-          .select('id, acessorio_id, categoria_alvo_id, equipamento_alvo_id');
+          .select('id, acessorio_id, acessorio_categoria_id, categoria_alvo_id, equipamento_alvo_id');
 
         if (equipError) throw equipError;
         if (gatilhosError) throw gatilhosError;
@@ -381,7 +382,12 @@ export default function SimuladorVideoWall() {
         const catAtual = limpar(equipType);
         return catGatilho === catAtual || (catAtual === 'led' && (catGatilho.includes('led') || catGatilho.includes('painel'))) || g.equipamento_alvo_id === currentItemDraft.id;
       })
-      .map(g => g.acessorio_id);
+      .flatMap(g => {
+        if (g.acessorio_categoria_id) {
+          return equipamentos.filter(e => limpar(e.categoria_id) === limpar(g.acessorio_categoria_id)).map(e => e.id);
+        }
+        return g.acessorio_id ? [g.acessorio_id] : [];
+      });
 
     const accsParaMostrar = dbSetores.acc.filter(a => accIdsSugeridos.includes(a.id));
 

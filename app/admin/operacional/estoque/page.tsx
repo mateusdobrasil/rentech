@@ -44,7 +44,8 @@ interface Equipamento {
 
 interface Gatilho {
   id: string;
-  acessorio_id: string;
+  acessorio_id: string | null;
+  acessorio_categoria_id: string | null;
   equipamento_alvo_id: string | null;
   categoria_alvo_id: string | null;
   acessorio_nome?: string;
@@ -78,6 +79,14 @@ export default function PainelEstoque() {
   const [modalAcessoriosCategoria, setModalAcessoriosCategoria] = useState<{ open: boolean; gatilhos: Gatilho[] }>({ open: false, gatilhos: [] });
   const [categoriaAlvoSelecionada, setCategoriaAlvoSelecionada] = useState('');
   const [acessorioCategoriaId, setAcessorioCategoriaId] = useState('');
+  const [modoAcessorioCategoria, setModoAcessorioCategoria] = useState<'item' | 'categoria'>('item');
+  const [acessorioCategoriaAlvoId, setAcessorioCategoriaAlvoId] = useState('');
+
+  // Estados Modal Trocar Categoria
+  const [modalTrocarCategoria, setModalTrocarCategoria] = useState(false);
+  const [categoriaOrigemTroca, setCategoriaOrigemTroca] = useState('');
+  const [categoriaDestinoTroca, setCategoriaDestinoTroca] = useState('');
+  const [itensSelecionadosTroca, setItensSelecionadosTroca] = useState<string[]>([]);
 
   // Estados Modal Categorias
   const [modalCategorias, setModalCategorias] = useState(false);
@@ -169,6 +178,11 @@ export default function PainelEstoque() {
       (filtroCategoriaVinculo === 'TODOS' || eq.categoria_id === filtroCategoriaVinculo)
     );
   }, [equipamentos, filtroCategoriaVinculo, modalAcessorios.eq]);
+
+  const itensOrigemTroca = useMemo(() => {
+    if (!categoriaOrigemTroca) return [];
+    return equipamentos.filter(eq => eq.categoria_id === categoriaOrigemTroca);
+  }, [equipamentos, categoriaOrigemTroca]);
 
   // Função Auxiliar para pegar o nome da Categoria
   const getNomeCategoria = (catId: string) => {
@@ -299,6 +313,50 @@ export default function PainelEstoque() {
   };
 
   // ============================================================================
+  // AÇÃO - TROCAR CATEGORIA EM MASSA
+  // ============================================================================
+
+  const abrirModalTrocarCategoria = () => {
+    setCategoriaOrigemTroca('');
+    setCategoriaDestinoTroca('');
+    setItensSelecionadosTroca([]);
+    setModalTrocarCategoria(true);
+  };
+
+  const toggleItemSelecionadoTroca = (id: string) => {
+    setItensSelecionadosTroca(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  };
+
+  const toggleSelecionarTodosTroca = () => {
+    setItensSelecionadosTroca(prev =>
+      prev.length === itensOrigemTroca.length ? [] : itensOrigemTroca.map(eq => eq.id)
+    );
+  };
+
+  const confirmarTrocarCategoria = async () => {
+    if (!categoriaDestinoTroca || itensSelecionadosTroca.length === 0) return;
+
+    setDialog({ open: true, type: 'loading', title: 'Aguarde', msg: 'Transferindo itens de categoria...' });
+
+    const { error } = await supabase.from('equipamentos').update({ categoria_id: categoriaDestinoTroca }).in('id', itensSelecionadosTroca);
+
+    if (!error) {
+      setEquipamentos(prev => prev.map(eq => itensSelecionadosTroca.includes(eq.id) ? { ...eq, categoria_id: categoriaDestinoTroca } : eq));
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: 'TROCOU CATEGORIA EM MASSA',
+        setor: 'ESTOQUE',
+        equipamento_nome: `${itensSelecionadosTroca.length} item(ns): ${getNomeCategoria(categoriaOrigemTroca)} → ${getNomeCategoria(categoriaDestinoTroca)}`,
+      });
+      setModalTrocarCategoria(false);
+      setDialog({ open: true, type: 'success', title: 'Concluído', msg: `${itensSelecionadosTroca.length} item(ns) transferido(s) para ${getNomeCategoria(categoriaDestinoTroca)}.` });
+      setTimeout(() => setDialog(prev => ({ ...prev, open: false })), 2000);
+    } else {
+      setDialog({ open: true, type: 'error', title: 'Erro', msg: error.message });
+    }
+  };
+
+  // ============================================================================
   // AÇÕES DE VÍNCULO - ACESSÓRIOS (GATILHOS)
   // ============================================================================
 
@@ -379,12 +437,20 @@ export default function PainelEstoque() {
     if (!error && data) {
       const gatilhosComNome = data.map(g => {
         const accInfo = equipamentos.find(e => e.id === g.acessorio_id);
-        return { ...g, acessorio_nome: accInfo ? accInfo.nome : 'Acessório Desconhecido', categoria_nome: getNomeCategoria(g.categoria_alvo_id || '') };
+        return {
+          ...g,
+          acessorio_nome: g.acessorio_categoria_id
+            ? `Toda a categoria: ${getNomeCategoria(g.acessorio_categoria_id)}`
+            : (accInfo ? accInfo.nome : 'Acessório Desconhecido'),
+          categoria_nome: getNomeCategoria(g.categoria_alvo_id || ''),
+        };
       });
 
       setModalAcessoriosCategoria({ open: true, gatilhos: gatilhosComNome });
       setCategoriaAlvoSelecionada('');
       setAcessorioCategoriaId('');
+      setAcessorioCategoriaAlvoId('');
+      setModoAcessorioCategoria('item');
       setDialog({ ...dialog, open: false });
     } else {
       setDialog({ open: true, type: 'error', title: 'Erro', msg: 'Falha ao buscar vínculos por categoria.' });
@@ -392,34 +458,41 @@ export default function PainelEstoque() {
   };
 
   const vincularAcessorioPorCategoria = async () => {
-    if (!categoriaAlvoSelecionada || !acessorioCategoriaId) return;
+    if (!categoriaAlvoSelecionada) return;
+    if (modoAcessorioCategoria === 'item' && !acessorioCategoriaId) return;
+    if (modoAcessorioCategoria === 'categoria' && !acessorioCategoriaAlvoId) return;
 
-    if (modalAcessoriosCategoria.gatilhos.some(g => g.categoria_alvo_id === categoriaAlvoSelecionada && g.acessorio_id === acessorioCategoriaId)) {
-      alert("Esta categoria já está vinculada a este acessório.");
+    const duplicado = modoAcessorioCategoria === 'item'
+      ? modalAcessoriosCategoria.gatilhos.some(g => g.categoria_alvo_id === categoriaAlvoSelecionada && g.acessorio_id === acessorioCategoriaId)
+      : modalAcessoriosCategoria.gatilhos.some(g => g.categoria_alvo_id === categoriaAlvoSelecionada && g.acessorio_categoria_id === acessorioCategoriaAlvoId);
+
+    if (duplicado) {
+      alert("Este vínculo já existe.");
       return;
     }
 
-    const payload = {
-      categoria_alvo_id: categoriaAlvoSelecionada,
-      equipamento_alvo_id: null,
-      acessorio_id: acessorioCategoriaId
-    };
+    const payload = modoAcessorioCategoria === 'item'
+      ? { categoria_alvo_id: categoriaAlvoSelecionada, equipamento_alvo_id: null, acessorio_id: acessorioCategoriaId, acessorio_categoria_id: null }
+      : { categoria_alvo_id: categoriaAlvoSelecionada, equipamento_alvo_id: null, acessorio_id: null, acessorio_categoria_id: acessorioCategoriaAlvoId };
 
     const { data, error } = await supabase.from('gatilhos_acessorios').insert([payload]).select().single();
 
     if (!error && data) {
-      const accInfo = equipamentos.find(e => e.id === data.acessorio_id);
       const catNome = getNomeCategoria(categoriaAlvoSelecionada);
-      const novoGatilho = { ...data, acessorio_nome: accInfo?.nome, categoria_nome: catNome };
+      const nomeAcessorio = modoAcessorioCategoria === 'item'
+        ? (equipamentos.find(e => e.id === acessorioCategoriaId)?.nome ?? acessorioCategoriaId)
+        : `Toda a categoria: ${getNomeCategoria(acessorioCategoriaAlvoId)}`;
+      const novoGatilho = { ...data, acessorio_nome: nomeAcessorio, categoria_nome: catNome };
       registrarLogAuditoria({
         usuario_nome: usuarioAtual,
         acao: 'VINCULOU ACESSÓRIO POR CATEGORIA',
         setor: 'ESTOQUE',
-        equipamento_nome: `${catNome} ← ${accInfo?.nome ?? acessorioCategoriaId}`,
+        equipamento_nome: `${catNome} ← ${nomeAcessorio}`,
       });
       setModalAcessoriosCategoria(prev => ({ ...prev, gatilhos: [...prev.gatilhos, novoGatilho] }));
       setCategoriaAlvoSelecionada('');
       setAcessorioCategoriaId('');
+      setAcessorioCategoriaAlvoId('');
     } else if (error) {
       alert(`Erro: ${error.message}`);
     }
@@ -508,6 +581,9 @@ export default function PainelEstoque() {
             <button onClick={abrirModalAcessoriosCategoria} className="flex-1 md:flex-none bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] px-4 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-[#CBD5E1]">
               🔗 Acessórios/Categoria
             </button>
+            <button onClick={abrirModalTrocarCategoria} className="flex-1 md:flex-none bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] px-4 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-[#CBD5E1]">
+              🔄 Trocar Categoria
+            </button>
             <button onClick={abrirModalNovo} className="flex-1 md:flex-none bg-[#336699] hover:bg-[#284B8C] text-white px-6 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-md hover:shadow-lg">
               ➕ Adicionar Item
             </button>
@@ -522,28 +598,38 @@ export default function PainelEstoque() {
             <thead className="bg-[#F8FAFC] sticky top-0 shadow-sm z-10">
               <tr className="text-[#64748B] text-[10px] uppercase tracking-wider font-bold">
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-20 text-center">Status</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] w-24 text-center">Simulador</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-40">Categoria</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0]">Equipamento / Modelo</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-32 text-center">Dimensões</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-24 text-center">Peso</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-24 text-center">Consumo</th>
-                <th className="p-4 border-b-2 border-[#E2E8F0] w-72 text-center">Ações</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] w-48 text-center">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E2E8F0] text-xs">
               {loading ? (
-                <tr><td colSpan={7} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Carregando catálogo...</td></tr>
+                <tr><td colSpan={8} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Carregando catálogo...</td></tr>
               ) : equipamentosFiltrados.length === 0 ? (
-                <tr><td colSpan={7} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Nenhum equipamento encontrado.</td></tr>
+                <tr><td colSpan={8} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Nenhum equipamento encontrado.</td></tr>
               ) : (
                 equipamentosFiltrados.map((eq) => (
                   <tr key={eq.id} className={`transition-colors ${!eq.ativo ? 'bg-gray-50 opacity-60' : 'hover:bg-[#F8FAFC]'}`}>
                     <td className="p-4 text-center">
-                      <button 
+                      <button
                         onClick={() => toggleAtivo(eq)}
                         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${eq.ativo ? 'bg-[#16A34A]' : 'bg-[#CBD5E1]'}`}
                       >
                         <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${eq.ativo ? 'translate-x-6' : 'translate-x-1'}`} />
+                      </button>
+                    </td>
+                    <td className="p-4 text-center">
+                      <button
+                        onClick={() => toggleVisivelSimulador(eq)}
+                        title={eq.visivel_simulador ? 'Visível no Simulador (clique para ocultar)' : 'Oculto no Simulador (clique para exibir)'}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${eq.visivel_simulador ? 'bg-[#16A34A]' : 'bg-[#CBD5E1]'}`}
+                      >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${eq.visivel_simulador ? 'translate-x-6' : 'translate-x-1'}`} />
                       </button>
                     </td>
                     <td className="p-4">
@@ -566,13 +652,6 @@ export default function PainelEstoque() {
                       </button>
                       <button onClick={() => abrirModalAcessorios(eq)} className="bg-blue-50 text-[#336699] hover:bg-blue-100 border border-blue-200 font-bold text-[10px] uppercase px-3 py-2 rounded transition-colors">
                         🔗 Acessórios
-                      </button>
-                      <button
-                        onClick={() => toggleVisivelSimulador(eq)}
-                        title={eq.visivel_simulador ? 'Visível no Simulador (clique para ocultar)' : 'Oculto no Simulador (clique para exibir)'}
-                        className={`font-bold text-[10px] uppercase px-3 py-2 rounded transition-colors border ${eq.visivel_simulador ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100' : 'bg-gray-100 text-gray-500 border-gray-200 hover:bg-gray-200'}`}
-                      >
-                        {eq.visivel_simulador ? '👁️ Simulador' : '🙈 Oculto'}
                       </button>
                     </td>
                   </tr>
@@ -650,6 +729,19 @@ export default function PainelEstoque() {
               <div>
                 <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Detalhes Técnicos Descritivos</label>
                 <textarea rows={3} className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm resize-none" value={modalEdit.eq.detalhes || ''} onChange={e => setModalEdit({ ...modalEdit, eq: { ...modalEdit.eq, detalhes: e.target.value }})} />
+              </div>
+
+              <div className="flex justify-between items-center bg-[#F8FAFC] p-4 rounded-xl border border-[#E2E8F0]">
+                <div>
+                  <label className="block text-xs font-bold text-[#0C1D4D] uppercase">Exibir no Simulador</label>
+                  <p className="text-[10px] text-[#64748B] mt-0.5">Se desligado, este item não aparecerá para seleção no Simulador de Videowall.</p>
+                </div>
+                <button
+                  onClick={() => setModalEdit({ ...modalEdit, eq: { ...modalEdit.eq, visivel_simulador: !(modalEdit.eq?.visivel_simulador ?? true) }})}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${(modalEdit.eq?.visivel_simulador ?? true) ? 'bg-[#16A34A]' : 'bg-[#CBD5E1]'}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${(modalEdit.eq?.visivel_simulador ?? true) ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
               </div>
             </div>
 
@@ -842,25 +934,55 @@ export default function PainelEstoque() {
                 </select>
 
                 <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-2">Acessório a Vincular</label>
-                <div className="flex gap-2">
-                  <select
-                    className="flex-grow p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm text-[#0C1D4D] font-semibold"
-                    value={acessorioCategoriaId}
-                    onChange={(e) => setAcessorioCategoriaId(e.target.value)}
+                <div className="flex gap-1 mb-2 bg-[#F0F4F8] p-1 rounded-lg w-fit">
+                  <button
+                    onClick={() => setModoAcessorioCategoria('item')}
+                    className={`px-3 py-1.5 rounded-md text-[10px] font-black uppercase tracking-wider transition-colors ${modoAcessorioCategoria === 'item' ? 'bg-white text-[#336699] shadow-sm' : 'text-[#64748B]'}`}
                   >
-                    <option value="">-- Selecione um acessório --</option>
-                    {equipamentos.filter(e => e.ativo).map(acc => (
-                      <option key={acc.id} value={acc.id}>{acc.nome}</option>
-                    ))}
-                  </select>
+                    Item Específico
+                  </button>
+                  <button
+                    onClick={() => setModoAcessorioCategoria('categoria')}
+                    className={`px-3 py-1.5 rounded-md text-[10px] font-black uppercase tracking-wider transition-colors ${modoAcessorioCategoria === 'categoria' ? 'bg-white text-[#336699] shadow-sm' : 'text-[#64748B]'}`}
+                  >
+                    Categoria Inteira
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  {modoAcessorioCategoria === 'item' ? (
+                    <select
+                      className="flex-grow p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm text-[#0C1D4D] font-semibold"
+                      value={acessorioCategoriaId}
+                      onChange={(e) => setAcessorioCategoriaId(e.target.value)}
+                    >
+                      <option value="">-- Selecione um acessório --</option>
+                      {equipamentos.filter(e => e.ativo).map(acc => (
+                        <option key={acc.id} value={acc.id}>{acc.nome}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <select
+                      className="flex-grow p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm text-[#0C1D4D] font-semibold"
+                      value={acessorioCategoriaAlvoId}
+                      onChange={(e) => setAcessorioCategoriaAlvoId(e.target.value)}
+                    >
+                      <option value="">-- Selecione a categoria de acessórios --</option>
+                      {categorias.filter(cat => cat.id !== categoriaAlvoSelecionada).map(cat => (
+                        <option key={cat.id} value={cat.id}>{cat.nome}</option>
+                      ))}
+                    </select>
+                  )}
                   <button
                     onClick={vincularAcessorioPorCategoria}
-                    disabled={!categoriaAlvoSelecionada || !acessorioCategoriaId}
+                    disabled={!categoriaAlvoSelecionada || (modoAcessorioCategoria === 'item' ? !acessorioCategoriaId : !acessorioCategoriaAlvoId)}
                     className="bg-[#336699] hover:bg-[#284B8C] text-white px-5 rounded-lg font-black text-[10px] uppercase tracking-widest transition-colors disabled:opacity-50"
                   >
                     Vincular
                   </button>
                 </div>
+                {modoAcessorioCategoria === 'categoria' && (
+                  <p className="text-[10px] text-[#94A3B8] mt-2">Todos os itens da categoria de acessórios escolhida — atuais e futuros — serão sugeridos automaticamente.</p>
+                )}
               </div>
 
               <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#CBD5E1] pb-2 mb-3">Vínculos por Categoria Ativos</h4>
@@ -883,6 +1005,85 @@ export default function PainelEstoque() {
                   ))
                 )}
               </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================================ */}
+      {/* MODAL: TROCAR CATEGORIA EM MASSA */}
+      {/* ============================================================================ */}
+      {modalTrocarCategoria && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white flex-shrink-0">
+              <div>
+                <h3 className="font-black uppercase tracking-wider text-sm">🔄 Trocar Categoria</h3>
+                <p className="text-[10px] text-blue-200 mt-0.5">Selecione itens de uma categoria e transfira para outra</p>
+              </div>
+              <button onClick={() => setModalTrocarCategoria(false)} className="text-white hover:text-red-300 text-2xl leading-none">&times;</button>
+            </div>
+
+            <div className="p-6 overflow-y-auto bg-[#F8FAFC] flex-grow">
+
+              <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-2">1. Categoria de Origem</label>
+              <select
+                className="w-full mb-4 p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm text-[#0C1D4D] font-semibold cursor-pointer"
+                value={categoriaOrigemTroca}
+                onChange={(e) => { setCategoriaOrigemTroca(e.target.value); setItensSelecionadosTroca([]); }}
+              >
+                <option value="">-- Selecione uma categoria --</option>
+                {categorias.map(cat => <option key={cat.id} value={cat.id}>{cat.nome}</option>)}
+              </select>
+
+              {categoriaOrigemTroca && (
+                <>
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase">2. Itens ({itensSelecionadosTroca.length}/{itensOrigemTroca.length} selecionados)</label>
+                    {itensOrigemTroca.length > 0 && (
+                      <button onClick={toggleSelecionarTodosTroca} className="text-[10px] font-black text-[#336699] uppercase hover:underline">
+                        {itensSelecionadosTroca.length === itensOrigemTroca.length ? 'Desmarcar Todos' : 'Selecionar Todos'}
+                      </button>
+                    )}
+                  </div>
+                  <div className="bg-white border border-[#E2E8F0] rounded-lg shadow-sm mb-4 max-h-56 overflow-y-auto divide-y divide-[#E2E8F0]">
+                    {itensOrigemTroca.length === 0 ? (
+                      <p className="text-xs text-center text-[#94A3B8] py-4">Nenhum item nesta categoria.</p>
+                    ) : (
+                      itensOrigemTroca.map(eq => (
+                        <label key={eq.id} className="flex items-center gap-3 p-3 cursor-pointer hover:bg-[#F8FAFC]">
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 accent-[#336699] cursor-pointer"
+                            checked={itensSelecionadosTroca.includes(eq.id)}
+                            onChange={() => toggleItemSelecionadoTroca(eq.id)}
+                          />
+                          <span className="text-sm font-bold text-[#0C1D4D]">{eq.nome}</span>
+                        </label>
+                      ))
+                    )}
+                  </div>
+
+                  <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-2">3. Transferir Para</label>
+                  <select
+                    className="w-full mb-4 p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm text-[#0C1D4D] font-semibold cursor-pointer"
+                    value={categoriaDestinoTroca}
+                    onChange={(e) => setCategoriaDestinoTroca(e.target.value)}
+                  >
+                    <option value="">-- Selecione a categoria de destino --</option>
+                    {categorias.filter(cat => cat.id !== categoriaOrigemTroca).map(cat => <option key={cat.id} value={cat.id}>{cat.nome}</option>)}
+                  </select>
+
+                  <button
+                    onClick={confirmarTrocarCategoria}
+                    disabled={!categoriaDestinoTroca || itensSelecionadosTroca.length === 0}
+                    className="w-full bg-[#16A34A] hover:bg-[#15803D] text-white font-black text-sm uppercase tracking-widest py-4 rounded-xl shadow-lg transition-colors disabled:opacity-50"
+                  >
+                    💾 Transferir {itensSelecionadosTroca.length > 0 ? `${itensSelecionadosTroca.length} item(ns)` : ''}
+                  </button>
+                </>
+              )}
 
             </div>
           </div>

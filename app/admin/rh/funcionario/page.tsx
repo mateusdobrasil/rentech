@@ -56,6 +56,7 @@ interface FuncionarioFin {
   data_admissao: string | null; data_desligamento: string | null;
   data_nascimento: string | null; cpf: string | null; celular: string | null; email: string | null;
   ponto_whatsapp_ativo: boolean;
+  pode_dirigir: boolean;
   banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null;
   pix_tipo: string | null; pix_chave: string | null;
   recebe_fechamento: boolean | null; recebe_holerite: boolean | null;
@@ -114,6 +115,7 @@ export default function FuncionarioPage() {
     data_admissao: null, data_desligamento: null,
     data_nascimento: null, cpf: null, celular: null, email: null,
     ponto_whatsapp_ativo: false,
+    pode_dirigir: false,
     banco_codigo: null, banco_agencia: null, banco_conta: null, banco_tipo: null,
     pix_tipo: null, pix_chave: null,
     recebe_fechamento: null, recebe_holerite: null,
@@ -528,6 +530,10 @@ export default function FuncionarioPage() {
                       <div className="col-span-2 flex items-center gap-2 bg-white p-2.5 rounded-lg border border-indigo-100">
                         <input type="checkbox" id="ponto_whatsapp_ativo" checked={form.ponto_whatsapp_ativo} onChange={e => setForm({...form, ponto_whatsapp_ativo: e.target.checked})} className="w-4 h-4" />
                         <label htmlFor="ponto_whatsapp_ativo" className="text-[11px] font-bold text-gray-600 uppercase">📲 Bate ponto pelo WhatsApp (usa o Celular acima)</label>
+                      </div>
+                      <div className="col-span-2 flex items-center gap-2 bg-white p-2.5 rounded-lg border border-indigo-100">
+                        <input type="checkbox" id="pode_dirigir" checked={form.pode_dirigir} onChange={e => setForm({...form, pode_dirigir: e.target.checked})} className="w-4 h-4" />
+                        <label htmlFor="pode_dirigir" className="text-[11px] font-bold text-gray-600 uppercase">🚗 Pode dirigir veículos da frota (libera o Checklist de Veículos no Portal)</label>
                       </div>
 
                       <div className="col-span-2 text-[10px] font-black text-indigo-600 uppercase tracking-wider mt-2">Dados Bancários (para pagamento)</div>

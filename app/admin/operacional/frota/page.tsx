@@ -42,6 +42,57 @@ const ICONE_DOCUMENTO: Record<string, string> = {
   'APÓLICE DE SEGURO': '🛡️', 'CRLV': '🪪', 'CONTRATO DE LOCAÇÃO': '📃', 'NOTA FISCAL': '🧾', 'OUTRO': '📎'
 };
 
+// ============================================================================
+// CHECKLIST DE VEÍCULOS (saída/retorno) — consulta apenas; quem preenche é o
+// motorista pelo Portal do Colaborador.
+// ============================================================================
+type StatusChecklistVeiculo = 'EM_ANDAMENTO' | 'FINALIZADO';
+const LABEL_STATUS_CHECKLIST: Record<StatusChecklistVeiculo, string> = {
+  EM_ANDAMENTO: 'Em Andamento', FINALIZADO: 'Finalizado'
+};
+const COR_STATUS_CHECKLIST: Record<StatusChecklistVeiculo, string> = {
+  EM_ANDAMENTO: 'bg-blue-100 text-blue-700 border-blue-300',
+  FINALIZADO: 'bg-green-100 text-green-700 border-green-300',
+};
+const gerarNumeroChecklist = (n: number) => `CKL-VEI-${String(n).padStart(6, '0')}`;
+const TAMANHO_PAGINA_CHECKLIST = 20;
+
+interface ChecklistVeiculoRow {
+  id: string;
+  numero: number;
+  veiculo_id: string;
+  motorista_nome: string;
+  status: StatusChecklistVeiculo;
+  destino: string | null;
+  km_inicial: number | null;
+  km_final: number | null;
+  combustivel_saida: string | null;
+  combustivel_retorno: string | null;
+  observacoes_saida: string | null;
+  observacoes_retorno: string | null;
+  saida_em: string;
+  retorno_em: string | null;
+}
+
+interface ChecklistVeiculoItem {
+  id: string;
+  etapa: 'SAIDA' | 'RETORNO';
+  ordem: number;
+  descricao: string;
+  marcado: boolean;
+}
+
+interface ChecklistVeiculoAvaria {
+  id: string;
+  etapa: 'SAIDA' | 'RETORNO';
+  descricao: string;
+  foto_url: string | null;
+  created_at: string;
+}
+
+const formatarDataHoraBR = (iso?: string | null): string =>
+  iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+
 // Interfaces do Banco de Dados
 interface Veiculo {
   id: string;
@@ -152,7 +203,7 @@ export default function VisualizacaoFrota() {
   const [podeGerenciar, setPodeGerenciar] = useState(false);
 
   // Aba ativa
-  const [abaAtiva, setAbaAtiva] = useState<'veiculos' | 'manutencao'>('veiculos');
+  const [abaAtiva, setAbaAtiva] = useState<'veiculos' | 'manutencao' | 'checklists'>('veiculos');
 
   // Estados de Dados
   const [veiculos, setVeiculos] = useState<Veiculo[]>([]);
@@ -171,6 +222,19 @@ export default function VisualizacaoFrota() {
 
   // Filtro de veículo na aba Manutenção — vazio mostra o histórico de todos
   const [filtroManutencaoVeiculoId, setFiltroManutencaoVeiculoId] = useState('');
+
+  // Estados da aba Checklist Veículos
+  const [checklistsVeiculo, setChecklistsVeiculo] = useState<ChecklistVeiculoRow[]>([]);
+  const [checklistLoading, setChecklistLoading] = useState(false);
+  const [checklistBusca, setChecklistBusca] = useState('');
+  const [checklistFiltroStatus, setChecklistFiltroStatus] = useState('');
+  const [checklistPagina, setChecklistPagina] = useState(0);
+  const [checklistTotal, setChecklistTotal] = useState(0);
+  const [checklistEmAndamentoCount, setChecklistEmAndamentoCount] = useState(0);
+  const [previewChecklist, setPreviewChecklist] = useState<ChecklistVeiculoRow | null>(null);
+  const [previewChecklistItens, setPreviewChecklistItens] = useState<ChecklistVeiculoItem[]>([]);
+  const [previewChecklistAvarias, setPreviewChecklistAvarias] = useState<ChecklistVeiculoAvaria[]>([]);
+  const [previewChecklistLoading, setPreviewChecklistLoading] = useState(false);
 
   // Estados de UI (Modal e Dialog)
   const [dialog, setDialog] = useState<{ open: boolean; type: 'loading' | 'success' | 'error'; title: string; msg: string }>({ open: false, type: 'loading', title: '', msg: '' });
@@ -254,6 +318,57 @@ export default function VisualizacaoFrota() {
       }
     }
     setLoading(false);
+  };
+
+  // 3. Carregar Checklists de Veículos (paginado, só quando a aba está ativa)
+  useEffect(() => {
+    if (authLoading || acessoNegado || abaAtiva !== 'checklists') return;
+
+    const handle = setTimeout(async () => {
+      setChecklistLoading(true);
+
+      let query = supabase
+        .from('frota_checklists')
+        .select('id, numero, veiculo_id, motorista_nome, status, destino, km_inicial, km_final, combustivel_saida, combustivel_retorno, observacoes_saida, observacoes_retorno, saida_em, retorno_em', { count: 'exact' })
+        .order('saida_em', { ascending: false })
+        .range(checklistPagina * TAMANHO_PAGINA_CHECKLIST, checklistPagina * TAMANHO_PAGINA_CHECKLIST + TAMANHO_PAGINA_CHECKLIST - 1);
+
+      if (checklistFiltroStatus) query = query.eq('status', checklistFiltroStatus);
+      if (checklistBusca.trim()) {
+        const termo = `%${checklistBusca.trim()}%`;
+        query = query.or(`motorista_nome.ilike.${termo},destino.ilike.${termo}`);
+      }
+
+      const { data, error, count } = await query;
+      if (!error) {
+        setChecklistsVeiculo(data || []);
+        setChecklistTotal(count || 0);
+      }
+      setChecklistLoading(false);
+    }, 300);
+
+    return () => clearTimeout(handle);
+  }, [authLoading, acessoNegado, abaAtiva, checklistPagina, checklistFiltroStatus, checklistBusca]);
+
+  // 3b. Contagem de checklists em andamento, para o badge da aba
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    (async () => {
+      const { count } = await supabase.from('frota_checklists').select('id', { count: 'exact', head: true }).eq('status', 'EM_ANDAMENTO');
+      setChecklistEmAndamentoCount(count || 0);
+    })();
+  }, [authLoading, acessoNegado, checklistsVeiculo]);
+
+  const abrirPreviewChecklist = async (c: ChecklistVeiculoRow) => {
+    setPreviewChecklist(c);
+    setPreviewChecklistLoading(true);
+    const [{ data: itensData }, { data: avariasData }] = await Promise.all([
+      supabase.from('frota_checklist_itens').select('*').eq('checklist_id', c.id).order('etapa', { ascending: true }).order('ordem', { ascending: true }),
+      supabase.from('frota_checklist_avarias').select('*').eq('checklist_id', c.id).order('created_at', { ascending: true }),
+    ]);
+    setPreviewChecklistItens(itensData || []);
+    setPreviewChecklistAvarias(avariasData || []);
+    setPreviewChecklistLoading(false);
   };
 
   // ============================================================================
@@ -459,6 +574,12 @@ export default function VisualizacaoFrota() {
         >
           🔧 Manutenção
         </button>
+        <button
+          onClick={() => setAbaAtiva('checklists')}
+          className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${abaAtiva === 'checklists' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
+        >
+          ✅ Checklist Veículos {checklistEmAndamentoCount > 0 && <span className="ml-1 bg-blue-500 text-white rounded-full px-1.5 py-0.5 text-[9px]">{checklistEmAndamentoCount}</span>}
+        </button>
       </div>
 
       {/* ============================================================================ */}
@@ -644,6 +765,179 @@ export default function VisualizacaoFrota() {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ============================================================================ */}
+      {/* ABA: CHECKLIST VEÍCULOS (consulta) */}
+      {/* ============================================================================ */}
+      {abaAtiva === 'checklists' && (
+        <div className="px-4 md:px-8 py-6 flex-grow flex flex-col">
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col md:flex-row gap-3 justify-between items-center mb-6">
+            <input
+              type="text"
+              value={checklistBusca}
+              onChange={(e) => { setChecklistBusca(e.target.value); setChecklistPagina(0); }}
+              placeholder="🔍 Buscar por motorista ou destino..."
+              className="w-full md:flex-1 p-2.5 border-2 border-[#E2E8F0] rounded-lg text-sm font-semibold text-[#0C1D4D] focus:border-[#336699] outline-none bg-white"
+            />
+            <select
+              value={checklistFiltroStatus}
+              onChange={(e) => { setChecklistFiltroStatus(e.target.value); setChecklistPagina(0); }}
+              className="w-full md:w-56 p-2.5 border-2 border-[#E2E8F0] rounded-lg text-[11px] font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer bg-white"
+            >
+              <option value="">TODOS OS STATUS</option>
+              <option value="EM_ANDAMENTO">Em Andamento</option>
+              <option value="FINALIZADO">Finalizado</option>
+            </select>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto relative min-h-[160px]">
+            {checklistLoading && (
+              <div className="absolute inset-0 bg-white/70 flex items-center justify-center z-10">
+                <div className="w-8 h-8 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin"></div>
+              </div>
+            )}
+            <table className="w-full text-left border-collapse min-w-[900px]">
+              <thead className="bg-[#F8FAFC] sticky top-0 shadow-sm z-[5]">
+                <tr className="text-[#64748B] text-[10px] uppercase tracking-wider font-bold">
+                  <th className="p-4 border-b-2 border-[#E2E8F0] w-32">Número</th>
+                  <th className="p-4 border-b-2 border-[#E2E8F0] w-44">Veículo</th>
+                  <th className="p-4 border-b-2 border-[#E2E8F0] w-40">Motorista</th>
+                  <th className="p-4 border-b-2 border-[#E2E8F0] w-36">Saída</th>
+                  <th className="p-4 border-b-2 border-[#E2E8F0] w-36">Retorno</th>
+                  <th className="p-4 border-b-2 border-[#E2E8F0] text-center w-32">KM</th>
+                  <th className="p-4 border-b-2 border-[#E2E8F0] w-32">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#E2E8F0] text-xs">
+                {checklistsVeiculo.length === 0 && !checklistLoading ? (
+                  <tr><td colSpan={7} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Nenhum checklist registrado.</td></tr>
+                ) : (
+                  checklistsVeiculo.map(c => (
+                    <tr key={c.id} onClick={() => abrirPreviewChecklist(c)} className="cursor-pointer transition-colors hover:bg-[#F8FAFC]" title="Clique para ver os detalhes">
+                      <td className="p-4 font-black text-[#0C1D4D]">{gerarNumeroChecklist(c.numero)}</td>
+                      <td className="p-4 font-bold text-[#0C1D4D] text-[11px] uppercase truncate max-w-[170px]" title={getVeiculoNome(c.veiculo_id)}>{getVeiculoNome(c.veiculo_id)}</td>
+                      <td className="p-4 text-[#475569] font-semibold">{c.motorista_nome}</td>
+                      <td className="p-4 text-[#475569]">{formatarDataHoraBR(c.saida_em)}</td>
+                      <td className="p-4 text-[#475569]">{formatarDataHoraBR(c.retorno_em)}</td>
+                      <td className="p-4 text-center text-[#64748B] font-medium">{c.km_inicial ?? '-'}{c.km_final ? ` → ${c.km_final}` : ''}</td>
+                      <td className="p-4">
+                        <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-full border ${COR_STATUS_CHECKLIST[c.status]}`}>{LABEL_STATUS_CHECKLIST[c.status]}</span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex justify-between items-center mt-4">
+            <button onClick={() => setChecklistPagina(p => Math.max(0, p - 1))} disabled={checklistPagina === 0 || checklistLoading} className="text-xs font-black uppercase tracking-wider bg-[#F0F4F8] text-[#0C1D4D] px-4 py-2 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#E2E8F0] transition-colors">
+              ⬅ Anterior
+            </button>
+            <span className="text-xs font-bold text-[#64748B]">
+              Página {checklistTotal === 0 ? 0 : checklistPagina + 1} de {Math.max(1, Math.ceil(checklistTotal / TAMANHO_PAGINA_CHECKLIST))}
+            </span>
+            <button onClick={() => setChecklistPagina(p => p + 1)} disabled={(checklistPagina + 1) * TAMANHO_PAGINA_CHECKLIST >= checklistTotal || checklistLoading} className="text-xs font-black uppercase tracking-wider bg-[#F0F4F8] text-[#0C1D4D] px-4 py-2 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#E2E8F0] transition-colors">
+              Próxima ➡
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================================ */}
+      {/* MODAL: DETALHE DO CHECKLIST DE VEÍCULO */}
+      {/* ============================================================================ */}
+      {previewChecklist && (
+        <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white flex-shrink-0">
+              <div>
+                <h3 className="font-black uppercase tracking-wider text-sm">✅ {gerarNumeroChecklist(previewChecklist.numero)}</h3>
+                <p className="text-[10px] text-blue-200 mt-0.5">{getVeiculoNome(previewChecklist.veiculo_id)} · {previewChecklist.motorista_nome}</p>
+              </div>
+              <button onClick={() => setPreviewChecklist(null)} className="text-white hover:text-red-300 text-2xl leading-none">&times;</button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-6">
+              <div className="flex items-center gap-2">
+                <span className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-full border ${COR_STATUS_CHECKLIST[previewChecklist.status]}`}>{LABEL_STATUS_CHECKLIST[previewChecklist.status]}</span>
+              </div>
+
+              {previewChecklistLoading ? (
+                <div className="text-center py-8 text-[#94A3B8] font-bold text-sm">Carregando detalhes...</div>
+              ) : (
+                <>
+                  <div>
+                    <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#E2E8F0] pb-2 mb-3">🚚 Saída</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+                      <Campo label="Data/Hora" valor={formatarDataHoraBR(previewChecklist.saida_em)} />
+                      <Campo label="KM Inicial" valor={previewChecklist.km_inicial} />
+                      <Campo label="Combustível" valor={previewChecklist.combustivel_saida} />
+                      <Campo label="Destino" valor={previewChecklist.destino} />
+                    </div>
+                    <ul className="space-y-1">
+                      {previewChecklistItens.filter(i => i.etapa === 'SAIDA').map(i => (
+                        <li key={i.id} className="flex items-center gap-2 text-sm text-[#0C1D4D] font-medium">
+                          <span>{i.marcado ? '✅' : '⬜'}</span> {i.descricao}
+                        </li>
+                      ))}
+                    </ul>
+                    {previewChecklist.observacoes_saida && <p className="text-sm text-[#475569] font-medium whitespace-pre-wrap mt-2">{previewChecklist.observacoes_saida}</p>}
+                  </div>
+
+                  <div>
+                    <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#E2E8F0] pb-2 mb-3">🔁 Retorno</h4>
+                    {previewChecklist.status === 'EM_ANDAMENTO' ? (
+                      <p className="text-xs text-[#94A3B8] font-bold">Ainda não finalizado.</p>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+                          <Campo label="Data/Hora" valor={formatarDataHoraBR(previewChecklist.retorno_em)} />
+                          <Campo label="KM Final" valor={previewChecklist.km_final} />
+                          <Campo label="Combustível" valor={previewChecklist.combustivel_retorno} />
+                        </div>
+                        <ul className="space-y-1">
+                          {previewChecklistItens.filter(i => i.etapa === 'RETORNO').map(i => (
+                            <li key={i.id} className="flex items-center gap-2 text-sm text-[#0C1D4D] font-medium">
+                              <span>{i.marcado ? '✅' : '⬜'}</span> {i.descricao}
+                            </li>
+                          ))}
+                        </ul>
+                        {previewChecklist.observacoes_retorno && <p className="text-sm text-[#475569] font-medium whitespace-pre-wrap mt-2">{previewChecklist.observacoes_retorno}</p>}
+                      </>
+                    )}
+                  </div>
+
+                  {previewChecklistAvarias.length > 0 && (
+                    <div>
+                      <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#E2E8F0] pb-2 mb-3">⚠️ Avarias Reportadas</h4>
+                      <div className="space-y-3">
+                        {previewChecklistAvarias.map(a => (
+                          <div key={a.id} className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-3">
+                            <p className="text-[9px] font-black uppercase text-[#94A3B8] mb-1">{a.etapa === 'SAIDA' ? 'Saída' : 'Retorno'} · {formatarDataHoraBR(a.created_at)}</p>
+                            <p className="text-sm text-[#0C1D4D] font-medium">{a.descricao}</p>
+                            {a.foto_url && (
+                              <a href={a.foto_url} target="_blank" rel="noopener noreferrer" className="inline-block mt-2">
+                                <img src={a.foto_url} alt="Foto da avaria" className="max-h-40 rounded-lg border border-[#E2E8F0]" />
+                              </a>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="p-5 border-t border-[#E2E8F0] bg-white flex-shrink-0">
+              <button onClick={() => setPreviewChecklist(null)} className="w-full py-3 bg-[#E2E8F0] text-[#0C1D4D] font-bold text-xs uppercase tracking-wider rounded-lg hover:bg-[#CBD5E1] transition-colors">
+                Fechar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

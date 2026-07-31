@@ -6,7 +6,9 @@ import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../lib/supabase';
 import { listarMeusDocumentosAction, urlMeuDocumentoAction, listarMeusHoleritesAction, urlMeuHoleriteAction } from './actions/actions-documentos';
 import { buscarMeuCrachaAction } from './actions/actions-cracha';
+import { podeDirigirAction } from './actions/actions-checklist-veiculo';
 import MeuCracha, { type DadosCracha } from './MeuCracha';
+import ChecklistVeiculo from './ChecklistVeiculo';
 
 interface DocumentoPortal {
   id: number; categoria: string; titulo: string | null; nome_arquivo: string;
@@ -29,10 +31,11 @@ export default function PortalDashboardPage() {
   const [carregandoSessao, setCarregandoSessao] = useState(true);
   const [accessToken, setAccessToken] = useState('');
 
-  const [aba, setAba] = useState<'documentos' | 'holerites'>('documentos');
+  const [aba, setAba] = useState<'documentos' | 'holerites' | 'checklist'>('documentos');
   const [documentos, setDocumentos] = useState<DocumentoPortal[]>([]);
   const [holerites, setHolerites] = useState<HoleritePortal[]>([]);
   const [cracha, setCracha] = useState<DadosCracha | null>(null);
+  const [podeDirigir, setPodeDirigir] = useState(false);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState('');
 
@@ -49,15 +52,17 @@ export default function PortalDashboardPage() {
 
   const carregar = async (token: string) => {
     setLoading(true);
-    const [docsRes, holeritesRes, crachaRes] = await Promise.all([
+    const [docsRes, holeritesRes, crachaRes, dirigirRes] = await Promise.all([
       listarMeusDocumentosAction(token),
       listarMeusHoleritesAction(token),
       buscarMeuCrachaAction(token),
+      podeDirigirAction(token),
     ]);
     if (docsRes.ok) setDocumentos(docsRes.info.documentos);
     else setErro(docsRes.erro || 'Erro ao carregar documentos.');
     if (holeritesRes.ok) setHolerites(holeritesRes.info.holerites);
     if (crachaRes.ok) setCracha(crachaRes.info);
+    if (dirigirRes.ok) setPodeDirigir(dirigirRes.info.podeDirigir);
     setLoading(false);
   };
 
@@ -118,6 +123,14 @@ export default function PortalDashboardPage() {
             >
               💰 Holerites
             </button>
+            {podeDirigir && (
+              <button
+                onClick={() => setAba('checklist')}
+                className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${aba === 'checklist' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
+              >
+                ✅ Checklist Veículos
+              </button>
+            )}
           </div>
 
           {erro && <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-bold px-4 py-3 rounded-lg">{erro}</div>}
@@ -159,6 +172,10 @@ export default function PortalDashboardPage() {
                 </button>
               ))}
             </div>
+          )}
+
+          {aba === 'checklist' && podeDirigir && accessToken && (
+            <ChecklistVeiculo accessToken={accessToken} />
           )}
         </div>
       </div>

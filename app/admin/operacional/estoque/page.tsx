@@ -39,13 +39,16 @@ interface Equipamento {
   dmx?: string;
   detalhes?: string;
   ativo: boolean;
+  visivel_simulador: boolean;
 }
 
 interface Gatilho {
   id: string;
   acessorio_id: string;
-  equipamento_alvo_id: string;
-  acessorio_nome?: string; 
+  equipamento_alvo_id: string | null;
+  categoria_alvo_id: string | null;
+  acessorio_nome?: string;
+  categoria_nome?: string;
 }
 
 export default function PainelEstoque() {
@@ -71,6 +74,10 @@ export default function PainelEstoque() {
   const [modalEdit, setModalEdit] = useState<{ open: boolean; isNew: boolean; eq: Partial<Equipamento> | null }>({ open: false, isNew: false, eq: null });
   const [modalAcessorios, setModalAcessorios] = useState<{ open: boolean; eq: Equipamento | null; gatilhos: Gatilho[] }>({ open: false, eq: null, gatilhos: [] });
   const [novoAcessorioId, setNovoAcessorioId] = useState('');
+  const [filtroCategoriaVinculo, setFiltroCategoriaVinculo] = useState('TODOS');
+  const [modalAcessoriosCategoria, setModalAcessoriosCategoria] = useState<{ open: boolean; gatilhos: Gatilho[] }>({ open: false, gatilhos: [] });
+  const [categoriaAlvoSelecionada, setCategoriaAlvoSelecionada] = useState('');
+  const [acessorioCategoriaId, setAcessorioCategoriaId] = useState('');
 
   // Estados Modal Categorias
   const [modalCategorias, setModalCategorias] = useState(false);
@@ -155,7 +162,13 @@ export default function PainelEstoque() {
     });
   }, [equipamentos, busca, filtroCategoria]);
 
-  const listaAcessorios = useMemo(() => equipamentos.filter(eq => eq.categoria_id.toLowerCase() === 'acc' && eq.ativo), [equipamentos]);
+  const listaAcessorios = useMemo(() => {
+    return equipamentos.filter(eq =>
+      eq.ativo &&
+      eq.id !== modalAcessorios.eq?.id &&
+      (filtroCategoriaVinculo === 'TODOS' || eq.categoria_id === filtroCategoriaVinculo)
+    );
+  }, [equipamentos, filtroCategoriaVinculo, modalAcessorios.eq]);
 
   // Função Auxiliar para pegar o nome da Categoria
   const getNomeCategoria = (catId: string) => {
@@ -180,11 +193,24 @@ export default function PainelEstoque() {
     });
   };
 
+  const toggleVisivelSimulador = async (eq: Equipamento) => {
+    const novoStatus = !eq.visivel_simulador;
+    setEquipamentos(prev => prev.map(item => item.id === eq.id ? { ...item, visivel_simulador: novoStatus } : item));
+    await supabase.from('equipamentos').update({ visivel_simulador: novoStatus }).eq('id', eq.id);
+    registrarLogAuditoria({
+      usuario_nome: usuarioAtual,
+      acao: novoStatus ? 'EXIBIU EQUIPAMENTO NO SIMULADOR' : 'OCULTOU EQUIPAMENTO DO SIMULADOR',
+      setor: 'ESTOQUE',
+      equipamento_id: eq.id,
+      equipamento_nome: eq.nome,
+    });
+  };
+
   const abrirModalNovo = () => {
     setModalEdit({
       open: true,
       isNew: true,
-      eq: { nome: '', categoria_id: '', peso: 0, consumo_watts: 0, largura: 0, altura: 0, profundidade: 0, resolucao: '', dmx: '', detalhes: '', ativo: true }
+      eq: { nome: '', categoria_id: '', peso: 0, consumo_watts: 0, largura: 0, altura: 0, profundidade: 0, resolucao: '', dmx: '', detalhes: '', ativo: true, visivel_simulador: true }
     });
   };
 
@@ -289,6 +315,7 @@ export default function PainelEstoque() {
       
       setModalAcessorios({ open: true, eq, gatilhos: gatilhosComNome });
       setNovoAcessorioId('');
+      setFiltroCategoriaVinculo('TODOS');
       setDialog({ ...dialog, open: false });
     } else {
       setDialog({ open: true, type: 'error', title: 'Erro', msg: 'Falha ao buscar acessórios vinculados.' });
@@ -337,6 +364,78 @@ export default function PainelEstoque() {
         equipamento_nome: `${modalAcessorios.eq?.nome} ← ${gatilho?.acessorio_nome ?? gatilhoId}`,
       });
       setModalAcessorios(prev => ({ ...prev, gatilhos: prev.gatilhos.filter(g => g.id !== gatilhoId) }));
+    }
+  };
+
+  // ============================================================================
+  // AÇÕES DE VÍNCULO - ACESSÓRIOS POR CATEGORIA (GATILHOS EM MASSA)
+  // ============================================================================
+
+  const abrirModalAcessoriosCategoria = async () => {
+    setDialog({ open: true, type: 'loading', title: 'Aguarde', msg: 'Buscando vínculos por categoria...' });
+
+    const { data, error } = await supabase.from('gatilhos_acessorios').select('*').not('categoria_alvo_id', 'is', null);
+
+    if (!error && data) {
+      const gatilhosComNome = data.map(g => {
+        const accInfo = equipamentos.find(e => e.id === g.acessorio_id);
+        return { ...g, acessorio_nome: accInfo ? accInfo.nome : 'Acessório Desconhecido', categoria_nome: getNomeCategoria(g.categoria_alvo_id || '') };
+      });
+
+      setModalAcessoriosCategoria({ open: true, gatilhos: gatilhosComNome });
+      setCategoriaAlvoSelecionada('');
+      setAcessorioCategoriaId('');
+      setDialog({ ...dialog, open: false });
+    } else {
+      setDialog({ open: true, type: 'error', title: 'Erro', msg: 'Falha ao buscar vínculos por categoria.' });
+    }
+  };
+
+  const vincularAcessorioPorCategoria = async () => {
+    if (!categoriaAlvoSelecionada || !acessorioCategoriaId) return;
+
+    if (modalAcessoriosCategoria.gatilhos.some(g => g.categoria_alvo_id === categoriaAlvoSelecionada && g.acessorio_id === acessorioCategoriaId)) {
+      alert("Esta categoria já está vinculada a este acessório.");
+      return;
+    }
+
+    const payload = {
+      categoria_alvo_id: categoriaAlvoSelecionada,
+      equipamento_alvo_id: null,
+      acessorio_id: acessorioCategoriaId
+    };
+
+    const { data, error } = await supabase.from('gatilhos_acessorios').insert([payload]).select().single();
+
+    if (!error && data) {
+      const accInfo = equipamentos.find(e => e.id === data.acessorio_id);
+      const catNome = getNomeCategoria(categoriaAlvoSelecionada);
+      const novoGatilho = { ...data, acessorio_nome: accInfo?.nome, categoria_nome: catNome };
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: 'VINCULOU ACESSÓRIO POR CATEGORIA',
+        setor: 'ESTOQUE',
+        equipamento_nome: `${catNome} ← ${accInfo?.nome ?? acessorioCategoriaId}`,
+      });
+      setModalAcessoriosCategoria(prev => ({ ...prev, gatilhos: [...prev.gatilhos, novoGatilho] }));
+      setCategoriaAlvoSelecionada('');
+      setAcessorioCategoriaId('');
+    } else if (error) {
+      alert(`Erro: ${error.message}`);
+    }
+  };
+
+  const desvincularAcessorioCategoria = async (gatilhoId: string) => {
+    const gatilho = modalAcessoriosCategoria.gatilhos.find(g => g.id === gatilhoId);
+    const { error } = await supabase.from('gatilhos_acessorios').delete().eq('id', gatilhoId);
+    if (!error) {
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: 'DESVINCULOU ACESSÓRIO POR CATEGORIA',
+        setor: 'ESTOQUE',
+        equipamento_nome: `${gatilho?.categoria_nome ?? ''} ← ${gatilho?.acessorio_nome ?? gatilhoId}`,
+      });
+      setModalAcessoriosCategoria(prev => ({ ...prev, gatilhos: prev.gatilhos.filter(g => g.id !== gatilhoId) }));
     }
   };
 
@@ -406,6 +505,9 @@ export default function PainelEstoque() {
             <button onClick={() => setModalCategorias(true)} className="flex-1 md:flex-none bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] px-4 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-[#CBD5E1]">
               🏷️ Categorias
             </button>
+            <button onClick={abrirModalAcessoriosCategoria} className="flex-1 md:flex-none bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] px-4 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-[#CBD5E1]">
+              🔗 Acessórios/Categoria
+            </button>
             <button onClick={abrirModalNovo} className="flex-1 md:flex-none bg-[#336699] hover:bg-[#284B8C] text-white px-6 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-md hover:shadow-lg">
               ➕ Adicionar Item
             </button>
@@ -425,7 +527,7 @@ export default function PainelEstoque() {
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-32 text-center">Dimensões</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-24 text-center">Peso</th>
                 <th className="p-4 border-b-2 border-[#E2E8F0] w-24 text-center">Consumo</th>
-                <th className="p-4 border-b-2 border-[#E2E8F0] w-48 text-center">Ações</th>
+                <th className="p-4 border-b-2 border-[#E2E8F0] w-72 text-center">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E2E8F0] text-xs">
@@ -464,6 +566,13 @@ export default function PainelEstoque() {
                       </button>
                       <button onClick={() => abrirModalAcessorios(eq)} className="bg-blue-50 text-[#336699] hover:bg-blue-100 border border-blue-200 font-bold text-[10px] uppercase px-3 py-2 rounded transition-colors">
                         🔗 Acessórios
+                      </button>
+                      <button
+                        onClick={() => toggleVisivelSimulador(eq)}
+                        title={eq.visivel_simulador ? 'Visível no Simulador (clique para ocultar)' : 'Oculto no Simulador (clique para exibir)'}
+                        className={`font-bold text-[10px] uppercase px-3 py-2 rounded transition-colors border ${eq.visivel_simulador ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100' : 'bg-gray-100 text-gray-500 border-gray-200 hover:bg-gray-200'}`}
+                      >
+                        {eq.visivel_simulador ? '👁️ Simulador' : '🙈 Oculto'}
                       </button>
                     </td>
                   </tr>
@@ -650,8 +759,16 @@ export default function PainelEstoque() {
               
               <div className="bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm mb-6">
                 <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-2">Vincular Novo Acessório</label>
+                <select
+                  className="w-full mb-2 p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-xs font-bold text-[#64748B] cursor-pointer"
+                  value={filtroCategoriaVinculo}
+                  onChange={(e) => { setFiltroCategoriaVinculo(e.target.value); setNovoAcessorioId(''); }}
+                >
+                  <option value="TODOS">TODAS AS CATEGORIAS</option>
+                  {categorias.map(cat => <option key={cat.id} value={cat.id}>{cat.nome}</option>)}
+                </select>
                 <div className="flex gap-2">
-                  <select 
+                  <select
                     className="flex-grow p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm text-[#0C1D4D] font-semibold"
                     value={novoAcessorioId}
                     onChange={(e) => setNovoAcessorioId(e.target.value)}
@@ -661,7 +778,7 @@ export default function PainelEstoque() {
                       <option key={acc.id} value={acc.id}>{acc.nome}</option>
                     ))}
                   </select>
-                  <button 
+                  <button
                     onClick={vincularAcessorio}
                     disabled={!novoAcessorioId}
                     className="bg-[#336699] hover:bg-[#284B8C] text-white px-5 rounded-lg font-black text-[10px] uppercase tracking-widest transition-colors disabled:opacity-50"
@@ -682,6 +799,81 @@ export default function PainelEstoque() {
                       <span className="text-sm font-bold text-[#0C1D4D]">{g.acessorio_nome}</span>
                       <button 
                         onClick={() => desvincularAcessorio(g.id)}
+                        className="text-red-500 hover:bg-red-50 px-2 py-1 rounded text-xs font-black transition-colors"
+                        title="Remover Vínculo"
+                      >
+                        Remover
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================================ */}
+      {/* MODAL: VÍNCULO DE ACESSÓRIO POR CATEGORIA (EM MASSA) */}
+      {/* ============================================================================ */}
+      {modalAcessoriosCategoria.open && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[80vh]">
+            <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white flex-shrink-0">
+              <div>
+                <h3 className="font-black uppercase tracking-wider text-sm">🔗 Acessórios por Categoria</h3>
+                <p className="text-[10px] text-blue-200 mt-0.5">Vincula automaticamente o acessório a todos os itens de uma categoria</p>
+              </div>
+              <button onClick={() => setModalAcessoriosCategoria({ open: false, gatilhos: [] })} className="text-white hover:text-red-300 text-2xl leading-none">&times;</button>
+            </div>
+
+            <div className="p-6 overflow-y-auto bg-[#F8FAFC]">
+
+              <div className="bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm mb-6">
+                <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-2">Categoria</label>
+                <select
+                  className="w-full mb-3 p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm text-[#0C1D4D] font-semibold cursor-pointer"
+                  value={categoriaAlvoSelecionada}
+                  onChange={(e) => setCategoriaAlvoSelecionada(e.target.value)}
+                >
+                  <option value="">-- Selecione uma categoria --</option>
+                  {categorias.map(cat => <option key={cat.id} value={cat.id}>{cat.nome}</option>)}
+                </select>
+
+                <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-2">Acessório a Vincular</label>
+                <div className="flex gap-2">
+                  <select
+                    className="flex-grow p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm text-[#0C1D4D] font-semibold"
+                    value={acessorioCategoriaId}
+                    onChange={(e) => setAcessorioCategoriaId(e.target.value)}
+                  >
+                    <option value="">-- Selecione um acessório --</option>
+                    {equipamentos.filter(e => e.ativo).map(acc => (
+                      <option key={acc.id} value={acc.id}>{acc.nome}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={vincularAcessorioPorCategoria}
+                    disabled={!categoriaAlvoSelecionada || !acessorioCategoriaId}
+                    className="bg-[#336699] hover:bg-[#284B8C] text-white px-5 rounded-lg font-black text-[10px] uppercase tracking-widest transition-colors disabled:opacity-50"
+                  >
+                    Vincular
+                  </button>
+                </div>
+              </div>
+
+              <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#CBD5E1] pb-2 mb-3">Vínculos por Categoria Ativos</h4>
+
+              <div className="space-y-2">
+                {modalAcessoriosCategoria.gatilhos.length === 0 ? (
+                  <p className="text-xs text-center text-[#94A3B8] py-4 bg-white border border-dashed border-[#CBD5E1] rounded-lg">Nenhum vínculo por categoria cadastrado.</p>
+                ) : (
+                  modalAcessoriosCategoria.gatilhos.map(g => (
+                    <div key={g.id} className="flex justify-between items-center bg-white p-3 border border-[#E2E8F0] rounded-lg shadow-sm">
+                      <span className="text-sm font-bold text-[#0C1D4D]">{g.categoria_nome} <span className="text-[#94A3B8] font-normal">→</span> {g.acessorio_nome}</span>
+                      <button
+                        onClick={() => desvincularAcessorioCategoria(g.id)}
                         className="text-red-500 hover:bg-red-50 px-2 py-1 rounded text-xs font-black transition-colors"
                         title="Remover Vínculo"
                       >

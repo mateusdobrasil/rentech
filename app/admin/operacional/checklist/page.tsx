@@ -40,6 +40,23 @@ const COR_STATUS: Record<StatusChecklist, string> = {
 interface Categoria { id: string; nome: string; }
 interface EquipamentoLeve { id: string; categoria_id: string; nome: string; ativo: boolean; }
 
+// Vínculo equipamento/categoria → acessório sugerido (mesma tabela usada em
+// Estoque > Gatilhos/Acessórios e no Simulador de Videowall).
+interface GatilhoAcessorio {
+  id: string;
+  acessorio_id: string;
+  categoria_alvo_id: string | null;
+  equipamento_alvo_id: string | null;
+}
+
+interface AcessorioSugerido {
+  id: string;
+  nome: string;
+  categoriaId: string | null;
+  selecionado: boolean;
+  qtd: string;
+}
+
 interface EventoFeiraBusca {
   nome: string;
   local: string | null;
@@ -98,14 +115,72 @@ interface ModeloItem {
   ativo: boolean;
 }
 
+// Linha extraída da coluna livre "itens" de uma OS (fichas_reserva), para revisão
+// antes de importar para o checklist — nunca é gravada como está, o usuário confere.
+interface ItemImportadoOS {
+  key: string;
+  ficha_numero: string;
+  ficha_cliente: string;
+  descricao: string;
+  qtd: string;
+  categoriaId: string; // '' = sem categoria, cai em DIVERSOS
+  selecionado: boolean;
+  jaExiste: boolean;
+}
+
+// Mesmo material somado entre várias OS's do evento (modo "Consolidado") —
+// derivado de ItemImportadoOS, nunca editado diretamente: a quantidade é a soma
+// das linhas com a mesma descrição.
+interface ItemConsolidadoOS {
+  descricao: string;
+  qtdSomada: string;
+  temQtdNaoNumerica: boolean;
+  osNumeros: string[];
+  categoriaId: string;
+  selecionado: boolean;
+  jaExiste: boolean;
+}
+
+type TipoDivergencia = 'SAIDA' | 'RETORNO';
+
+interface DivergenciaRow {
+  id: string;
+  checklist_id: string;
+  item_id: string | null;
+  checklist_numero: number;
+  tipo: TipoDivergencia;
+  secao: string;
+  descricao: string;
+  qtd_esperada: number | null;
+  qtd_real: number | null;
+  usuario_nome: string;
+  evento_feira: string | null;
+  cliente: string | null;
+  created_at: string;
+}
+
+const LABEL_TIPO_DIVERGENCIA: Record<TipoDivergencia, string> = { SAIDA: 'Saída', RETORNO: 'Retorno' };
+const COR_TIPO_DIVERGENCIA: Record<TipoDivergencia, string> = {
+  SAIDA: 'bg-blue-100 text-blue-700 border-blue-300',
+  RETORNO: 'bg-orange-100 text-orange-700 border-orange-300',
+};
+
 const ITEM_NOVO_PREFIXO = 'novo-';
 const ehItemNovo = (id: string) => id.startsWith(ITEM_NOVO_PREFIXO);
 const gerarIdTemporario = () => `${ITEM_NOVO_PREFIXO}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 const gerarNumeroExibicao = (n: number) => `CKL-${String(n).padStart(6, '0')}`;
 
+// Seção usada para itens "livres" (sem vínculo com o catálogo de equipamentos) —
+// evita que o usuário crie categorias/seções avulsas digitando texto livre.
+const SECAO_DIVERSOS = 'DIVERSOS';
+
 // Colunas do tipo "date" no Postgres rejeitam string vazia — normaliza para null
 const dataOuNulo = (v?: string | null) => (v && v.trim() !== '' ? v : null);
+
+// Padroniza todo texto digitado em maiúsculas (exceto campos de busca/filtro e
+// campos de data/número, que não passam por aqui).
+const up = (v: string) => v.toUpperCase();
 
 // Casa o nome do evento/feira (texto livre) com o cadastro eventos_feiras, ignorando
 // acentuação/maiúsculas — mesma normalização usada no Calendário Operacional (relatorios).
@@ -118,6 +193,29 @@ const formatarDataBR = (iso: string | null | undefined): string => {
   if (!ano || !mes || !dia) return iso;
   return `${dia}/${mes}/${ano}`;
 };
+
+// A coluna "itens" de fichas_reserva é texto livre (uma OS por linha, geralmente
+// uma linha por item) — não tem estrutura garantida. Quebra em linhas e, se não
+// houver quebra de linha, tenta separar por vírgula/ponto-e-vírgula.
+const dividirItensTexto = (texto: string): string[] => {
+  const porLinha = texto.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (porLinha.length > 1) return porLinha;
+  return texto.split(/[;,]/).map(l => l.trim()).filter(Boolean);
+};
+
+// Formato da linha em fichas_reserva.itens: os dígitos até o primeiro espaço são
+// a quantidade, o restante da linha é a descrição do item (ex: "2 Mesa Redonda").
+// Sem número no início, a linha inteira vira descrição e a quantidade fica em
+// branco para o usuário revisar.
+const parseLinhaItemOS = (linhaBruta: string): { qtd: string; descricao: string } => {
+  const linha = linhaBruta.trim();
+  const m = linha.match(/^(\d+)\s+(.+)$/);
+  if (m) return { qtd: String(parseInt(m[1], 10)), descricao: m[2].trim() };
+  return { qtd: '', descricao: linha };
+};
+
+const formatarDataHoraBR = (iso: string): string =>
+  new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 const TAMANHO_PAGINA = 20;
 
@@ -142,12 +240,13 @@ export default function ChecklistCargaRetorno() {
 
   const [dialog, setDialog] = useState<{ open: boolean; type: 'loading' | 'success' | 'error'; title: string; msg: string }>({ open: false, type: 'loading', title: '', msg: '' });
 
-  const [view, setView] = useState<'lista' | 'editor'>('lista');
+  const [view, setView] = useState<'lista' | 'editor' | 'divergencias'>('lista');
   const [abrindoAutomatico, setAbrindoAutomatico] = useState(false);
 
   // Catálogo (equipamentos/categorias) — usado nos modais de item e no modelo padrão
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [equipamentos, setEquipamentos] = useState<EquipamentoLeve[]>([]);
+  const [gatilhosAcessorios, setGatilhosAcessorios] = useState<GatilhoAcessorio[]>([]);
   // Mapa nome (normalizado) → local padrão, carregado de eventos_feiras — usado para
   // preencher "Local do Evento" automaticamente a partir do Evento/Feira informado.
   const [mapaLocaisEventos, setMapaLocaisEventos] = useState<Record<string, string>>({});
@@ -162,6 +261,15 @@ export default function ChecklistCargaRetorno() {
   const [pagina, setPagina] = useState(0);
   const [totalRegistros, setTotalRegistros] = useState(0);
   const [refreshLista, setRefreshLista] = useState(0);
+
+  // ------------------------------------------------------------------------
+  // Estado: view Divergências
+  // ------------------------------------------------------------------------
+  const [divergencias, setDivergencias] = useState<DivergenciaRow[]>([]);
+  const [divergenciasLoading, setDivergenciasLoading] = useState(false);
+  const [filtroTipoDivergencia, setFiltroTipoDivergencia] = useState<'' | TipoDivergencia>('');
+  const [paginaDivergencias, setPaginaDivergencias] = useState(0);
+  const [totalDivergencias, setTotalDivergencias] = useState(0);
 
   const [modalNovo, setModalNovo] = useState(false);
   const [camposManuais, setCamposManuais] = useState({ evento_feira: '', cliente: '', local: '', periodo_inicio: '', periodo_fim: '', data_entrega: '' });
@@ -178,7 +286,7 @@ export default function ChecklistCargaRetorno() {
   const [modalModelo, setModalModelo] = useState(false);
   const [modeloItens, setModeloItens] = useState<ModeloItem[]>([]);
   const [modeloLoading, setModeloLoading] = useState(false);
-  const [novoModelo, setNovoModelo] = useState({ secao: '', modo: 'livre' as 'catalogo' | 'livre', categoriaId: '', equipamentoId: '', descricaoLivre: '', qtdPadrao: '' });
+  const [novoModelo, setNovoModelo] = useState({ modo: 'livre' as 'catalogo' | 'livre', categoriaId: '', equipamentoId: '', descricaoLivre: '', observacaoCatalogo: '', qtdPadrao: '' });
 
   // ------------------------------------------------------------------------
   // Estado: view Editor
@@ -188,9 +296,22 @@ export default function ChecklistCargaRetorno() {
   const [itensRemovidos, setItensRemovidos] = useState<string[]>([]);
   const [salvando, setSalvando] = useState(false);
 
-  const [modalAddItem, setModalAddItem] = useState<{ open: boolean; secao: string; modo: 'catalogo' | 'livre'; categoriaId: string; equipamentoId: string; descricaoLivre: string; qtdPrevista: string }>({
-    open: false, secao: '', modo: 'livre', categoriaId: '', equipamentoId: '', descricaoLivre: '', qtdPrevista: '',
+  const [modalAddItem, setModalAddItem] = useState<{ open: boolean; modo: 'catalogo' | 'livre'; categoriaId: string; equipamentoId: string; descricaoLivre: string; observacaoCatalogo: string; qtdPrevista: string }>({
+    open: false, modo: 'livre', categoriaId: '', equipamentoId: '', descricaoLivre: '', observacaoCatalogo: '', qtdPrevista: '',
   });
+
+  // Modal: sugestão de acessórios (gatilhos_acessorios) ao adicionar um item do catálogo
+  const [modalSugestaoAcessorios, setModalSugestaoAcessorios] = useState<{
+    open: boolean;
+    itemPrincipal: { secao: string; equipamentoId: string; descricao: string; qtd: string } | null;
+    acessorios: AcessorioSugerido[];
+  }>({ open: false, itemPrincipal: null, acessorios: [] });
+
+  // Modal: Importar Itens das OS's (fichas_reserva.itens do evento do checklist)
+  const [modalImportarOS, setModalImportarOS] = useState(false);
+  const [importandoOS, setImportandoOS] = useState(false);
+  const [itensImportadosOS, setItensImportadosOS] = useState<ItemImportadoOS[]>([]);
+  const [modoConsolidadoOS, setModoConsolidadoOS] = useState(false);
 
   // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
   useEffect(() => {
@@ -216,13 +337,15 @@ export default function ChecklistCargaRetorno() {
       setUsuarioAtual(perfil.nome || 'Usuário');
       setAuthLoading(false);
 
-      const [resCat, resEq, resEventos] = await Promise.all([
+      const [resCat, resEq, resEventos, resGatilhos] = await Promise.all([
         supabase.from('categorias').select('*').order('nome', { ascending: true }),
         supabase.from('equipamentos').select('id, categoria_id, nome, ativo').order('nome', { ascending: true }),
         supabase.from('eventos_feiras').select('nome, local').not('local', 'is', null),
+        supabase.from('gatilhos_acessorios').select('id, acessorio_id, categoria_alvo_id, equipamento_alvo_id'),
       ]);
       if (resCat.data) setCategorias(resCat.data);
       if (resEq.data) setEquipamentos(resEq.data);
+      if (resGatilhos.data) setGatilhosAcessorios(resGatilhos.data);
       if (resEventos.data) {
         const mapa: Record<string, string> = {};
         resEventos.data.forEach((ev: { nome: string; local: string | null }) => {
@@ -263,6 +386,30 @@ export default function ChecklistCargaRetorno() {
 
     return () => clearTimeout(handle);
   }, [authLoading, acessoNegado, view, pagina, filtroStatus, busca, refreshLista]);
+
+  // 2b. Carregar Lista de Divergências
+  useEffect(() => {
+    if (authLoading || acessoNegado || view !== 'divergencias') return;
+
+    (async () => {
+      setDivergenciasLoading(true);
+
+      let query = supabase
+        .from('checklist_divergencias')
+        .select('*', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(paginaDivergencias * TAMANHO_PAGINA, paginaDivergencias * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
+
+      if (filtroTipoDivergencia) query = query.eq('tipo', filtroTipoDivergencia);
+
+      const { data, error, count } = await query;
+      if (!error) {
+        setDivergencias(data || []);
+        setTotalDivergencias(count || 0);
+      }
+      setDivergenciasLoading(false);
+    })();
+  }, [authLoading, acessoNegado, view, paginaDivergencias, filtroTipoDivergencia]);
 
   // ------------------------------------------------------------------------
   // Catálogo agrupado por categoria (para os selects de "Do catálogo")
@@ -472,12 +619,38 @@ export default function ChecklistCargaRetorno() {
     setItens(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i));
   };
 
+  // Extrai o número da qtd. prevista (ex: "02" -> 2). Quando não é numérica
+  // (ex: "Lote", "Pacote"), retorna null e o campo fica para preenchimento manual.
+  const qtdNumericaPrevista = (qtdPrevista: string): number | null => {
+    const n = parseInt(qtdPrevista, 10);
+    return Number.isNaN(n) ? null : n;
+  };
+
+  // Marcar "Saída"/"Retorno" já preenche a quantidade com o previsto — agiliza o
+  // caso comum (saiu/voltou tudo); se faltou algo, o usuário ajusta o número na mão.
+  // Desmarcar limpa a quantidade, já que ela deixou de estar confirmada.
+  const alternarConferencia = (item: ChecklistItem, campo: 'saida' | 'retorno', checked: boolean) => {
+    atualizarItem(item.id, campo === 'saida'
+      ? { saida_ok: checked, saida_qtd: checked ? qtdNumericaPrevista(item.qtd_prevista) : null }
+      : { retorno_ok: checked, retorno_qtd: checked ? qtdNumericaPrevista(item.qtd_prevista) : null });
+  };
+
+  // Itens de saída cuja quantidade real não bate com a prevista (ignora itens sem
+  // qtd. prevista numérica ou ainda sem saída conferida — nada para comparar).
+  const itensDivergentesSaida = (lista: ChecklistItem[]): ChecklistItem[] =>
+    lista.filter(i => {
+      const previsto = qtdNumericaPrevista(i.qtd_prevista);
+      return previsto !== null && i.saida_qtd !== null && i.saida_qtd !== previsto;
+    });
+
+  // Itens de retorno cuja quantidade real não bate com o que saiu.
+  const itensDivergentesRetorno = (lista: ChecklistItem[]): ChecklistItem[] =>
+    lista.filter(i => i.saida_qtd !== null && i.retorno_qtd !== null && i.retorno_qtd !== i.saida_qtd);
+
   const removerItem = (item: ChecklistItem) => {
     setItens(prev => prev.filter(i => i.id !== item.id));
     if (!ehItemNovo(item.id)) setItensRemovidos(prev => [...prev, item.id]);
   };
-
-  const secoesExistentes = useMemo(() => Array.from(new Set(itens.map(i => i.secao))), [itens]);
 
   const itensPorSecao = useMemo(() => {
     const mapa = new Map<string, ChecklistItem[]>();
@@ -488,36 +661,354 @@ export default function ChecklistCargaRetorno() {
     return Array.from(mapa.entries());
   }, [itens]);
 
+  // Ao clicar em "+ Item" numa seção já existente, tenta pré-selecionar a categoria
+  // do catálogo com o mesmo nome, para o novo item continuar naquela seção.
   const abrirModalAddItem = (secaoPreSelecionada: string) => {
-    setModalAddItem({ open: true, secao: secaoPreSelecionada, modo: 'livre', categoriaId: '', equipamentoId: '', descricaoLivre: '', qtdPrevista: '' });
+    const categoriaCorrespondente = categorias.find(c => c.nome.toUpperCase() === secaoPreSelecionada.toUpperCase());
+    setModalAddItem({
+      open: true,
+      modo: categoriaCorrespondente ? 'catalogo' : 'livre',
+      categoriaId: categoriaCorrespondente?.id || '',
+      equipamentoId: '', descricaoLivre: '', observacaoCatalogo: '', qtdPrevista: '',
+    });
   };
 
+  // Empilha novos itens no checklist, atribuindo ordem sequencial a partir do maior
+  // valor atual — usado tanto para um item só quanto para item + acessórios juntos.
+  const adicionarItensNaLista = (novosItens: Omit<ChecklistItem, 'id' | 'ordem'>[]) => {
+    let ordemAtual = itens.length > 0 ? Math.max(...itens.map(i => i.ordem)) : 0;
+    const itensCompletos: ChecklistItem[] = novosItens.map(i => {
+      ordemAtual += 1;
+      return { ...i, id: gerarIdTemporario(), ordem: ordemAtual };
+    });
+    setItens(prev => [...prev, ...itensCompletos]);
+  };
+
+  // Acessórios cadastrados em Estoque > Gatilhos/Acessórios para o equipamento
+  // escolhido — por vínculo direto (equipamento_alvo_id) ou por categoria inteira
+  // (categoria_alvo_id), ex: toda TV sugere cabo HDMI, suporte e controle.
+  const sugerirAcessorios = (equipamento: EquipamentoLeve): EquipamentoLeve[] => {
+    // categoria_alvo_id vem do mesmo slug de categorias.id usado em equipamentos.categoria_id
+    // (ver Estoque > Acessórios por Categoria) — normaliza como o Simulador de Videowall faz,
+    // pra não perder o match por causa de maiúsculas/espaços.
+    const limpar = (v: string | null) => (v || '').toLowerCase().trim();
+    const categoriaAtual = limpar(equipamento.categoria_id);
+    const idsSugeridos = new Set(
+      gatilhosAcessorios
+        .filter(g => g.equipamento_alvo_id === equipamento.id || (g.categoria_alvo_id && limpar(g.categoria_alvo_id) === categoriaAtual))
+        .map(g => g.acessorio_id)
+    );
+    return equipamentosAtivos.filter(e => idsSugeridos.has(e.id) && e.id !== equipamento.id);
+  };
+
+  const modalAddItemFechado = { open: false, modo: 'livre' as const, categoriaId: '', equipamentoId: '', descricaoLivre: '', observacaoCatalogo: '', qtdPrevista: '' };
+
+  // A seção do item nunca é digitada livremente: no modo "catálogo" ela vem da
+  // categoria cadastrada do equipamento escolhido; no modo "livre" cai sempre em
+  // DIVERSOS. Isso impede a criação de categorias/seções avulsas.
   const confirmarAddItem = () => {
-    const descricao = modalAddItem.modo === 'catalogo'
-      ? (equipamentos.find(e => e.id === modalAddItem.equipamentoId)?.nome || '')
-      : modalAddItem.descricaoLivre.trim();
+    let descricao = '';
+    let secao = SECAO_DIVERSOS;
+    let equipamentoId: string | null = null;
+    let equipamentoEscolhido: EquipamentoLeve | null = null;
 
-    if (!descricao || !modalAddItem.secao.trim()) return;
+    if (modalAddItem.modo === 'catalogo') {
+      const equipamento = equipamentos.find(e => e.id === modalAddItem.equipamentoId);
+      if (!equipamento) return;
+      const categoria = categorias.find(c => c.id === equipamento.categoria_id);
+      const observacao = modalAddItem.observacaoCatalogo.trim();
+      descricao = observacao ? `${equipamento.nome} (${observacao})` : equipamento.nome;
+      secao = categoria?.nome.toUpperCase() || SECAO_DIVERSOS;
+      equipamentoId = equipamento.id;
+      equipamentoEscolhido = equipamento;
+    } else {
+      descricao = modalAddItem.descricaoLivre.trim();
+    }
 
-    const maiorOrdem = itens.length > 0 ? Math.max(...itens.map(i => i.ordem)) : 0;
-    const novoItem: ChecklistItem = {
-      id: gerarIdTemporario(),
-      ordem: maiorOrdem + 1,
-      secao: modalAddItem.secao.trim().toUpperCase(),
-      equipamento_id: modalAddItem.modo === 'catalogo' ? (modalAddItem.equipamentoId || null) : null,
-      descricao,
-      qtd_prevista: modalAddItem.qtdPrevista,
+    if (!descricao) return;
+
+    // Se o equipamento escolhido tem acessórios sugeridos, pausa aqui e abre a
+    // modal de confirmação em vez de inserir o item direto na lista.
+    if (equipamentoEscolhido) {
+      const sugestoes = sugerirAcessorios(equipamentoEscolhido);
+      if (sugestoes.length > 0) {
+        setModalSugestaoAcessorios({
+          open: true,
+          itemPrincipal: { secao, equipamentoId: equipamentoEscolhido.id, descricao, qtd: modalAddItem.qtdPrevista },
+          acessorios: sugestoes.map(a => ({ id: a.id, nome: a.nome, categoriaId: a.categoria_id, selecionado: true, qtd: modalAddItem.qtdPrevista || '1' })),
+        });
+        setModalAddItem(modalAddItemFechado);
+        return;
+      }
+    }
+
+    adicionarItensNaLista([{
+      secao, equipamento_id: equipamentoId, descricao, qtd_prevista: modalAddItem.qtdPrevista,
       saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null,
-    };
-    setItens(prev => [...prev, novoItem]);
-    setModalAddItem({ open: false, secao: '', modo: 'livre', categoriaId: '', equipamentoId: '', descricaoLivre: '', qtdPrevista: '' });
+    }]);
+    setModalAddItem(modalAddItemFechado);
+  };
+
+  const atualizarAcessorioSugerido = (id: string, patch: Partial<AcessorioSugerido>) => {
+    setModalSugestaoAcessorios(prev => ({ ...prev, acessorios: prev.acessorios.map(a => a.id === id ? { ...a, ...patch } : a) }));
+  };
+
+  // Confirma o item principal (que já ficou pendente ao abrir esta modal) e, se
+  // aceito, os acessórios marcados — cada um assumindo a categoria do próprio
+  // acessório no catálogo (ou DIVERSOS, se ele não tiver uma).
+  const confirmarSugestaoAcessorios = (incluirAcessorios: boolean) => {
+    const principal = modalSugestaoAcessorios.itemPrincipal;
+    if (!principal) { setModalSugestaoAcessorios({ open: false, itemPrincipal: null, acessorios: [] }); return; }
+
+    const novos: Omit<ChecklistItem, 'id' | 'ordem'>[] = [{
+      secao: principal.secao, equipamento_id: principal.equipamentoId, descricao: principal.descricao,
+      qtd_prevista: principal.qtd, saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null,
+    }];
+
+    if (incluirAcessorios) {
+      modalSugestaoAcessorios.acessorios.filter(a => a.selecionado).forEach(a => {
+        const categoria = categorias.find(c => c.id === a.categoriaId);
+        novos.push({
+          secao: categoria?.nome.toUpperCase() || SECAO_DIVERSOS,
+          equipamento_id: a.id,
+          descricao: a.nome,
+          qtd_prevista: a.qtd,
+          saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null,
+        });
+      });
+    }
+
+    adicionarItensNaLista(novos);
+    setModalSugestaoAcessorios({ open: false, itemPrincipal: null, acessorios: [] });
+  };
+
+  // ------------------------------------------------------------------------
+  // IMPORTAR ITENS DAS OS's (fichas_reserva.itens, filtradas pelo evento do checklist)
+  // ------------------------------------------------------------------------
+  const abrirImportarOS = async () => {
+    const evento = checklistAtual.evento_feira.trim();
+    if (!evento) {
+      setDialog({ open: true, type: 'error', title: 'Atenção', msg: 'Preencha o Evento/Feira antes de importar itens das OS\'s.' });
+      return;
+    }
+
+    setModalImportarOS(true);
+    setImportandoOS(true);
+    setItensImportadosOS([]);
+    setModoConsolidadoOS(false);
+
+    const { data, error } = await supabase
+      .from('fichas_reserva')
+      .select('numero, cliente, itens')
+      .ilike('evento_feira', evento)
+      .not('itens', 'is', null);
+
+    setImportandoOS(false);
+
+    if (error) {
+      setDialog({ open: true, type: 'error', title: 'Erro', msg: error.message });
+      setModalImportarOS(false);
+      return;
+    }
+
+    // Itens já presentes no checklist não vêm pré-marcados, pra evitar duplicar
+    // ao importar mais de uma vez.
+    const descricoesAtuais = new Set(itens.map(i => i.descricao.trim().toUpperCase()));
+    const linhas: ItemImportadoOS[] = [];
+
+    (data || []).forEach((ficha: { numero: string; cliente: string | null; itens: string | null }) => {
+      if (!ficha.itens || !ficha.itens.trim()) return;
+      dividirItensTexto(ficha.itens).forEach((linhaBruta, idx) => {
+        const { qtd, descricao } = parseLinhaItemOS(linhaBruta);
+        if (!descricao) return;
+        const descricaoUpper = up(descricao);
+        linhas.push({
+          key: `${ficha.numero}-${idx}`,
+          ficha_numero: ficha.numero,
+          ficha_cliente: ficha.cliente || '',
+          descricao: descricaoUpper,
+          qtd,
+          categoriaId: '',
+          selecionado: !descricoesAtuais.has(descricaoUpper),
+          jaExiste: descricoesAtuais.has(descricaoUpper),
+        });
+      });
+    });
+
+    setItensImportadosOS(linhas);
+
+    if (linhas.length === 0) {
+      setDialog({ open: true, type: 'error', title: 'Nada encontrado', msg: `Nenhum item encontrado nas OS's do evento "${evento}".` });
+      setModalImportarOS(false);
+    }
+  };
+
+  const atualizarItemImportadoOS = (key: string, patch: Partial<ItemImportadoOS>) => {
+    setItensImportadosOS(prev => prev.map(i => i.key === key ? { ...i, ...patch } : i));
+  };
+
+  const alternarTodosImportadosOS = (selecionar: boolean) => {
+    setItensImportadosOS(prev => prev.map(i => ({ ...i, selecionado: selecionar })));
+  };
+
+  // Aplica a mesma categoria do catálogo a todas as linhas marcadas de uma vez —
+  // evita ter que escolher item por item quando várias linhas são da mesma seção.
+  const aplicarCategoriaSelecionadosOS = (categoriaId: string) => {
+    setItensImportadosOS(prev => prev.map(i => i.selecionado ? { ...i, categoriaId } : i));
+  };
+
+  const itensImportadosPorOS = useMemo(() => {
+    const mapa = new Map<string, ItemImportadoOS[]>();
+    itensImportadosOS.forEach(i => {
+      if (!mapa.has(i.ficha_numero)) mapa.set(i.ficha_numero, []);
+      mapa.get(i.ficha_numero)!.push(i);
+    });
+    return Array.from(mapa.entries());
+  }, [itensImportadosOS]);
+
+  // Modo "Consolidado": agrupa linhas de OS's diferentes com a mesma descrição
+  // num único item com a quantidade somada — facilita separar o material de uma
+  // vez só, em vez de repetir a mesma peça uma vez por OS.
+  const itensConsolidadosOS = useMemo(() => {
+    const mapa = new Map<string, ItemConsolidadoOS & { qtdNumerica: number }>();
+    itensImportadosOS.forEach(i => {
+      const chave = i.descricao.trim().toUpperCase();
+      if (!chave) return;
+      const qtdNum = parseInt(i.qtd, 10);
+      const existente = mapa.get(chave);
+      if (!existente) {
+        mapa.set(chave, {
+          descricao: chave,
+          qtdSomada: '',
+          qtdNumerica: Number.isNaN(qtdNum) ? 0 : qtdNum,
+          temQtdNaoNumerica: Number.isNaN(qtdNum),
+          osNumeros: [i.ficha_numero],
+          categoriaId: i.categoriaId,
+          selecionado: i.selecionado,
+          jaExiste: i.jaExiste,
+        });
+      } else {
+        existente.qtdNumerica += Number.isNaN(qtdNum) ? 0 : qtdNum;
+        if (Number.isNaN(qtdNum)) existente.temQtdNaoNumerica = true;
+        if (!existente.osNumeros.includes(i.ficha_numero)) existente.osNumeros.push(i.ficha_numero);
+        if (existente.categoriaId !== i.categoriaId) existente.categoriaId = '';
+        existente.selecionado = existente.selecionado || i.selecionado;
+        existente.jaExiste = existente.jaExiste && i.jaExiste;
+      }
+    });
+    return Array.from(mapa.values()).map(v => ({
+      descricao: v.descricao,
+      qtdSomada: v.qtdNumerica > 0 ? String(v.qtdNumerica) : '',
+      temQtdNaoNumerica: v.temQtdNaoNumerica,
+      osNumeros: v.osNumeros,
+      categoriaId: v.categoriaId,
+      selecionado: v.selecionado,
+      jaExiste: v.jaExiste,
+    }));
+  }, [itensImportadosOS]);
+
+  // No modo Consolidado, marcar/trocar categoria de um grupo aplica em todas as
+  // linhas originais com a mesma descrição — mantém tudo sincronizado se o usuário
+  // voltar para o modo Individual.
+  const alternarConsolidadoOS = (descricaoChave: string, checked: boolean) => {
+    setItensImportadosOS(prev => prev.map(i => i.descricao.trim().toUpperCase() === descricaoChave ? { ...i, selecionado: checked } : i));
+  };
+
+  const aplicarCategoriaConsolidadoOS = (descricaoChave: string, categoriaId: string) => {
+    setItensImportadosOS(prev => prev.map(i => i.descricao.trim().toUpperCase() === descricaoChave ? { ...i, categoriaId } : i));
+  };
+
+  // Itens importados não têm vínculo com um equipamento do catálogo (são texto
+  // livre da OS), mas a seção pode ser uma categoria já cadastrada — escolhida na
+  // revisão — ou, se nenhuma for escolhida, cai em DIVERSOS como um item livre.
+  // No modo Consolidado, um item é criado por descrição (já com a soma das OS's);
+  // no modo Individual, um item por linha de OS selecionada.
+  const confirmarImportarOS = () => {
+    const selecionados = modoConsolidadoOS
+      ? itensConsolidadosOS.filter(c => c.selecionado).map(c => ({ descricao: c.descricao, qtd: c.qtdSomada, categoriaId: c.categoriaId }))
+      : itensImportadosOS.filter(i => i.selecionado && i.descricao.trim()).map(i => ({ descricao: i.descricao.trim(), qtd: i.qtd, categoriaId: i.categoriaId }));
+
+    if (selecionados.length === 0) { setModalImportarOS(false); return; }
+
+    let ordemAtual = itens.length > 0 ? Math.max(...itens.map(i => i.ordem)) : 0;
+    const novos: ChecklistItem[] = selecionados.map(i => {
+      ordemAtual += 1;
+      const categoria = categorias.find(c => c.id === i.categoriaId);
+      return {
+        id: gerarIdTemporario(),
+        ordem: ordemAtual,
+        secao: categoria?.nome.toUpperCase() || SECAO_DIVERSOS,
+        equipamento_id: null,
+        descricao: i.descricao,
+        qtd_prevista: i.qtd,
+        saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null,
+      };
+    });
+
+    setItens(prev => [...prev, ...novos]);
+    registrarLogAuditoria({
+      usuario_nome: usuarioAtual,
+      acao: `IMPORTOU ${novos.length} ITEM(NS) DAS OS'S${modoConsolidadoOS ? ' (CONSOLIDADO)' : ''}`,
+      setor: 'OPERACIONAL',
+      equipamento_nome: `${gerarNumeroExibicao(checklistAtual.numero)} — ${checklistAtual.evento_feira || checklistAtual.cliente || ''}`,
+    });
+    setModalImportarOS(false);
+    setItensImportadosOS([]);
   };
 
   // ------------------------------------------------------------------------
   // SALVAR CHECKLIST (header + itens)
   // ------------------------------------------------------------------------
   const salvarChecklist = async () => {
+    // Resp. Conferência / Saída e / Retorno não são editáveis: são preenchidos
+    // automaticamente com o usuário logado sempre que o checklist é salvo como
+    // Saída Conferida / Finalizado, respectivamente. Se algum item estiver com
+    // quantidade divergente, avisa antes de salvar; depois de salvo, a aba
+    // Divergências é reconciliada com o estado atual dos itens (itens que
+    // deixaram de divergir são removidos de lá automaticamente).
+    let statusSalvo = checklistAtual.status;
+
+    // Sugestão automática de avanço de status: se todos os itens já estão com a
+    // Saída (ou o Retorno) conferidos, pergunta se quer avançar o status agora
+    // em vez de exigir que o usuário troque manualmente no seletor.
+    const todosSaidaConferida = itens.length > 0 && itens.every(i => i.saida_ok);
+    const todosRetornoConferido = itens.length > 0 && itens.every(i => i.retorno_ok);
+
+    if (statusSalvo === 'RASCUNHO' && todosSaidaConferida) {
+      if (confirm('Todos os itens de Saída (Separação) já estão conferidos.\n\nDeseja mudar o status para "Saída Conferida"?')) {
+        statusSalvo = 'SAIDA_CONFERIDA';
+      }
+    }
+
+    if ((statusSalvo === 'RASCUNHO' || statusSalvo === 'SAIDA_CONFERIDA') && todosRetornoConferido) {
+      if (confirm('Todos os itens de Retorno (Desmontagem) já estão conferidos.\n\nDeseja mudar o status para "Finalizado"?')) {
+        statusSalvo = 'FINALIZADO';
+      }
+    }
+
+    let responsavelSaida = checklistAtual.responsavel_saida;
+    let responsavelRetorno = checklistAtual.responsavel_retorno;
+
+    if (statusSalvo === 'SAIDA_CONFERIDA') {
+      responsavelSaida = usuarioAtual;
+      const divergentes = itensDivergentesSaida(itens);
+      if (divergentes.length > 0) {
+        const confirmado = confirm(`⚠️ ${divergentes.length} item(ns) de saída com quantidade divergente da prevista.\n\nDeseja salvar mesmo assim?`);
+        if (!confirmado) return;
+      }
+    }
+
+    if (statusSalvo === 'FINALIZADO') {
+      responsavelRetorno = usuarioAtual;
+      const divergentes = itensDivergentesRetorno(itens);
+      if (divergentes.length > 0) {
+        const confirmado = confirm(`⚠️ ${divergentes.length} item(ns) de retorno com quantidade divergente da saída.\n\nDeseja salvar mesmo assim?`);
+        if (!confirmado) return;
+      }
+    }
+
     setSalvando(true);
+    setChecklistAtual(prev => ({ ...prev, status: statusSalvo, responsavel_saida: responsavelSaida, responsavel_retorno: responsavelRetorno }));
 
     const payloadHeader = {
       evento_feira: checklistAtual.evento_feira || null,
@@ -527,10 +1018,10 @@ export default function ChecklistCargaRetorno() {
       periodo_fim: dataOuNulo(checklistAtual.periodo_fim),
       data_entrega: checklistAtual.data_entrega || null,
       observacoes: checklistAtual.observacoes || null,
-      responsavel_saida: checklistAtual.responsavel_saida || null,
+      responsavel_saida: responsavelSaida || null,
       responsavel_montagem: checklistAtual.responsavel_montagem || null,
-      responsavel_retorno: checklistAtual.responsavel_retorno || null,
-      status: checklistAtual.status,
+      responsavel_retorno: responsavelRetorno || null,
+      status: statusSalvo,
       updated_at: new Date().toISOString(),
     };
 
@@ -588,14 +1079,71 @@ export default function ChecklistCargaRetorno() {
       equipamento_nome: `${gerarNumeroExibicao(checklistAtual.numero)} — ${checklistAtual.evento_feira || checklistAtual.cliente || ''}`,
     });
 
-    // Recarrega do banco para normalizar ids dos itens recém-criados
+    // Recarrega do banco para normalizar ids dos itens recém-criados (necessário
+    // antes de reconciliar divergências, que usam o id real do item como chave)
     const { data: itensAtualizados } = await supabase.from('checklist_itens').select('*').eq('checklist_id', checklistAtual.id).order('ordem', { ascending: true });
-    setItens((itensAtualizados || []).map((i: ChecklistItem) => ({ ...i, qtd_prevista: i.qtd_prevista || '' })));
+    const itensSalvos: ChecklistItem[] = (itensAtualizados || []).map((i: ChecklistItem) => ({ ...i, qtd_prevista: i.qtd_prevista || '' }));
+    setItens(itensSalvos);
     setItensRemovidos([]);
 
+    // Reconcilia a aba Divergências apenas para o tipo do status salvo agora:
+    // itens ainda divergentes são gravados/atualizados, itens que deixaram de
+    // divergir (corrigidos) são removidos da lista.
+    let erroDivergencia: string | null = null;
+    let qtdDivergenciasAtivas = 0;
+    if (statusSalvo === 'SAIDA_CONFERIDA' || statusSalvo === 'FINALIZADO') {
+      const tipo: TipoDivergencia = statusSalvo === 'SAIDA_CONFERIDA' ? 'SAIDA' : 'RETORNO';
+      const divergentesAtuais = tipo === 'SAIDA' ? itensDivergentesSaida(itensSalvos) : itensDivergentesRetorno(itensSalvos);
+      const idsDivergentes = divergentesAtuais.map(i => i.id);
+      qtdDivergenciasAtivas = divergentesAtuais.length;
+
+      const { data: existentes, error: erroConsulta } = await supabase
+        .from('checklist_divergencias').select('id, item_id').eq('checklist_id', checklistAtual.id).eq('tipo', tipo);
+
+      if (erroConsulta) {
+        erroDivergencia = erroConsulta.message;
+      } else {
+        const idsResolvidos = (existentes || []).filter(d => d.item_id && !idsDivergentes.includes(d.item_id)).map(d => d.id);
+        if (idsResolvidos.length > 0) {
+          const { error } = await supabase.from('checklist_divergencias').delete().in('id', idsResolvidos);
+          if (error) erroDivergencia = error.message;
+        }
+
+        if (!erroDivergencia && divergentesAtuais.length > 0) {
+          const payload = divergentesAtuais.map(item => ({
+            checklist_id: checklistAtual.id,
+            item_id: item.id,
+            checklist_numero: checklistAtual.numero,
+            tipo,
+            secao: item.secao,
+            descricao: item.descricao,
+            qtd_esperada: tipo === 'SAIDA' ? qtdNumericaPrevista(item.qtd_prevista) : item.saida_qtd,
+            qtd_real: tipo === 'SAIDA' ? item.saida_qtd : item.retorno_qtd,
+            usuario_nome: usuarioAtual,
+            evento_feira: checklistAtual.evento_feira || null,
+            cliente: checklistAtual.cliente || null,
+            updated_at: new Date().toISOString(),
+          }));
+          const { error } = await supabase.from('checklist_divergencias').upsert(payload, { onConflict: 'item_id,tipo' });
+          if (error) erroDivergencia = error.message;
+        }
+
+        if (!erroDivergencia && (qtdDivergenciasAtivas > 0 || idsResolvidos.length > 0)) {
+          registrarLogAuditoria({
+            usuario_nome: usuarioAtual,
+            acao: `RECONCILIOU DIVERGÊNCIAS (${LABEL_TIPO_DIVERGENCIA[tipo].toUpperCase()}): ${qtdDivergenciasAtivas} ATIVA(S), ${idsResolvidos.length} RESOLVIDA(S)`,
+            setor: 'OPERACIONAL',
+            equipamento_nome: `${gerarNumeroExibicao(checklistAtual.numero)} — ${checklistAtual.evento_feira || checklistAtual.cliente || ''}`,
+          });
+        }
+      }
+    }
+
     setSalvando(false);
-    setDialog({ open: true, type: 'success', title: 'Salvo', msg: 'Checklist atualizado com sucesso.' });
-    setTimeout(() => setDialog(prev => ({ ...prev, open: false })), 1800);
+    setDialog(erroDivergencia
+      ? { open: true, type: 'error', title: 'Checklist salvo, mas...', msg: `Falhou ao atualizar a aba Divergências: ${erroDivergencia}` }
+      : { open: true, type: 'success', title: 'Salvo', msg: qtdDivergenciasAtivas > 0 ? `Checklist atualizado com sucesso. ${qtdDivergenciasAtivas} item(ns) divergente(s) em Divergências.` : 'Checklist atualizado com sucesso.' });
+    if (!erroDivergencia) setTimeout(() => setDialog(prev => ({ ...prev, open: false })), qtdDivergenciasAtivas > 0 ? 2400 : 1800);
   };
 
   const excluirChecklist = async (c: ChecklistGridRow) => {
@@ -629,22 +1177,36 @@ export default function ChecklistCargaRetorno() {
 
   const abrirModalModelo = () => {
     setModalModelo(true);
-    setNovoModelo({ secao: '', modo: 'livre', categoriaId: '', equipamentoId: '', descricaoLivre: '', qtdPadrao: '' });
+    setNovoModelo({ modo: 'livre', categoriaId: '', equipamentoId: '', descricaoLivre: '', observacaoCatalogo: '', qtdPadrao: '' });
     carregarModelo();
   };
 
+  // Mesma regra do checklist: seção vem da categoria do equipamento (catálogo) ou
+  // é DIVERSOS (item livre) — nunca digitada livremente.
   const adicionarItemModelo = async () => {
-    const descricao = novoModelo.modo === 'catalogo'
-      ? (equipamentos.find(e => e.id === novoModelo.equipamentoId)?.nome || '')
-      : novoModelo.descricaoLivre.trim();
+    let descricao = '';
+    let secao = SECAO_DIVERSOS;
+    let equipamentoId: string | null = null;
 
-    if (!descricao || !novoModelo.secao.trim()) return;
+    if (novoModelo.modo === 'catalogo') {
+      const equipamento = equipamentos.find(e => e.id === novoModelo.equipamentoId);
+      if (!equipamento) return;
+      const categoria = categorias.find(c => c.id === equipamento.categoria_id);
+      const observacao = novoModelo.observacaoCatalogo.trim();
+      descricao = observacao ? `${equipamento.nome} (${observacao})` : equipamento.nome;
+      secao = categoria?.nome.toUpperCase() || SECAO_DIVERSOS;
+      equipamentoId = equipamento.id;
+    } else {
+      descricao = novoModelo.descricaoLivre.trim();
+    }
+
+    if (!descricao) return;
 
     const maiorOrdem = modeloItens.length > 0 ? Math.max(...modeloItens.map(m => m.ordem)) : 0;
     const { error } = await supabase.from('checklist_modelo_itens').insert([{
       ordem: maiorOrdem + 1,
-      secao: novoModelo.secao.trim().toUpperCase(),
-      equipamento_id: novoModelo.modo === 'catalogo' ? (novoModelo.equipamentoId || null) : null,
+      secao,
+      equipamento_id: equipamentoId,
       descricao,
       qtd_padrao: novoModelo.qtdPadrao || null,
       ativo: true,
@@ -656,7 +1218,7 @@ export default function ChecklistCargaRetorno() {
     }
 
     registrarLogAuditoria({ usuario_nome: usuarioAtual, acao: 'ADICIONOU ITEM AO MODELO PADRÃO DE CHECKLIST', setor: 'OPERACIONAL', equipamento_nome: descricao });
-    setNovoModelo({ secao: '', modo: 'livre', categoriaId: '', equipamentoId: '', descricaoLivre: '', qtdPadrao: '' });
+    setNovoModelo({ modo: 'livre', categoriaId: '', equipamentoId: '', descricaoLivre: '', observacaoCatalogo: '', qtdPadrao: '' });
     carregarModelo();
   };
 
@@ -747,8 +1309,8 @@ export default function ChecklistCargaRetorno() {
         <p className="text-[#0369A1] font-medium text-sm">
           ✅ <strong>Olá, {usuarioAtual}</strong>. Checklist de carga e retorno de equipamentos por evento.
         </p>
-        <button onClick={() => (view === 'editor' ? voltarParaLista() : router.push('/admin/operacional'))} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
-          ⬅ {view === 'editor' ? 'VOLTAR À LISTA' : 'VOLTAR AO HUB'}
+        <button onClick={() => (view === 'lista' ? router.push('/admin/operacional') : voltarParaLista())} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
+          ⬅ {view === 'lista' ? 'VOLTAR AO HUB' : 'VOLTAR À LISTA'}
         </button>
       </div>
 
@@ -763,6 +1325,9 @@ export default function ChecklistCargaRetorno() {
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
                 <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Checklists de Carga</h2>
                 <div className="flex gap-2">
+                  <button onClick={() => setView('divergencias')} className="bg-orange-50 hover:bg-orange-100 text-orange-700 px-4 py-2.5 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-orange-200">
+                    ⚠️ Divergências
+                  </button>
                   <button onClick={abrirModalModelo} className="bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] px-4 py-2.5 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-[#CBD5E1]">
                     🛠️ Modelo Padrão
                   </button>
@@ -856,6 +1421,97 @@ export default function ChecklistCargaRetorno() {
           )}
 
           {/* ==================================================================== */}
+          {/* VIEW: DIVERGÊNCIAS */}
+          {/* ==================================================================== */}
+          {view === 'divergencias' && (
+            <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
+                <div>
+                  <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">⚠️ Divergências</h2>
+                  <p className="text-xs text-[#64748B] mt-0.5">Itens salvos com quantidade diferente da esperada na Saída ou no Retorno.</p>
+                </div>
+                <select
+                  value={filtroTipoDivergencia}
+                  onChange={(e) => { setFiltroTipoDivergencia(e.target.value as '' | TipoDivergencia); setPaginaDivergencias(0); }}
+                  className="border border-[#E2E8F0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#336699]"
+                >
+                  <option value="">Todos os tipos</option>
+                  <option value="SAIDA">Saída</option>
+                  <option value="RETORNO">Retorno</option>
+                </select>
+              </div>
+
+              <div className="overflow-x-auto border border-[#E2E8F0] rounded-xl relative min-h-[120px]">
+                {divergenciasLoading && (
+                  <div className="absolute inset-0 bg-white/70 flex items-center justify-center z-10">
+                    <div className="w-8 h-8 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin"></div>
+                  </div>
+                )}
+                <table className="w-full text-xs">
+                  <thead className="bg-[#F0F4F8] sticky top-0">
+                    <tr className="text-left text-[#64748B] uppercase tracking-wider font-black">
+                      <th className="p-2">Data</th>
+                      <th className="p-2">Checklist</th>
+                      <th className="p-2">Tipo</th>
+                      <th className="p-2">Item</th>
+                      <th className="p-2 text-center">Esperado</th>
+                      <th className="p-2 text-center">Real</th>
+                      <th className="p-2">Usuário</th>
+                      <th className="p-2 text-center">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {divergencias.length === 0 && !divergenciasLoading ? (
+                      <tr>
+                        <td colSpan={8} className="p-6 text-center text-[#94A3B8] font-bold uppercase text-xs">
+                          Nenhuma divergência registrada.
+                        </td>
+                      </tr>
+                    ) : (
+                      divergencias.map((d) => (
+                        <tr key={d.id} className="border-t border-[#E2E8F0] hover:bg-[#F8FAFC]">
+                          <td className="p-2 whitespace-nowrap">{formatarDataHoraBR(d.created_at)}</td>
+                          <td className="p-2">
+                            <p className="font-bold">{gerarNumeroExibicao(d.checklist_numero)}</p>
+                            <p className="text-[10px] text-[#64748B]">{d.evento_feira || d.cliente || '—'}</p>
+                          </td>
+                          <td className="p-2">
+                            <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-full border ${COR_TIPO_DIVERGENCIA[d.tipo]}`}>{LABEL_TIPO_DIVERGENCIA[d.tipo]}</span>
+                          </td>
+                          <td className="p-2">
+                            <p className="font-semibold">{d.descricao}</p>
+                            <p className="text-[10px] text-[#64748B]">{d.secao}</p>
+                          </td>
+                          <td className="p-2 text-center">{d.qtd_esperada ?? '—'}</td>
+                          <td className="p-2 text-center font-bold text-orange-600">{d.qtd_real ?? '—'}</td>
+                          <td className="p-2">{d.usuario_nome}</td>
+                          <td className="p-2 text-center">
+                            <button onClick={() => abrirChecklist(d.checklist_id)} className="bg-blue-50 text-[#336699] hover:bg-blue-100 border border-blue-200 font-bold text-[10px] uppercase px-3 py-1.5 rounded transition-colors">
+                              📂 Abrir
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex justify-between items-center mt-4">
+                <button onClick={() => setPaginaDivergencias(p => Math.max(0, p - 1))} disabled={paginaDivergencias === 0 || divergenciasLoading} className="text-xs font-black uppercase tracking-wider bg-[#F0F4F8] text-[#0C1D4D] px-4 py-2 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#E2E8F0] transition-colors">
+                  ⬅ Anterior
+                </button>
+                <span className="text-xs font-bold text-[#64748B]">
+                  Página {totalDivergencias === 0 ? 0 : paginaDivergencias + 1} de {Math.max(1, Math.ceil(totalDivergencias / TAMANHO_PAGINA))}
+                </span>
+                <button onClick={() => setPaginaDivergencias(p => p + 1)} disabled={(paginaDivergencias + 1) * TAMANHO_PAGINA >= totalDivergencias || divergenciasLoading} className="text-xs font-black uppercase tracking-wider bg-[#F0F4F8] text-[#0C1D4D] px-4 py-2 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#E2E8F0] transition-colors">
+                  Próxima ➡
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ==================================================================== */}
           {/* VIEW: EDITOR */}
           {/* ==================================================================== */}
           {view === 'editor' && (
@@ -874,6 +1530,9 @@ export default function ChecklistCargaRetorno() {
                     >
                       {STATUS_CHECKLIST.map(s => <option key={s} value={s}>{LABEL_STATUS[s]}</option>)}
                     </select>
+                    <button onClick={abrirImportarOS} className="bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] font-black uppercase tracking-widest text-xs px-5 py-2.5 rounded-xl shadow-sm border border-[#CBD5E1] transition-colors">
+                      📦 Importar das OS&apos;s
+                    </button>
                     <button onClick={() => window.print()} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-5 py-2.5 rounded-xl shadow-md hover:bg-[#284B8C] transition-all">
                       🖨️ Imprimir / PDF
                     </button>
@@ -886,21 +1545,21 @@ export default function ChecklistCargaRetorno() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Evento / Feira</label>
-                    <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-bold" value={checklistAtual.evento_feira} onChange={e => { const v = e.target.value; const localAuto = buscarLocalPadrao(v); setChecklistAtual(prev => ({ ...prev, evento_feira: v, cliente: localAuto || prev.cliente })); }} />
+                    <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-bold uppercase" value={checklistAtual.evento_feira} onChange={e => { const v = up(e.target.value); const localAuto = buscarLocalPadrao(v); setChecklistAtual(prev => ({ ...prev, evento_feira: v, cliente: localAuto || prev.cliente })); }} />
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Local do Evento</label>
-                    <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={checklistAtual.cliente} onChange={e => setChecklistAtual(prev => ({ ...prev, cliente: e.target.value }))} />
+                    <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm uppercase" value={checklistAtual.cliente} onChange={e => setChecklistAtual(prev => ({ ...prev, cliente: up(e.target.value) }))} />
                   </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                   <div>
                     <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Endereço do Local</label>
-                    <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={checklistAtual.local} onChange={e => setChecklistAtual(prev => ({ ...prev, local: e.target.value }))} />
+                    <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm uppercase" value={checklistAtual.local} onChange={e => setChecklistAtual(prev => ({ ...prev, local: up(e.target.value) }))} />
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Data de Entrega</label>
-                    <input type="text" placeholder="Ex: 02/08/2026" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={checklistAtual.data_entrega} onChange={e => setChecklistAtual(prev => ({ ...prev, data_entrega: e.target.value }))} />
+                    <input type="text" placeholder="Ex: 02/08/2026" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={checklistAtual.data_entrega} onChange={e => setChecklistAtual(prev => ({ ...prev, data_entrega: up(e.target.value) }))} />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 mt-4">
@@ -916,15 +1575,17 @@ export default function ChecklistCargaRetorno() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
                   <div>
                     <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Resp. Conferência / Saída</label>
-                    <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={checklistAtual.responsavel_saida} onChange={e => setChecklistAtual(prev => ({ ...prev, responsavel_saida: e.target.value }))} />
+                    <input type="text" readOnly disabled className="w-full p-2 border border-[#E2E8F0] bg-[#F0F4F8] rounded outline-none text-sm uppercase text-[#64748B] cursor-not-allowed" value={checklistAtual.responsavel_saida} placeholder="Preenchido ao salvar como Saída Conferida" />
+                    <p className="mt-1 text-[9px] text-[#94A3B8]">Automático: preenchido com o usuário logado ao salvar como Saída Conferida.</p>
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Resp. Recebimento / Montagem</label>
-                    <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={checklistAtual.responsavel_montagem} onChange={e => setChecklistAtual(prev => ({ ...prev, responsavel_montagem: e.target.value }))} />
+                    <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm uppercase" value={checklistAtual.responsavel_montagem} onChange={e => setChecklistAtual(prev => ({ ...prev, responsavel_montagem: up(e.target.value) }))} />
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Resp. Conferência / Retorno</label>
-                    <input type="text" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={checklistAtual.responsavel_retorno} onChange={e => setChecklistAtual(prev => ({ ...prev, responsavel_retorno: e.target.value }))} />
+                    <input type="text" readOnly disabled className="w-full p-2 border border-[#E2E8F0] bg-[#F0F4F8] rounded outline-none text-sm uppercase text-[#64748B] cursor-not-allowed" value={checklistAtual.responsavel_retorno} placeholder="Preenchido ao salvar como Finalizado" />
+                    <p className="mt-1 text-[9px] text-[#94A3B8]">Automático: preenchido com o usuário logado ao salvar como Finalizado.</p>
                   </div>
                 </div>
               </div>
@@ -966,21 +1627,21 @@ export default function ChecklistCargaRetorno() {
                         {linhas.map(item => (
                           <tr key={item.id} className="border-t border-[#E2E8F0]">
                             <td className="p-2">
-                              <input type="text" className="w-full bg-transparent outline-none font-semibold print:font-normal" value={item.descricao} onChange={e => atualizarItem(item.id, { descricao: e.target.value })} />
+                              <input type="text" className="w-full bg-transparent outline-none font-semibold print:font-normal uppercase" value={item.descricao} onChange={e => atualizarItem(item.id, { descricao: up(e.target.value) })} />
                             </td>
                             <td className="p-2 text-center">
-                              <input type="text" className="w-full bg-transparent outline-none text-center" value={item.qtd_prevista} onChange={e => atualizarItem(item.id, { qtd_prevista: e.target.value })} />
+                              <input type="text" className="w-full bg-transparent outline-none text-center uppercase" value={item.qtd_prevista} onChange={e => atualizarItem(item.id, { qtd_prevista: up(e.target.value) })} />
                             </td>
                             <td className="p-2">
                               <div className="flex items-center justify-center gap-1.5">
-                                <input type="checkbox" className="w-4 h-4 accent-[#336699]" checked={item.saida_ok} onChange={e => atualizarItem(item.id, { saida_ok: e.target.checked })} />
+                                <input type="checkbox" className="w-4 h-4 accent-[#336699]" checked={item.saida_ok} onChange={e => alternarConferencia(item, 'saida', e.target.checked)} />
                                 <span className="text-[10px] text-[#94A3B8]">Qtd:</span>
                                 <input type="number" className="w-14 bg-transparent border-b border-[#CBD5E1] outline-none text-center" value={item.saida_qtd ?? ''} onChange={e => atualizarItem(item.id, { saida_qtd: e.target.value === '' ? null : Number(e.target.value) })} />
                               </div>
                             </td>
                             <td className="p-2">
                               <div className="flex items-center justify-center gap-1.5">
-                                <input type="checkbox" className="w-4 h-4 accent-[#336699]" checked={item.retorno_ok} onChange={e => atualizarItem(item.id, { retorno_ok: e.target.checked })} />
+                                <input type="checkbox" className="w-4 h-4 accent-[#336699]" checked={item.retorno_ok} onChange={e => alternarConferencia(item, 'retorno', e.target.checked)} />
                                 <span className="text-[10px] text-[#94A3B8]">Qtd:</span>
                                 <input type="number" className="w-14 bg-transparent border-b border-[#CBD5E1] outline-none text-center" value={item.retorno_qtd ?? ''} onChange={e => atualizarItem(item.id, { retorno_qtd: e.target.value === '' ? null : Number(e.target.value) })} />
                               </div>
@@ -1004,7 +1665,7 @@ export default function ChecklistCargaRetorno() {
 
               <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6 print:border print:border-black print:shadow-none">
                 <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Observações de Campo / Avarias / Faltas</label>
-                <textarea rows={3} className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm resize-none" value={checklistAtual.observacoes} onChange={e => setChecklistAtual(prev => ({ ...prev, observacoes: e.target.value }))} />
+                <textarea rows={3} className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm resize-none uppercase" value={checklistAtual.observacoes} onChange={e => setChecklistAtual(prev => ({ ...prev, observacoes: up(e.target.value) }))} />
               </div>
 
               {/* Assinaturas — só aparece na impressão */}
@@ -1045,11 +1706,11 @@ export default function ChecklistCargaRetorno() {
                   type="text"
                   placeholder="Buscar evento/feira cadastrado..."
                   autoComplete="off"
-                  className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm"
+                  className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm uppercase"
                   value={camposManuais.evento_feira}
                   onChange={e => {
                     setEventoSelecionado(null);
-                    setCamposManuais(prev => ({ ...prev, evento_feira: e.target.value }));
+                    setCamposManuais(prev => ({ ...prev, evento_feira: up(e.target.value) }));
                   }}
                 />
 
@@ -1088,11 +1749,11 @@ export default function ChecklistCargaRetorno() {
 
               <div>
                 <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Local do Evento</label>
-                <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={camposManuais.cliente} onChange={e => setCamposManuais(prev => ({ ...prev, cliente: e.target.value }))} />
+                <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm uppercase" value={camposManuais.cliente} onChange={e => setCamposManuais(prev => ({ ...prev, cliente: up(e.target.value) }))} />
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Endereço do Local</label>
-                <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={camposManuais.local} onChange={e => setCamposManuais(prev => ({ ...prev, local: e.target.value }))} />
+                <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm uppercase" value={camposManuais.local} onChange={e => setCamposManuais(prev => ({ ...prev, local: up(e.target.value) }))} />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -1106,7 +1767,7 @@ export default function ChecklistCargaRetorno() {
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Data de Entrega</label>
-                <input type="text" placeholder="Ex: 02/08/2026" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={camposManuais.data_entrega} onChange={e => setCamposManuais(prev => ({ ...prev, data_entrega: e.target.value }))} />
+                <input type="text" placeholder="Ex: 02/08/2026" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={camposManuais.data_entrega} onChange={e => setCamposManuais(prev => ({ ...prev, data_entrega: up(e.target.value) }))} />
               </div>
               <p className="text-[10px] text-[#64748B]">O checklist já nasce com o modelo padrão de itens (editável depois na tela do checklist).</p>
             </div>
@@ -1132,14 +1793,6 @@ export default function ChecklistCargaRetorno() {
             </div>
 
             <div className="p-6 overflow-y-auto space-y-4">
-              <div>
-                <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Seção</label>
-                <input type="text" list="secoes-existentes" className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm font-semibold" value={modalAddItem.secao} onChange={e => setModalAddItem(prev => ({ ...prev, secao: e.target.value }))} placeholder="Ex: PAINEL DE LED" />
-                <datalist id="secoes-existentes">
-                  {secoesExistentes.map(s => <option key={s} value={s} />)}
-                </datalist>
-              </div>
-
               <div className="flex gap-2">
                 <button onClick={() => setModalAddItem(prev => ({ ...prev, modo: 'livre' }))} className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-wider border transition-colors ${modalAddItem.modo === 'livre' ? 'bg-[#336699] text-white border-[#336699]' : 'bg-white text-[#64748B] border-[#CBD5E1]'}`}>Item Livre</button>
                 <button onClick={() => setModalAddItem(prev => ({ ...prev, modo: 'catalogo' }))} className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-wider border transition-colors ${modalAddItem.modo === 'catalogo' ? 'bg-[#336699] text-white border-[#336699]' : 'bg-white text-[#64748B] border-[#CBD5E1]'}`}>Do Catálogo</button>
@@ -1148,7 +1801,8 @@ export default function ChecklistCargaRetorno() {
               {modalAddItem.modo === 'livre' ? (
                 <div>
                   <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Descrição</label>
-                  <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm" value={modalAddItem.descricaoLivre} onChange={e => setModalAddItem(prev => ({ ...prev, descricaoLivre: e.target.value }))} placeholder="Ex: Cabos de Rede (Patch Cords)" />
+                  <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm uppercase" value={modalAddItem.descricaoLivre} onChange={e => setModalAddItem(prev => ({ ...prev, descricaoLivre: up(e.target.value) }))} placeholder="Ex: Cabos de Rede (Patch Cords)" />
+                  <p className="mt-1 text-[10px] text-[#94A3B8]">Itens livres entram na seção <strong>{SECAO_DIVERSOS}</strong>.</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-3">
@@ -1166,19 +1820,177 @@ export default function ChecklistCargaRetorno() {
                       {equipamentosAtivos.filter(e => !modalAddItem.categoriaId || e.categoria_id === modalAddItem.categoriaId).map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
                     </select>
                   </div>
+                  <div className="col-span-2">
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Observação (opcional)</label>
+                    <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm uppercase" value={modalAddItem.observacaoCatalogo} onChange={e => setModalAddItem(prev => ({ ...prev, observacaoCatalogo: up(e.target.value) }))} placeholder="Ex: cor branca, com estabilizador..." />
+                    {modalAddItem.equipamentoId && (
+                      <p className="mt-1 text-[10px] text-[#94A3B8]">
+                        Descrição final: <strong>{equipamentos.find(e => e.id === modalAddItem.equipamentoId)?.nome}{modalAddItem.observacaoCatalogo.trim() ? ` (${modalAddItem.observacaoCatalogo.trim()})` : ''}</strong>
+                      </p>
+                    )}
+                  </div>
+                  <p className="col-span-2 text-[10px] text-[#94A3B8]">A seção do item é a categoria do equipamento escolhido — não é possível criar seções avulsas.</p>
                 </div>
               )}
 
               <div>
                 <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Qtd. Prevista</label>
-                <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm" value={modalAddItem.qtdPrevista} onChange={e => setModalAddItem(prev => ({ ...prev, qtdPrevista: e.target.value }))} placeholder="Ex: 01, Lote, Pacote..." />
+                <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm uppercase" value={modalAddItem.qtdPrevista} onChange={e => setModalAddItem(prev => ({ ...prev, qtdPrevista: up(e.target.value) }))} placeholder="Ex: 01, Lote, Pacote..." />
               </div>
             </div>
 
             <div className="p-5 border-t border-[#E2E8F0] bg-white flex-shrink-0">
-              <button onClick={confirmarAddItem} className="w-full bg-[#16A34A] hover:bg-[#15803D] text-white font-black text-sm uppercase tracking-widest py-3 rounded-xl shadow-lg transition-colors">
+              <button onClick={confirmarAddItem} disabled={modalAddItem.modo === 'catalogo' ? !modalAddItem.equipamentoId : !modalAddItem.descricaoLivre.trim()} className="w-full bg-[#16A34A] hover:bg-[#15803D] disabled:opacity-50 disabled:cursor-not-allowed text-white font-black text-sm uppercase tracking-widest py-3 rounded-xl shadow-lg transition-colors">
                 Adicionar
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================================ */}
+      {/* MODAL: SUGESTÃO DE ACESSÓRIOS (gatilhos_acessorios) */}
+      {/* ============================================================================ */}
+      {modalSugestaoAcessorios.open && modalSugestaoAcessorios.itemPrincipal && (
+        <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="bg-[#336699] p-5 text-white flex-shrink-0">
+              <h3 className="font-black uppercase tracking-wider text-sm">🧩 Acessórios Sugeridos</h3>
+              <p className="text-[10px] text-blue-100 mt-0.5">Para {modalSugestaoAcessorios.itemPrincipal.descricao}, o estoque tem os seguintes acessórios vinculados:</p>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-2 bg-[#F8FAFC]">
+              {modalSugestaoAcessorios.acessorios.map(a => (
+                <div key={a.id} className="flex items-center gap-2 p-2 border border-[#E2E8F0] bg-white rounded-lg">
+                  <input type="checkbox" className="w-4 h-4 accent-[#336699] flex-shrink-0" checked={a.selecionado} onChange={e => atualizarAcessorioSugerido(a.id, { selecionado: e.target.checked })} />
+                  <span className="flex-1 min-w-0 text-xs font-semibold uppercase truncate">{a.nome}</span>
+                  <input type="text" className="w-16 flex-shrink-0 bg-transparent border-b border-[#CBD5E1] outline-none text-xs text-center uppercase" placeholder="Qtd." value={a.qtd} onChange={e => atualizarAcessorioSugerido(a.id, { qtd: up(e.target.value) })} />
+                </div>
+              ))}
+            </div>
+
+            <div className="p-5 border-t border-[#E2E8F0] bg-white flex-shrink-0 flex gap-3">
+              <button onClick={() => confirmarSugestaoAcessorios(false)} className="flex-1 bg-[#F0F4F8] hover:bg-[#E2E8F0] text-[#0C1D4D] border border-[#CBD5E1] font-black text-xs uppercase tracking-widest py-3 rounded-xl transition-colors">
+                Só o item principal
+              </button>
+              <button onClick={() => confirmarSugestaoAcessorios(true)} className="flex-1 bg-[#16A34A] hover:bg-[#15803D] text-white font-black text-xs uppercase tracking-widest py-3 rounded-xl shadow-lg transition-colors">
+                Adicionar com selecionados
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================================ */}
+      {/* MODAL: IMPORTAR ITENS DAS OS's */}
+      {/* ============================================================================ */}
+      {modalImportarOS && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="bg-[#336699] p-5 flex justify-between items-center text-white flex-shrink-0">
+              <div>
+                <h3 className="font-black uppercase tracking-wider text-sm">📦 Importar Itens das OS&apos;s</h3>
+                <p className="text-[10px] text-blue-100 mt-0.5">Evento: {checklistAtual.evento_feira || '—'}</p>
+              </div>
+              <button onClick={() => setModalImportarOS(false)} className="text-white hover:text-red-300 text-2xl leading-none">&times;</button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-4 bg-[#F8FAFC]">
+              {importandoOS ? (
+                <p className="text-center text-[#94A3B8] text-xs font-bold py-6">Buscando OS&apos;s do evento...</p>
+              ) : itensImportadosOS.length === 0 ? (
+                <p className="text-center text-[#94A3B8] text-xs font-bold py-6">Nenhum item encontrado.</p>
+              ) : (
+                <>
+                  <div className="flex gap-2">
+                    <button onClick={() => setModoConsolidadoOS(false)} className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-wider border transition-colors ${!modoConsolidadoOS ? 'bg-[#336699] text-white border-[#336699]' : 'bg-white text-[#64748B] border-[#CBD5E1]'}`}>
+                      📋 Individual (por OS)
+                    </button>
+                    <button onClick={() => setModoConsolidadoOS(true)} className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-wider border transition-colors ${modoConsolidadoOS ? 'bg-[#336699] text-white border-[#336699]' : 'bg-white text-[#64748B] border-[#CBD5E1]'}`}>
+                      🔗 Consolidado (agrupado)
+                    </button>
+                  </div>
+
+                  <div className="bg-white p-2.5 rounded-lg border border-[#E2E8F0] space-y-2">
+                    <div className="flex justify-between items-center">
+                      <p className="text-[10px] font-black text-[#64748B] uppercase">
+                        {modoConsolidadoOS
+                          ? `${itensConsolidadosOS.filter(c => c.selecionado).length} de ${itensConsolidadosOS.length} selecionado(s)`
+                          : `${itensImportadosOS.filter(i => i.selecionado).length} de ${itensImportadosOS.length} selecionado(s)`}
+                      </p>
+                      <div className="flex gap-3">
+                        <button onClick={() => alternarTodosImportadosOS(true)} className="text-[10px] font-black uppercase text-[#336699] underline">Marcar todos</button>
+                        <button onClick={() => alternarTodosImportadosOS(false)} className="text-[10px] font-black uppercase text-[#64748B] underline">Desmarcar todos</button>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 border-t border-[#E2E8F0] pt-2">
+                      <label className="text-[10px] font-bold text-[#64748B] uppercase flex-shrink-0">Categoria p/ selecionados:</label>
+                      <select onChange={e => { if (e.target.value !== '__placeholder__') aplicarCategoriaSelecionadosOS(e.target.value); e.target.value = '__placeholder__'; }} defaultValue="__placeholder__" className="flex-1 p-1.5 border border-[#CBD5E1] rounded text-xs outline-none focus:border-[#336699]">
+                        <option value="__placeholder__" disabled>-- Aplicar categoria do catálogo --</option>
+                        <option value="">DIVERSOS (sem categoria)</option>
+                        {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  {modoConsolidadoOS ? (
+                    <div className="space-y-1.5">
+                      {itensConsolidadosOS.map(item => (
+                        <div key={item.descricao} className={`flex flex-wrap items-center gap-2 p-2 border rounded-lg ${item.jaExiste ? 'border-amber-200 bg-amber-50' : 'border-[#E2E8F0] bg-white'}`}>
+                          <input type="checkbox" className="w-4 h-4 accent-[#336699] flex-shrink-0" checked={item.selecionado} onChange={e => alternarConsolidadoOS(item.descricao, e.target.checked)} />
+                          <div className="flex-1 min-w-[120px]">
+                            <p className="text-xs font-semibold">{item.descricao}</p>
+                            <p className="text-[9px] text-[#94A3B8]">OS&apos;s: {item.osNumeros.join(', ')}</p>
+                          </div>
+                          <span className="flex-shrink-0 w-14 text-xs text-center font-bold">
+                            {item.qtdSomada || '—'}{item.temQtdNaoNumerica && '+'}
+                          </span>
+                          <select className="flex-shrink-0 w-36 p-1 border border-[#CBD5E1] rounded text-[10px] outline-none focus:border-[#336699]" value={item.categoriaId} onChange={e => aplicarCategoriaConsolidadoOS(item.descricao, e.target.value)}>
+                            <option value="">DIVERSOS</option>
+                            {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                          </select>
+                          {item.jaExiste && <span className="flex-shrink-0 text-[8px] font-black uppercase text-amber-600">já existe</span>}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    itensImportadosPorOS.map(([numeroFicha, linhas]) => (
+                      <div key={numeroFicha}>
+                        <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#CBD5E1] pb-2 mb-2">
+                          OS Nº {numeroFicha}{linhas[0]?.ficha_cliente ? ` — ${linhas[0].ficha_cliente}` : ''}
+                        </h4>
+                        <div className="space-y-1.5">
+                          {linhas.map(item => (
+                            <div key={item.key} className={`flex flex-wrap items-center gap-2 p-2 border rounded-lg ${item.jaExiste ? 'border-amber-200 bg-amber-50' : 'border-[#E2E8F0] bg-white'}`}>
+                              <input type="checkbox" className="w-4 h-4 accent-[#336699] flex-shrink-0" checked={item.selecionado} onChange={e => atualizarItemImportadoOS(item.key, { selecionado: e.target.checked })} />
+                              <input type="text" className="flex-1 min-w-[120px] bg-transparent outline-none text-xs font-semibold uppercase" value={item.descricao} onChange={e => atualizarItemImportadoOS(item.key, { descricao: up(e.target.value) })} />
+                              <input type="text" className="w-14 flex-shrink-0 bg-transparent border-b border-[#CBD5E1] outline-none text-xs text-center uppercase" placeholder="Qtd." value={item.qtd} onChange={e => atualizarItemImportadoOS(item.key, { qtd: up(e.target.value) })} />
+                              <select className="flex-shrink-0 w-36 p-1 border border-[#CBD5E1] rounded text-[10px] outline-none focus:border-[#336699]" value={item.categoriaId} onChange={e => atualizarItemImportadoOS(item.key, { categoriaId: e.target.value })}>
+                                <option value="">DIVERSOS</option>
+                                {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                              </select>
+                              {item.jaExiste && <span className="flex-shrink-0 text-[8px] font-black uppercase text-amber-600">já existe</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="p-5 border-t border-[#E2E8F0] bg-white flex-shrink-0">
+              {(() => {
+                const qtdSelecionados = modoConsolidadoOS
+                  ? itensConsolidadosOS.filter(c => c.selecionado).length
+                  : itensImportadosOS.filter(i => i.selecionado).length;
+                return (
+                  <button onClick={confirmarImportarOS} disabled={qtdSelecionados === 0} className="w-full bg-[#16A34A] hover:bg-[#15803D] disabled:opacity-50 disabled:cursor-not-allowed text-white font-black text-sm uppercase tracking-widest py-3 rounded-xl shadow-lg transition-colors">
+                    Importar {qtdSelecionados > 0 ? `(${qtdSelecionados})` : ''}
+                  </button>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -1201,21 +2013,17 @@ export default function ChecklistCargaRetorno() {
             <div className="p-6 overflow-y-auto bg-[#F8FAFC]">
               <div className="bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm mb-6">
                 <h4 className="text-[10px] font-black uppercase text-[#64748B] mb-3">Adicionar Item ao Modelo</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-                  <input type="text" list="secoes-modelo" placeholder="Seção (ex: PAINEL DE LED)" className="p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-xs font-semibold" value={novoModelo.secao} onChange={e => setNovoModelo(prev => ({ ...prev, secao: e.target.value }))} />
-                  <datalist id="secoes-modelo">
-                    {Array.from(new Set(modeloItens.map(m => m.secao))).map(s => <option key={s} value={s} />)}
-                  </datalist>
-                  <input type="text" placeholder="Qtd. Padrão (ex: 01, Lote, Pacote)" className="p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-xs" value={novoModelo.qtdPadrao} onChange={e => setNovoModelo(prev => ({ ...prev, qtdPadrao: e.target.value }))} />
-                </div>
                 <div className="flex gap-2 mb-3">
                   <button onClick={() => setNovoModelo(prev => ({ ...prev, modo: 'livre' }))} className={`flex-1 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-colors ${novoModelo.modo === 'livre' ? 'bg-[#336699] text-white border-[#336699]' : 'bg-white text-[#64748B] border-[#CBD5E1]'}`}>Item Livre</button>
                   <button onClick={() => setNovoModelo(prev => ({ ...prev, modo: 'catalogo' }))} className={`flex-1 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-colors ${novoModelo.modo === 'catalogo' ? 'bg-[#336699] text-white border-[#336699]' : 'bg-white text-[#64748B] border-[#CBD5E1]'}`}>Do Catálogo</button>
                 </div>
                 {novoModelo.modo === 'livre' ? (
-                  <input type="text" placeholder="Descrição do item" className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-xs mb-3" value={novoModelo.descricaoLivre} onChange={e => setNovoModelo(prev => ({ ...prev, descricaoLivre: e.target.value }))} />
+                  <div className="mb-3">
+                    <input type="text" placeholder="Descrição do item" className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-xs uppercase" value={novoModelo.descricaoLivre} onChange={e => setNovoModelo(prev => ({ ...prev, descricaoLivre: up(e.target.value) }))} />
+                    <p className="mt-1 text-[10px] text-[#94A3B8]">Itens livres entram na seção <strong>{SECAO_DIVERSOS}</strong>.</p>
+                  </div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div className="grid grid-cols-2 gap-3 mb-1">
                     <select className="p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-xs" value={novoModelo.categoriaId} onChange={e => setNovoModelo(prev => ({ ...prev, categoriaId: e.target.value, equipamentoId: '' }))}>
                       <option value="">-- Categoria --</option>
                       {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
@@ -1224,9 +2032,21 @@ export default function ChecklistCargaRetorno() {
                       <option value="">-- Equipamento --</option>
                       {equipamentosAtivos.filter(e => !novoModelo.categoriaId || e.categoria_id === novoModelo.categoriaId).map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
                     </select>
+                    <div className="col-span-2">
+                      <input type="text" placeholder="Observação (opcional) — ex: cor branca, com estabilizador..." className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-xs uppercase" value={novoModelo.observacaoCatalogo} onChange={e => setNovoModelo(prev => ({ ...prev, observacaoCatalogo: up(e.target.value) }))} />
+                      {novoModelo.equipamentoId && (
+                        <p className="mt-1 text-[10px] text-[#94A3B8]">
+                          Descrição final: <strong>{equipamentosAtivos.find(e => e.id === novoModelo.equipamentoId)?.nome}{novoModelo.observacaoCatalogo.trim() ? ` (${novoModelo.observacaoCatalogo.trim()})` : ''}</strong>
+                        </p>
+                      )}
+                    </div>
+                    <p className="col-span-2 text-[10px] text-[#94A3B8] mb-2">A seção do item é a categoria do equipamento escolhido — não é possível criar seções avulsas.</p>
                   </div>
                 )}
-                <button onClick={adicionarItemModelo} className="bg-[#16A34A] hover:bg-[#15803D] text-white px-4 py-2.5 rounded-lg font-black text-[10px] uppercase tracking-widest transition-colors w-full">
+                <div>
+                  <input type="text" placeholder="Qtd. Padrão (ex: 01, Lote, Pacote)" className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-xs mb-3 uppercase" value={novoModelo.qtdPadrao} onChange={e => setNovoModelo(prev => ({ ...prev, qtdPadrao: up(e.target.value) }))} />
+                </div>
+                <button onClick={adicionarItemModelo} disabled={novoModelo.modo === 'catalogo' ? !novoModelo.equipamentoId : !novoModelo.descricaoLivre.trim()} className="bg-[#16A34A] hover:bg-[#15803D] disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2.5 rounded-lg font-black text-[10px] uppercase tracking-widest transition-colors w-full">
                   Adicionar ao Modelo
                 </button>
               </div>

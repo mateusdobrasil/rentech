@@ -249,7 +249,8 @@ export default function SimuladorVideoWall() {
         const { data: equipData, error: equipError } = await supabase
           .from('equipamentos')
           .select('id, categoria_id, nome, peso, consumo_watts, largura, altura, profundidade, resolucao, dmx, detalhes, imagem_url')
-          .eq('ativo', true);
+          .eq('ativo', true)
+          .eq('visivel_simulador', true);
         const { data: gatilhosData, error: gatilhosError } = await supabase
           .from('gatilhos_acessorios')
           .select('id, acessorio_id, categoria_alvo_id, equipamento_alvo_id');

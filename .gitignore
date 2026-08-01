@@ -39,7 +39,7 @@ yarn-error.log*
 .vercel
 
 # ffmpeg.wasm core files (copied from node_modules at build time, see scripts/copy-ffmpeg-core.js)
-/public/ffmpeg-core-mt/
+/public/ffmpeg-core/
 
 # typescript
 *.tsbuildinfo

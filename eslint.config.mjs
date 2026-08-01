@@ -16,6 +16,8 @@ const eslintConfig = defineConfig([
     // são código Next.js e têm suas próprias regras de lint.
     "mobile/**",
     "packages/**",
+    // Scripts de build Node.js (CommonJS), não fazem parte do bundle da app.
+    "scripts/**",
   ]),
 ]);
 

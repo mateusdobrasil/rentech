@@ -5,7 +5,10 @@
 const fs = require('fs');
 const path = require('path');
 
-const srcDir = path.join(__dirname, '..', 'node_modules', '@ffmpeg', 'core', 'dist', 'esm');
+// Usa a build UMD (não a ESM): o worker interno do @ffmpeg/ffmpeg carrega o core
+// via `importScripts()` (funciona com UMD); se isso falhar ele cai num `import()`
+// dinâmico que o bundler do Next.js não consegue resolver (trava em runtime).
+const srcDir = path.join(__dirname, '..', 'node_modules', '@ffmpeg', 'core', 'dist', 'umd');
 const destDir = path.join(__dirname, '..', 'public', 'ffmpeg-core');
 
 const files = ['ffmpeg-core.js', 'ffmpeg-core.wasm'];

@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-textract": "^3.1084.0",
-    "@ffmpeg/core": "^0.12.10",
+    "@ffmpeg/core": "^0.12.6",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
     "@supabase/supabase-js": "^2.107.0",

@@ -253,16 +253,16 @@ export default function RegistroDePontoOperacional() {
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-4 gap-2 text-center mb-3">
+                  <div className="grid grid-cols-2 gap-2 text-center mb-3">
                     {[
                       { rotulo: 'Entrada 1', valor: l.e1 },
                       { rotulo: 'Saída 1', valor: l.s1 },
                       { rotulo: 'Entrada 2', valor: l.e2 },
                       { rotulo: 'Saída 2', valor: l.s2 },
                     ].map(b => (
-                      <div key={b.rotulo} className="bg-[#F8FAFC] rounded-lg py-2 px-1">
-                        <div className="text-[9px] font-black text-gray-400 uppercase tracking-wide mb-0.5">{b.rotulo}</div>
-                        <div className="text-xs font-bold text-[#0C1D4D]">{b.valor || '--:--'}</div>
+                      <div key={b.rotulo} className="bg-[#F8FAFC] rounded-lg py-2 px-2 flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-wide">{b.rotulo}</span>
+                        <span className="text-xs font-bold text-[#0C1D4D]">{b.valor || '--:--'}</span>
                       </div>
                     ))}
                   </div>

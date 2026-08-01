@@ -6,7 +6,7 @@ import { Analytics } from "@vercel/analytics/next";
 
 type Rotacao = 0 | 90 | 180 | 270;
 
-const CORE_BASE_URL = '/ffmpeg-core-mt';
+const CORE_BASE_URL = '/ffmpeg-core';
 
 function girar(atual: Rotacao, delta: 90 | -90): Rotacao {
   return (((atual + delta) % 360) + 360) % 360 as Rotacao;
@@ -75,19 +75,27 @@ export default function RotacionarVideo() {
     if (ffmpegRef.current) return ffmpegRef.current;
 
     setCarregandoFerramenta(true);
+    console.log('DEBUG: importing ffmpeg modules');
     const { FFmpeg } = await import('@ffmpeg/ffmpeg');
     const { toBlobURL } = await import('@ffmpeg/util');
+    console.log('DEBUG: modules imported');
 
     const ffmpeg = new FFmpeg();
     ffmpeg.on('progress', ({ progress }) => {
       setProgresso(Math.min(99, Math.max(0, Math.round(progress * 100))));
     });
+    ffmpeg.on('log', ({ message }) => console.log('DEBUG ffmpeg log:', message));
 
-    await ffmpeg.load({
-      coreURL: await toBlobURL(`${CORE_BASE_URL}/ffmpeg-core.js`, 'text/javascript'),
-      wasmURL: await toBlobURL(`${CORE_BASE_URL}/ffmpeg-core.wasm`, 'application/wasm'),
-      workerURL: await toBlobURL(`${CORE_BASE_URL}/ffmpeg-core.worker.js`, 'text/javascript'),
-    });
+    console.log('DEBUG: fetching blob urls');
+    const coreURL = await toBlobURL(`${CORE_BASE_URL}/ffmpeg-core.js`, 'text/javascript');
+    console.log('DEBUG: coreURL ready');
+    const wasmURL = await toBlobURL(`${CORE_BASE_URL}/ffmpeg-core.wasm`, 'application/wasm');
+    console.log('DEBUG: wasmURL ready');
+    const workerURL = await toBlobURL(`${CORE_BASE_URL}/ffmpeg-core.worker.js`, 'text/javascript');
+    console.log('DEBUG: workerURL ready, calling ffmpeg.load()');
+
+    await ffmpeg.load({ coreURL, wasmURL, workerURL });
+    console.log('DEBUG: ffmpeg.load() resolved');
 
     ffmpegRef.current = ffmpeg;
     setCarregandoFerramenta(false);

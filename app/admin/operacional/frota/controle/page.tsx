@@ -435,7 +435,7 @@ export default function PainelControleFrota() {
       <Analytics />
 
       {/* IDENTIFICAÇÃO E NAVEGAÇÃO ALINHADOS À NAVBAR GLOBAL */}
-      <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex-shrink-0 flex justify-between items-center shadow-sm">
+      <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex-shrink-0 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 shadow-sm">
         <p className="text-[#0369A1] font-medium text-sm">
           🔧 <strong>Olá, {usuarioAtual}</strong>. Cadastro, documentos e seguros da frota.
         </p>
@@ -451,7 +451,7 @@ export default function PainelControleFrota() {
           </div>
         )}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col md:flex-row gap-4 justify-between items-center">
-          <div className="flex w-full md:w-auto gap-4 flex-grow max-w-2xl">
+          <div className="flex flex-col md:flex-row w-full md:w-auto gap-4 flex-grow max-w-2xl">
             <input
               type="text"
               placeholder="🔍 Buscar por apelido, placa ou modelo..."
@@ -460,7 +460,7 @@ export default function PainelControleFrota() {
               onChange={(e) => setBusca(e.target.value)}
             />
             <select
-              className="p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer w-48"
+              className="p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer w-full md:w-48"
               value={filtroStatus}
               onChange={(e) => setFiltroStatus(e.target.value)}
             >
@@ -468,7 +468,7 @@ export default function PainelControleFrota() {
               {STATUS_VEICULO.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
             <select
-              className="p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer w-48"
+              className="p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer w-full md:w-48"
               value={filtroPropriedade}
               onChange={(e) => setFiltroPropriedade(e.target.value)}
             >

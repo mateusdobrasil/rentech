@@ -1504,7 +1504,7 @@ export default function ChecklistCargaRetorno() {
             <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
                 <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Checklists de Carga</h2>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2 w-full md:w-auto">
                   <button onClick={() => setView('divergencias')} className="bg-orange-50 hover:bg-orange-100 text-orange-700 px-4 py-2.5 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-orange-200">
                     ⚠️ Divergências{totalDivergenciasAbertas > 0 ? ` (${totalDivergenciasAbertas})` : ''}
                   </button>
@@ -1747,7 +1747,7 @@ export default function ChecklistCargaRetorno() {
                   <div>
                     <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">{gerarNumeroExibicao(checklistAtual.numero)}</h2>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
                     <select
                       value={checklistAtual.status}
                       onChange={(e) => setChecklistAtual(prev => ({ ...prev, status: e.target.value as StatusChecklist }))}
@@ -1755,16 +1755,16 @@ export default function ChecklistCargaRetorno() {
                     >
                       {STATUS_CHECKLIST.map(s => <option key={s} value={s}>{LABEL_STATUS[s]}</option>)}
                     </select>
-                    <button onClick={abrirImportarOS} className="bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] font-black uppercase tracking-widest text-xs px-5 py-2.5 rounded-xl shadow-sm border border-[#CBD5E1] transition-colors">
+                    <button onClick={abrirImportarOS} className="bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] font-black uppercase tracking-widest text-xs px-3 md:px-5 py-2.5 rounded-xl shadow-sm border border-[#CBD5E1] transition-colors">
                       📦 Importar das OS&apos;s
                     </button>
-                    <button onClick={unificarItensDuplicados} title="Junta itens repetidos (mesma seção e mesmo item) somando as quantidades" className="bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] font-black uppercase tracking-widest text-xs px-5 py-2.5 rounded-xl shadow-sm border border-[#CBD5E1] transition-colors">
+                    <button onClick={unificarItensDuplicados} title="Junta itens repetidos (mesma seção e mesmo item) somando as quantidades" className="bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] font-black uppercase tracking-widest text-xs px-3 md:px-5 py-2.5 rounded-xl shadow-sm border border-[#CBD5E1] transition-colors">
                       🧩 Unificar Duplicados
                     </button>
-                    <button onClick={() => window.print()} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-5 py-2.5 rounded-xl shadow-md hover:bg-[#284B8C] transition-all">
+                    <button onClick={() => window.print()} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-3 md:px-5 py-2.5 rounded-xl shadow-md hover:bg-[#284B8C] transition-all">
                       🖨️ Imprimir / PDF
                     </button>
-                    <button onClick={salvarChecklist} disabled={salvando} className="bg-[#16A34A] hover:bg-[#15803D] text-white font-black text-xs uppercase tracking-widest px-5 py-2.5 rounded-xl shadow-md transition-colors disabled:opacity-50">
+                    <button onClick={salvarChecklist} disabled={salvando} className="bg-[#16A34A] hover:bg-[#15803D] text-white font-black text-xs uppercase tracking-widest px-3 md:px-5 py-2.5 rounded-xl shadow-md transition-colors disabled:opacity-50">
                       {salvando ? '⏳ Salvando...' : '💾 Salvar Checklist'}
                     </button>
                   </div>
@@ -1841,7 +1841,38 @@ export default function ChecklistCargaRetorno() {
                         + Item
                       </button>
                     </div>
-                    <table className="w-full text-xs">
+                    {/* Mobile: cartões empilhados — a tabela abaixo não cabe numa tela de
+                        celular sem cortar colunas, e é nela que o time preenche o checklist
+                        em campo. */}
+                    <div className="md:hidden print:hidden divide-y divide-[#E2E8F0]">
+                      {linhas.map(item => (
+                        <div key={item.id} className="p-3 space-y-2.5">
+                          <div className="flex items-start gap-2">
+                            <input type="text" className="flex-1 min-w-0 bg-transparent outline-none font-semibold uppercase text-sm" value={item.descricao} onChange={e => atualizarItem(item.id, { descricao: up(e.target.value) })} />
+                            <button onClick={() => removerItem(item)} className="flex-shrink-0 text-red-500 hover:bg-red-50 rounded px-2 py-1 text-xs font-black">✕</button>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px] text-[#64748B] font-bold uppercase">
+                            <span>Qtd. Prevista:</span>
+                            <input type="text" className="w-16 bg-transparent border-b border-[#CBD5E1] outline-none text-center uppercase text-[#0A2A4A]" value={item.qtd_prevista} onChange={e => atualizarItem(item.id, { qtd_prevista: up(e.target.value) })} />
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <label className="flex items-center justify-center gap-1.5 border border-[#E2E8F0] rounded-lg p-2">
+                              <input type="checkbox" className="w-4 h-4 accent-[#336699] flex-shrink-0" checked={item.saida_ok} onChange={e => alternarConferencia(item, 'saida', e.target.checked)} />
+                              <span className="text-[10px] text-[#94A3B8] font-bold uppercase">Saída:</span>
+                              <input type="number" className="w-12 bg-transparent border-b border-[#CBD5E1] outline-none text-center" value={item.saida_qtd ?? ''} onChange={e => atualizarItem(item.id, { saida_qtd: e.target.value === '' ? null : Number(e.target.value) })} />
+                            </label>
+                            <label className="flex items-center justify-center gap-1.5 border border-[#E2E8F0] rounded-lg p-2">
+                              <input type="checkbox" className="w-4 h-4 accent-[#336699] flex-shrink-0" checked={item.retorno_ok} onChange={e => alternarConferencia(item, 'retorno', e.target.checked)} />
+                              <span className="text-[10px] text-[#94A3B8] font-bold uppercase">Retorno:</span>
+                              <input type="number" className="w-12 bg-transparent border-b border-[#CBD5E1] outline-none text-center" value={item.retorno_qtd ?? ''} onChange={e => atualizarItem(item.id, { retorno_qtd: e.target.value === '' ? null : Number(e.target.value) })} />
+                            </label>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Desktop / impressão: tabela original */}
+                    <table className="hidden md:table print:table w-full text-xs">
                       <thead className="bg-[#F8FAFC] print:bg-white">
                         <tr className="text-left text-[#64748B] uppercase tracking-wider font-black text-[10px]">
                           <th className="p-2">Descrição do Item</th>

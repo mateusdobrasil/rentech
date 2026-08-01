@@ -567,7 +567,7 @@ export default function ImportadorEventosFeiras() {
               </table>
             </div>
 
-            <div className="flex justify-between items-center mt-4">
+            <div className="flex flex-wrap justify-between items-center gap-2 mt-4">
               <button
                 onClick={() => setPagina(p => Math.max(0, p - 1))}
                 disabled={pagina === 0 || gridLoading}

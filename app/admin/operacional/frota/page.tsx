@@ -561,7 +561,7 @@ export default function VisualizacaoFrota() {
       </div>
 
       {/* ABAS */}
-      <div className="px-4 md:px-8 pt-4 flex-shrink-0 flex gap-2 border-b border-[#E2E8F0] bg-white">
+      <div className="px-4 md:px-8 pt-4 flex-shrink-0 flex flex-wrap gap-2 border-b border-[#E2E8F0] bg-white">
         <button
           onClick={() => setAbaAtiva('veiculos')}
           className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${abaAtiva === 'veiculos' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}

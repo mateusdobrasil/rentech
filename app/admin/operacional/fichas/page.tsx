@@ -673,7 +673,7 @@ export default function ImportadorFichasReserva() {
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
               <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Fichas Cadastradas</h2>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
                 <span className="text-xs font-black uppercase tracking-wider text-[#64748B]">
                   {totalRegistros} registro(s)
                 </span>
@@ -754,7 +754,7 @@ export default function ImportadorFichasReserva() {
               </table>
             </div>
 
-            <div className="flex justify-between items-center mt-4">
+            <div className="flex flex-wrap justify-between items-center gap-2 mt-4">
               <button
                 onClick={() => setPagina(p => Math.max(0, p - 1))}
                 disabled={pagina === 0 || gridLoading}
@@ -812,7 +812,7 @@ export default function ImportadorFichasReserva() {
               )}
             </div>
 
-            <div className="p-5 border-t border-[#E2E8F0] flex justify-end gap-3">
+            <div className="p-5 border-t border-[#E2E8F0] flex flex-wrap justify-end gap-3">
               <button
                 onClick={() => setModalLimpar({ open: false, contando: false, total: null, excluindo: false })}
                 disabled={modalLimpar.excluindo}

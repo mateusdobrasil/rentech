@@ -641,7 +641,7 @@ export default function PainelEstoque() {
 
       {/* NAVEGAÇÃO POR ABAS */}
       <div className="px-4 md:px-8 pt-6 flex-shrink-0">
-        <div className="flex gap-2 border-b-2 border-[#E2E8F0]">
+        <div className="flex flex-wrap gap-2 border-b-2 border-[#E2E8F0]">
           <button
             onClick={() => setAbaAtiva('equipamentos')}
             className={`px-5 py-3 font-black text-xs uppercase tracking-wider transition-colors border-b-2 -mb-0.5 ${abaAtiva === 'equipamentos' ? 'border-[#336699] text-[#336699]' : 'border-transparent text-[#94A3B8] hover:text-[#64748B]'}`}
@@ -679,7 +679,7 @@ export default function PainelEstoque() {
           </div>
 
           {abaAtiva === 'equipamentos' && (
-            <div className="flex w-full md:w-auto gap-2">
+            <div className="flex flex-wrap w-full md:w-auto gap-2">
               <button onClick={() => setModalCategorias(true)} className="flex-1 md:flex-none bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] px-4 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-[#CBD5E1]">
                 🏷️ Categorias
               </button>
@@ -942,7 +942,7 @@ export default function PainelEstoque() {
             </div>
 
             <div className="p-6 overflow-y-auto space-y-4">
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Quantidade Total</label>
                   <input

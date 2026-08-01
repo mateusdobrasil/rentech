@@ -75,6 +75,12 @@ const modulosOperacional = [
     descricao: 'Checklist de saída e devolução de equipamentos por evento, vinculado às fichas de reserva.',
     icone: '✅', link: '/admin/operacional/checklist',
     cor: 'bg-teal-50 border-teal-200 text-teal-700', hover: 'hover:border-teal-500'
+  },
+  {
+    titulo: 'Registro de Ponto',
+    descricao: 'Consulta (somente leitura) se cada colaborador já registrou o ponto do dia.',
+    icone: '🕒', link: '/admin/operacional/registro-ponto',
+    cor: 'bg-sky-50 border-sky-200 text-sky-700', hover: 'hover:border-sky-500'
   }
 ];
 

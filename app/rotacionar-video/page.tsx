@@ -6,7 +6,7 @@ import { Analytics } from "@vercel/analytics/next";
 
 type Rotacao = 0 | 90 | 180 | 270;
 
-const CORE_BASE_URL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+const CORE_BASE_URL = '/ffmpeg-core-mt';
 
 function girar(atual: Rotacao, delta: 90 | -90): Rotacao {
   return (((atual + delta) % 360) + 360) % 360 as Rotacao;
@@ -86,6 +86,7 @@ export default function RotacionarVideo() {
     await ffmpeg.load({
       coreURL: await toBlobURL(`${CORE_BASE_URL}/ffmpeg-core.js`, 'text/javascript'),
       wasmURL: await toBlobURL(`${CORE_BASE_URL}/ffmpeg-core.wasm`, 'application/wasm'),
+      workerURL: await toBlobURL(`${CORE_BASE_URL}/ffmpeg-core.worker.js`, 'text/javascript'),
     });
 
     ffmpegRef.current = ffmpeg;

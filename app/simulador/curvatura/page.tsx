@@ -11,10 +11,11 @@ export default function SimuladorCurvatura() {
   const [cliente, setCliente] = useState('');
 
   // 2. O Painel
-  const [modeloPainel, setModeloPainel] = useState<number>(5); 
-  
+  const [modeloPainel, setModeloPainel] = useState<number>(5);
+  const [usoFlex, setUsoFlex] = useState<'curvo' | 'reto'>('curvo'); // Só se aplica ao modelo Flex
+
   // 3. Lógica da Curvatura (Como ele curva)
-  const [modoAngulo, setModoAngulo] = useState<'unico' | 'diametro' | 'raio' | 'circunferencia' | 'multiplo'>('unico');
+  const [modoAngulo, setModoAngulo] = useState<'unico' | 'diametro' | 'raio' | 'circunferencia' | 'multiplo' | 'quina'>('unico');
   const [angleInput, setAngleInput] = useState<string>('5');
   
   // 4. Dimensionamento (Qual o tamanho)
@@ -46,7 +47,7 @@ export default function SimuladorCurvatura() {
 
   useEffect(() => {
     calcularEDesenhar();
-  }, [projeto, cliente, modeloPainel, modoAngulo, angleInput, sizeMode, qty, inputCorda, inputLinear, isPrintMode]);
+  }, [projeto, cliente, modeloPainel, usoFlex, modoAngulo, angleInput, sizeMode, qty, inputCorda, inputLinear, isPrintMode]);
 
   // ============================================================================
   // MOTOR MATEMÁTICO (FÍSICA POLIGONAL EXATA)
@@ -54,7 +55,8 @@ export default function SimuladorCurvatura() {
   const calcularEDesenhar = () => {
     let aviso = '';
     const maxPermitido = modeloPainel;
-    const nomeModelo = maxPermitido === 5 ? 'P2 Indoor (Curvo Máx 5°)' : maxPermitido === 15 ? 'P3 Indoor (Curvo Máx 15°)' : 'P2 Flexível (Máx 45°)';
+    const renderCurvaSuave = maxPermitido === 45 && usoFlex === 'curvo' && modoAngulo !== 'quina';
+    const nomeModelo = maxPermitido === 5 ? 'P2 Indoor (Curvo Máx 5°)' : maxPermitido === 15 ? 'P3 Indoor (Curvo Máx 15°)' : (usoFlex === 'curvo' ? 'P2 Flexível (Uso Curvo)' : 'P2 Flexível (Uso Reto)');
     
     let angles: number[] = [];
     let n = 0;
@@ -118,7 +120,12 @@ export default function SimuladorCurvatura() {
       for (const part of parts) {
         let val = parseFloat(part.trim());
         if (!isNaN(val)) {
-          if (val > maxPermitido) { val = maxPermitido; aviso = "Valores excedentes limitados."; }
+          if (modoAngulo === 'quina') {
+            // Quina: junta de canto reto, sempre 0° ou 90° (independe do limite de flexão do painel)
+            const snapped = val >= 45 ? 90 : val <= -45 ? -90 : 0;
+            if (snapped !== val) aviso = "Ângulos de quina ajustados para 0° ou 90°.";
+            val = snapped;
+          } else if (val > maxPermitido) { val = maxPermitido; aviso = "Valores excedentes limitados."; }
           else if (val < -maxPermitido) { val = -maxPermitido; aviso = "Valores excedentes limitados."; }
           angles.push(val);
         }
@@ -169,13 +176,13 @@ export default function SimuladorCurvatura() {
       raioDisplay, diamDisplay, circDisplay, avisoSeguranca: aviso 
     });
     
-    desenharCanvas(pts, linear, cordaFinal, n, nomeModelo, projeto || "PROJETO RENTECH", cliente || "Não informado");
+    desenharCanvas(pts, linear, cordaFinal, n, nomeModelo, projeto || "PROJETO RENTECH", cliente || "Não informado", renderCurvaSuave, totalAngleDeg, raioDisplay);
   };
 
   // ============================================================================
   // RENDERIZAÇÃO GRÁFICA NO CANVAS
   // ============================================================================
-  const desenharCanvas = (pts: {x:number, y:number}[], linear: number, corda: number, n: number, nomeModelo: string, pName: string, cName: string) => {
+  const desenharCanvas = (pts: {x:number, y:number}[], linear: number, corda: number, n: number, nomeModelo: string, pName: string, cName: string, renderCurvaSuave: boolean, totalAngle: number, raioDisplay: string) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -216,11 +223,27 @@ export default function SimuladorCurvatura() {
       ctx.fillText(`Corda Real: ${corda.toFixed(2)}m`, canvas.width / 2, pts[0].y * escala + offsetY - 20);
     }
 
+    const screenPts = pts.map(p => ({ x: p.x * escala + offsetX, y: p.y * escala + offsetY }));
+
     ctx.save();
     ctx.beginPath();
-    ctx.moveTo(pts[0].x * escala + offsetX, pts[0].y * escala + offsetY);
-    for (let i = 1; i < pts.length; i++) {
-      ctx.lineTo(pts[i].x * escala + offsetX, pts[i].y * escala + offsetY);
+    ctx.moveTo(screenPts[0].x, screenPts[0].y);
+
+    if (renderCurvaSuave && screenPts.length > 2) {
+      // Painel flexível: aproxima os vértices por uma spline suave (curva contínua)
+      for (let i = 1; i < screenPts.length - 1; i++) {
+        const xc = (screenPts[i].x + screenPts[i + 1].x) / 2;
+        const yc = (screenPts[i].y + screenPts[i + 1].y) / 2;
+        ctx.quadraticCurveTo(screenPts[i].x, screenPts[i].y, xc, yc);
+      }
+      const last = screenPts[screenPts.length - 1];
+      const secondLast = screenPts[screenPts.length - 2];
+      ctx.quadraticCurveTo(secondLast.x, secondLast.y, last.x, last.y);
+    } else {
+      // Painel rígido: segmentos retos entre placas
+      for (let i = 1; i < screenPts.length; i++) {
+        ctx.lineTo(screenPts[i].x, screenPts[i].y);
+      }
     }
 
     if (!isPrintMode) {
@@ -238,9 +261,9 @@ export default function SimuladorCurvatura() {
     ctx.restore();
 
     ctx.fillStyle = isPrintMode ? '#ffffff' : '#336699';
-    for (let i = 1; i < pts.length - 1; i++) {
+    for (let i = 1; i < screenPts.length - 1; i++) {
       ctx.beginPath();
-      ctx.arc(pts[i].x * escala + offsetX, pts[i].y * escala + offsetY, 6, 0, Math.PI * 2);
+      ctx.arc(screenPts[i].x, screenPts[i].y, 6, 0, Math.PI * 2);
       ctx.fill();
     }
 
@@ -258,7 +281,7 @@ export default function SimuladorCurvatura() {
 
     ctx.fillStyle = subColor;
     ctx.font = "italic 22px sans-serif";
-    ctx.fillText(`Curvatura Total: ${resultados.totalAngle.toFixed(1)}° | Raio Técnico: ${resultados.raioDisplay}`, canvas.width / 2, canvas.height - 40);
+    ctx.fillText(`Curvatura Total: ${totalAngle.toFixed(1)}° | Raio Técnico: ${raioDisplay}`, canvas.width / 2, canvas.height - 40);
   };
 
   return (
@@ -292,24 +315,47 @@ export default function SimuladorCurvatura() {
                   <button onClick={() => setModeloPainel(45)} className={`py-1.5 text-[10px] font-black uppercase rounded ${modeloPainel === 45 ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:bg-gray-200'}`}>Flex (45°)</button>
                 </div>
               </div>
+
+              {modeloPainel === 45 && (
+                <label className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-lg p-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={usoFlex === 'reto'}
+                    onChange={(e) => setUsoFlex(e.target.checked ? 'reto' : 'curvo')}
+                    className="w-4 h-4 accent-[#0C1D4D] cursor-pointer"
+                  />
+                  <span className="text-[10px] font-bold text-[#0C1D4D] uppercase">Projeto será instalado reto (sem curvatura)</span>
+                </label>
+              )}
             </div>
           </div>
 
           <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100">
             <h3 className="font-black text-[#336699] uppercase tracking-wider text-[10px] mb-3">3. Definição da Curvatura</h3>
-            <select className="w-full p-2 bg-white border border-blue-200 rounded text-xs font-bold text-[#0C1D4D] mb-2 cursor-pointer outline-none" value={modoAngulo} onChange={(e) => setModoAngulo(e.target.value as any)}>
+            <select className="w-full p-2 bg-white border border-blue-200 rounded text-xs font-bold text-[#0C1D4D] mb-2 cursor-pointer outline-none" value={modoAngulo} onChange={(e) => {
+              const novoModo = e.target.value as typeof modoAngulo;
+              setModoAngulo(novoModo);
+              if (novoModo === 'quina' && modoAngulo !== 'quina') setAngleInput('0,90');
+            }}>
               <option value="unico">Travar Ângulo por Placa (°)</option>
               <option value="diametro">Informar Diâmetro da Curva (m)</option>
               <option value="raio">Informar Raio da Curva (m)</option>
               <option value="circunferencia">Informar Circunferência Total (m)</option>
               <option value="multiplo">Painel S-Curve Livre (Custom)</option>
+              <option value="quina">Quina (Canto 0° ou 90°)</option>
             </select>
-            
+
             <label className="text-[9px] font-bold text-gray-500 uppercase mt-2 block">
-              {modoAngulo === 'unico' ? 'Qual o ângulo entre as placas?' : modoAngulo === 'diametro' ? 'Qual o diâmetro desejado?' : modoAngulo === 'raio' ? 'Qual o raio desejado?' : modoAngulo === 'circunferencia' ? 'Tamanho da circunferência?' : 'Digite os ângulos separados por vírgula'}
+              {modoAngulo === 'unico' ? 'Qual o ângulo entre as placas?' : modoAngulo === 'diametro' ? 'Qual o diâmetro desejado?' : modoAngulo === 'raio' ? 'Qual o raio desejado?' : modoAngulo === 'circunferencia' ? 'Tamanho da circunferência?' : modoAngulo === 'quina' ? 'Digite os ângulos (0 ou 90°) separados por vírgula' : 'Digite os ângulos separados por vírgula'}
             </label>
             <input type="text" className="w-full p-2 bg-white border border-blue-300 rounded text-sm text-[#0C1D4D] font-black focus:border-[#0C1D4D] outline-none" value={angleInput} onChange={(e) => setAngleInput(e.target.value)} />
             {resultados.avisoSeguranca && <p className="text-[9px] text-[#0C1D4D] font-bold mt-1 bg-blue-100 p-1.5 rounded">{resultados.avisoSeguranca}</p>}
+            {modoAngulo === 'quina' && (
+              <p className="text-[9px] text-gray-500 font-bold mt-1 bg-gray-100 p-1.5 rounded">Quina funciona em qualquer modelo de painel (P2, P3 ou Flex) e sempre desenha canto reto (0°/90°), sem curva suave.</p>
+            )}
+            {modeloPainel === 45 && usoFlex === 'reto' && modoAngulo !== 'quina' && (
+              <p className="text-[9px] text-gray-500 font-bold mt-1 bg-gray-100 p-1.5 rounded">Modo "reto" ativo: os ângulos abaixo continuam formando o polígono, mas o desenho usa segmentos retos entre placas (sem curva suave).</p>
+            )}
           </div>
 
           {modoAngulo !== 'circunferencia' && (

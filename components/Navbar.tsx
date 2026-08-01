@@ -107,6 +107,7 @@ export default function Navbar() {
     { href: '/freelance', label: 'Freelancer' },
     { href: '/downloads', label: 'Downloads' },
     { href: '/portal/login', label: 'Portal do Funcionário' },
+    { href: '/rotacionar-video', label: 'Rotacionar Vídeo' },
   ];
 
   const socialmedia = [

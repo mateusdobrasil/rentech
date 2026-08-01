@@ -17,10 +17,15 @@ type Fluxo = 'MENU_INICIAL' | 'CONFIRMAR_BATIDA' | 'JUSTIFICAR' | 'ABONAR';
 
 const ORDEM_BATIDAS: TipoBatida[] = ['ENTRADA_1', 'SAIDA_1', 'ENTRADA_2', 'SAIDA_2'];
 
+// Rótulos propositalmente sem menção a "almoço" — estava confundindo
+// funcionários (achavam que Saída/Volta do almoço era opcional). ENTRADA_1
+// e ENTRADA_2 mostram o mesmo texto "Entrada", SAIDA_1 e SAIDA_2 mostram o
+// mesmo texto "Saída"; a ordem (1ª ou 2ª batida do tipo) some do texto mas
+// continua implícita na sequência ENTRADA_1→SAIDA_1→ENTRADA_2→SAIDA_2.
 const ROTULO_BATIDA: Record<TipoBatida, string> = {
   ENTRADA_1: 'Entrada',
-  SAIDA_1: 'Saída (almoço)',
-  ENTRADA_2: 'Volta do almoço',
+  SAIDA_1: 'Saída',
+  ENTRADA_2: 'Entrada',
   SAIDA_2: 'Saída',
 };
 

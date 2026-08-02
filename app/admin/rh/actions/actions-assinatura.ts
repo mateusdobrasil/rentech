@@ -127,10 +127,47 @@ function deduzirFormaPagamento(func: { pix_chave?: string | null; banco_conta?: 
   return 'A combinar';
 }
 
+// Valor do holerite de pagamento da contabilidade (tipo HOLERITE_MENSAL, não
+// ADIANTAMENTO), já extraído por OCR e cacheado em folha_documentos_contabeis
+// (ver actions-financeiro.ts). null se o documento não existe ou o OCR ainda
+// não rodou para ele.
+async function buscarValorOcrPagamento(
+  db: ReturnType<typeof supabaseAdmin>,
+  funcionarioNome: string,
+  mesReferencia: string
+): Promise<number | null> {
+  const { data } = await db
+    .from('folha_documentos_contabeis')
+    .select('valor_ocr')
+    .eq('funcionario_nome', funcionarioNome)
+    .eq('mes_referencia', mesReferencia)
+    .eq('tipo', 'HOLERITE_MENSAL')
+    .maybeSingle();
+  return data?.valor_ocr != null ? Number(data.valor_ocr) : null;
+}
+
+// Quando o contrato tem "paga_salario_base" desligado (o parâmetro "Exibir
+// Salário Base no Holerite?" em /admin/rh/parametros) e o funcionário tem
+// Salário Folha > 0, o salário base NÃO entra no cálculo da nossa folha
+// (montarDadosHolerite zera salarioBaseExibido) — ele é pago à parte, pelo
+// holerite da contabilidade. Nesse caso o funcionário recebe os DOIS
+// pagamentos, então o recibo (que é a quitação de tudo) precisa somar
+// valorLiquidoReceber (só os extras/benefícios calculados por nós) com o
+// valor real do holerite de pagamento, lido do OCR (valorOcrPagamento).
+function calcularValorRecibo(dados: any, salarioFolha: number | null | undefined, valorOcrPagamento: number | null): number {
+  const base = dados?.valorLiquidoReceber || 0;
+  const pagaSalarioBase = dados?.regra?.paga_salario_base;
+  const gatilhoDoisPagamentos = pagaSalarioBase === false && (salarioFolha || 0) > 0;
+  const complementoHoleriteContabil = gatilhoDoisPagamentos ? (valorOcrPagamento || 0) : 0;
+  return base + complementoHoleriteContabil;
+}
+
 // Recibo de pagamento — vai como o ÚLTIMO arquivo do pacote de assinatura de
 // TODOS os colaboradores (com ou sem folha calculada). Quem tem folha usa o
-// valorLiquidoReceber do snapshot fechado; quem é só documental usa o valor
-// digitado manualmente pelo RH (valorManual), já que não há cálculo.
+// valorLiquidoReceber do snapshot fechado (mais o salário folha, se pago à
+// parte pela contabilidade — ver calcularValorRecibo); quem é só documental
+// usa o valor digitado manualmente pelo RH (valorManual), já que não há
+// cálculo.
 async function gerarReciboBytes(
   db: ReturnType<typeof supabaseAdmin>,
   funcionarioNome: string,
@@ -258,10 +295,6 @@ export async function enviarHoleriteAssinaturaAction(payload: {
       return { ok: false, erro: 'A folha deste mês não está fechada para este funcionário. Feche a folha antes de enviar para assinatura.' };
     }
 
-    // O recibo (último arquivo do pacote) vale para todo mundo: quem tem
-    // folha usa o valor líquido já calculado; quem é só documental precisa
-    // do valor digitado pelo RH, já que não há cálculo no sistema.
-    const valorRecibo = !soDocumental ? fechamento?.dados?.valorLiquidoReceber : valorManual;
     if (soDocumental && (valorManual === undefined || valorManual === null || valorManual <= 0)) {
       return { ok: false, erro: 'Informe o valor do recibo (o mesmo do holerite da contabilidade) para enviar este funcionário documental.' };
     }
@@ -269,9 +302,29 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     // 2) Busca dados pessoais (CPF, celular, e-mail) da ficha
     const { data: func } = await db
       .from('folha_funcionarios')
-      .select('cpf, celular, email, data_admissao, data_desligamento, pix_chave, banco_conta')
+      .select('cpf, celular, email, data_admissao, data_desligamento, pix_chave, banco_conta, salario_folha')
       .eq('nome_completo', funcionarioNome)
       .maybeSingle();
+
+    // Contrato paga o salário base à parte (pelo holerite da contabilidade):
+    // o recibo precisa do valor real desse pagamento, lido do OCR.
+    const gatilhoDoisPagamentos = !soDocumental
+      && fechamento?.dados?.regra?.paga_salario_base === false
+      && (func?.salario_folha || 0) > 0;
+    const valorOcrPagamento = gatilhoDoisPagamentos
+      ? await buscarValorOcrPagamento(db, funcionarioNome, mesReferencia)
+      : null;
+    if (gatilhoDoisPagamentos && valorOcrPagamento === null) {
+      return { ok: false, erro: `Este funcionário recebe o salário base pelo holerite da contabilidade, mas o valor ainda não foi lido (OCR) para ${funcionarioNome} neste mês. Rode o OCR na tela de Financeiro antes de enviar.` };
+    }
+
+    // O recibo (último arquivo do pacote) vale para todo mundo: quem tem
+    // folha usa o valor líquido já calculado (mais o holerite da
+    // contabilidade, se o salário base for pago à parte); quem é só
+    // documental usa o valor digitado pelo RH, já que não há cálculo.
+    const valorRecibo = !soDocumental
+      ? calcularValorRecibo(fechamento?.dados, func?.salario_folha, valorOcrPagamento)
+      : valorManual;
 
     const cpfLimpo = (func?.cpf || '').replace(/\D/g, '');
     if (cpfLimpo.length !== 11) {
@@ -514,13 +567,26 @@ export async function previaDocumentoAssinaturaAction(payload: {
     if (soDocumental && (valorManual === undefined || valorManual === null || valorManual <= 0)) {
       return { ok: false, erro: 'Informe o valor do recibo (o mesmo do holerite da contabilidade) para gerar a prévia deste funcionário documental.' };
     }
-    const valorRecibo = !soDocumental ? dados?.valorLiquidoReceber : valorManual;
 
     const { data: func } = await db
       .from('folha_funcionarios')
-      .select('cpf, data_admissao, data_desligamento, pix_chave, banco_conta')
+      .select('cpf, data_admissao, data_desligamento, pix_chave, banco_conta, salario_folha')
       .eq('nome_completo', funcionarioNome)
       .maybeSingle();
+
+    const gatilhoDoisPagamentos = !soDocumental
+      && dados?.regra?.paga_salario_base === false
+      && (func?.salario_folha || 0) > 0;
+    const valorOcrPagamento = gatilhoDoisPagamentos
+      ? await buscarValorOcrPagamento(db, funcionarioNome, mesReferencia)
+      : null;
+    if (gatilhoDoisPagamentos && valorOcrPagamento === null) {
+      return { ok: false, erro: `Este funcionário recebe o salário base pelo holerite da contabilidade, mas o valor ainda não foi lido (OCR) para ${funcionarioNome} neste mês. Rode o OCR na tela de Financeiro antes de gerar a prévia.` };
+    }
+
+    const valorRecibo = !soDocumental
+      ? calcularValorRecibo(dados, func?.salario_folha, valorOcrPagamento)
+      : valorManual;
 
     const resumoBytes = (!soDocumental && dados) ? await gerarHoleritePdf({
       nome: funcionarioNome,

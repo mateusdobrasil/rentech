@@ -21,7 +21,7 @@ function competenciaAtualBR(): string {
 
 // Rotina mensal (ver vercel.json, agendada para o dia 28) que chama a mesma
 // consulta ao vivo da API do GOV.BR usada pelo botão "Consultar API" da tela
-// /admin/rh/consignado, para a competência do mês corrente. Persiste os
+// /admin/financeiro/consignado, para a competência do mês corrente. Persiste os
 // resultados e dispara a notificação de novo empréstimo automaticamente,
 // exatamente como uma consulta manual faria.
 export async function GET(request: Request) {

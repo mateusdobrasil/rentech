@@ -204,12 +204,12 @@ export async function criarOP(data: NovaOPData, accessToken: string) {
 // "Minhas OPs" (responsavel) só mostra tudo para cargos de alta gestão; os
 // demais só veem as OPs que ELES MESMOS solicitaram, e esse "eles mesmos" vem
 // do perfil validado no servidor — não de um parâmetro enviado pelo cliente.
-export async function listarOPs(accessToken: string, rota: '/admin/op/responsavel' | '/admin/op/financeiro') {
+export async function listarOPs(accessToken: string, rota: '/admin/op/responsavel' | '/admin/financeiro/ops') {
   const acesso = await validarAcesso(accessToken, rota);
   if (!acesso.ok) return { success: false, message: acesso.message, data: [] };
   const { perfil } = acesso;
 
-  const verTodas = rota === '/admin/op/financeiro' || ehAltaGestaoOP(perfil.permissaoBruta);
+  const verTodas = rota === '/admin/financeiro/ops' || ehAltaGestaoOP(perfil.permissaoBruta);
 
   try {
     let query = supabaseAdmin
@@ -234,7 +234,7 @@ export async function listarOPs(accessToken: string, rota: '/admin/op/responsave
 
 // 3. Atualizar Status (exclusivo do Painel Financeiro)
 export async function atualizarStatus(opId: string, novoStatus: string, accessToken: string) {
-  const acesso = await validarAcesso(accessToken, '/admin/op/financeiro');
+  const acesso = await validarAcesso(accessToken, '/admin/financeiro/ops');
   if (!acesso.ok) return { success: false, message: acesso.message };
   const { perfil } = acesso;
 
@@ -269,7 +269,7 @@ export async function buscarOP(opId: string, accessToken: string) {
 
   const [temResponsavel, temFinanceiro] = await Promise.all([
     possuiAcessoRota(perfil.permissaoNormalizada, '/admin/op/responsavel'),
-    possuiAcessoRota(perfil.permissaoNormalizada, '/admin/op/financeiro'),
+    possuiAcessoRota(perfil.permissaoNormalizada, '/admin/financeiro/ops'),
   ]);
   if (!temResponsavel && !temFinanceiro) {
     return { success: false, message: 'Você não tem permissão para executar esta ação.' };
@@ -406,7 +406,7 @@ export async function dispararEmailOP(opId: string, accessToken: string, apenasC
 
   const [temResponsavel, temFinanceiro] = await Promise.all([
     possuiAcessoRota(perfil.permissaoNormalizada, '/admin/op/responsavel'),
-    possuiAcessoRota(perfil.permissaoNormalizada, '/admin/op/financeiro'),
+    possuiAcessoRota(perfil.permissaoNormalizada, '/admin/financeiro/ops'),
   ]);
   if (!temResponsavel && !temFinanceiro) {
     return { success: false, message: 'Você não tem permissão para executar esta ação.' };

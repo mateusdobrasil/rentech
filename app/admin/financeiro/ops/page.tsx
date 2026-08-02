@@ -3,13 +3,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { listarOPs, atualizarStatus, dispararEmailOP } from '../actions';
+import { listarOPs, atualizarStatus, dispararEmailOP } from '../../op/actions';
 import { registrarLogAuditoria } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
 import logoColorido from '../../../../app/imgs/logo.png';
-import { useAcessoRota } from '../useAcessoRota';
-import { normalizarItensOP, ItemOPNormalizado } from '../utils';
-import { DialogOP, DialogOPState, BotaoLinkAssinatura } from '../DialogOP';
+import { useAcessoRota } from '../../op/useAcessoRota';
+import { normalizarItensOP, ItemOPNormalizado } from '../../op/utils';
+import { DialogOP, DialogOPState, BotaoLinkAssinatura } from '../../op/DialogOP';
 
 // Os itens em memória já chegam normalizados (ver normalizarItensOP) — não há
 // mais motivo para este tipo carregar os campos legados (description/quantity)
@@ -43,7 +43,7 @@ export default function PainelFinanceiro() {
   const router = useRouter();
 
   // Sessão + permissão da rota, resolvidas pelo hook compartilhado do módulo.
-  const { authLoading, acessoNegado, perfil } = useAcessoRota('/admin/op/financeiro');
+  const { authLoading, acessoNegado, perfil } = useAcessoRota('/admin/financeiro/ops');
 
   // Estados de Dados
   const [ops, setOps] = useState<OP[]>([]);
@@ -67,7 +67,7 @@ export default function PainelFinanceiro() {
     const token = tokenOverride || perfil?.accessToken;
     if (!token) return;
     setLoading(true);
-    const res = await listarOPs(token, '/admin/op/financeiro');
+    const res = await listarOPs(token, '/admin/financeiro/ops');
     if (res.success && res.data) {
       const opsNormalizadas = res.data.map((op: any) => ({ ...op, itens: normalizarItensOP(op.itens) }));
       setOps(opsNormalizadas);

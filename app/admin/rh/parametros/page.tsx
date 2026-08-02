@@ -679,7 +679,7 @@ export default function ParametrosRH() {
               <div className="border border-gray-200 p-4 rounded-xl bg-gray-50/50">
                 <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
                   <input type="checkbox" checked={form.paga_salario_base} onChange={e => setForm({...form, paga_salario_base: e.target.checked})} className="w-4 h-4 accent-[#336699]" />
-                  Exibir Salário Base no Holerite?
+                  Exibir Salário Base na Nossa Folha?
                 </label>
               </div>
 

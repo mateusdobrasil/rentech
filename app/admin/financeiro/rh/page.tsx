@@ -7,8 +7,9 @@ import { supabase } from '../../../lib/supabase';
 import {
   montarLoteSalariosAction, salvarLoteAction, listarLotesAction, enviarLoteAoBancoAction,
   listarPdfsContabilidadeAction, processarOcrAwsAction
-} from '../actions/actions-financeiro';
+} from '../../rh/actions/actions-financeiro';
 import { listarIntegracoesAction } from '../../integracao/actions';
+import SepararHolerites from '../../rh/ponto/SepararHolerites';
 
 // ============================================================================
 // MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
@@ -92,6 +93,12 @@ export default function FinanceiroPage() {
   const [salvandoLote, setSalvandoLote] = useState(false);
   const [lotes, setLotes] = useState<Lote[]>([]);
 
+  // Separação dos holerites da contabilidade — mesma tela usada em
+  // /admin/rh/ponto (componente compartilhado), pra RH e Financeiro poderem
+  // importar independentemente.
+  const [viewMode, setViewMode] = useState<'resumo' | 'separar_holerites'>('resumo');
+  const [elegiveisContabilidade, setElegiveisContabilidade] = useState<{ nome_completo: string; tipo_contrato: string }[]>([]);
+
   // Valida a sessão e a permissão (dinâmica, via banco) antes de liberar a página
   useEffect(() => {
     async function checkAuth() {
@@ -151,6 +158,28 @@ export default function FinanceiroPage() {
     ]);
     if (lotesRes.ok) setLotes(lotesRes.info.lotes);
     if (integRes.ok) setIntegracoes(integRes.info.integracoes);
+    carregarElegiveisContabilidade();
+  };
+
+  // Funcionários elegíveis à separação de holerite (contrato com a flag
+  // recebe_holerite_contabilidade ligada), em ordem alfabética — mesma
+  // lógica usada em /admin/rh/ponto.
+  const carregarElegiveisContabilidade = async () => {
+    const { data: regrasData } = await supabase
+      .from('folha_parametros')
+      .select('nome_regra, recebe_holerite_contabilidade');
+    const contratosComHolerite = new Set(
+      (regrasData || []).filter(r => r.recebe_holerite_contabilidade !== false).map(r => r.nome_regra)
+    );
+    const { data: funcData } = await supabase
+      .from('folha_funcionarios')
+      .select('nome_completo, tipo_contrato')
+      .eq('ativo', true)
+      .order('nome_completo');
+    const elegiveis = (funcData || [])
+      .filter(f => contratosComHolerite.has(f.tipo_contrato))
+      .map(f => ({ nome_completo: f.nome_completo, tipo_contrato: f.tipo_contrato }));
+    setElegiveisContabilidade(elegiveis);
   };
 
   const montarLote = async () => {
@@ -639,7 +668,30 @@ export default function FinanceiroPage() {
         </button>
       </div>
 
+      {viewMode === 'separar_holerites' && (
+        <div className="p-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full">
+          <SepararHolerites
+            mesReferencia={mesReferencia}
+            usuarioAtual={usuarioAtual}
+            elegiveis={elegiveisContabilidade}
+            onFechar={() => setViewMode('resumo')}
+          />
+        </div>
+      )}
+
+      {viewMode === 'resumo' && (
       <div className="p-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full">
+        <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider mb-1">📄 Holerites da Contabilidade</h3>
+            <p className="text-[11px] text-gray-500">Importar e separar por funcionário os PDFs de adiantamento e pagamento, para anexar à assinatura.</p>
+          </div>
+          <button onClick={() => setViewMode('separar_holerites')} className="text-xs font-black bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-5 py-2.5 rounded-lg uppercase tracking-wider flex items-center justify-center gap-2 shrink-0">
+            📄 SEPARAR HOLERITES
+            <span className="bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{elegiveisContabilidade.length}</span>
+          </button>
+        </div>
+
         <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] mb-4">
           <div className="flex flex-wrap items-end gap-4 mb-4">
             <div>
@@ -881,6 +933,7 @@ export default function FinanceiroPage() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

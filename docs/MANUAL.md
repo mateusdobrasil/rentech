@@ -257,7 +257,7 @@ Módulo de gestão de pagamentos a fornecedores/terceiros:
 | `/admin/op` | Lista e gerencia as Ordens de Pagamento; permite disparar e-mail de notificação (`dispararEmailOP`). |
 | `/admin/op/nova` | Cria uma nova OP. |
 | `/admin/op/responsavel` | Visão da lista de OPs filtrada para o "responsável" designado. |
-| `/admin/op/financeiro` | Visão financeira das OPs. |
+| `/admin/financeiro/ops` | Visão financeira das OPs (antes `/admin/op/financeiro`). |
 | `/admin/op/assinaturas` | Painel de assinatura digital do recibo via Autentique: envia o recibo em PDF para o favorecido assinar (CPF + celular obrigatórios, cadastrados na criação da OP), consulta status, reenvia e baixa o documento assinado. |
 
 Fluxo típico: OP criada (com CPF e celular do signatário) → e-mail disparado ao responsável/pagador → pagador confirma pagamento pelo link em `/api/baixar-op` (seção 8) → recibo é enviado para assinatura via Autentique em `/admin/op/assinaturas`, que valida o signatário por CPF e envia o link automaticamente por WhatsApp.
@@ -332,7 +332,7 @@ Estas são observações levantadas na revisão, para conhecimento de quem admin
 ## 12. Pontos de atenção / pendências encontradas
 
 - **README.md** ainda é o texto padrão gerado pelo `create-next-app` — não documenta o projeto. Este manual (`docs/MANUAL.md`) supre essa lacuna.
-- **Envio bancário no módulo Financeiro do RH** (`/admin/rh/financeiro`) está implementado como stub/placeholder — a submissão real ao banco depende de credenciais/certificado que ainda não foram configurados.
+- **Envio bancário no módulo Lotes de Pagamento** (`/admin/financeiro/rh`, antes `/admin/rh/financeiro`) está implementado como stub/placeholder — a submissão real ao banco depende de credenciais/certificado que ainda não foram configurados.
 - **`components/Contato.jsx`** parece ser um formulário de contato "de exemplo", não conectado (simula envio com 1.5s de espera) — o formulário de orçamento real da Home usa outra lógica (`app/page.tsx` + `app/actions.ts`).
 - **`.vscode/launch.json`** aponta para a porta `8080`, mas o Next.js roda por padrão na porta `3000` — provavelmente configuração antiga/não usada.
 - Ícones padrão do Next.js (`file.svg`, `globe.svg`, `next.svg`, `window.svg`, `vercel.svg`) continuam em `public/` e aparentam não estar em uso — candidatos a limpeza.

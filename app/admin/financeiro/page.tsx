@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../lib/supabase';
+import { normalizarPermissao } from '../../lib/permissoes';
 
 // Tipagem do Perfil
 interface PerfilUsuario {
@@ -13,85 +14,36 @@ interface PerfilUsuario {
   permissaoNormalizada?: string;
 }
 
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-
-  // 1. ADMINISTRATIVO deve vir ANTES de ADMIN para evitar a colisão de texto
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  
-  // 2. ALTA GESTÃO (Acesso Total)
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  
-  // 3. DEMAIS DEPARTAMENTOS
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  
-  // PADRÃO
-  return 'USUARIO'; 
-};
-
 // Lista de módulos do hub. As permissões de cada um NÃO ficam mais aqui —
 // vêm da tabela folha_paginas_permissoes (gerida em /admin/permissoes),
 // buscadas pelo campo "link" (= endereco_route). Isso mantém o hub sempre
 // em sincronia com o que a própria página de destino já exige para entrar.
-const modulosRh = [
+//
+// Transferidas para cá (antes viviam soltas em /admin/rh e /admin/op):
+// Lotes de Pagamento (era "Financeiro" em /admin/rh), Ordens de Pagamento
+// (eram /admin/rh/financeiro, /admin/rh/consignado e /admin/op/financeiro).
+const modulosFinanceiro = [
   {
-    titulo: 'Gestão de Funcionários',
-    descricao: 'Gestão de cadastro e gerenciamento dos os funcionários.',
-    icone: '🧑', link: '/admin/rh/funcionario',
+    titulo: 'Lotes de Pagamento',
+    descricao: 'Lotes de pagamento, OCR de comprovantes e arquivos bancários (CNAB).',
+    icone: '💰', link: '/admin/financeiro/rh',
     cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
   },
   {
-    titulo: 'Gestão de Holerites',
-    descricao: 'Visualizaçao de holerites, fechamentos e envio de assinaturas.',
-    icone: '💰', link: '/admin/rh/holerite',
-    cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
-  },
-  {
-    titulo: 'Gestão de Assinaturas',
-    descricao: 'Gestão de Assinaturas de contratos e documentos.',
-    icone: '📃', link: '/admin/rh/assinaturas',
-    cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
-  },
-  {
-    titulo: 'Gestão de Benefícios',
-    descricao: 'Transporte, refeição, alimentação e outros benefícios.',
-    icone: '🎁', link: '/admin/rh/beneficios',
-    cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
-  },
-  {
-    titulo: 'Gestão de Documentos',
-    descricao: 'Gestão de RG, CPF, CTPS, comprovante de residência, contrato, ASO admissional/periódico, CNH, certificados, advertência e outros',
-    icone: '📁', link: '/admin/rh/documentos',
-    cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
-  },
-  {
-    titulo: 'Controle de Ponto',
-    descricao: 'Importação de registros, cálculo de horas extras e espelhos.',
-    icone: '⏱️', link: '/admin/rh/ponto',
+    titulo: 'Ordens de Pagamento',
+    descricao: 'Painel geral para aprovação, baixa e conferência de todas as Ordens de Pagamento.',
+    icone: '📋', link: '/admin/financeiro/ops',
     cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
   },
   {
-    titulo: 'Relatórios e Dashboards',
-    descricao: 'Relatórios financeiros e analíticos.',
-    icone: '📊', link: '/admin/rh/relatorios',
-    cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
-  },
-  {
-    titulo: 'Parâmetros de Contrato',
-    descricao: 'Motor de regras de cálculo (CLT, PJ, Temporário, etc).',
-    icone: '⚙️', link: '/admin/rh/parametros',
+    titulo: 'Crédito Consignado',
+    descricao: 'Gestão de Empréstimos Consignados no GOV.BR.',
+    icone: '💸', link: '/admin/financeiro/consignado',
     cor: 'bg-purple-50 border-purple-200 text-purple-700', hover: 'hover:border-purple-500'
   }
 ];
 
-export default function RhHub() {
+export default function FinanceiroHub() {
   const router = useRouter();
   const [perfil, setPerfil] = useState<PerfilUsuario | null>(null);
   const [mapaPermissoes, setMapaPermissoes] = useState<Record<string, string[]>>({});
@@ -109,7 +61,7 @@ export default function RhHub() {
       const [perfilRes, permissoesRes] = await Promise.all([
         supabase.from('perfis_usuarios').select('nome, email, permissao').eq('id', session.user.id).single(),
         supabase.from('folha_paginas_permissoes').select('endereco_route, permissoes_permitidas')
-          .in('endereco_route', modulosRh.map(m => m.link))
+          .in('endereco_route', modulosFinanceiro.map(m => m.link))
       ]);
 
       if (permissoesRes.error) {
@@ -171,7 +123,7 @@ export default function RhHub() {
   // FILTRO DE SEGURANÇA APLICADO — permissões vêm do banco (folha_paginas_permissoes),
   // não mais de um array fixo no código. Rota sem linha na tabela = ninguém acessa.
   // ==========================================================================
-  const modulosAutorizados = modulosRh.filter(modulo =>
+  const modulosAutorizados = modulosFinanceiro.filter(modulo =>
     (mapaPermissoes[modulo.link] || []).includes(perfil.permissaoNormalizada!)
   );
 
@@ -180,10 +132,10 @@ export default function RhHub() {
       <Analytics />
       <div className="max-w-6xl mx-auto">
         <div className="mb-10">
-          <h1 className="text-3xl font-black text-[#0C1D4D] uppercase tracking-tight">Setor de RH</h1>
-          <p className="text-[#64748B] font-medium">Gestão de jornada, folha financeira e regras operacionais.</p>
+          <h1 className="text-3xl font-black text-[#0C1D4D] uppercase tracking-tight">Financeiro</h1>
+          <p className="text-[#64748B] font-medium">Lotes de pagamento, Ordens de Pagamento e Crédito Consignado.</p>
         </div>
-        
+
         {/* Renderiza APENAS a variável modulosAutorizados */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {modulosAutorizados.length === 0 ? (
@@ -200,7 +152,7 @@ export default function RhHub() {
             ))
           )}
         </div>
-        
+
         <div className="mt-12 text-center pb-12">
           <button onClick={() => router.push('/admin')} className="text-[#64748B] font-bold text-sm hover:text-[#0C1D4D] transition-colors">
             ⬅ Voltar ao Painel Administrativo Geral

@@ -4,6 +4,19 @@
 //
 // Depende de: npm i pdf-lib
 import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont } from 'pdf-lib';
+import fs from 'fs';
+import path from 'path';
+
+// Mesmo logotipo colorido usado no cabeçalho do espelho de ponto e do
+// recibo de pagamento (app/imgs/logo.png), para os três documentos ficarem
+// padronizados.
+let logoBytesCache: Buffer | null = null;
+function lerLogoBytes(): Buffer {
+  if (!logoBytesCache) {
+    logoBytesCache = fs.readFileSync(path.join(process.cwd(), 'app', 'imgs', 'logo.png'));
+  }
+  return logoBytesCache;
+}
 
 // Espelha o snapshot DadosHolerite (o que é congelado no fechamento)
 export interface DadosHoleritePdf {
@@ -92,7 +105,10 @@ export async function gerarHoleritePdf(p: GerarPdfParams): Promise<Uint8Array> {
     page.drawRectangle({ x, y: yy, width: w, height: h, color });
 
   // ===== Cabeçalho =====
-  txt(p.empresaNome || 'RENTECH', M, y - 4, 18, bold, azul);
+  const logoImg = await pdf.embedPng(lerLogoBytes());
+  const logoH = 28;
+  const logoW = logoH * (logoImg.width / logoImg.height);
+  page.drawImage(logoImg, { x: M, y: y - 24, width: logoW, height: logoH });
   txtRight('DEMONSTRATIVO DE PAGAMENTO', width - M, y - 2, 13, bold, azul);
   txtRight(`Competência: ${mesAnoBR(p.mesReferencia)}`, width - M, y - 18, 9, font, cinza);
   txtRight(`Pagamento: ${pagamentoBR(p.mesReferencia)}`, width - M, y - 30, 9, bold, verde);

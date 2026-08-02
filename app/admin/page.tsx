@@ -60,6 +60,14 @@ const MODULOS_SISTEMA = [
     bgIcon: 'bg-rose-50 text-rose-600'
   },
   {
+    titulo: 'Financeiro',
+    descricao: 'Lotes de pagamento, Ordens de Pagamento e Crédito Consignado.',
+    icone: '💰',
+    link: '/admin/financeiro',
+    cor: 'border-emerald-500/50 hover:border-emerald-500',
+    bgIcon: 'bg-emerald-50 text-emerald-600'
+  },
+  {
     titulo: 'Comercial',
     descricao: 'Gerencie documentos, oportunidades, leads e relacionamento com clientes.',
     icone: '🤝',

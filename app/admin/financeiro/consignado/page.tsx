@@ -7,7 +7,7 @@ import { supabase } from '../../../lib/supabase';
 import {
   listarConsignadosAction, importarConsignacoesArquivoAction, listarConsignadosPersistidosAction,
   type ConsignadoFuncionario
-} from '../actions/actions-consignado';
+} from '../../rh/actions/actions-consignado';
 
 // ============================================================================
 // MOTOR DE NORMALIZAÇÃO DE PERMISSÕES

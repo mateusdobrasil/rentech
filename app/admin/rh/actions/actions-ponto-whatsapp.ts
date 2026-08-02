@@ -114,6 +114,41 @@ export async function listarSolicitacoesPendentesAction(): Promise<Resultado<Sol
   }
 }
 
+export interface AbonoPendenteResumo {
+  funcionario_nome: string;
+  data_referencia: string;
+  motivo: string;
+}
+
+// Usada pelo fechamento de folha (Holerite): enquanto uma solicitação de
+// ABONO_DIA estiver PENDENTE, o dia aparece como falta no cálculo (o abono
+// só vira linha em folha_ponto_abono quando aprovado — ver
+// aprovarSolicitacaoAction) — por isso a folha não deve fechar até o RH
+// decidir.
+export async function listarAbonosPendentesDoMesAction(payload: { mesAno: string; nomes: string[] }): Promise<Resultado<AbonoPendenteResumo[]>> {
+  const db = supabaseAdmin();
+  try {
+    if (!payload.nomes.length) return { ok: true, info: [] };
+    const [ano, mes] = payload.mesAno.split('-');
+    const dataInicio = `${ano}-${mes}-01`;
+    const ultimoDia = new Date(Number(ano), Number(mes), 0).getDate();
+    const dataFim = `${ano}-${mes}-${String(ultimoDia).padStart(2, '0')}`;
+
+    const { data, error } = await db
+      .from('folha_ponto_whatsapp_solicitacoes')
+      .select('funcionario_nome, data_referencia, motivo')
+      .eq('status', 'PENDENTE')
+      .eq('tipo', 'ABONO_DIA')
+      .gte('data_referencia', dataInicio)
+      .lte('data_referencia', dataFim)
+      .in('funcionario_nome', payload.nomes);
+    if (error) throw new Error(error.message);
+    return { ok: true, info: data || [] };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
 export interface SolicitacaoHistorico extends SolicitacaoPendente {
   status: 'PENDENTE' | 'APROVADA' | 'REJEITADA';
   resolvido_por: string | null;

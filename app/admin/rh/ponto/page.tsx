@@ -123,8 +123,12 @@ export default function GestaoDePonto() {
   const [loading, setLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const [abaPrincipal, setAbaPrincipal] = useState<'gestao' | 'registro_diario'>('gestao');
-  const [viewMode, setViewMode] = useState<'resumo' | 'espelho' | 'espelho_todos' | 'abonos' | 'separar_holerites' | 'ponto_whatsapp'>('resumo');
+  const [abaPrincipal, setAbaPrincipal] = useState<'gestao' | 'registro_diario' | 'gestao_abonos' | 'inconsistencia_ponto'>('gestao');
+  // Batidas ímpares/incompletas do mês (mesma regra usada para travar o
+  // fechamento da folha em /admin/rh/holerite) — só é preenchido quando o RH
+  // clica em "Verificar Inconsistência", não é automático.
+  const [inconsistencias, setInconsistencias] = useState<RegistroDiario[] | null>(null);
+  const [viewMode, setViewMode] = useState<'resumo' | 'espelho' | 'espelho_todos' | 'separar_holerites' | 'ponto_whatsapp'>('resumo');
   const [funcionarioSelecionado, setFuncionarioSelecionado] = useState('');
   const [estatisticasWhatsapp, setEstatisticasWhatsapp] = useState<EstatisticasPontoWhatsapp | null>(null);
   const [ledgerWhatsapp, setLedgerWhatsapp] = useState<RegistroLedger[]>([]);
@@ -169,6 +173,10 @@ export default function GestaoDePonto() {
   useEffect(() => {
     if (!authLoading && !acessoNegado) carregarAcessoEDados();
   }, [mesAnoSelecionado, authLoading, acessoNegado]);
+
+  // O resultado da verificação de inconsistência é para o mês em que foi
+  // gerado — muda o mês, o resultado anterior fica obsoleto.
+  useEffect(() => { setInconsistencias(null); }, [mesAnoSelecionado]);
 
   useEffect(() => {
     if (authLoading || acessoNegado) return;
@@ -643,6 +651,25 @@ export default function GestaoDePonto() {
 
   const totalAbonosMin = useMemo(() => abonos.reduce((acc, a) => acc + a.minutos_abonados, 0), [abonos]);
 
+  // Um dia só é considerado OK se tiver ENTRADA+SAÍDA, ou ENTRADA+SAÍDA
+  // ALMOÇO+RETORNO ALMOÇO+SAÍDA. Qualquer combinação parcial (batida ímpar —
+  // ex.: só entrada, ou 3 das 4 batidas) é inconsistente. Mesma regra usada
+  // para travar o fechamento da folha em /admin/rh/holerite.
+  const diaComBatidasOk = (r: RegistroDiario): boolean => {
+    const { entrada_1: e1, saida_1: s1, entrada_2: e2, saida_2: s2 } = r;
+    if (!e1 && !s1 && !e2 && !s2) return true;
+    if (e1 && s1 && !e2 && !s2) return true;
+    if (e1 && s1 && e2 && s2) return true;
+    return false;
+  };
+
+  const verificarInconsistenciasPonto = () => {
+    const problemas = registros
+      .filter(r => !diaComBatidasOk(r))
+      .sort((a, b) => a.funcionario_nome.localeCompare(b.funcionario_nome) || a.data_registro.localeCompare(b.data_registro));
+    setInconsistencias(problemas);
+  };
+
   const abrirEspelhoUnico = (nome: string) => { setFuncionarioSelecionado(nome); setViewMode('espelho'); };
   const abrirTodosEspelhos = () => setViewMode('espelho_todos');
   const voltarResumo = () => { setViewMode('resumo'); setFuncionarioSelecionado(''); };
@@ -914,6 +941,12 @@ export default function GestaoDePonto() {
           <button onClick={() => setAbaPrincipal('registro_diario')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abaPrincipal === 'registro_diario' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>
             🕒 Registro de Ponto (Dia a Dia)
           </button>
+          <button onClick={() => setAbaPrincipal('gestao_abonos')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abaPrincipal === 'gestao_abonos' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>
+            🗓️ Gestão de Abonos
+          </button>
+          <button onClick={() => setAbaPrincipal('inconsistencia_ponto')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abaPrincipal === 'inconsistencia_ponto' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>
+            ⚠️ Inconsistência no Ponto
+          </button>
         </div>
       </div>
 
@@ -956,7 +989,16 @@ export default function GestaoDePonto() {
               </div>
 
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
-                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">3. Importar Dados</h3>
+                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">3. Holerites da Contabilidade</h3>
+                <p className="text-xs text-[#64748B] mb-4">Importar e separar por funcionário os PDFs de adiantamento e pagamento, para anexar à assinatura.</p>
+                <button onClick={() => setViewMode('separar_holerites')} className="w-full bg-[#0C1D4D] hover:bg-[#284B8C] text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
+                  📄 SEPARAR HOLERITES
+                  <span className="bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{elegiveisContabilidade.length}</span>
+                </button>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
+                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">4. Importar Dados</h3>
                 <p className="text-xs text-[#64748B] mb-4">Carregue os CSVs para reescrever as batidas e abonos do mês.</p>
                 <div className="flex flex-col space-y-2">
                   <input type="file" accept=".csv" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
@@ -968,72 +1010,6 @@ export default function GestaoDePonto() {
                     {isProcessing ? '⏳ Processando...' : '➕ ABONOS (AUSÊNCIAS)'}
                   </button>
                 </div>
-              </div>
-
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
-                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">Lançar Ponto Manual</h3>
-                <p className="text-xs text-[#64748B] mb-4">O RH pode lançar a batida de um dia direto por aqui, sem depender do CSV ou do WhatsApp.</p>
-                <div className="flex flex-col gap-2">
-                  <select value={manualFuncionario} onChange={e => setManualFuncionario(e.target.value)} className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]">
-                    <option value="">Selecione o funcionário...</option>
-                    {listaFuncionariosAtivos.map(n => <option key={n} value={n}>{n}</option>)}
-                  </select>
-                  <input type="date" value={manualData} onChange={e => setManualData(e.target.value)} className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]" />
-
-                  {verificandoExistente && (
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider">🔎 Verificando batidas já lançadas...</p>
-                  )}
-                  {!verificandoExistente && registroExistente === null && manualFuncionario && manualData && (
-                    <p className="text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 uppercase">✅ Nenhum ponto lançado neste dia ainda.</p>
-                  )}
-                  {!verificandoExistente && registroExistente && registroExistente.origem === 'WHATSAPP' && (
-                    <p className="text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 uppercase">⚠ Batida confirmada via WhatsApp (ledger legal, nunca é apagado). Editar aqui corrige só a versão usada no cálculo da folha — ex: remover uma batida a mais feita sem querer.</p>
-                  )}
-                  {!verificandoExistente && registroExistente && registroExistente.origem !== 'WHATSAPP' && (
-                    <p className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 uppercase">⚠ Já existe ponto lançado nesse dia (origem: {registroExistente.origem}). Campos pré-preenchidos abaixo — editar e salvar SUBSTITUI a batida atual.</p>
-                  )}
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Entrada</label>
-                      <input type="time" value={manualE1} onChange={e => setManualE1(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
-                    </div>
-                    <div>
-                      <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Saída{(manualE2 || manualS2) ? ' (Almoço)' : ''}</label>
-                      <input type="time" value={manualS1} onChange={e => setManualS1(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
-                    </div>
-                    <div>
-                      <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Retorno Almoço</label>
-                      <input type="time" value={manualE2} onChange={e => setManualE2(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
-                    </div>
-                    <div>
-                      <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Saída</label>
-                      <input type="time" value={manualS2} onChange={e => setManualS2(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
-                    </div>
-                  </div>
-                  <p className="text-[9px] text-gray-400 font-bold uppercase">Deixe Retorno/Saída em branco para lançar só Entrada + Saída.</p>
-                  <button onClick={handleLancarPontoManual} disabled={lancandoManual} className="w-full bg-[#336699] hover:bg-[#284B8C] text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors disabled:opacity-50">
-                    {lancandoManual ? '⏳ Lançando...' : registroExistente ? '💾 SUBSTITUIR PONTO' : '💾 LANÇAR PONTO'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
-                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">4. Abonos</h3>
-                <p className="text-xs text-[#64748B] mb-4">Consultar os abonos (ausências) lançados no mês selecionado.</p>
-                <button onClick={() => { setAbonosConsolidado(false); setViewMode('abonos'); }} className="w-full bg-green-600 hover:bg-green-700 text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
-                  📋 VER ABONOS DO MÊS
-                  {abonos.length > 0 && <span className="bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{abonos.length}</span>}
-                </button>
-              </div>
-
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
-                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">5. Holerites da Contabilidade</h3>
-                <p className="text-xs text-[#64748B] mb-4">Importar e separar por funcionário os PDFs de adiantamento e pagamento, para anexar à assinatura.</p>
-                <button onClick={() => setViewMode('separar_holerites')} className="w-full bg-[#0C1D4D] hover:bg-[#284B8C] text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
-                  📄 SEPARAR HOLERITES
-                  <span className="bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{elegiveisContabilidade.length}</span>
-                </button>
               </div>
             </aside>
 
@@ -1127,115 +1103,6 @@ export default function GestaoDePonto() {
             elegiveis={elegiveisContabilidade}
             onFechar={voltarResumo}
           />
-        )}
-
-        {viewMode === 'abonos' && (
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col sm:flex-row justify-between items-center gap-4 bg-white p-4 rounded-xl border border-[#E2E8F0] shadow-sm print:hidden">
-              <button onClick={voltarResumo} className="text-[#64748B] font-bold text-sm hover:text-[#0C1D4D] transition-colors flex items-center gap-2">⬅ Voltar ao Resumo</button>
-              <div className="flex items-center gap-3">
-                <input type="month" value={mesAnoSelecionado} onChange={(e) => setMesAnoSelecionado(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
-                <div className="flex bg-[#F1F5F9] p-1 rounded-lg border border-[#E2E8F0]">
-                  <button onClick={() => setAbonosConsolidado(false)} className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-md transition-all ${!abonosConsolidado ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>📋 Lançamentos</button>
-                  <button onClick={() => setAbonosConsolidado(true)} className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abonosConsolidado ? 'bg-[#16A34A] text-white shadow-sm' : 'text-[#64748B] hover:text-[#16A34A]'}`}>👥 Consolidado por Equipe</button>
-                </div>
-              </div>
-            </div>
-
-            <main className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col">
-              <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC] flex flex-col sm:flex-row justify-between items-center gap-4">
-                <div>
-                  <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">
-                    {abonosConsolidado ? 'Abonos — Consolidado por Equipe' : 'Abonos — Lançamentos do Mês'}
-                  </h2>
-                  <p className="text-sm text-[#64748B]">Competência: {mesAnoSelecionado.split('-').reverse().join('/')} • {abonos.length} lançamento(s) • Total abonado: {minutesToTimeStr(totalAbonosMin)}</p>
-                </div>
-              </div>
-
-              {loading ? (
-                <div className="p-12 text-center text-[#94A3B8] font-bold">Carregando abonos...</div>
-              ) : abonos.length === 0 ? (
-                <div className="p-12 text-center text-[#94A3B8] font-bold">
-                  Nenhum abono lançado para este mês. Importe o CSV de abonos na barra lateral.
-                </div>
-              ) : !abonosConsolidado ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm text-left border-collapse">
-                    <thead className="bg-white border-b-2 border-[#E2E8F0]">
-                      <tr className="text-[9px] xl:text-[10px] uppercase font-black tracking-widest text-[#64748B]">
-                        <th className="p-4">Colaborador</th>
-                        <th className="p-4">Data</th>
-                        <th className="p-4 text-center">Tipo</th>
-                        <th className="p-4 text-center">Período</th>
-                        <th className="p-4 text-center">Tempo Abonado</th>
-                        <th className="p-4">Motivo</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#E2E8F0]">
-                      {abonosOrdenados.map((a, idx) => {
-                        const diaNaoUtil = isDiaNaoUtil(a.data_abono, feriadosGlobais);
-                        return (
-                          <tr key={a.id || idx} className="hover:bg-[#F8FAFC] transition-colors">
-                            <td className="p-4 font-black text-[#0C1D4D]">{a.funcionario_nome}</td>
-                            <td className="p-4 font-bold">{a.data_abono.split('-').reverse().join('/')}</td>
-                            <td className="p-4 text-center">
-                              {a.dia_todo
-                                ? <span className="text-[9px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-black uppercase">Dia Todo</span>
-                                : <span className="text-[9px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-black uppercase">Parcial</span>}
-                            </td>
-                            <td className="p-4 text-center text-xs font-medium text-gray-600">
-                              {a.dia_todo ? '—' : `${a.hora_inicio || '--:--'} às ${a.hora_fim || '--:--'}`}
-                            </td>
-                            <td className="p-4 text-center font-bold">
-                              {diaNaoUtil
-                                ? <span className="text-gray-400" title="Dia não útil: abono não gera crédito de horas">{minutesToTimeStr(a.minutos_abonados)} *</span>
-                                : minutesToTimeStr(a.minutos_abonados)}
-                            </td>
-                            <td className="p-4 text-xs font-medium text-gray-600">{a.motivo || '—'}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                  <p className="p-4 text-[10px] text-gray-400 font-medium">* Abono em dia não útil (sábado, domingo ou feriado): registrado, mas não gera crédito de horas no cálculo.</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm text-left border-collapse">
-                    <thead className="bg-white border-b-2 border-[#E2E8F0]">
-                      <tr className="text-[9px] xl:text-[10px] uppercase font-black tracking-widest text-[#64748B]">
-                        <th className="p-4">Colaborador</th>
-                        <th className="p-4 text-center">Total de Abonos</th>
-                        <th className="p-4 text-center text-green-700">Dias Inteiros</th>
-                        <th className="p-4 text-center text-blue-700">Parciais</th>
-                        <th className="p-4 text-center">Tempo Total Abonado</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#E2E8F0]">
-                      {abonosPorFuncionario.map((item, idx) => (
-                        <tr key={idx} className="hover:bg-[#F8FAFC] transition-colors">
-                          <td className="p-4 font-black text-[#0C1D4D]">{item.nome}</td>
-                          <td className="p-4 text-center font-bold">{item.qtd}</td>
-                          <td className="p-4 text-center font-bold text-green-700">{item.qtdDiaTodo}</td>
-                          <td className="p-4 text-center font-bold text-blue-700">{item.qtdParcial}</td>
-                          <td className="p-4 text-center font-black">{minutesToTimeStr(item.totalMins)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t-2 border-[#0C1D4D] bg-[#F8FAFC] font-black text-[#0C1D4D]">
-                        <td className="p-4 uppercase text-xs tracking-wider">Total da Equipe</td>
-                        <td className="p-4 text-center">{abonos.length}</td>
-                        <td className="p-4 text-center text-green-700">{abonosPorFuncionario.reduce((s, i) => s + i.qtdDiaTodo, 0)}</td>
-                        <td className="p-4 text-center text-blue-700">{abonosPorFuncionario.reduce((s, i) => s + i.qtdParcial, 0)}</td>
-                        <td className="p-4 text-center">{minutesToTimeStr(totalAbonosMin)}</td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              )}
-            </main>
-          </div>
         )}
 
         {viewMode === 'ponto_whatsapp' && (
@@ -1421,6 +1288,217 @@ export default function GestaoDePonto() {
           </div>
         )}
         </>
+        )}
+
+        {abaPrincipal === 'gestao_abonos' && (
+          <div className="flex flex-col gap-4">
+            <main className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col">
+              <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC] flex flex-col sm:flex-row justify-between items-center gap-4">
+                <div>
+                  <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">
+                    {abonosConsolidado ? 'Abonos — Consolidado por Equipe' : 'Abonos — Lançamentos do Mês'}
+                  </h2>
+                  <p className="text-sm text-[#64748B]">Competência: {mesAnoSelecionado.split('-').reverse().join('/')} • {abonos.length} lançamento(s) • Total abonado: {minutesToTimeStr(totalAbonosMin)}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <input type="month" value={mesAnoSelecionado} onChange={(e) => setMesAnoSelecionado(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+                  <div className="flex bg-[#F1F5F9] p-1 rounded-lg border border-[#E2E8F0]">
+                    <button onClick={() => setAbonosConsolidado(false)} className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-md transition-all ${!abonosConsolidado ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>📋 Lançamentos</button>
+                    <button onClick={() => setAbonosConsolidado(true)} className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abonosConsolidado ? 'bg-[#16A34A] text-white shadow-sm' : 'text-[#64748B] hover:text-[#16A34A]'}`}>👥 Consolidado por Equipe</button>
+                  </div>
+                </div>
+              </div>
+
+              {loading ? (
+                <div className="p-12 text-center text-[#94A3B8] font-bold">Carregando abonos...</div>
+              ) : abonos.length === 0 ? (
+                <div className="p-12 text-center text-[#94A3B8] font-bold">
+                  Nenhum abono lançado para este mês. Importe o CSV de abonos na aba Gestão de Ponto.
+                </div>
+              ) : !abonosConsolidado ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left border-collapse">
+                    <thead className="bg-white border-b-2 border-[#E2E8F0]">
+                      <tr className="text-[9px] xl:text-[10px] uppercase font-black tracking-widest text-[#64748B]">
+                        <th className="p-4">Colaborador</th>
+                        <th className="p-4">Data</th>
+                        <th className="p-4 text-center">Tipo</th>
+                        <th className="p-4 text-center">Período</th>
+                        <th className="p-4 text-center">Tempo Abonado</th>
+                        <th className="p-4">Motivo</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0]">
+                      {abonosOrdenados.map((a, idx) => {
+                        const diaNaoUtil = isDiaNaoUtil(a.data_abono, feriadosGlobais);
+                        return (
+                          <tr key={a.id || idx} className="hover:bg-[#F8FAFC] transition-colors">
+                            <td className="p-4 font-black text-[#0C1D4D]">{a.funcionario_nome}</td>
+                            <td className="p-4 font-bold">{a.data_abono.split('-').reverse().join('/')}</td>
+                            <td className="p-4 text-center">
+                              {a.dia_todo
+                                ? <span className="text-[9px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-black uppercase">Dia Todo</span>
+                                : <span className="text-[9px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-black uppercase">Parcial</span>}
+                            </td>
+                            <td className="p-4 text-center text-xs font-medium text-gray-600">
+                              {a.dia_todo ? '—' : `${a.hora_inicio || '--:--'} às ${a.hora_fim || '--:--'}`}
+                            </td>
+                            <td className="p-4 text-center font-bold">
+                              {diaNaoUtil
+                                ? <span className="text-gray-400" title="Dia não útil: abono não gera crédito de horas">{minutesToTimeStr(a.minutos_abonados)} *</span>
+                                : minutesToTimeStr(a.minutos_abonados)}
+                            </td>
+                            <td className="p-4 text-xs font-medium text-gray-600">{a.motivo || '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <p className="p-4 text-[10px] text-gray-400 font-medium">* Abono em dia não útil (sábado, domingo ou feriado): registrado, mas não gera crédito de horas no cálculo.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left border-collapse">
+                    <thead className="bg-white border-b-2 border-[#E2E8F0]">
+                      <tr className="text-[9px] xl:text-[10px] uppercase font-black tracking-widest text-[#64748B]">
+                        <th className="p-4">Colaborador</th>
+                        <th className="p-4 text-center">Total de Abonos</th>
+                        <th className="p-4 text-center text-green-700">Dias Inteiros</th>
+                        <th className="p-4 text-center text-blue-700">Parciais</th>
+                        <th className="p-4 text-center">Tempo Total Abonado</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0]">
+                      {abonosPorFuncionario.map((item, idx) => (
+                        <tr key={idx} className="hover:bg-[#F8FAFC] transition-colors">
+                          <td className="p-4 font-black text-[#0C1D4D]">{item.nome}</td>
+                          <td className="p-4 text-center font-bold">{item.qtd}</td>
+                          <td className="p-4 text-center font-bold text-green-700">{item.qtdDiaTodo}</td>
+                          <td className="p-4 text-center font-bold text-blue-700">{item.qtdParcial}</td>
+                          <td className="p-4 text-center font-black">{minutesToTimeStr(item.totalMins)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-[#0C1D4D] bg-[#F8FAFC] font-black text-[#0C1D4D]">
+                        <td className="p-4 uppercase text-xs tracking-wider">Total da Equipe</td>
+                        <td className="p-4 text-center">{abonos.length}</td>
+                        <td className="p-4 text-center text-green-700">{abonosPorFuncionario.reduce((s, i) => s + i.qtdDiaTodo, 0)}</td>
+                        <td className="p-4 text-center text-blue-700">{abonosPorFuncionario.reduce((s, i) => s + i.qtdParcial, 0)}</td>
+                        <td className="p-4 text-center">{minutesToTimeStr(totalAbonosMin)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </main>
+          </div>
+        )}
+
+        {abaPrincipal === 'inconsistencia_ponto' && (
+          <div className="flex flex-col lg:flex-row gap-6">
+            <aside className="w-full lg:w-80 flex-shrink-0 space-y-6">
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
+                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">Lançar Ponto Manual</h3>
+                <p className="text-xs text-[#64748B] mb-4">O RH pode lançar a batida de um dia direto por aqui, sem depender do CSV ou do WhatsApp.</p>
+                <div className="flex flex-col gap-2">
+                  <select value={manualFuncionario} onChange={e => setManualFuncionario(e.target.value)} className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]">
+                    <option value="">Selecione o funcionário...</option>
+                    {listaFuncionariosAtivos.map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                  <input type="date" value={manualData} onChange={e => setManualData(e.target.value)} className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]" />
+
+                  {verificandoExistente && (
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider">🔎 Verificando batidas já lançadas...</p>
+                  )}
+                  {!verificandoExistente && registroExistente === null && manualFuncionario && manualData && (
+                    <p className="text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 uppercase">✅ Nenhum ponto lançado neste dia ainda.</p>
+                  )}
+                  {!verificandoExistente && registroExistente && registroExistente.origem === 'WHATSAPP' && (
+                    <p className="text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 uppercase">⚠ Batida confirmada via WhatsApp (ledger legal, nunca é apagado). Editar aqui corrige só a versão usada no cálculo da folha — ex: remover uma batida a mais feita sem querer.</p>
+                  )}
+                  {!verificandoExistente && registroExistente && registroExistente.origem !== 'WHATSAPP' && (
+                    <p className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 uppercase">⚠ Já existe ponto lançado nesse dia (origem: {registroExistente.origem}). Campos pré-preenchidos abaixo — editar e salvar SUBSTITUI a batida atual.</p>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Entrada</label>
+                      <input type="time" value={manualE1} onChange={e => setManualE1(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Saída{(manualE2 || manualS2) ? ' (Almoço)' : ''}</label>
+                      <input type="time" value={manualS1} onChange={e => setManualS1(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Retorno Almoço</label>
+                      <input type="time" value={manualE2} onChange={e => setManualE2(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Saída</label>
+                      <input type="time" value={manualS2} onChange={e => setManualS2(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
+                    </div>
+                  </div>
+                  <p className="text-[9px] text-gray-400 font-bold uppercase">Deixe Retorno/Saída em branco para lançar só Entrada + Saída.</p>
+                  <button onClick={handleLancarPontoManual} disabled={lancandoManual} className="w-full bg-[#336699] hover:bg-[#284B8C] text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors disabled:opacity-50">
+                    {lancandoManual ? '⏳ Lançando...' : registroExistente ? '💾 SUBSTITUIR PONTO' : '💾 LANÇAR PONTO'}
+                  </button>
+                </div>
+              </div>
+            </aside>
+
+            <main className="flex-grow flex flex-col gap-4">
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row sm:items-end gap-4">
+                <div>
+                  <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Mês de Competência</label>
+                  <input type="month" value={mesAnoSelecionado} onChange={(e) => setMesAnoSelecionado(e.target.value)} className="p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]" />
+                </div>
+                <button onClick={verificarInconsistenciasPonto} disabled={loading} className="bg-amber-600 hover:bg-amber-700 text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition-colors disabled:opacity-50">
+                  {loading ? '⏳ Carregando ponto do mês...' : '⚠️ VERIFICAR INCONSISTÊNCIA'}
+                </button>
+              </div>
+
+              {inconsistencias !== null && (
+                <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col">
+                  <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC]">
+                    <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Pontos Ímpar (Batidas Incompletas)</h2>
+                    <p className="text-sm text-[#64748B]">Competência: {mesAnoSelecionado.split('-').reverse().join('/')} • {inconsistencias.length} dia(s) com inconsistência</p>
+                  </div>
+
+                  {inconsistencias.length === 0 ? (
+                    <div className="p-12 text-center text-[#94A3B8] font-bold">Nenhuma inconsistência encontrada — todas as batidas do mês estão completas.</div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left border-collapse">
+                        <thead className="bg-white border-b-2 border-[#E2E8F0]">
+                          <tr className="text-[9px] xl:text-[10px] uppercase font-black tracking-widest text-[#64748B]">
+                            <th className="p-4">Colaborador</th>
+                            <th className="p-4">Data</th>
+                            <th className="p-4 text-center">Entrada</th>
+                            <th className="p-4 text-center">Saída Almoço</th>
+                            <th className="p-4 text-center">Retorno Almoço</th>
+                            <th className="p-4 text-center">Saída</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#E2E8F0]">
+                          {inconsistencias.map((r, idx) => (
+                            <tr key={r.id || idx} className="hover:bg-[#F8FAFC] transition-colors">
+                              <td className="p-4 font-black text-[#0C1D4D]">{r.funcionario_nome}</td>
+                              <td className="p-4 font-bold">{r.data_registro.split('-').reverse().join('/')}</td>
+                              <td className={`p-4 text-center font-bold ${!r.entrada_1 ? 'text-red-500' : ''}`}>{r.entrada_1 || '—'}</td>
+                              <td className={`p-4 text-center font-bold ${!r.saida_1 ? 'text-red-500' : ''}`}>{r.saida_1 || '—'}</td>
+                              <td className={`p-4 text-center font-bold ${!r.entrada_2 ? 'text-red-500' : ''}`}>{r.entrada_2 || '—'}</td>
+                              <td className={`p-4 text-center font-bold ${!r.saida_2 ? 'text-red-500' : ''}`}>{r.saida_2 || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </main>
+          </div>
         )}
 
       </div>

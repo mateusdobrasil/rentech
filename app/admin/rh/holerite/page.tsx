@@ -8,6 +8,7 @@ import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { fecharFolhaLoteAction, reabrirFolhaAction, salvarBonusDescontosAction, salvarDadosSalariaisAction } from '../actions/actions-folha';
+import { listarAbonosPendentesDoMesAction } from '../actions/actions-ponto-whatsapp';
 import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction, previaDocumentoAssinaturaAction } from '../actions/actions-assinatura';
 import logoColorido from '../../../../app/imgs/logo.png';
 
@@ -988,10 +989,19 @@ export default function HoleritePage() {
 
     setLoadingLote(true);
     try {
-      // Antes de fechar, revalida as batidas de ponto ao vivo (podem ter
-      // mudado desde que o lote foi carregado). Cada dia trabalhado precisa
-      // ter ENTRADA+SAÍDA ou ENTRADA+SAÍDA ALMOÇO+RETORNO ALMOÇO+SAÍDA.
-      const { porFuncionario } = await buscarPontoDoMes(mesReferencia);
+      // Antes de fechar, revalida ao vivo (podem ter mudado desde que o lote
+      // foi carregado): (1) cada dia trabalhado precisa ter ENTRADA+SAÍDA ou
+      // ENTRADA+SAÍDA ALMOÇO+RETORNO ALMOÇO+SAÍDA — batida ímpar/incompleta
+      // trava o fechamento; (2) nenhum funcionário do lote pode ter
+      // solicitação de abono via WhatsApp ainda PENDENTE no mês — enquanto
+      // não aprovada/rejeitada pelo RH, o dia conta como falta no cálculo.
+      const nomesAbertos = abertos.map(l => l.func.nome_completo);
+      const [{ porFuncionario }, resAbonos] = await Promise.all([
+        buscarPontoDoMes(mesReferencia),
+        listarAbonosPendentesDoMesAction({ mesAno: mesReferencia, nomes: nomesAbertos })
+      ]);
+      if (!resAbonos.ok) throw new Error(resAbonos.erro);
+
       const relatorioProblemas = abertos
         .map(item => ({
           nome: item.func.nome_completo,
@@ -1002,17 +1012,34 @@ export default function HoleritePage() {
         }))
         .filter(r => r.dias.length > 0);
 
-      if (relatorioProblemas.length > 0) {
-        alert(
-          `Não é possível fechar a folha: há batidas de ponto incompletas.\n\n` +
-          `Cada dia trabalhado precisa ter ENTRADA e SAÍDA, ou ENTRADA, SAÍDA ALMOÇO, RETORNO ALMOÇO e SAÍDA.\n\n` +
-          relatorioProblemas.map(r => `• ${r.nome}: ${r.dias.join(', ')}`).join('\n') +
-          `\n\nCorrija essas batidas na tela de Ponto e tente fechar a folha novamente.`
-        );
+      const abonosPorNome: Record<string, string[]> = {};
+      (resAbonos.info || []).forEach(a => {
+        (abonosPorNome[a.funcionario_nome] ||= []).push(a.data_referencia.split('-').reverse().join('/'));
+      });
+      const relatorioAbonos = Object.entries(abonosPorNome).map(([nome, dias]) => ({ nome, dias }));
+
+      if (relatorioProblemas.length > 0 || relatorioAbonos.length > 0) {
+        let msg = 'Não é possível fechar a folha:\n';
+        if (relatorioProblemas.length > 0) {
+          msg +=
+            `\n⏱ BATIDAS DE PONTO INCOMPLETAS\n` +
+            `Cada dia trabalhado precisa ter ENTRADA e SAÍDA, ou ENTRADA, SAÍDA ALMOÇO, RETORNO ALMOÇO e SAÍDA.\n` +
+            relatorioProblemas.map(r => `• ${r.nome}: ${r.dias.join(', ')}`).join('\n') +
+            `\nCorrija essas batidas na tela de Ponto.\n`;
+        }
+        if (relatorioAbonos.length > 0) {
+          msg +=
+            `\n📋 ABONOS AINDA NÃO AUTORIZADOS\n` +
+            `Há solicitação de abono via WhatsApp pendente de análise — o dia conta como falta até ser aprovado ou rejeitado.\n` +
+            relatorioAbonos.map(r => `• ${r.nome}: ${r.dias.join(', ')}`).join('\n') +
+            `\nAprove ou rejeite em RH → Ponto → Gestão de Ponto → Ponto via WhatsApp → Solicitações Pendentes.\n`;
+        }
+        msg += `\nCorrija e tente fechar a folha novamente.`;
+        alert(msg);
         return;
       }
     } catch (e: any) {
-      alert('Erro ao validar as batidas de ponto: ' + e.message);
+      alert('Erro ao validar o fechamento: ' + e.message);
       return;
     } finally {
       setLoadingLote(false);

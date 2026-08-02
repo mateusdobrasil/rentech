@@ -14,6 +14,7 @@ import {
   type EstatisticasPontoWhatsapp, type RegistroLedger, type SolicitacaoPendente, type SolicitacaoHistorico
 } from '../actions/actions-ponto-whatsapp';
 import SepararHolerites from './SepararHolerites';
+import RegistroPontoConsulta from '../../operacional/registro-ponto/RegistroPontoConsulta';
 import logoColorido from '../../../../app/imgs/logo.png';
 
 // ============================================================================
@@ -122,6 +123,7 @@ export default function GestaoDePonto() {
   const [loading, setLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  const [abaPrincipal, setAbaPrincipal] = useState<'gestao' | 'registro_diario'>('gestao');
   const [viewMode, setViewMode] = useState<'resumo' | 'espelho' | 'espelho_todos' | 'abonos' | 'separar_holerites' | 'ponto_whatsapp'>('resumo');
   const [funcionarioSelecionado, setFuncionarioSelecionado] = useState('');
   const [estatisticasWhatsapp, setEstatisticasWhatsapp] = useState<EstatisticasPontoWhatsapp | null>(null);
@@ -904,8 +906,23 @@ export default function GestaoDePonto() {
         </button>
       </div>
 
+      <div className="px-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full print:hidden">
+        <div className="inline-flex bg-[#F1F5F9] p-1 rounded-lg border border-[#E2E8F0]">
+          <button onClick={() => setAbaPrincipal('gestao')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abaPrincipal === 'gestao' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>
+            📊 Gestão de Ponto
+          </button>
+          <button onClick={() => setAbaPrincipal('registro_diario')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abaPrincipal === 'registro_diario' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>
+            🕒 Registro de Ponto (Dia a Dia)
+          </button>
+        </div>
+      </div>
+
       <div className="p-4 md:px-8 pt-6 flex-grow flex flex-col max-w-[1400px] mx-auto w-full">
-        
+
+        {abaPrincipal === 'registro_diario' && <RegistroPontoConsulta />}
+
+        {abaPrincipal === 'gestao' && (
+        <>
         {viewMode === 'resumo' && (
           <div className="flex flex-col lg:flex-row gap-6">
             <aside className="w-full lg:w-80 flex-shrink-0 space-y-6">
@@ -1402,6 +1419,8 @@ export default function GestaoDePonto() {
               </main>
             )}
           </div>
+        )}
+        </>
         )}
 
       </div>

@@ -178,54 +178,66 @@ export default function FinanceiroPage() {
     finally { setMontando(false); }
   };
 
-  // Nova função de OCR operando 100% via Backend (AWS Textract)
-  const rodarOcrTipo = async (tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL', rotulo: string) => {
+  // Nova função de OCR operando 100% via Backend (AWS Textract). Documentos já
+  // lidos antes voltam do banco em `cache` (ver listarPdfsContabilidadeAction)
+  // e não são reenviados à AWS — só `forcar: true` (releitura manual) ignora
+  // o cache e lê tudo de novo.
+  const rodarOcrTipo = async (tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL', rotulo: string, forcar = false) => {
     setOcrRodando(true);
     setOcrFalhas([]);
     setOcrDebug(null);
 
     try {
-      const res = await listarPdfsContabilidadeAction({ mesReferencia, tipo });
+      const res = await listarPdfsContabilidadeAction({ mesReferencia, tipo, forcar });
       if (!res.ok) throw new Error(res.erro);
 
       const pdfs: { funcionario_nome: string; pdfBase64: string }[] = res.info.pdfs;
-      if (pdfs.length === 0) {
+      const cache: { funcionario_nome: string; valor: number }[] = res.info.cache || [];
+
+      if (pdfs.length === 0 && cache.length === 0) {
         alert(`Nenhum PDF de ${rotulo.toLowerCase()} encontrado neste mês.`);
         return;
       }
 
-      setOcrProgresso({ atual: 0, total: pdfs.length, nome: '', tipo: rotulo });
-
       const anteriores = tipo === 'ADIANTAMENTO' ? valoresAdiant : valoresPagto;
       const novos: Record<string, number> = { ...anteriores };
-      const falhas: string[] = [];
-      let primeiroTexto = '';
+      cache.forEach(c => { novos[c.funcionario_nome] = c.valor; });
 
-      for (let i = 0; i < pdfs.length; i++) {
-        const { funcionario_nome, pdfBase64 } = pdfs[i];
-        setOcrProgresso({ atual: i + 1, total: pdfs.length, nome: funcionario_nome, tipo: rotulo });
+      if (pdfs.length > 0) {
+        setOcrProgresso({ atual: 0, total: pdfs.length, nome: '', tipo: rotulo });
 
-        try {
-          // Chamada para a Server Action conectada à AWS Textract
-          const respostaAws = await processarOcrAwsAction(pdfBase64, tipo);
+        const falhas: string[] = [];
+        let primeiroTexto = '';
 
-          if (i === 0 && respostaAws._textoLido) {
-            primeiroTexto = `[VALOR CAPTURADO: ${respostaAws.valor ?? 'nenhum'}]\n\n${respostaAws._textoLido}`;
+        for (let i = 0; i < pdfs.length; i++) {
+          const { funcionario_nome, pdfBase64 } = pdfs[i];
+          setOcrProgresso({ atual: i + 1, total: pdfs.length, nome: funcionario_nome, tipo: rotulo });
+
+          try {
+            // Chamada para a Server Action conectada à AWS Textract — salva o
+            // resultado em banco (mesReferencia + funcionario_nome) para não
+            // precisar reler este PDF nas próximas vezes.
+            const respostaAws = await processarOcrAwsAction(pdfBase64, tipo, mesReferencia, funcionario_nome);
+
+            if (i === 0 && respostaAws._textoLido) {
+              primeiroTexto = `[VALOR CAPTURADO: ${respostaAws.valor ?? 'nenhum'}]\n\n${respostaAws._textoLido}`;
+            }
+
+            if (respostaAws.ok && respostaAws.valor) {
+              novos[funcionario_nome] = respostaAws.valor;
+            } else {
+              falhas.push(`${funcionario_nome} (${rotulo}): ${respostaAws.erro}`);
+            }
+          } catch (errReq: any) {
+            falhas.push(`${funcionario_nome} (${rotulo}): Falha de conexão.`);
           }
-
-          if (respostaAws.ok && respostaAws.valor) {
-            novos[funcionario_nome] = respostaAws.valor;
-          } else {
-            falhas.push(`${funcionario_nome} (${rotulo}): ${respostaAws.erro}`);
-          }
-        } catch (errReq: any) {
-          falhas.push(`${funcionario_nome} (${rotulo}): Falha de conexão.`);
         }
+
+        setOcrFalhas(prev => [...prev, ...falhas]);
+        if (primeiroTexto) setOcrDebug(primeiroTexto);
       }
 
       if (tipo === 'ADIANTAMENTO') setValoresAdiant(novos); else setValoresPagto(novos);
-      setOcrFalhas(prev => [...prev, ...falhas]);
-      if (primeiroTexto) setOcrDebug(primeiroTexto);
 
       // Remonta a tabela com os novos valores
       const res2 = await montarLoteSalariosAction({
@@ -658,17 +670,28 @@ export default function FinanceiroPage() {
           {itens.length > 0 && (
             <div className="pt-3 border-t border-gray-100 space-y-4">
               {(fontesSel.includes('ADIANTAMENTO') || fontesSel.includes('PAGAMENTO')) && (
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {fontesSel.includes('ADIANTAMENTO') && (
-                    <button onClick={() => rodarOcrTipo('ADIANTAMENTO', 'Adiantamento')} disabled={ocrRodando} className="text-[10px] font-black bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
-                      🔍 OCR Adiantamento
-                    </button>
+                    <>
+                      <button onClick={() => rodarOcrTipo('ADIANTAMENTO', 'Adiantamento')} disabled={ocrRodando} className="text-[10px] font-black bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
+                        🔍 OCR Adiantamento
+                      </button>
+                      <button onClick={() => rodarOcrTipo('ADIANTAMENTO', 'Adiantamento', true)} disabled={ocrRodando} title="Ignora o valor já salvo e lê os comprovantes de novo" className="text-[10px] font-black bg-white border border-purple-300 text-purple-700 hover:bg-purple-50 px-3 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
+                        🔄 Reler tudo
+                      </button>
+                    </>
                   )}
                   {fontesSel.includes('PAGAMENTO') && (
-                    <button onClick={() => rodarOcrTipo('HOLERITE_MENSAL', 'Pagamento')} disabled={ocrRodando} className="text-[10px] font-black bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
-                      🔍 OCR Pagamento
-                    </button>
+                    <>
+                      <button onClick={() => rodarOcrTipo('HOLERITE_MENSAL', 'Pagamento')} disabled={ocrRodando} className="text-[10px] font-black bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
+                        🔍 OCR Pagamento
+                      </button>
+                      <button onClick={() => rodarOcrTipo('HOLERITE_MENSAL', 'Pagamento', true)} disabled={ocrRodando} title="Ignora o valor já salvo e lê os comprovantes de novo" className="text-[10px] font-black bg-white border border-purple-300 text-purple-700 hover:bg-purple-50 px-3 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
+                        🔄 Reler tudo
+                      </button>
+                    </>
                   )}
+                  <span className="text-[10px] text-gray-400 font-bold">Comprovantes já lidos usam o valor salvo — só os novos vão para a AWS.</span>
                 </div>
               )}
 

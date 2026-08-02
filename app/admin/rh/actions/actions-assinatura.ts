@@ -10,6 +10,7 @@ import { supabaseAdmin } from '../../../lib/supabase';
 import { autentiqueCriarDocumento, autentiqueConsultarDocumento } from '../../../lib/autentique';
 import { gerarHoleritePdf } from '../../../lib/gerarHoleritePdf';
 import { gerarEspelhoPontoPdf, RegistroPontoDia } from '../../../lib/gerarEspelhoPontoPdf';
+import { gerarReciboPdf } from '../../../lib/gerarReciboPdf';
 import { mergePdfs } from '../../../lib/mergePdf';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
@@ -118,6 +119,38 @@ async function gerarEspelhoPontoBytes(
   });
 }
 
+// Deduz a forma de pagamento a partir da ficha (mesma lógica em toda a
+// função: PIX cadastrado > dados bancários cadastrados > "a combinar").
+function deduzirFormaPagamento(func: { pix_chave?: string | null; banco_conta?: string | null } | null): string {
+  if (func?.pix_chave) return 'PIX';
+  if (func?.banco_conta) return 'Transferência bancária';
+  return 'A combinar';
+}
+
+// Recibo de pagamento — vai como o ÚLTIMO arquivo do pacote de assinatura de
+// TODOS os colaboradores (com ou sem folha calculada). Quem tem folha usa o
+// valorLiquidoReceber do snapshot fechado; quem é só documental usa o valor
+// digitado manualmente pelo RH (valorManual), já que não há cálculo.
+async function gerarReciboBytes(
+  db: ReturnType<typeof supabaseAdmin>,
+  funcionarioNome: string,
+  cpf: string | null,
+  mesReferencia: string,
+  valor: number,
+  formaPagamento: string
+): Promise<Uint8Array> {
+  const { data: fData } = await db.from('folha_feriados').select('data_feriado');
+  return gerarReciboPdf({
+    nome: funcionarioNome,
+    cpf,
+    mesReferencia,
+    valor,
+    formaPagamento,
+    feriados: (fData || []).map((f: any) => f.data_feriado),
+    empresaNome: 'RENTECH'
+  });
+}
+
 function normalizarCelularBR(celular?: string | null): string | null {
   if (!celular) return null;
   const digits = celular.replace(/\D/g, '');
@@ -207,9 +240,10 @@ export async function enviarHoleriteAssinaturaAction(payload: {
   enviadoPor: string;
   sandbox: boolean;
   soDocumental?: boolean;
+  valorManual?: number; // obrigatório quando soDocumental: valor declarado no recibo
 }): Promise<Resultado> {
   const db = supabaseAdmin();
-  const { funcionarioNome, mesReferencia, enviadoPor, sandbox, soDocumental } = payload;
+  const { funcionarioNome, mesReferencia, enviadoPor, sandbox, soDocumental, valorManual } = payload;
 
   try {
     // 1) Folha fechada: obrigatória para contratos com cálculo. Para contratos
@@ -224,10 +258,18 @@ export async function enviarHoleriteAssinaturaAction(payload: {
       return { ok: false, erro: 'A folha deste mês não está fechada para este funcionário. Feche a folha antes de enviar para assinatura.' };
     }
 
+    // O recibo (último arquivo do pacote) vale para todo mundo: quem tem
+    // folha usa o valor líquido já calculado; quem é só documental precisa
+    // do valor digitado pelo RH, já que não há cálculo no sistema.
+    const valorRecibo = !soDocumental ? fechamento?.dados?.valorLiquidoReceber : valorManual;
+    if (soDocumental && (valorManual === undefined || valorManual === null || valorManual <= 0)) {
+      return { ok: false, erro: 'Informe o valor do recibo (o mesmo do holerite da contabilidade) para enviar este funcionário documental.' };
+    }
+
     // 2) Busca dados pessoais (CPF, celular, e-mail) da ficha
     const { data: func } = await db
       .from('folha_funcionarios')
-      .select('cpf, celular, email, data_admissao, data_desligamento')
+      .select('cpf, celular, email, data_admissao, data_desligamento, pix_chave, banco_conta')
       .eq('nome_completo', funcionarioNome)
       .maybeSingle();
 
@@ -268,21 +310,29 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     );
 
     // 4c) Anexa os documentos da contabilidade que existirem no Storage.
-    // Ordem: nosso resumo (se houver) → espelho de ponto → adiantamento → holerite mensal.
     const adiantamento = await baixarAnexoContabil(db, mesReferencia, 'ADIANTAMENTO', funcionarioNome);
     const holeriteMensal = await baixarAnexoContabil(db, mesReferencia, 'HOLERITE_MENSAL', funcionarioNome);
 
-    const partes = [resumoBytes, espelhoBytes, adiantamento, holeriteMensal].filter((p): p is Uint8Array => !!p);
-    if (partes.length === 0) {
-      return { ok: false, erro: soDocumental
-        ? `Nenhum holerite da contabilidade encontrado para ${funcionarioNome} neste mês. Importe e separe os PDFs antes de enviar.`
-        : 'Nenhum documento disponível para envio.' };
+    // Documental exige o holerite real da contabilidade — o recibo sozinho
+    // (valor digitado) não substitui esse anexo.
+    if (soDocumental && !adiantamento && !holeriteMensal) {
+      return { ok: false, erro: `Nenhum holerite da contabilidade encontrado para ${funcionarioNome} neste mês. Importe e separe os PDFs antes de enviar.` };
     }
+
+    // 4d) Recibo de pagamento — sempre o ÚLTIMO arquivo do pacote.
+    const formaPagamento = deduzirFormaPagamento(func);
+    const reciboBytes = await gerarReciboBytes(
+      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento
+    );
+
+    // Ordem: nosso resumo (se houver) → espelho de ponto → adiantamento → holerite mensal → recibo.
+    const partes = [resumoBytes, espelhoBytes, adiantamento, holeriteMensal, reciboBytes].filter((p): p is Uint8Array => !!p);
     const pdfBytes = partes.length > 1 ? await mergePdfs(partes) : partes[0];
     const anexados = [
       espelhoBytes ? 'espelho de ponto' : null,
       adiantamento ? 'adiantamento' : null,
-      holeriteMensal ? 'holerite' : null
+      holeriteMensal ? 'holerite' : null,
+      'recibo'
     ].filter(Boolean);
 
     // 5) Cria o documento na Autentique (com validação por CPF + WhatsApp)
@@ -443,9 +493,10 @@ export async function previaDocumentoAssinaturaAction(payload: {
   mesReferencia: string;
   soDocumental?: boolean;
   dadosAoVivo?: any; // se a folha não está fechada, a tela pode mandar o cálculo ao vivo
+  valorManual?: number; // obrigatório quando soDocumental: valor declarado no recibo
 }): Promise<Resultado> {
   const db = supabaseAdmin();
-  const { funcionarioNome, mesReferencia, soDocumental, dadosAoVivo } = payload;
+  const { funcionarioNome, mesReferencia, soDocumental, dadosAoVivo, valorManual } = payload;
 
   try {
     // Snapshot congelado (se fechado) ou dados ao vivo (prévia de folha aberta)
@@ -460,10 +511,14 @@ export async function previaDocumentoAssinaturaAction(payload: {
     if (!soDocumental && !dados) {
       return { ok: false, erro: 'Sem dados para gerar a prévia: feche a folha ou envie o cálculo ao vivo.' };
     }
+    if (soDocumental && (valorManual === undefined || valorManual === null || valorManual <= 0)) {
+      return { ok: false, erro: 'Informe o valor do recibo (o mesmo do holerite da contabilidade) para gerar a prévia deste funcionário documental.' };
+    }
+    const valorRecibo = !soDocumental ? dados?.valorLiquidoReceber : valorManual;
 
     const { data: func } = await db
       .from('folha_funcionarios')
-      .select('cpf, data_admissao, data_desligamento')
+      .select('cpf, data_admissao, data_desligamento, pix_chave, banco_conta')
       .eq('nome_completo', funcionarioNome)
       .maybeSingle();
 
@@ -484,15 +539,20 @@ export async function previaDocumentoAssinaturaAction(payload: {
     const adiantamento = await baixarAnexoContabil(db, mesReferencia, 'ADIANTAMENTO', funcionarioNome);
     const holeriteMensal = await baixarAnexoContabil(db, mesReferencia, 'HOLERITE_MENSAL', funcionarioNome);
 
-    const partes = [resumoBytes, espelhoBytes, adiantamento, holeriteMensal].filter((p): p is Uint8Array => !!p);
-    if (partes.length === 0) return { ok: false, erro: 'Nenhum documento disponível para a prévia.' };
+    const formaPagamento = deduzirFormaPagamento(func);
+    const reciboBytes = await gerarReciboBytes(
+      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento
+    );
+
+    const partes = [resumoBytes, espelhoBytes, adiantamento, holeriteMensal, reciboBytes].filter((p): p is Uint8Array => !!p);
     const pdfBytes = partes.length > 1 ? await mergePdfs(partes) : partes[0];
 
     const anexados = [
       resumoBytes ? 'resumo' : null,
       espelhoBytes ? 'espelho de ponto' : null,
       adiantamento ? 'adiantamento' : null,
-      holeriteMensal ? 'holerite' : null
+      holeriteMensal ? 'holerite' : null,
+      'recibo'
     ].filter(Boolean);
 
     return {

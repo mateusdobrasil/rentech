@@ -3,6 +3,18 @@
 // usando pdf-lib — mesmo padrão do gerarHoleritePdf.ts. Anexado ao holerite
 // no envio para assinatura, para o colaborador atestar a jornada registrada.
 import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont } from 'pdf-lib';
+import fs from 'fs';
+import path from 'path';
+
+// Lida em memória uma única vez por instância do servidor (o mesmo arquivo
+// usado no cabeçalho colorido do holerite, app/imgs/logo.png).
+let logoBytesCache: Buffer | null = null;
+function lerLogoBytes(): Buffer {
+  if (!logoBytesCache) {
+    logoBytesCache = fs.readFileSync(path.join(process.cwd(), 'app', 'imgs', 'logo.png'));
+  }
+  return logoBytesCache;
+}
 
 export interface RegistroPontoDia {
   data: string; // ISO AAAA-MM-DD
@@ -56,7 +68,10 @@ export async function gerarEspelhoPontoPdf(p: GerarEspelhoPontoParams): Promise<
     page.drawRectangle({ x, y: yy, width: w, height: h, color });
 
   // ===== Cabeçalho =====
-  txt(p.empresaNome || 'RENTECH', M, y - 4, 18, bold, azul);
+  const logoImg = await pdf.embedPng(lerLogoBytes());
+  const logoH = 28;
+  const logoW = logoH * (logoImg.width / logoImg.height);
+  page.drawImage(logoImg, { x: M, y: y - 24, width: logoW, height: logoH });
   const titulo = 'ESPELHO DE PONTO';
   const tW = bold.widthOfTextAtSize(titulo, 13);
   txt(titulo, width - M - tW, y - 2, 13, bold, azul);

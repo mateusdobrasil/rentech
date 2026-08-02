@@ -27,6 +27,33 @@ const normalizarPermissao = (permissaoBruta: string): string => {
 };
 // Utilitários
 const formatCurrency = (value: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
+
+// Contratos "só documentais" não têm cálculo de folha: o RH digita o valor
+// do recibo (o mesmo valor que já está no holerite da contabilidade) na
+// hora de enviar/pré-visualizar. Aceita "2850", "2850,00", "2.850,00" etc.
+const parseValorInformado = (raw: string): number | null => {
+  const limpo = raw.trim().replace(/^R\$\s*/i, '');
+  if (!limpo) return null;
+  let normalizado = limpo.replace(/[^\d.,]/g, '');
+  if (normalizado.includes(',') && normalizado.includes('.')) {
+    normalizado = normalizado.replace(/\./g, '').replace(',', '.');
+  } else if (normalizado.includes(',')) {
+    normalizado = normalizado.replace(',', '.');
+  }
+  const valor = parseFloat(normalizado);
+  return Number.isFinite(valor) && valor > 0 ? valor : null;
+};
+
+const pedirValorRecibo = (nomeCompleto: string): number | null => {
+  const raw = prompt(`Valor do recibo (R$) para ${nomeCompleto} — o mesmo valor do holerite da contabilidade:`);
+  if (raw === null) return null; // cancelou
+  const valor = parseValorInformado(raw);
+  if (valor === null) {
+    alert('Valor inválido. Informe um número maior que zero (ex.: 2850,00).');
+    return null;
+  }
+  return valor;
+};
 const formatTimeStr = (totalMins: number) => `${Math.floor(totalMins / 60).toString().padStart(2, '0')}:${(totalMins % 60).toString().padStart(2, '0')}:00`;
 
 // ============================================================================
@@ -1065,13 +1092,21 @@ export default function HoleritePage() {
   };
 
   const previaPdf = async (item: ItemLote) => {
+    let valorManual: number | undefined;
+    if (item.soDocumental) {
+      const valor = pedirValorRecibo(item.func.nome_completo);
+      if (valor === null) return;
+      valorManual = valor;
+    }
+
     setGerandoPrevia(item.func.nome_completo);
     try {
       const res = await previaDocumentoAssinaturaAction({
         funcionarioNome: item.func.nome_completo,
         mesReferencia,
         soDocumental: item.soDocumental,
-        dadosAoVivo: item.fechamento ? undefined : item.dados
+        dadosAoVivo: item.fechamento ? undefined : item.dados,
+        valorManual
       });
       if (!res.ok) throw new Error(res.erro);
       const bin = atob(res.info.pdfBase64);
@@ -1096,12 +1131,22 @@ export default function HoleritePage() {
       alert('Este holerite já foi assinado.');
       return;
     }
+
+    let valorManual: number | undefined;
+    if (item.soDocumental) {
+      const valor = pedirValorRecibo(item.func.nome_completo);
+      if (valor === null) return;
+      valorManual = valor;
+    }
+
     const jaEnviado = item.statusAssinatura === 'ENVIADO' || item.statusAssinatura === 'VISUALIZADO';
     if (!confirm(
       `${jaEnviado ? 'REENVIAR' : 'Enviar'} ${item.soDocumental ? 'os holerites da contabilidade' : 'o holerite'} de ${item.func.nome_completo} (${formatarMesAnoBR(mesReferencia)}) para assinatura?\n\n` +
       `Destino: ${item.func.celular ? 'WhatsApp ' + item.func.celular : item.func.email || 'sem contato'}\n` +
       `CPF exigido na assinatura: ${item.func.cpf || 'NÃO PREENCHIDO ⚠'}\n` +
-      (item.soDocumental ? '\n📄 Contrato documental: envia apenas os documentos da contabilidade (sem resumo calculado).' : '') +
+      (item.soDocumental
+        ? `\n📄 Contrato documental: envia os documentos da contabilidade + recibo de ${formatCurrency(valorManual!)}.`
+        : '\n🧾 Inclui o recibo de pagamento como último arquivo.') +
       (sandboxAssinatura ? '\n🧪 MODO TESTE (sandbox): não gasta créditos e o documento é temporário.' : '\n⚠ MODO REAL: consome um documento do seu plano Autentique.')
     )) return;
 
@@ -1112,10 +1157,11 @@ export default function HoleritePage() {
         mesReferencia,
         enviadoPor: usuarioAtual,
         sandbox: sandboxAssinatura,
-        soDocumental: item.soDocumental
+        soDocumental: item.soDocumental,
+        valorManual
       });
       if (!res.ok) throw new Error(res.erro);
-      const anexosMsg = res.info?.anexados?.length ? `\n\nAnexado: ${item.soDocumental ? '' : 'resumo + '}${res.info.anexados.join(' + ')}` : (item.soDocumental ? '\n\n⚠ Nenhum documento da contabilidade encontrado para este funcionário.' : '\n\n(só o resumo — sem documentos da contabilidade neste mês)');
+      const anexosMsg = res.info?.anexados?.length ? `\n\nAnexado: ${item.soDocumental ? '' : 'resumo + '}${res.info.anexados.join(' + ')}` : '';
       alert(`Enviado para assinatura!${anexosMsg}${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`);
       carregarLote(mesReferencia);
     } catch (e: any) {
@@ -1133,6 +1179,8 @@ export default function HoleritePage() {
     }
     if (!confirm(
       `Enviar ${fechadosNaoAssinados.length} holerite(s) fechado(s) para assinatura?\n\n` +
+      `🧾 Cada um sai com o recibo de pagamento anexado por último.\n` +
+      `📄 Fichas documentais vão falhar no envio em lote (o valor do recibo precisa ser digitado) — envie-as uma a uma.\n\n` +
       (sandboxAssinatura ? '🧪 MODO TESTE (sandbox): não gasta créditos.' : `⚠ MODO REAL: consome ${fechadosNaoAssinados.length} documento(s) do seu plano Autentique.`)
     )) return;
 

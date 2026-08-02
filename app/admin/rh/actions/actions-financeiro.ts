@@ -59,15 +59,25 @@ export async function montarLoteSalariosAction(payload: {
       });
     }
 
-    // CONTABILIDADE — quem tem cada tipo cadastrado no mês
+    // CONTABILIDADE — quem tem cada tipo cadastrado no mês. valor_ocr é o
+    // resultado da leitura AWS Textract já persistido em leituras anteriores
+    // (ver processarOcrAwsAction), usado como padrão para não precisar rodar
+    // o OCR de novo toda vez que o lote é montado.
     const temAdiantamento = new Set<string>();
     const temPagamento = new Set<string>();
+    const valorOcrAdiantPorNome: Record<string, number> = {};
+    const valorOcrPagtoPorNome: Record<string, number> = {};
     if (fontes.includes('ADIANTAMENTO') || fontes.includes('PAGAMENTO')) {
       const { data: docs } = await db.from('folha_documentos_contabeis')
-        .select('funcionario_nome, tipo').eq('mes_referencia', mesReferencia);
+        .select('funcionario_nome, tipo, valor_ocr').eq('mes_referencia', mesReferencia);
       (docs || []).forEach(d => {
-        if (d.tipo === 'ADIANTAMENTO') temAdiantamento.add(d.funcionario_nome);
-        else if (d.tipo === 'HOLERITE_MENSAL') temPagamento.add(d.funcionario_nome);
+        if (d.tipo === 'ADIANTAMENTO') {
+          temAdiantamento.add(d.funcionario_nome);
+          if (d.valor_ocr != null) valorOcrAdiantPorNome[d.funcionario_nome] = Number(d.valor_ocr);
+        } else if (d.tipo === 'HOLERITE_MENSAL') {
+          temPagamento.add(d.funcionario_nome);
+          if (d.valor_ocr != null) valorOcrPagtoPorNome[d.funcionario_nome] = Number(d.valor_ocr);
+        }
       });
     }
 
@@ -137,12 +147,14 @@ export async function montarLoteSalariosAction(payload: {
         if (daFicha !== undefined && daFicha > 0) {
           entradas.push({ fonte: 'ADIANTAMENTO', valor: daFicha, temDoc: false, origem: 'FICHA' });
         } else if (temAdiantamento.has(nome)) {
-          entradas.push({ fonte: 'ADIANTAMENTO', valor: valoresAdiant[nome] || 0, temDoc: true, origem: 'OCR' });
+          const valor = valoresAdiant[nome] ?? valorOcrAdiantPorNome[nome] ?? 0;
+          entradas.push({ fonte: 'ADIANTAMENTO', valor, temDoc: true, origem: 'OCR' });
         }
       }
 
       if (fontes.includes('PAGAMENTO') && resolvido.recebeHolerite && temPagamento.has(nome)) {
-        entradas.push({ fonte: 'PAGAMENTO', valor: valoresPagto[nome] || 0, temDoc: true });
+        const valor = valoresPagto[nome] ?? valorOcrPagtoPorNome[nome] ?? 0;
+        entradas.push({ fonte: 'PAGAMENTO', valor, temDoc: true });
       }
       if (fontes.includes('BENEFICIOS') && beneficiosPorNome[nome] !== undefined) {
         entradas.push({ fonte: 'BENEFICIOS', valor: beneficiosPorNome[nome] });
@@ -196,7 +208,9 @@ export async function montarLoteSalariosAction(payload: {
 // A chamada ao Textract em si vive em app/lib/textract.ts (compartilhada com
 // o reconhecimento de funcionário em actions-documentos.ts).
 // ============================================================================
-export async function processarOcrAwsAction(pdfBase64: string, tipo: string): Promise<Resultado> {
+export async function processarOcrAwsAction(
+  pdfBase64: string, tipo: string, mesReferencia?: string, funcionarioNome?: string
+): Promise<Resultado> {
   try {
     const linhas = await extrairTextoPdf(pdfBase64);
 
@@ -210,9 +224,22 @@ export async function processarOcrAwsAction(pdfBase64: string, tipo: string): Pr
 
     if (m && m[1]) {
       const numero = m[1].replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
+      const valor = Number(numero);
+
+      // Persiste o valor lido no documento de origem, para que a próxima
+      // montagem do lote (ou clique em "OCR") não precise reler este PDF.
+      if (mesReferencia && funcionarioNome) {
+        const db = supabaseAdmin();
+        await db.from('folha_documentos_contabeis')
+          .update({ valor_ocr: valor, ocr_processado_em: new Date().toISOString() })
+          .eq('funcionario_nome', funcionarioNome)
+          .eq('mes_referencia', mesReferencia)
+          .eq('tipo', tipo);
+      }
+
       return {
         ok: true,
-        valor: Number(numero),
+        valor,
         _textoLido: linhas.substring(0, 500)
       };
     }
@@ -231,23 +258,36 @@ export async function processarOcrAwsAction(pdfBase64: string, tipo: string): Pr
 
 // ============================================================================
 // PDFs DA CONTABILIDADE
-// Devolve as páginas dos holerites em base64 para o backend despachar pra AWS
+// Devolve as páginas dos holerites em base64 para o backend despachar pra AWS.
+// Documentos que já têm valor_ocr salvo (leitura anterior) voltam em `cache`
+// e não são baixados do Storage nem reenviados à AWS — só `forcar: true`
+// (releitura manual) ignora o cache e baixa tudo de novo.
 // ============================================================================
 export async function listarPdfsContabilidadeAction(payload: {
   mesReferencia: string;
   tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL';
+  forcar?: boolean;
 }): Promise<Resultado> {
   const db = supabaseAdmin();
   try {
     const { data: docs } = await db
       .from('folha_documentos_contabeis')
-      .select('funcionario_nome, tipo, storage_path')
+      .select('funcionario_nome, tipo, storage_path, valor_ocr')
       .eq('mes_referencia', payload.mesReferencia)
       .eq('tipo', payload.tipo);
-    if (!docs?.length) return { ok: true, info: { pdfs: [] } };
+    if (!docs?.length) return { ok: true, info: { pdfs: [], cache: [] } };
+
+    const cache: { funcionario_nome: string; valor: number }[] = [];
+    const pendentes = docs.filter(d => {
+      if (!payload.forcar && d.valor_ocr != null) {
+        cache.push({ funcionario_nome: d.funcionario_nome, valor: Number(d.valor_ocr) });
+        return false;
+      }
+      return true;
+    });
 
     const pdfs: { funcionario_nome: string; pdfBase64: string }[] = [];
-    for (const d of docs) {
+    for (const d of pendentes) {
       const { data: blob } = await db.storage.from('documentos-folha').download(d.storage_path);
       if (!blob) continue;
       const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -256,7 +296,7 @@ export async function listarPdfsContabilidadeAction(payload: {
         pdfBase64: Buffer.from(bytes).toString('base64')
       });
     }
-    return { ok: true, info: { pdfs } };
+    return { ok: true, info: { pdfs, cache } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

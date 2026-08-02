@@ -663,8 +663,8 @@ export default function FinanceiroPage() {
         <p className="text-[#1E40AF] font-medium text-sm">
           💸 <strong>Financeiro</strong>. Lotes de pagamento, OCR de comprovantes e arquivos bancários (CNAB).
         </p>
-        <button onClick={() => router.push('/admin/rh')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BFDBFE] text-[#1E40AF] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
-          ⬅ VOLTAR AO RH
+        <button onClick={() => router.push('/admin/financeiro')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BFDBFE] text-[#1E40AF] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
+          ⬅ VOLTAR AO FINANCEIRO
         </button>
       </div>
 

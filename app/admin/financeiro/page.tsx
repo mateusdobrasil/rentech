@@ -40,6 +40,12 @@ const modulosFinanceiro = [
     descricao: 'Gestão de Empréstimos Consignados no GOV.BR.',
     icone: '💸', link: '/admin/financeiro/consignado',
     cor: 'bg-purple-50 border-purple-200 text-purple-700', hover: 'hover:border-purple-500'
+  },
+  {
+    titulo: 'Relatórios e Dashboard',
+    descricao: 'OPs, Lotes de Pagamento e Consignado consolidados para decisão e auditoria.',
+    icone: '📊', link: '/admin/financeiro/relatorios',
+    cor: 'bg-indigo-50 border-indigo-200 text-indigo-700', hover: 'hover:border-indigo-500'
   }
 ];
 

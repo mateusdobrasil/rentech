@@ -15,6 +15,7 @@ export const normalizarPermissao = (permissaoBruta: string): string => {
   if (p.includes('OPER')) return 'OPERACIONAL';
   if (p.includes('ESTOQ')) return 'ESTOQUE';
   if (p.includes('EDIT')) return 'EDITOR';
+  if (p.includes('GESTOR')) return 'GESTORES';
 
   // PADRÃO
   return 'USUARIO';

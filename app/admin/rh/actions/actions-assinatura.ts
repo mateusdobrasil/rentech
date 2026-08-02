@@ -9,6 +9,7 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { autentiqueCriarDocumento, autentiqueConsultarDocumento } from '../../../lib/autentique';
 import { gerarHoleritePdf } from '../../../lib/gerarHoleritePdf';
+import { gerarEspelhoPontoPdf, RegistroPontoDia } from '../../../lib/gerarEspelhoPontoPdf';
 import { mergePdfs } from '../../../lib/mergePdf';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
@@ -55,6 +56,66 @@ async function baixarAnexoContabil(
   if (error || !data) return null;
   const buf = await data.arrayBuffer();
   return new Uint8Array(buf);
+}
+
+// Monta o espelho de ponto do mês (batidas + abonos) e gera o PDF. Retorna
+// null se não houver nenhum registro de ponto/abono naquele mês — nesse caso
+// simplesmente não anexa (não bloqueia o envio).
+async function gerarEspelhoPontoBytes(
+  db: ReturnType<typeof supabaseAdmin>,
+  funcionarioNome: string,
+  cpf: string | null,
+  mesReferencia: string,
+  dataAdmissao?: string | null,
+  dataDesligamento?: string | null
+): Promise<Uint8Array | null> {
+  const [ano, mes] = mesReferencia.split('-');
+  const dataInicio = `${ano}-${mes}-01`;
+  const dataFim = `${ano}-${mes}-${new Date(Number(ano), Number(mes), 0).getDate()}`;
+
+  const [{ data: pontoData }, { data: abonoData }, { data: fData }] = await Promise.all([
+    db.from('folha_ponto_diaria')
+      .select('data_registro, minutos_trabalhados, entrada_1, saida_1, entrada_2, saida_2')
+      .eq('funcionario_nome', funcionarioNome)
+      .gte('data_registro', dataInicio).lte('data_registro', dataFim),
+    db.from('folha_ponto_abono')
+      .select('data_abono, minutos_abonados, motivo')
+      .eq('funcionario_nome', funcionarioNome)
+      .gte('data_abono', dataInicio).lte('data_abono', dataFim),
+    db.from('folha_feriados').select('data_feriado')
+  ]);
+
+  if ((!pontoData || pontoData.length === 0) && (!abonoData || abonoData.length === 0)) return null;
+
+  const porDia: Record<string, RegistroPontoDia> = {};
+  (pontoData || []).forEach((r: any) => {
+    porDia[r.data_registro] = {
+      data: r.data_registro, entrada_1: r.entrada_1, saida_1: r.saida_1,
+      entrada_2: r.entrada_2, saida_2: r.saida_2,
+      minutosTrabalhados: r.minutos_trabalhados || 0, minutosAbonados: 0, motivoAbono: null
+    };
+  });
+  (abonoData || []).forEach((a: any) => {
+    if (!porDia[a.data_abono]) {
+      porDia[a.data_abono] = {
+        data: a.data_abono, entrada_1: null, saida_1: null, entrada_2: null, saida_2: null,
+        minutosTrabalhados: 0, minutosAbonados: 0, motivoAbono: null
+      };
+    }
+    porDia[a.data_abono].minutosAbonados = a.minutos_abonados || 0;
+    porDia[a.data_abono].motivoAbono = a.motivo || null;
+  });
+
+  return gerarEspelhoPontoPdf({
+    nome: funcionarioNome,
+    cpf,
+    mesReferencia,
+    registros: Object.values(porDia),
+    feriados: (fData || []).map((f: any) => f.data_feriado),
+    dataAdmissao,
+    dataDesligamento,
+    empresaNome: 'RENTECH'
+  });
 }
 
 function normalizarCelularBR(celular?: string | null): string | null {
@@ -166,7 +227,7 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     // 2) Busca dados pessoais (CPF, celular, e-mail) da ficha
     const { data: func } = await db
       .from('folha_funcionarios')
-      .select('cpf, celular, email')
+      .select('cpf, celular, email, data_admissao, data_desligamento')
       .eq('nome_completo', funcionarioNome)
       .maybeSingle();
 
@@ -200,12 +261,18 @@ export async function enviarHoleriteAssinaturaAction(payload: {
       empresaNome: 'RENTECH'
     }) : null;
 
-    // 4b) Anexa os documentos da contabilidade que existirem no Storage.
-    // Ordem: nosso resumo (se houver) → adiantamento → holerite mensal.
+    // 4b) Espelho de ponto do mês (batidas + abonos), se houver registro.
+    const espelhoBytes = await gerarEspelhoPontoBytes(
+      db, funcionarioNome, cpfLimpo || func?.cpf || null, mesReferencia,
+      func?.data_admissao, func?.data_desligamento
+    );
+
+    // 4c) Anexa os documentos da contabilidade que existirem no Storage.
+    // Ordem: nosso resumo (se houver) → espelho de ponto → adiantamento → holerite mensal.
     const adiantamento = await baixarAnexoContabil(db, mesReferencia, 'ADIANTAMENTO', funcionarioNome);
     const holeriteMensal = await baixarAnexoContabil(db, mesReferencia, 'HOLERITE_MENSAL', funcionarioNome);
 
-    const partes = [resumoBytes, adiantamento, holeriteMensal].filter((p): p is Uint8Array => !!p);
+    const partes = [resumoBytes, espelhoBytes, adiantamento, holeriteMensal].filter((p): p is Uint8Array => !!p);
     if (partes.length === 0) {
       return { ok: false, erro: soDocumental
         ? `Nenhum holerite da contabilidade encontrado para ${funcionarioNome} neste mês. Importe e separe os PDFs antes de enviar.`
@@ -213,6 +280,7 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     }
     const pdfBytes = partes.length > 1 ? await mergePdfs(partes) : partes[0];
     const anexados = [
+      espelhoBytes ? 'espelho de ponto' : null,
       adiantamento ? 'adiantamento' : null,
       holeriteMensal ? 'holerite' : null
     ].filter(Boolean);
@@ -395,7 +463,7 @@ export async function previaDocumentoAssinaturaAction(payload: {
 
     const { data: func } = await db
       .from('folha_funcionarios')
-      .select('cpf')
+      .select('cpf, data_admissao, data_desligamento')
       .eq('nome_completo', funcionarioNome)
       .maybeSingle();
 
@@ -408,15 +476,21 @@ export async function previaDocumentoAssinaturaAction(payload: {
       empresaNome: 'RENTECH'
     }) : null;
 
+    const espelhoBytes = await gerarEspelhoPontoBytes(
+      db, funcionarioNome, func?.cpf || null, mesReferencia,
+      func?.data_admissao, func?.data_desligamento
+    );
+
     const adiantamento = await baixarAnexoContabil(db, mesReferencia, 'ADIANTAMENTO', funcionarioNome);
     const holeriteMensal = await baixarAnexoContabil(db, mesReferencia, 'HOLERITE_MENSAL', funcionarioNome);
 
-    const partes = [resumoBytes, adiantamento, holeriteMensal].filter((p): p is Uint8Array => !!p);
+    const partes = [resumoBytes, espelhoBytes, adiantamento, holeriteMensal].filter((p): p is Uint8Array => !!p);
     if (partes.length === 0) return { ok: false, erro: 'Nenhum documento disponível para a prévia.' };
     const pdfBytes = partes.length > 1 ? await mergePdfs(partes) : partes[0];
 
     const anexados = [
       resumoBytes ? 'resumo' : null,
+      espelhoBytes ? 'espelho de ponto' : null,
       adiantamento ? 'adiantamento' : null,
       holeriteMensal ? 'holerite' : null
     ].filter(Boolean);

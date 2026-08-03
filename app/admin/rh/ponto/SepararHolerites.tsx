@@ -193,15 +193,32 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
     }
 
     setSalvando(true);
+    // Envia um item por chamada: mandar todas as páginas juntas em uma única
+    // Server Action estoura o limite de tamanho de requisição da hospedagem
+    // (a Vercel limita o corpo da requisição independente do bodySizeLimit
+    // configurado no next.config.ts), o que fazia o salvamento falhar com
+    // "An unexpected response was received from the server".
+    let salvos = 0;
+    const falhas: string[] = [];
     try {
-      const res = await salvarDocumentosContabeisAction({
-        mesReferencia: competencia, tipo, nomeArquivoOrigem: nomeArquivo, importadoPor: usuarioAtual, itens
-      });
-      if (!res.ok && !res.info) throw new Error(res.erro);
-      const falhasMsg = res.info?.falhas?.length ? `\n\nFalhas:\n${res.info.falhas.join('\n')}` : '';
-      alert(`${res.info?.salvos || 0} de ${res.info?.total || 0} documento(s) salvos.${falhasMsg}`);
-      if ((res.info?.salvos || 0) > 0) { setPaginas([]); setNomeArquivo(''); }
+      for (let i = 0; i < itens.length; i++) {
+        setProgresso(`Salvando ${i + 1} de ${itens.length}...`);
+        const res = await salvarDocumentosContabeisAction({
+          mesReferencia: competencia, tipo, nomeArquivoOrigem: nomeArquivo, importadoPor: usuarioAtual, itens: [itens[i]]
+        });
+        if (res.ok) {
+          salvos += res.info?.salvos || 0;
+          if (res.info?.falhas?.length) falhas.push(...res.info.falhas);
+        } else {
+          falhas.push(`${itens[i].funcionarioNome}: ${res.erro || 'falha desconhecida'}`);
+        }
+      }
+      setProgresso('');
+      const falhasMsg = falhas.length ? `\n\nFalhas:\n${falhas.join('\n')}` : '';
+      alert(`${salvos} de ${itens.length} documento(s) salvos.${falhasMsg}`);
+      if (salvos > 0) { setPaginas([]); setNomeArquivo(''); }
     } catch (e: any) {
+      setProgresso('');
       alert('Erro ao salvar: ' + e.message);
     } finally {
       setSalvando(false);
@@ -281,7 +298,7 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
               {precisamRevisao > 0 && <span className="text-amber-600">· {precisamRevisao} sem leitura (revisar manualmente)</span>}
             </div>
             <button onClick={salvar} disabled={salvando} className="bg-[#16A34A] hover:bg-[#15803D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md transition-all disabled:opacity-50">
-              {salvando ? '⏳ Salvando...' : '💾 Salvar Documentos'}
+              {salvando ? `⏳ ${progresso || 'Salvando...'}` : '💾 Salvar Documentos'}
             </button>
           </div>
 

@@ -19,11 +19,13 @@ function competenciaAtualBR(): string {
   return `${agora.getFullYear()}${String(agora.getMonth() + 1).padStart(2, '0')}`;
 }
 
-// Rotina mensal (ver vercel.json, agendada para o dia 28) que chama a mesma
-// consulta ao vivo da API do GOV.BR usada pelo botão "Consultar API" da tela
-// /admin/financeiro/consignado, para a competência do mês corrente. Persiste os
-// resultados e dispara a notificação de novo empréstimo automaticamente,
-// exatamente como uma consulta manual faria.
+// Rotina diária (ver vercel.json, agendada para as 11h UTC / 8h BR) que chama
+// a mesma consulta ao vivo da API do GOV.BR usada pelo botão "Consultar API"
+// da tela /admin/financeiro/consignado, para a competência do mês corrente.
+// Persiste os resultados e dispara a notificação de novo empréstimo
+// automaticamente, exatamente como uma consulta manual faria. Rodar todo dia
+// (em vez de só no dia 28) pega consignações que a Dataprev libera pra
+// consulta em outros dias do mês, não só no fechamento da competência.
 export async function GET(request: Request) {
   const authHeader = request.headers.get('authorization');
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {

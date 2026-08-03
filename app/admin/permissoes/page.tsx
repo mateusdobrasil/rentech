@@ -4,7 +4,8 @@ import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation'; // <-- CORRIGIDO: Import adicionado
 import { supabase } from '../../lib/supabase';
-import { registrarLogAuditoria, criarUsuarioAcesso } from '../../actions';
+import { registrarLogAuditoria, criarUsuarioAcesso, listarAcessosPortalAction } from '../../actions';
+import { formatarCpf } from '../../portal/lib/cpf';
 import { Analytics } from "@vercel/analytics/next"; // <-- CORRIGIDO: Barra adicionada
 
 const normalizarPermissao = (permissaoBruta: string): string => {
@@ -44,6 +45,16 @@ interface PaginaPermissao {
   permissoes_permitidas: NivelPermissao[];
 }
 
+interface AcessoPortal {
+  id: number;
+  funcionario_nome: string;
+  cpf: string;
+  criado_em: string | null;
+  cargo: string | null;
+  celular: string | null;
+  funcionario_ativo: boolean | null;
+}
+
 export default function GestaoPermissoes() {
   const router = useRouter();
   const pathname = usePathname();
@@ -54,7 +65,7 @@ export default function GestaoPermissoes() {
   const [usuarioNome, setUsuarioNome] = useState('Usuário');
 
   const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [abaAtiva, setAbaAtiva] = useState<'usuarios' | 'paginas' | 'setores'>('usuarios');
+  const [abaAtiva, setAbaAtiva] = useState<'usuarios' | 'paginas' | 'setores' | 'portal'>('usuarios');
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
   const [buscaPagina, setBuscaPagina] = useState('');
@@ -78,6 +89,11 @@ export default function GestaoPermissoes() {
   const [setores, setSetores] = useState<Setor[]>([]);
   const [novoSetor, setNovoSetor] = useState('');
   const [salvandoSetor, setSalvandoSetor] = useState(false);
+
+  // Estados da aba de Acessos ao Portal do Funcionário
+  const [acessosPortal, setAcessosPortal] = useState<AcessoPortal[]>([]);
+  const [loadingPortal, setLoadingPortal] = useState(true);
+  const [buscaPortal, setBuscaPortal] = useState('');
 
   const [feedback, setFeedback] = useState<{ show: boolean; msg: string; type: 'success' | 'error' }>({ show: false, msg: '', type: 'success' });
 
@@ -131,8 +147,9 @@ export default function GestaoPermissoes() {
       carregarUsuarios();
       carregarPaginas();
       carregarSetores();
+      carregarAcessosPortal();
     }
-    
+
     checkAuth();
   }, [router, pathname]);
 
@@ -395,6 +412,23 @@ export default function GestaoPermissoes() {
   };
 
   // ============================================================================
+  // OPERAÇÕES: ACESSOS AO PORTAL DO FUNCIONÁRIO (somente leitura)
+  // ============================================================================
+  const carregarAcessosPortal = async () => {
+    setLoadingPortal(true);
+    try {
+      const resultado = await listarAcessosPortalAction();
+      if (!resultado.success) throw new Error(resultado.message);
+      setAcessosPortal(resultado.data as AcessoPortal[]);
+    } catch (error: any) {
+      console.error(error);
+      mostrarFeedback(error.message || 'Erro ao carregar acessos do Portal do Funcionário.', 'error');
+    } finally {
+      setLoadingPortal(false);
+    }
+  };
+
+  // ============================================================================
   // FILTROS E AUXILIARES
   // ============================================================================
   const mostrarFeedback = (msg: string, type: 'success' | 'error') => {
@@ -413,11 +447,20 @@ export default function GestaoPermissoes() {
   }, [usuarios, busca]);
 
   const paginasFiltradas = useMemo(() => {
-    return paginas.filter(p => 
+    return paginas.filter(p =>
       p.nome_pagina.toLowerCase().includes(buscaPagina.toLowerCase()) ||
       p.endereco_route.toLowerCase().includes(buscaPagina.toLowerCase())
     );
   }, [paginas, buscaPagina]);
+
+  const acessosPortalFiltrados = useMemo(() => {
+    const termo = buscaPortal.toLowerCase();
+    return acessosPortal.filter(a =>
+      a.funcionario_nome.toLowerCase().includes(termo) ||
+      (a.cargo || '').toLowerCase().includes(termo) ||
+      a.cpf.includes(termo.replace(/\D/g, ''))
+    );
+  }, [acessosPortal, buscaPortal]);
 
   const getBadgeColor = (permissao: NivelPermissao) => {
     switch(permissao) {
@@ -479,6 +522,9 @@ export default function GestaoPermissoes() {
           </button>
           <button onClick={() => setAbaAtiva('setores')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'setores' ? 'bg-amber-600 text-white shadow-sm' : 'text-[#64748B] hover:text-amber-600'}`}>
             🏷️ Setores de Permissão
+          </button>
+          <button onClick={() => setAbaAtiva('portal')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'portal' ? 'bg-emerald-600 text-white shadow-sm' : 'text-[#64748B] hover:text-emerald-600'}`}>
+            📱 Acessos ao Portal
           </button>
         </div>
       </div>
@@ -765,6 +811,68 @@ export default function GestaoPermissoes() {
           </div>
 
         </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MÓDULO 4: ACESSOS AO PORTAL DO FUNCIONÁRIO (somente leitura) */}
+      {/* ==================================================================== */}
+      {abaAtiva === 'portal' && (
+        <>
+          <div className="px-4 md:px-8 pb-4 flex flex-col md:flex-row justify-between items-center gap-4 flex-shrink-0">
+            <div className="w-full md:w-1/2">
+              <input
+                type="text"
+                placeholder="🔍 Buscar colaborador por nome, cargo ou CPF..."
+                className="w-full p-3.5 border border-gray-300 rounded-xl text-sm font-semibold text-[#0C1D4D] bg-white outline-none focus:border-emerald-600 shadow-sm"
+                value={buscaPortal}
+                onChange={(e) => setBuscaPortal(e.target.value)}
+              />
+            </div>
+            <span className="text-xs font-black text-[#64748B] uppercase tracking-wider bg-white border border-[#E2E8F0] px-4 py-3 rounded-xl shadow-sm">
+              {acessosPortal.length} colaborador(es) com acesso criado
+            </span>
+          </div>
+
+          <div className="px-4 md:px-8 pb-8 flex-grow overflow-hidden flex flex-col">
+            <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto">
+              <table className="w-full text-left border-collapse min-w-[800px]">
+                <thead className="bg-[#F8FAFC] sticky top-0 shadow-sm z-10 border-b border-[#E2E8F0]">
+                  <tr className="text-[#64748B] text-[10px] uppercase tracking-widest font-black">
+                    <th className="p-4">Colaborador</th>
+                    <th className="p-4">Cargo</th>
+                    <th className="p-4">CPF</th>
+                    <th className="p-4">Celular</th>
+                    <th className="p-4">Cadastro do Acesso</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#E2E8F0] text-sm">
+                  {loadingPortal ? (
+                    <tr><td colSpan={5} className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Carregando colaboradores...</td></tr>
+                  ) : acessosPortalFiltrados.length === 0 ? (
+                    <tr><td colSpan={5} className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Nenhum colaborador com cadastro de acesso encontrado.</td></tr>
+                  ) : (
+                    acessosPortalFiltrados.map((a) => (
+                      <tr key={a.id} className={`hover:bg-[#F8FAFC] transition-colors ${a.funcionario_ativo === false ? 'opacity-40 bg-gray-50' : ''}`}>
+                        <td className="p-4">
+                          <strong className="block text-[#0C1D4D] font-black uppercase tracking-tight">{a.funcionario_nome}</strong>
+                          {a.funcionario_ativo === false && (
+                            <span className="text-[10px] text-red-600 font-black uppercase">Funcionário inativo</span>
+                          )}
+                        </td>
+                        <td className="p-4 text-xs text-[#64748B] font-bold">{a.cargo || '—'}</td>
+                        <td className="p-4 text-xs text-[#64748B] font-mono font-semibold">{formatarCpf(a.cpf)}</td>
+                        <td className="p-4 text-xs text-[#64748B] font-bold">{a.celular || '—'}</td>
+                        <td className="p-4 text-xs text-[#64748B] font-bold">
+                          {a.criado_em ? new Date(a.criado_em).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
       )}
 
       {/* MODAL DE REGISTRO DE NOVO USUÁRIO */}

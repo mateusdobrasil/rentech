@@ -240,6 +240,57 @@ export async function criarUsuarioAcesso(payload: {
   return { success: true };
 }
 
+// ============================================================================
+// 2.2 LISTAGEM DE COLABORADORES COM ACESSO AO PORTAL DO FUNCIONÁRIO
+// ============================================================================
+// Lê a tabela portal_funcionarios_auth com a service role: ela guarda a
+// identidade do login do portal (separada de perfis_usuarios de propósito,
+// ver app/portal/actions/actions-acesso.ts) e não libera SELECT para o
+// cliente autenticado do admin. Enriquecemos com cargo/celular de
+// folha_funcionarios só para exibição — o vínculo é sempre feito pelo nome.
+export async function listarAcessosPortalAction() {
+  try {
+    if (!supabaseAdmin) {
+      throw new Error('Credenciais do Supabase ausentes.');
+    }
+
+    const { data: acessos, error } = await supabaseAdmin
+      .from('portal_funcionarios_auth')
+      .select('*')
+      .order('funcionario_nome');
+
+    if (error) throw error;
+
+    const nomes = (acessos || []).map((a: any) => a.funcionario_nome);
+    const { data: funcionarios } = nomes.length
+      ? await supabaseAdmin
+          .from('folha_funcionarios')
+          .select('nome_completo, cargo, celular, ativo')
+          .in('nome_completo', nomes)
+      : { data: [] };
+
+    const mapaFuncionarios = new Map((funcionarios || []).map((f: any) => [f.nome_completo, f]));
+
+    const lista = (acessos || []).map((a: any) => {
+      const funcionario = mapaFuncionarios.get(a.funcionario_nome);
+      return {
+        id: a.id,
+        funcionario_nome: a.funcionario_nome,
+        cpf: a.cpf,
+        criado_em: a.criado_em || a.created_at || null,
+        cargo: funcionario?.cargo || null,
+        celular: funcionario?.celular || null,
+        funcionario_ativo: funcionario?.ativo ?? null,
+      };
+    });
+
+    return { success: true, data: lista };
+  } catch (error: any) {
+    console.error('Falha ao listar acessos do Portal do Funcionário:', error.message);
+    return { success: false, message: error.message, data: [] };
+  }
+}
+
 export async function registrarLogAuditoria(payload: LogPayload) {
   try {
     if (!supabaseAdmin) {

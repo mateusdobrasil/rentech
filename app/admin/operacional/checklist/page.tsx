@@ -105,6 +105,9 @@ interface ChecklistItem {
   saida_qtd: number | null;
   retorno_ok: boolean;
   retorno_qtd: number | null;
+  // Unidades a mais do que o pedido original prevê (ex: pedido de 50 TVs, mas
+  // enviando 53 — as 3 a mais entram como uma linha separada com extra=true).
+  extra: boolean;
 }
 
 interface ModeloItem {
@@ -308,14 +311,14 @@ export default function ChecklistCargaRetorno() {
   const [itensRemovidos, setItensRemovidos] = useState<string[]>([]);
   const [salvando, setSalvando] = useState(false);
 
-  const [modalAddItem, setModalAddItem] = useState<{ open: boolean; modo: 'catalogo' | 'livre'; categoriaId: string; equipamentoId: string; descricaoLivre: string; observacaoCatalogo: string; qtdPrevista: string }>({
-    open: false, modo: 'livre', categoriaId: '', equipamentoId: '', descricaoLivre: '', observacaoCatalogo: '', qtdPrevista: '',
+  const [modalAddItem, setModalAddItem] = useState<{ open: boolean; modo: 'catalogo' | 'livre'; categoriaId: string; equipamentoId: string; descricaoLivre: string; observacaoCatalogo: string; qtdPrevista: string; extra: boolean }>({
+    open: false, modo: 'livre', categoriaId: '', equipamentoId: '', descricaoLivre: '', observacaoCatalogo: '', qtdPrevista: '', extra: false,
   });
 
   // Modal: sugestão de acessórios (gatilhos_acessorios) ao adicionar um item do catálogo
   const [modalSugestaoAcessorios, setModalSugestaoAcessorios] = useState<{
     open: boolean;
-    itemPrincipal: { secao: string; equipamentoId: string; descricao: string; qtd: string } | null;
+    itemPrincipal: { secao: string; equipamentoId: string; descricao: string; qtd: string; extra: boolean } | null;
     acessorios: AcessorioSugerido[];
   }>({ open: false, itemPrincipal: null, acessorios: [] });
 
@@ -588,7 +591,7 @@ export default function ChecklistCargaRetorno() {
       responsavel_montagem: header.responsavel_montagem || '', responsavel_retorno: header.responsavel_retorno || '',
       status: header.status,
     });
-    const itensIniciais = itensCriados.map(i => ({ ...i, qtd_prevista: i.qtd_prevista || '' }));
+    const itensIniciais = itensCriados.map(i => ({ ...i, qtd_prevista: i.qtd_prevista || '', extra: i.extra ?? false }));
     setItens(itensIniciais);
     setItensOriginais(itensIniciais);
     setItensRemovidos([]);
@@ -625,7 +628,7 @@ export default function ChecklistCargaRetorno() {
       responsavel_montagem: header.responsavel_montagem || '', responsavel_retorno: header.responsavel_retorno || '',
       status: header.status,
     });
-    const itensCarregados = (itensData || []).map((i: ChecklistItem) => ({ ...i, qtd_prevista: i.qtd_prevista || '' }));
+    const itensCarregados = (itensData || []).map((i: ChecklistItem) => ({ ...i, qtd_prevista: i.qtd_prevista || '', extra: i.extra ?? false }));
     setItens(itensCarregados);
     setItensOriginais(itensCarregados);
     setItensRemovidos([]);
@@ -724,7 +727,9 @@ export default function ChecklistCargaRetorno() {
   // iguais (mesma seção + mesmo equipamento do catálogo, ou mesma descrição para
   // itens livres) numa só, somando as quantidades.
   const unificarItensDuplicados = () => {
-    const chaveGrupo = (i: ChecklistItem) => `${i.secao}::${i.equipamento_id || `LIVRE:${i.descricao.trim().toUpperCase()}`}`;
+    // Inclui o flag "extra" na chave: uma linha normal e uma linha extra do mesmo
+    // equipamento não devem se fundir (é exatamente a separação que o usuário quer manter).
+    const chaveGrupo = (i: ChecklistItem) => `${i.secao}::${i.equipamento_id || `LIVRE:${i.descricao.trim().toUpperCase()}`}::${i.extra ? 'EXTRA' : 'NORMAL'}`;
     const grupos = new Map<string, ChecklistItem[]>();
     itens.forEach(i => {
       const chave = chaveGrupo(i);
@@ -789,7 +794,7 @@ export default function ChecklistCargaRetorno() {
       open: true,
       modo: categoriaCorrespondente ? 'catalogo' : 'livre',
       categoriaId: categoriaCorrespondente?.id || '',
-      equipamentoId: '', descricaoLivre: '', observacaoCatalogo: '', qtdPrevista: '',
+      equipamentoId: '', descricaoLivre: '', observacaoCatalogo: '', qtdPrevista: '', extra: false,
     });
   };
 
@@ -826,7 +831,7 @@ export default function ChecklistCargaRetorno() {
     return equipamentosAtivos.filter(e => idsSugeridos.has(e.id) && e.id !== equipamento.id);
   };
 
-  const modalAddItemFechado = { open: false, modo: 'livre' as const, categoriaId: '', equipamentoId: '', descricaoLivre: '', observacaoCatalogo: '', qtdPrevista: '' };
+  const modalAddItemFechado = { open: false, modo: 'livre' as const, categoriaId: '', equipamentoId: '', descricaoLivre: '', observacaoCatalogo: '', qtdPrevista: '', extra: false };
 
   // A seção do item nunca é digitada livremente: no modo "catálogo" ela vem da
   // categoria cadastrada do equipamento escolhido; no modo "livre" cai sempre em
@@ -859,7 +864,7 @@ export default function ChecklistCargaRetorno() {
       if (sugestoes.length > 0) {
         setModalSugestaoAcessorios({
           open: true,
-          itemPrincipal: { secao, equipamentoId: equipamentoEscolhido.id, descricao, qtd: modalAddItem.qtdPrevista },
+          itemPrincipal: { secao, equipamentoId: equipamentoEscolhido.id, descricao, qtd: modalAddItem.qtdPrevista, extra: modalAddItem.extra },
           // Começa tudo desmarcado — evita inserir acessórios em massa por engano,
           // principalmente quando a sugestão vem de uma categoria inteira vinculada.
           acessorios: sugestoes.map(a => ({ id: a.id, nome: a.nome, categoriaId: a.categoria_id, selecionado: false, qtd: modalAddItem.qtdPrevista || '1' })),
@@ -871,7 +876,7 @@ export default function ChecklistCargaRetorno() {
 
     adicionarItensNaLista([{
       secao, equipamento_id: equipamentoId, descricao, qtd_prevista: modalAddItem.qtdPrevista,
-      saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null,
+      saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null, extra: modalAddItem.extra,
     }]);
     setModalAddItem(modalAddItemFechado);
   };
@@ -889,7 +894,7 @@ export default function ChecklistCargaRetorno() {
 
     const novos: Omit<ChecklistItem, 'id' | 'ordem'>[] = [{
       secao: principal.secao, equipamento_id: principal.equipamentoId, descricao: principal.descricao,
-      qtd_prevista: principal.qtd, saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null,
+      qtd_prevista: principal.qtd, saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null, extra: principal.extra,
     }];
 
     if (incluirAcessorios) {
@@ -900,7 +905,9 @@ export default function ChecklistCargaRetorno() {
           equipamento_id: a.id,
           descricao: a.nome,
           qtd_prevista: a.qtd,
-          saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null,
+          // Acessório de um item extra também nasce marcado como extra (ex: cabo/suporte
+          // das 3 TVs a mais também não fazem parte do pedido original).
+          saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null, extra: principal.extra,
         });
       });
     }
@@ -1068,7 +1075,7 @@ export default function ChecklistCargaRetorno() {
         equipamento_id: null,
         descricao: i.descricao,
         qtd_prevista: i.qtd,
-        saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null,
+        saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null, extra: false,
       };
     });
 
@@ -1166,7 +1173,7 @@ export default function ChecklistCargaRetorno() {
       const payload = itensExistentes.map(i => ({
         id: i.id, checklist_id: checklistAtual.id, ordem: i.ordem, secao: i.secao,
         equipamento_id: i.equipamento_id, descricao: i.descricao, qtd_prevista: i.qtd_prevista || null,
-        saida_ok: i.saida_ok, saida_qtd: i.saida_qtd, retorno_ok: i.retorno_ok, retorno_qtd: i.retorno_qtd,
+        saida_ok: i.saida_ok, saida_qtd: i.saida_qtd, retorno_ok: i.retorno_ok, retorno_qtd: i.retorno_qtd, extra: i.extra,
       }));
       const { error } = await supabase.from('checklist_itens').upsert(payload, { onConflict: 'id' });
       if (error) {
@@ -1180,7 +1187,7 @@ export default function ChecklistCargaRetorno() {
       const payload = itensNovos.map(i => ({
         checklist_id: checklistAtual.id, ordem: i.ordem, secao: i.secao,
         equipamento_id: i.equipamento_id, descricao: i.descricao, qtd_prevista: i.qtd_prevista || null,
-        saida_ok: i.saida_ok, saida_qtd: i.saida_qtd, retorno_ok: i.retorno_ok, retorno_qtd: i.retorno_qtd,
+        saida_ok: i.saida_ok, saida_qtd: i.saida_qtd, retorno_ok: i.retorno_ok, retorno_qtd: i.retorno_qtd, extra: i.extra,
       }));
       const { error } = await supabase.from('checklist_itens').insert(payload);
       if (error) {
@@ -1253,7 +1260,7 @@ export default function ChecklistCargaRetorno() {
     // Recarrega do banco para normalizar ids dos itens recém-criados (necessário
     // antes de reconciliar divergências, que usam o id real do item como chave)
     const { data: itensAtualizados } = await supabase.from('checklist_itens').select('*').eq('checklist_id', checklistAtual.id).order('ordem', { ascending: true });
-    const itensSalvos: ChecklistItem[] = (itensAtualizados || []).map((i: ChecklistItem) => ({ ...i, qtd_prevista: i.qtd_prevista || '' }));
+    const itensSalvos: ChecklistItem[] = (itensAtualizados || []).map((i: ChecklistItem) => ({ ...i, qtd_prevista: i.qtd_prevista || '', extra: i.extra ?? false }));
     setItens(itensSalvos);
     setItensOriginais(itensSalvos);
     setItensRemovidos([]);
@@ -1847,14 +1854,21 @@ export default function ChecklistCargaRetorno() {
                         em campo. */}
                     <div className="md:hidden print:hidden divide-y divide-[#E2E8F0]">
                       {linhas.map(item => (
-                        <div key={item.id} className="p-3 space-y-2.5">
+                        <div key={item.id} className={`p-3 space-y-2.5 ${item.extra ? 'bg-amber-50' : ''}`}>
                           <div className="flex items-start gap-2">
                             <input type="text" className="flex-1 min-w-0 bg-transparent outline-none font-semibold uppercase text-sm" value={item.descricao} onChange={e => atualizarItem(item.id, { descricao: up(e.target.value) })} />
+                            {item.extra && <span className="flex-shrink-0 bg-amber-400 text-amber-900 text-[9px] font-black uppercase px-1.5 py-0.5 rounded">Extra</span>}
                             <button onClick={() => removerItem(item)} className="flex-shrink-0 text-red-500 hover:bg-red-50 rounded px-2 py-1 text-xs font-black">✕</button>
                           </div>
-                          <div className="flex items-center gap-2 text-[11px] text-[#64748B] font-bold uppercase">
-                            <span>Qtd. Prevista:</span>
-                            <input type="text" className="w-16 bg-transparent border-b border-[#CBD5E1] outline-none text-center uppercase text-[#0A2A4A]" value={item.qtd_prevista} onChange={e => atualizarItem(item.id, { qtd_prevista: up(e.target.value) })} />
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 text-[11px] text-[#64748B] font-bold uppercase">
+                              <span>Qtd. Prevista:</span>
+                              <input type="text" className="w-16 bg-transparent border-b border-[#CBD5E1] outline-none text-center uppercase text-[#0A2A4A]" value={item.qtd_prevista} onChange={e => atualizarItem(item.id, { qtd_prevista: up(e.target.value) })} />
+                            </div>
+                            <label className="flex items-center gap-1.5 text-[10px] text-amber-700 font-bold uppercase">
+                              <input type="checkbox" className="w-4 h-4 accent-amber-600 flex-shrink-0" checked={item.extra} onChange={e => atualizarItem(item.id, { extra: e.target.checked })} />
+                              Extra
+                            </label>
                           </div>
                           <div className="grid grid-cols-2 gap-2">
                             <label className="flex items-center justify-center gap-1.5 border border-[#E2E8F0] rounded-lg p-2">
@@ -1878,6 +1892,7 @@ export default function ChecklistCargaRetorno() {
                         <tr className="text-left text-[#64748B] uppercase tracking-wider font-black text-[10px]">
                           <th className="p-2">Descrição do Item</th>
                           <th className="p-2 w-24 text-center">Qtd. Prevista</th>
+                          <th className="p-2 w-16 text-center no-print">Extra</th>
                           <th className="p-2 w-32 text-center">Saída (Separação)</th>
                           <th className="p-2 w-32 text-center">Retorno (Desmontagem)</th>
                           <th className="p-2 w-10 no-print"></th>
@@ -1885,12 +1900,18 @@ export default function ChecklistCargaRetorno() {
                       </thead>
                       <tbody>
                         {linhas.map(item => (
-                          <tr key={item.id} className="border-t border-[#E2E8F0]">
+                          <tr key={item.id} className={`border-t border-[#E2E8F0] ${item.extra ? 'bg-amber-50' : ''}`}>
                             <td className="p-2">
-                              <input type="text" className="w-full bg-transparent outline-none font-semibold print:font-normal uppercase" value={item.descricao} onChange={e => atualizarItem(item.id, { descricao: up(e.target.value) })} />
+                              <div className="flex items-center gap-1.5">
+                                <input type="text" className="flex-1 min-w-0 bg-transparent outline-none font-semibold print:font-normal uppercase" value={item.descricao} onChange={e => atualizarItem(item.id, { descricao: up(e.target.value) })} />
+                                {item.extra && <span className="flex-shrink-0 bg-amber-400 text-amber-900 text-[9px] font-black uppercase px-1.5 py-0.5 rounded">Extra</span>}
+                              </div>
                             </td>
                             <td className="p-2 text-center">
                               <input type="text" className="w-full bg-transparent outline-none text-center uppercase" value={item.qtd_prevista} onChange={e => atualizarItem(item.id, { qtd_prevista: up(e.target.value) })} />
+                            </td>
+                            <td className="p-2 text-center no-print">
+                              <input type="checkbox" className="w-4 h-4 accent-amber-600" checked={item.extra} onChange={e => atualizarItem(item.id, { extra: e.target.checked })} />
                             </td>
                             <td className="p-2">
                               <div className="flex items-center justify-center gap-1.5">
@@ -2097,6 +2118,11 @@ export default function ChecklistCargaRetorno() {
                 <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Qtd. Prevista</label>
                 <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm uppercase" value={modalAddItem.qtdPrevista} onChange={e => setModalAddItem(prev => ({ ...prev, qtdPrevista: up(e.target.value) }))} placeholder="Ex: 01, Lote, Pacote..." />
               </div>
+
+              <label className="flex items-center gap-2 p-2.5 border border-amber-300 bg-amber-50 rounded-lg cursor-pointer">
+                <input type="checkbox" className="w-4 h-4 accent-amber-600 flex-shrink-0" checked={modalAddItem.extra} onChange={e => setModalAddItem(prev => ({ ...prev, extra: e.target.checked }))} />
+                <span className="text-xs font-bold text-amber-800 uppercase">Equipamento Extra (a mais do que o pedido original)</span>
+              </label>
             </div>
 
             <div className="p-5 border-t border-[#E2E8F0] bg-white flex-shrink-0">

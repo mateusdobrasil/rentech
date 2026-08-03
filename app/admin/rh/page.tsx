@@ -45,7 +45,7 @@ interface PainelRh {
   assinaturasPendentes: number;
   solicitacoesPontoPendentes: number;
   pontosImpares: number;
-  aniversariantes: { nome: string; dia: number; mes: number }[];
+  aniversariantes: { nome: string; dia: number; mes: number; departamento: string | null }[];
 }
 
 // Lista de módulos do hub. As permissões de cada um NÃO ficam mais aqui —
@@ -161,7 +161,7 @@ export default function RhHub() {
   }, [perfil]);
 
   const textoAniversariantes = (painel?.aniversariantes || [])
-    .map(a => `${String(a.dia).padStart(2, '0')}/${String(a.mes).padStart(2, '0')} — ${a.nome}`)
+    .map(a => `${String(a.dia).padStart(2, '0')}/${String(a.mes).padStart(2, '0')} — ${a.nome}${a.departamento ? ` (${a.departamento})` : ''}`)
     .join('\n');
 
   const copiarAniversariantes = async () => {

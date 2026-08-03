@@ -115,11 +115,13 @@ export default function ParametrosRH() {
   // Aba ativa: motor de regras, catálogos ou feriados
   const [abaAtiva, setAbaAtiva] = useState<'regras' | 'padroes' | 'feriados'>('regras');
 
-  // Catálogos de padronização (folha_cargo e folha_tipocontrato)
+  // Catálogos de padronização (folha_cargo, folha_tipocontrato e folha_departamento)
   const [cargos, setCargos] = useState<ItemCatalogo[]>([]);
   const [tiposContrato, setTiposContrato] = useState<ItemCatalogo[]>([]);
+  const [departamentos, setDepartamentos] = useState<ItemCatalogo[]>([]);
   const [novoCargo, setNovoCargo] = useState('');
   const [novoTipoContrato, setNovoTipoContrato] = useState('');
+  const [novoDepartamento, setNovoDepartamento] = useState('');
   const [salvandoCatalogo, setSalvandoCatalogo] = useState(false);
 
   // Feriados (folha_feriados)
@@ -235,16 +237,18 @@ export default function ParametrosRH() {
   };
 
   const carregarCatalogos = async () => {
-    const [{ data: cargosData, error: cargosError }, { data: tiposData, error: tiposError }] = await Promise.all([
+    const [{ data: cargosData, error: cargosError }, { data: tiposData, error: tiposError }, { data: deptosData, error: deptosError }] = await Promise.all([
       supabase.from('folha_cargo').select('*').order('nome'),
-      supabase.from('folha_tipocontrato').select('*').order('nome')
+      supabase.from('folha_tipocontrato').select('*').order('nome'),
+      supabase.from('folha_departamento').select('*').order('nome')
     ]);
-    if (cargosError || tiposError) {
-      alert('Erro ao carregar os catálogos: ' + (cargosError?.message || tiposError?.message));
+    if (cargosError || tiposError || deptosError) {
+      alert('Erro ao carregar os catálogos: ' + (cargosError?.message || tiposError?.message || deptosError?.message));
       return;
     }
     setCargos(cargosData || []);
     setTiposContrato(tiposData || []);
+    setDepartamentos(deptosData || []);
   };
 
   // ==========================================================================
@@ -267,7 +271,7 @@ export default function ParametrosRH() {
     if (!res.ok) { alert('Erro ao salvar: ' + res.erro); carregarCatalogos(); }
   };
 
-  const adicionarCatalogo = async (tabela: 'folha_cargo' | 'folha_tipocontrato', nome: string) => {
+  const adicionarCatalogo = async (tabela: 'folha_cargo' | 'folha_tipocontrato' | 'folha_departamento', nome: string) => {
     const nomeNormalizado = nome.toUpperCase().trim();
     if (!nomeNormalizado) return alert('Digite um nome antes de adicionar.');
 
@@ -276,7 +280,8 @@ export default function ParametrosRH() {
       const res = await adicionarCatalogoAction({ tabela, nome: nomeNormalizado });
       if (!res.ok) throw new Error(res.erro);
       if (tabela === 'folha_cargo') setNovoCargo('');
-      else setNovoTipoContrato('');
+      else if (tabela === 'folha_tipocontrato') setNovoTipoContrato('');
+      else setNovoDepartamento('');
       carregarCatalogos();
     } catch (e: any) {
       alert('Erro ao adicionar: ' + e.message);
@@ -285,11 +290,12 @@ export default function ParametrosRH() {
     }
   };
 
-  const removerCatalogo = async (tabela: 'folha_cargo' | 'folha_tipocontrato', item: ItemCatalogo) => {
-    // Só pede confirmação para cargos que não estão em uso; a verificação de
-    // vínculo é feita dentro da action (e retorna a lista de quem usa).
+  const removerCatalogo = async (tabela: 'folha_cargo' | 'folha_tipocontrato' | 'folha_departamento', item: ItemCatalogo) => {
+    // Só pede confirmação especial pra quem tem vínculo verificado (cargo e
+    // departamento); a verificação em si é feita dentro da action.
     if (tabela === 'folha_tipocontrato' && !confirm(`Excluir "${item.nome}" do catálogo?`)) return;
     if (tabela === 'folha_cargo' && !confirm(`Excluir "${item.nome}" do catálogo? (Só é possível se nenhum funcionário o utiliza.)`)) return;
+    if (tabela === 'folha_departamento' && !confirm(`Excluir "${item.nome}" do catálogo? (Só é possível se nenhum funcionário o utiliza.)`)) return;
 
     setSalvandoCatalogo(true);
     try {
@@ -534,7 +540,7 @@ export default function ParametrosRH() {
       )}
 
       {abaAtiva === 'padroes' && (
-        <div className="p-4 md:px-8 pb-8 flex-grow max-w-[1200px] mx-auto w-full grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="p-4 md:px-8 pb-8 flex-grow max-w-[1200px] mx-auto w-full grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* CATÁLOGO DE CARGOS */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] h-fit">
             <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider border-b-2 border-[#E2E8F0] pb-3 mb-4">Cargos</h2>
@@ -617,6 +623,33 @@ export default function ParametrosRH() {
                     )}
                   </div>
                   <button onClick={() => removerCatalogo('folha_tipocontrato', t)} disabled={salvandoCatalogo} className="text-red-500 font-bold text-xs hover:bg-red-50 px-2 py-1 rounded disabled:opacity-40">X</button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* CATÁLOGO DE DEPARTAMENTOS */}
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] h-fit">
+            <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider border-b-2 border-[#E2E8F0] pb-3 mb-4">Departamentos</h2>
+            <p className="text-xs text-[#64748B] mb-4">Lista padrão de departamentos/setores. A ficha do colaborador seleciona daqui — usado também no popup de Aniversariantes do hub de RH.</p>
+            <div className="flex gap-2 mb-4">
+              <input
+                type="text" value={novoDepartamento} onChange={e => setNovoDepartamento(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') adicionarCatalogo('folha_departamento', novoDepartamento); }}
+                placeholder="Ex: OPERACIONAL, FINANCEIRO..."
+                className="flex-grow p-2.5 border border-gray-300 rounded-lg text-sm font-bold uppercase bg-gray-50"
+              />
+              <button onClick={() => adicionarCatalogo('folha_departamento', novoDepartamento)} disabled={salvandoCatalogo} className="bg-amber-600 text-white font-black text-xs uppercase px-5 rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50">
+                + Add
+              </button>
+            </div>
+            <div className="border border-[#E2E8F0] rounded-xl overflow-hidden max-h-[45vh] overflow-y-auto">
+              {departamentos.length === 0 ? (
+                <p className="p-6 text-center text-xs text-gray-400 font-bold uppercase">Nenhum departamento cadastrado</p>
+              ) : departamentos.map(d => (
+                <div key={d.id} className="p-3 border-b border-[#E2E8F0] flex justify-between items-center hover:bg-gray-50 transition-colors">
+                  <span className="font-black text-[#0C1D4D] text-sm uppercase">{d.nome}</span>
+                  <button onClick={() => removerCatalogo('folha_departamento', d)} disabled={salvandoCatalogo} className="text-red-500 font-bold text-xs hover:bg-red-50 px-2 py-1 rounded disabled:opacity-40">X</button>
                 </div>
               ))}
             </div>

@@ -50,10 +50,10 @@ export async function excluirFeriadoAction(id: number): Promise<Resultado> {
 }
 
 // ============================================================================
-// CATÁLOGOS (folha_cargo / folha_tipocontrato)
+// CATÁLOGOS (folha_cargo / folha_tipocontrato / folha_departamento)
 // ============================================================================
 export async function adicionarCatalogoAction(payload: {
-  tabela: 'folha_cargo' | 'folha_tipocontrato'; nome: string;
+  tabela: 'folha_cargo' | 'folha_tipocontrato' | 'folha_departamento'; nome: string;
 }): Promise<Resultado> {
   const db = supabaseAdmin();
   const nome = payload.nome.toUpperCase().trim();
@@ -72,19 +72,20 @@ export async function adicionarCatalogoAction(payload: {
 }
 
 export async function removerCatalogoAction(payload: {
-  tabela: 'folha_cargo' | 'folha_tipocontrato'; id: number; nome: string;
+  tabela: 'folha_cargo' | 'folha_tipocontrato' | 'folha_departamento'; id: number; nome: string;
 }): Promise<Resultado> {
   const db = supabaseAdmin();
   const { tabela, id, nome } = payload;
 
   try {
-    // Cargo em uso não pode ser removido (ficha ficaria órfã)
-    if (tabela === 'folha_cargo') {
+    // Cargo/Departamento em uso não pode ser removido (ficha ficaria órfã)
+    const colunaVinculo = tabela === 'folha_cargo' ? 'cargo' : tabela === 'folha_departamento' ? 'departamento' : null;
+    if (colunaVinculo) {
       const { data: emUso, error: buscaErr } = await db
-        .from('folha_funcionarios').select('nome_completo').eq('cargo', nome);
+        .from('folha_funcionarios').select('nome_completo').eq(colunaVinculo, nome);
       if (buscaErr) throw new Error(`Falha ao verificar vínculos: ${buscaErr.message}`);
       if (emUso && emUso.length > 0) {
-        return { ok: false, erro: `Não é possível excluir o cargo "${nome}": ${emUso.length} funcionário(s) o utilizam (${emUso.map((f: any) => f.nome_completo).join(', ')}). Altere o cargo desses colaboradores antes.` };
+        return { ok: false, erro: `Não é possível excluir "${nome}": ${emUso.length} funcionário(s) o utilizam (${emUso.map((f: any) => f.nome_completo).join(', ')}). Altere o(a) ${colunaVinculo} desses colaboradores antes.` };
       }
     }
     const { error } = await db.from(tabela).delete().eq('id', id);

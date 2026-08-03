@@ -49,7 +49,7 @@ interface RegraContrato {
 }
 
 interface FuncionarioFin {
-  nome_completo: string; cargo: string; tipo_contrato: string; ativo: boolean;
+  nome_completo: string; cargo: string; departamento: string; tipo_contrato: string; ativo: boolean;
   recebe_transporte: boolean; valor_transporte: number;
   recebe_refeicao: boolean; valor_refeicao: number;
   salario_folha: number; salario_contrato: number;
@@ -103,6 +103,7 @@ export default function FuncionarioPage() {
   const [listaFuncionarios, setListaFuncionarios] = useState<FuncionarioFin[]>([]);
   const [regrasContrato, setRegrasContrato] = useState<Record<string, RegraContrato>>({});
   const [cargosCatalogo, setCargosCatalogo] = useState<string[]>([]);
+  const [departamentosCatalogo, setDepartamentosCatalogo] = useState<string[]>([]);
 
   const [buscaGrid, setBuscaGrid] = useState('');
   const [filtroContrato, setFiltroContrato] = useState('TODOS');
@@ -110,7 +111,7 @@ export default function FuncionarioPage() {
   const [abaAtiva, setAbaAtiva] = useState<'ESSENCIAL' | 'COMPLETO'>('ESSENCIAL');
 
   const defaultForm: FuncionarioFin = {
-    nome_completo: '', cargo: '', tipo_contrato: 'CLT + Contrato', ativo: true,
+    nome_completo: '', cargo: '', departamento: '', tipo_contrato: 'CLT + Contrato', ativo: true,
     recebe_transporte: false, valor_transporte: 0, recebe_refeicao: false, valor_refeicao: 0,
     salario_folha: 0, salario_contrato: 0, valor_diaria: 0, valor_adiantamento: 0,
     data_admissao: null, data_desligamento: null,
@@ -241,6 +242,9 @@ export default function FuncionarioPage() {
     const { data: cargosData } = await supabase.from('folha_cargo').select('nome').order('nome');
     if (cargosData) setCargosCatalogo(cargosData.map(c => c.nome));
 
+    const { data: departamentosData } = await supabase.from('folha_departamento').select('nome').order('nome');
+    if (departamentosData) setDepartamentosCatalogo(departamentosData.map(d => d.nome));
+
     carregarListaFuncionarios();
   };
 
@@ -260,7 +264,9 @@ export default function FuncionarioPage() {
       setLoading(false);
       return;
     }
-    setForm(funcData);
+    // departamento é coluna nova — funcionários cadastrados antes dela têm
+    // null no banco, e um <select> controlado não aceita value={null}.
+    setForm({ ...funcData, cargo: funcData.cargo || '', departamento: funcData.departamento || '' });
 
     setFotoPreviewUrl('');
     if (funcData.foto_path) {
@@ -596,6 +602,15 @@ export default function FuncionarioPage() {
                         <option value="">— Selecione —</option>
                         {form.cargo && !cargosCatalogo.includes(form.cargo) && <option value={form.cargo}>{form.cargo} (fora do catálogo)</option>}
                         {cargosCatalogo.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Departamento</label>
+                      <select value={form.departamento} onChange={e => setForm({...form, departamento: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white uppercase text-[#0C1D4D]">
+                        <option value="">— Selecione —</option>
+                        {form.departamento && !departamentosCatalogo.includes(form.departamento) && <option value={form.departamento}>{form.departamento} (fora do catálogo)</option>}
+                        {departamentosCatalogo.map(d => <option key={d} value={d}>{d}</option>)}
                       </select>
                     </div>
 

@@ -46,7 +46,7 @@ export async function painelRhAction(): Promise<Resultado> {
       pontoMesRes
     ] = await Promise.all([
       painelDocumentosAction(),
-      db.from('folha_funcionarios').select('nome_completo, tipo_contrato, ativo, data_admissao, data_nascimento').eq('ativo', true),
+      db.from('folha_funcionarios').select('nome_completo, tipo_contrato, ativo, data_admissao, data_nascimento, departamento').eq('ativo', true),
       db.from('folha_parametros').select('nome_regra, so_documental'),
       db.from('folha_holerites').select('funcionario_nome').eq('mes_referencia', mesAno),
       db.from('folha_holerite_assinaturas').select('id, status').not('status', 'in', '("ASSINADO","REJEITADO")'),
@@ -74,7 +74,10 @@ export async function painelRhAction(): Promise<Resultado> {
     // Aniversariantes do mês corrente (não da competência — é sobre hoje).
     const aniversariantes = (funcsRes.data || [])
       .filter(f => f.data_nascimento && f.data_nascimento.slice(5, 7) === hojeMes)
-      .map(f => ({ nome: f.nome_completo, dia: Number(f.data_nascimento!.slice(8, 10)), mes: Number(f.data_nascimento!.slice(5, 7)) }))
+      .map(f => ({
+        nome: f.nome_completo, dia: Number(f.data_nascimento!.slice(8, 10)), mes: Number(f.data_nascimento!.slice(5, 7)),
+        departamento: f.departamento || null
+      }))
       .sort((a, b) => a.dia - b.dia);
 
     return {

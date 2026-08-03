@@ -11,6 +11,7 @@ import { supabaseAdmin } from '../../../lib/supabase';
 import { calcularBeneficiosMes } from './actions-beneficios';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
 import { extrairTextoPdf } from '../../../lib/textract';
+import { registrarLogAuditoria } from '../../../actions';
 
 type Resultado = {
   ok: boolean;
@@ -338,12 +339,60 @@ export async function listarLotesAction(payload: { mesReferencia?: string }): Pr
   const db = supabaseAdmin();
   try {
     let q = db.from('folha_lotes_pagamento')
-      .select('id, parceiro, mes_referencia, tipo_lote, nome_lote, qtd_pagamentos, valor_total, status, criado_por, criado_em')
+      .select('id, parceiro, mes_referencia, tipo_lote, nome_lote, qtd_pagamentos, valor_total, status, ativo, criado_por, criado_em')
       .order('criado_em', { ascending: false });
     if (payload.mesReferencia) q = q.eq('mes_referencia', payload.mesReferencia);
     const { data, error } = await q;
     if (error) throw new Error(error.message);
-    return { ok: true, info: { lotes: data || [] } };
+    return { ok: true, info: { lotes: (data || []).map(l => ({ ...l, ativo: l.ativo ?? true })) } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// BUSCAR LOTE (com os itens salvos) — usado pra reabrir um lote já gerado no
+// histórico e exportar de novo (CSV/CNAB), sem precisar remontar do zero.
+// ============================================================================
+export async function buscarLoteAction(payload: { loteId: number }): Promise<Resultado> {
+  const db = supabaseAdmin();
+  try {
+    const { data, error } = await db.from('folha_lotes_pagamento')
+      .select('id, nome_lote, tipo_lote, mes_referencia, itens')
+      .eq('id', payload.loteId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) return { ok: false, erro: 'Lote não encontrado.' };
+    return { ok: true, info: { lote: data } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// INATIVAR / REATIVAR LOTE — não apaga o registro (mantém auditoria/histórico
+// do que já foi gerado), só marca como inativo pra sinalizar que esse lote
+// não deve mais ser considerado (ex.: duplicado, gerado por engano).
+// ============================================================================
+export async function alternarAtivoLoteAction(payload: {
+  loteId: number; ativo: boolean; usuarioNome: string;
+}): Promise<Resultado> {
+  const db = supabaseAdmin();
+  try {
+    const { data: lote, error: buscaErr } = await db.from('folha_lotes_pagamento')
+      .select('nome_lote, tipo_lote, mes_referencia').eq('id', payload.loteId).maybeSingle();
+    if (buscaErr) throw new Error(buscaErr.message);
+    if (!lote) return { ok: false, erro: 'Lote não encontrado.' };
+
+    const { error } = await db.from('folha_lotes_pagamento').update({ ativo: payload.ativo }).eq('id', payload.loteId);
+    if (error) throw new Error(error.message);
+
+    await registrarLogAuditoria({
+      usuario_nome: payload.usuarioNome,
+      acao: `${payload.ativo ? 'REATIVAÇÃO' : 'INATIVAÇÃO'} DE LOTE DE PAGAMENTO: ${lote.nome_lote || lote.tipo_lote} (${lote.mes_referencia})`,
+      setor: 'FINANCEIRO / RH'
+    });
+
+    return { ok: true };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

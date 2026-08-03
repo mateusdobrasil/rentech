@@ -6,7 +6,7 @@ import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../../lib/supabase';
 import {
   montarLoteSalariosAction, salvarLoteAction, listarLotesAction, enviarLoteAoBancoAction,
-  listarPdfsContabilidadeAction, processarOcrAwsAction
+  listarPdfsContabilidadeAction, processarOcrAwsAction, alternarAtivoLoteAction, buscarLoteAction
 } from '../../rh/actions/actions-financeiro';
 import { listarIntegracoesAction } from '../../integracao/actions';
 import SepararHolerites from '../../rh/ponto/SepararHolerites';
@@ -55,7 +55,7 @@ interface ItemLote {
 interface Lote {
   id: number; parceiro: string; mes_referencia: string; tipo_lote: string;
   nome_lote: string | null;
-  qtd_pagamentos: number; valor_total: number; status: string; criado_por: string | null; criado_em: string;
+  qtd_pagamentos: number; valor_total: number; status: string; ativo: boolean; criado_por: string | null; criado_em: string;
 }
 
 export default function FinanceiroPage() {
@@ -92,6 +92,11 @@ export default function FinanceiroPage() {
   const [montando, setMontando] = useState(false);
   const [salvandoLote, setSalvandoLote] = useState(false);
   const [lotes, setLotes] = useState<Lote[]>([]);
+  // Lote do histórico reaberto só pra exportar de novo (não é um lote sendo
+  // montado do zero) — enquanto ativo, esconde os controles de montagem/OCR/
+  // Gerar Lote pra não criar um lote duplicado sem querer.
+  const [loteReaberto, setLoteReaberto] = useState<{ id: number; nome: string } | null>(null);
+  const [abrindoLote, setAbrindoLote] = useState<number | null>(null);
 
   // Separação dos holerites da contabilidade — mesma tela usada em
   // /admin/rh/ponto (componente compartilhado), pra RH e Financeiro poderem
@@ -619,6 +624,42 @@ export default function FinanceiroPage() {
     alert(res.erro || (res.ok ? 'Enviado.' : 'Não foi possível enviar.'));
   };
 
+  const alternarAtivoLote = async (lote: Lote) => {
+    const novoAtivo = !lote.ativo;
+    const confirmMsg = novoAtivo
+      ? `Reativar o lote "${lote.nome_lote || lote.tipo_lote}"?`
+      : `Inativar o lote "${lote.nome_lote || lote.tipo_lote}"?\n\nO histórico continua salvo, só fica sinalizado como inativo (ex.: lote duplicado ou gerado por engano).`;
+    if (!confirm(confirmMsg)) return;
+
+    const res = await alternarAtivoLoteAction({ loteId: lote.id, ativo: novoAtivo, usuarioNome: usuarioAtual });
+    if (!res.ok) { alert(res.erro || 'Não foi possível atualizar o lote.'); return; }
+    setLotes(prev => prev.map(l => l.id === lote.id ? { ...l, ativo: novoAtivo } : l));
+  };
+
+  // Reabre um lote já salvo no histórico (carrega os itens exatamente como
+  // foram gerados na época) só pra poder exportar de novo o CSV/CNAB.
+  const abrirLoteParaExportar = async (lote: Lote) => {
+    setAbrindoLote(lote.id);
+    try {
+      const res = await buscarLoteAction({ loteId: lote.id });
+      if (!res.ok) { alert(res.erro || 'Não foi possível abrir o lote.'); return; }
+      const itensSalvos: ItemLote[] = res.info.lote.itens || [];
+      if (itensSalvos.length === 0) { alert('Este lote não tem itens salvos para exportar.'); return; }
+      setItens(itensSalvos);
+      setMesReferencia(res.info.lote.mes_referencia);
+      setLoteReaberto({ id: lote.id, nome: lote.nome_lote || lote.tipo_lote });
+      setViewMode('resumo');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } finally {
+      setAbrindoLote(null);
+    }
+  };
+
+  const fecharLoteReaberto = () => {
+    setItens([]);
+    setLoteReaberto(null);
+  };
+
   const badgeStatus = (s: string) => {
     const mapa: Record<string, string> = {
       RASCUNHO: 'bg-gray-100 text-gray-500',
@@ -693,35 +734,48 @@ export default function FinanceiroPage() {
         </div>
 
         <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] mb-4">
-          <div className="flex flex-wrap items-end gap-4 mb-4">
-            <div>
-              <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Competência</label>
-              <input type="month" value={mesReferencia} onChange={e => setMesReferencia(e.target.value)} className="p-2 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+          {loteReaberto && (
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+              <p className="text-xs font-black text-emerald-700 uppercase tracking-wider">
+                📤 Reabrindo lote do histórico: {loteReaberto.nome} · {itens.length} pagamento(s)
+              </p>
+              <button onClick={fecharLoteReaberto} className="text-[10px] font-black text-emerald-700 bg-white border border-emerald-600 hover:bg-emerald-600 hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors">
+                ✕ Fechar
+              </button>
             </div>
-            <div className="flex-1">
-              <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Fontes a incluir no lote</label>
-              <div className="flex flex-wrap gap-2">
-                {([
-                  ['FOLHA', '💼 Nossa folha', 'bg-blue-50 text-blue-700 border-blue-300'],
-                  ['ADIANTAMENTO', '📄 Adiantamento', 'bg-purple-50 text-purple-700 border-purple-300'],
-                  ['PAGAMENTO', '📄 Pagamento', 'bg-purple-50 text-purple-700 border-purple-300'],
-                  ['BENEFICIOS', '🎁 Benefícios', 'bg-emerald-50 text-emerald-700 border-emerald-300']
-                ] as const).map(([f, lbl, cor]) => (
-                  <label key={f} className={`cursor-pointer inline-flex items-center gap-2 px-3 py-2 rounded-lg border-2 text-[11px] font-black uppercase tracking-wider transition-all ${fontesSel.includes(f) ? cor : 'bg-gray-50 text-gray-400 border-gray-200'}`}>
-                    <input type="checkbox" checked={fontesSel.includes(f)} onChange={() => alternarFonte(f)} className="w-4 h-4" />
-                    {lbl}
-                  </label>
-                ))}
+          )}
+
+          {!loteReaberto && (
+            <div className="flex flex-wrap items-end gap-4 mb-4">
+              <div>
+                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Competência</label>
+                <input type="month" value={mesReferencia} onChange={e => setMesReferencia(e.target.value)} className="p-2 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />
               </div>
+              <div className="flex-1">
+                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Fontes a incluir no lote</label>
+                <div className="flex flex-wrap gap-2">
+                  {([
+                    ['FOLHA', '💼 Nossa folha', 'bg-blue-50 text-blue-700 border-blue-300'],
+                    ['ADIANTAMENTO', '📄 Adiantamento', 'bg-purple-50 text-purple-700 border-purple-300'],
+                    ['PAGAMENTO', '📄 Pagamento', 'bg-purple-50 text-purple-700 border-purple-300'],
+                    ['BENEFICIOS', '🎁 Benefícios', 'bg-emerald-50 text-emerald-700 border-emerald-300']
+                  ] as const).map(([f, lbl, cor]) => (
+                    <label key={f} className={`cursor-pointer inline-flex items-center gap-2 px-3 py-2 rounded-lg border-2 text-[11px] font-black uppercase tracking-wider transition-all ${fontesSel.includes(f) ? cor : 'bg-gray-50 text-gray-400 border-gray-200'}`}>
+                      <input type="checkbox" checked={fontesSel.includes(f)} onChange={() => alternarFonte(f)} className="w-4 h-4" />
+                      {lbl}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <button onClick={montarLote} disabled={montando || fontesSel.length === 0} className="text-xs font-black bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-5 py-2.5 rounded-lg uppercase tracking-wider disabled:opacity-50">
+                {montando ? '⏳ Montando...' : '📥 Montar lote'}
+              </button>
             </div>
-            <button onClick={montarLote} disabled={montando || fontesSel.length === 0} className="text-xs font-black bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-5 py-2.5 rounded-lg uppercase tracking-wider disabled:opacity-50">
-              {montando ? '⏳ Montando...' : '📥 Montar lote'}
-            </button>
-          </div>
+          )}
 
           {itens.length > 0 && (
             <div className="pt-3 border-t border-gray-100 space-y-4">
-              {(fontesSel.includes('ADIANTAMENTO') || fontesSel.includes('PAGAMENTO')) && (
+              {!loteReaberto && (fontesSel.includes('ADIANTAMENTO') || fontesSel.includes('PAGAMENTO')) && (
                 <div className="flex flex-wrap items-center gap-2">
                   {fontesSel.includes('ADIANTAMENTO') && (
                     <>
@@ -755,9 +809,11 @@ export default function FinanceiroPage() {
 
                 <div className="flex flex-col gap-2">
                   <button onClick={exportarLoteCSV} className="text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg uppercase tracking-wider">⬇ Exportar CSV</button>
-                  <button onClick={gerarLote} disabled={salvandoLote} className="text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-lg uppercase tracking-wider disabled:opacity-50">
-                    {salvandoLote ? '⏳ Gerando...' : '✓ Gerar Lote'}
-                  </button>
+                  {!loteReaberto && (
+                    <button onClick={gerarLote} disabled={salvandoLote} className="text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-lg uppercase tracking-wider disabled:opacity-50">
+                      {salvandoLote ? '⏳ Gerando...' : '✓ Gerar Lote'}
+                    </button>
+                  )}
                 </div>
 
                 <div className="flex flex-col gap-2">
@@ -912,7 +968,7 @@ export default function FinanceiroPage() {
                 </thead>
                 <tbody>
                   {lotes.map((l, idx) => (
-                    <tr key={l.id} className={`${idx % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white'} border-b border-[#E2E8F0]`}>
+                    <tr key={l.id} className={`${l.ativo === false ? 'opacity-50' : ''} ${idx % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white'} border-b border-[#E2E8F0]`}>
                       <td className="p-3 text-[11px] text-gray-500">{fmtDataHora(l.criado_em)}</td>
                       <td className="p-3">
                         <span className="font-black text-[#0C1D4D] block">{l.nome_lote || l.tipo_lote}</span>
@@ -921,9 +977,22 @@ export default function FinanceiroPage() {
                       <td className="p-3 font-bold">{fmtMesBR(l.mes_referencia)}</td>
                       <td className="p-3 text-center font-black text-[#0C1D4D]">{l.qtd_pagamentos}</td>
                       <td className="p-3 text-right font-black text-[#0C1D4D] tabular-nums">{BRL(l.valor_total)}</td>
-                      <td className="p-3 text-center">{badgeStatus(l.status)}</td>
+                      <td className="p-3 text-center">
+                        {badgeStatus(l.status)}
+                        {l.ativo === false && <span className="block mt-1 text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-red-100 text-red-600">Inativo</span>}
+                      </td>
                       <td className="p-3 text-right">
-                        <button onClick={() => enviarLote(l.id)} className="text-[10px] font-black text-[#0C1D4D] bg-white border border-[#0C1D4D] hover:bg-[#0C1D4D] hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors">↗ Enviar ao banco</button>
+                        <div className="flex justify-end gap-2">
+                          <button onClick={() => abrirLoteParaExportar(l)} disabled={abrindoLote === l.id} className="text-[10px] font-black text-emerald-700 bg-white border border-emerald-600 hover:bg-emerald-600 hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors disabled:opacity-50">
+                            {abrindoLote === l.id ? '⏳ Abrindo...' : '📤 Abrir p/ Exportar'}
+                          </button>
+                          <button onClick={() => enviarLote(l.id)} disabled={l.ativo === false} className="text-[10px] font-black text-[#0C1D4D] bg-white border border-[#0C1D4D] hover:bg-[#0C1D4D] hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:text-[#0C1D4D]">↗ Enviar ao banco</button>
+                          {l.ativo === false ? (
+                            <button onClick={() => alternarAtivoLote(l)} className="text-[10px] font-black text-emerald-700 bg-white border border-emerald-600 hover:bg-emerald-600 hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors">✓ Reativar</button>
+                          ) : (
+                            <button onClick={() => alternarAtivoLote(l)} className="text-[10px] font-black text-red-600 bg-white border border-red-500 hover:bg-red-500 hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors">🚫 Inativar</button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}

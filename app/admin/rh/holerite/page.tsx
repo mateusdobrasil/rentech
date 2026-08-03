@@ -424,8 +424,8 @@ const montarDadosHolerite = (
   const diasFaltas = regra.desconta_faltas ? apuracao.faltas : 0;
   const valorDescontoFaltas = diasFaltas > 0 ? (baseFaltas / 30) * diasFaltas : 0;
 
-  const descontoVrFaltas = (regra.direito_vr ? apuracao.faltas : 0) * diariaVr;
-  const descontoVtFaltas = (regra.direito_vt ? apuracao.faltas : 0) * diariaVt;
+  const descontoVrFaltas = (regra.desconta_faltas && regra.direito_vr ? apuracao.faltas : 0) * diariaVr;
+  const descontoVtFaltas = (regra.desconta_faltas && regra.direito_vt ? apuracao.faltas : 0) * diariaVt;
   const totalDescontoBeneficios = descontoVrFaltas + descontoVtFaltas;
 
   const totalCreditos = salarioBaseExibido + complementoContratoExibido + totalBonusGrid + totalExtra60 + totalExtra100 + totalDiariasFdsFechada + totalAdicionais;
@@ -701,9 +701,18 @@ export default function HoleritePage() {
       }
       setUsuarioAtual(perfil.nome || 'Equipe RH');
       setEmailUsuario(perfil.email || session.user.email || '');
+      // Espera as regras (folha_parametros) e a lista de funcionários
+      // carregarem ANTES de liberar authLoading: o efeito abaixo dispara
+      // carregarLote() assim que authLoading vira false, e carregarLote()
+      // monta o holerite de cada funcionário usando regrasContrato — se essa
+      // chamada corresse contra um regrasContrato ainda vazio (fetch em
+      // andamento), cada funcionário caía no REGRA_PADRAO em vez da regra
+      // real do contrato dele (ex.: PJ mostrando hora extra em vez de diária,
+      // CLT mostrando salário base que a regra manda esconder). Como
+      // dependia de qual fetch vencia a corrida, o resultado mudava a cada
+      // recarregamento da página.
+      await Promise.all([carregarRegras(), carregarListaFuncionarios()]);
       setAuthLoading(false);
-      carregarRegras();
-      carregarListaFuncionarios();
     }
     checkAuth();
   }, [router, pathname]);

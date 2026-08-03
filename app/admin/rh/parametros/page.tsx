@@ -675,80 +675,82 @@ export default function ParametrosRH() {
               )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="border border-gray-200 p-4 rounded-xl bg-gray-50/50">
-                <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
-                  <input type="checkbox" checked={form.paga_salario_base} onChange={e => setForm({...form, paga_salario_base: e.target.checked})} className="w-4 h-4 accent-[#336699]" />
-                  Exibir Salário Base na Nossa Folha?
-                </label>
-              </div>
-
-              <div className="border border-gray-200 p-4 rounded-xl bg-gray-50/50">
-                <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
-                  <input type="checkbox" checked={form.desconta_faltas} onChange={e => setForm({...form, desconta_faltas: e.target.checked})} className="w-4 h-4 accent-[#336699]" />
-                  Habilitar Desconto de Faltas?
-                </label>
-              </div>
-
-              <div className="border-2 border-blue-200 p-4 rounded-xl bg-blue-50/40">
-                <p className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider mb-3">O que este contrato recebe (padrão)</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="flex items-center gap-2 font-bold text-sm text-[#0C1D4D] cursor-pointer bg-white p-2.5 rounded-lg border border-gray-200">
-                    <input type="checkbox" checked={form.recebe_fechamento} onChange={e => setForm({...form, recebe_fechamento: e.target.checked})} className="w-4 h-4 accent-[#336699]" />
-                    Recebe fechamento (nossa folha)
+            <div>
+              <p className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider mb-2">Comportamento do Contrato</p>
+              <div className="border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-200">
+                <div className={`px-4 py-3 ${!form.calcula_extras_padrao ? 'bg-red-50' : ''}`}>
+                  <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
+                    <input type="checkbox" checked={form.calcula_extras_padrao} onChange={e => setForm({...form, calcula_extras_padrao: e.target.checked})} className="w-4 h-4 flex-shrink-0 accent-[#336699]" />
+                    Calcula Horas Extras?
                   </label>
-                  <label className="flex items-center gap-2 font-bold text-sm text-[#0C1D4D] cursor-pointer bg-white p-2.5 rounded-lg border border-gray-200">
-                    <input type="checkbox" checked={form.recebe_holerite} onChange={e => setForm({...form, recebe_holerite: e.target.checked})} className="w-4 h-4 accent-indigo-600" />
-                    Recebe holerite (contabilidade)
+                  {!form.calcula_extras_padrao && <p className="text-[9px] font-bold text-red-600 mt-1 uppercase pl-7">Contrato fechado: nenhuma hora extra ou diária será paga</p>}
+                </div>
+
+                <div className="px-4 py-3">
+                  <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
+                    <input type="checkbox" checked={form.desconta_faltas} onChange={e => setForm({...form, desconta_faltas: e.target.checked})} className="w-4 h-4 flex-shrink-0 accent-[#336699]" />
+                    Habilitar Desconto de Faltas?
                   </label>
                 </div>
-                <p className="text-[9px] font-bold text-gray-400 mt-2 uppercase">Padrão do contrato para pagamentos. O cargo e a ficha do funcionário podem sobrescrever isso.</p>
-              </div>
 
-              <div className={`border-2 p-4 rounded-xl ${form.so_documental ? 'border-indigo-300 bg-indigo-50' : 'border-gray-200 bg-gray-50/50'}`}>
-                <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
-                  <input type="checkbox" checked={form.so_documental} onChange={e => setForm({...form, so_documental: e.target.checked})} className="w-4 h-4 accent-indigo-600" />
-                  Contrato só documental (não gera cálculo)?
-                </label>
-                {form.so_documental
-                  ? <p className="text-[9px] font-bold text-indigo-600 mt-1 uppercase">Não entra na folha/cálculo. Serve só para guardar dados e enviar holerites da contabilidade para assinatura.</p>
-                  : <p className="text-[9px] font-bold text-gray-400 mt-1 uppercase">Marque para contratos que só recebem holerite da contabilidade, sem cálculo no sistema</p>}
-              </div>
+                <div className="px-4 py-3">
+                  <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
+                    <input type="checkbox" checked={form.paga_salario_base} onChange={e => setForm({...form, paga_salario_base: e.target.checked})} className="w-4 h-4 flex-shrink-0 accent-[#336699]" />
+                    Exibir Salário Base na Nossa Folha?
+                  </label>
+                </div>
 
-              <div className="border border-gray-200 p-4 rounded-xl bg-gray-50/50">
-                <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
-                  <input type="checkbox" checked={form.recebe_holerite_contabilidade} onChange={e => setForm({...form, recebe_holerite_contabilidade: e.target.checked})} className="w-4 h-4 accent-[#336699]" />
-                  Recebe holerite da contabilidade?
-                </label>
-                <p className="text-[9px] font-bold text-gray-400 mt-1 uppercase">Se marcado, entra na separação dos PDFs de adiantamento e pagamento</p>
-              </div>
+                <div className={`px-4 py-3 ${form.so_documental ? 'bg-indigo-50' : ''}`}>
+                  <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
+                    <input type="checkbox" checked={form.so_documental} onChange={e => setForm({...form, so_documental: e.target.checked})} className="w-4 h-4 flex-shrink-0 accent-indigo-600" />
+                    Contrato só documental (não gera cálculo)?
+                  </label>
+                  <p className={`text-[9px] font-bold mt-1 uppercase pl-7 ${form.so_documental ? 'text-indigo-600' : 'text-gray-400'}`}>
+                    {form.so_documental
+                      ? 'Não entra na folha/cálculo. Serve só para guardar dados e enviar holerites da contabilidade para assinatura.'
+                      : 'Marque para contratos que só recebem holerite da contabilidade, sem cálculo no sistema'}
+                  </p>
+                </div>
 
-              <div className={`border p-4 rounded-xl ${form.calcula_extras_padrao ? 'border-gray-200 bg-gray-50/50' : 'border-red-200 bg-red-50'}`}>
-                <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
-                  <input type="checkbox" checked={form.calcula_extras_padrao} onChange={e => setForm({...form, calcula_extras_padrao: e.target.checked})} className="w-4 h-4 accent-[#336699]" />
-                  Calcula Horas Extras?
-                </label>
-                {!form.calcula_extras_padrao && <p className="text-[9px] font-bold text-red-600 mt-1 uppercase">Contrato fechado: nenhuma hora extra ou diária será paga</p>}
+                <div className="px-4 py-3">
+                  <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
+                    <input type="checkbox" checked={form.recebe_fechamento} onChange={e => setForm({...form, recebe_fechamento: e.target.checked})} className="w-4 h-4 flex-shrink-0 accent-[#336699]" />
+                    Recebe fechamento (nossa folha)?
+                  </label>
+                </div>
+
+                <div className="px-4 py-3">
+                  <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
+                    <input type="checkbox" checked={form.recebe_holerite} onChange={e => setForm({...form, recebe_holerite: e.target.checked})} className="w-4 h-4 flex-shrink-0 accent-indigo-600" />
+                    Recebe holerite (contabilidade)?
+                  </label>
+                </div>
+
+                <div className="px-4 py-3">
+                  <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
+                    <input type="checkbox" checked={form.recebe_holerite_contabilidade} onChange={e => setForm({...form, recebe_holerite_contabilidade: e.target.checked})} className="w-4 h-4 flex-shrink-0 accent-[#336699]" />
+                    Entra na separação dos PDFs de holerite da contabilidade?
+                  </label>
+                </div>
               </div>
+              <p className="text-[9px] font-bold text-gray-400 mt-2 uppercase">"Recebe fechamento/holerite" é o padrão do contrato — o cargo e a ficha do funcionário podem sobrescrever isso.</p>
             </div>
 
             {/* BENEFÍCIOS VR / VT */}
             <div className="border-2 border-teal-200 bg-teal-50/40 p-5 rounded-xl">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-black text-teal-800 uppercase tracking-wider text-sm">Benefícios — Vale Refeição e Transporte</h3>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer border border-teal-200 bg-white p-3 rounded-lg">
-                  <input type="checkbox" checked={form.direito_vr} onChange={e => setForm({...form, direito_vr: e.target.checked})} className="w-4 h-4 accent-teal-600" />
+              <h3 className="font-black text-teal-800 uppercase tracking-wider text-sm mb-3">Benefícios — Vale Refeição e Transporte</h3>
+              <div className="bg-white border border-teal-200 rounded-lg overflow-hidden divide-y divide-teal-100 mb-4">
+                <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer px-3 py-2.5">
+                  <input type="checkbox" checked={form.direito_vr} onChange={e => setForm({...form, direito_vr: e.target.checked})} className="w-4 h-4 flex-shrink-0 accent-teal-600" />
                   Direito a VR (refeição)?
                 </label>
-                <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer border border-teal-200 bg-white p-3 rounded-lg">
-                  <input type="checkbox" checked={form.direito_vt} onChange={e => setForm({...form, direito_vt: e.target.checked})} className="w-4 h-4 accent-teal-600" />
+                <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer px-3 py-2.5">
+                  <input type="checkbox" checked={form.direito_vt} onChange={e => setForm({...form, direito_vt: e.target.checked})} className="w-4 h-4 flex-shrink-0 accent-teal-600" />
                   Direito a VT (transporte)?
                 </label>
-                <div className="border border-teal-200 bg-white p-3 rounded-lg">
-                  <label className="block text-[10px] font-black text-teal-700 uppercase mb-1">Modalidade do valor</label>
-                  <select value={form.modalidade_beneficio} onChange={e => setForm({...form, modalidade_beneficio: e.target.value as RegraRH['modalidade_beneficio']})} disabled={!form.direito_vr && !form.direito_vt} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white disabled:opacity-50">
+                <div className="px-3 py-2.5 flex items-center justify-between gap-3">
+                  <label className="text-[10px] font-black text-teal-700 uppercase flex-shrink-0">Modalidade do valor</label>
+                  <select value={form.modalidade_beneficio} onChange={e => setForm({...form, modalidade_beneficio: e.target.value as RegraRH['modalidade_beneficio']})} disabled={!form.direito_vr && !form.direito_vt} className="p-2 border border-gray-300 rounded text-sm font-bold bg-white disabled:opacity-50">
                     <option value="POR_DIA">Por Dia (lança a diária)</option>
                     <option value="VALOR_FECHADO">Valor Fechado (lança o mês, ÷30)</option>
                   </select>

@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
-import { importarPontoAction, importarAbonosAction, lancarPontoManualAction } from '../actions/actions-ponto';
+import { importarPontoAction, importarAbonosAction, lancarPontoManualAction, abonarDiaManualAction } from '../actions/actions-ponto';
 import {
   estatisticasPontoWhatsappAction, listarLedgerPontoWhatsappAction,
   listarSolicitacoesPendentesAction, aprovarSolicitacaoAction, rejeitarSolicitacaoAction,
@@ -128,6 +128,10 @@ export default function GestaoDePonto() {
   // fechamento da folha em /admin/rh/holerite) — só é preenchido quando o RH
   // clica em "Verificar Inconsistência", não é automático.
   const [inconsistencias, setInconsistencias] = useState<RegistroDiario[] | null>(null);
+  // Faltas do mês (dia útil sem batida e sem abono), calculada junto com as
+  // inconsistências ao clicar em "Verificar Inconsistência".
+  const [faltasEncontradas, setFaltasEncontradas] = useState<{ funcionario_nome: string; data: string }[] | null>(null);
+  const [filtroFuncionarioPendencia, setFiltroFuncionarioPendencia] = useState('');
   const [viewMode, setViewMode] = useState<'resumo' | 'espelho' | 'espelho_todos' | 'separar_holerites' | 'ponto_whatsapp'>('resumo');
   const [funcionarioSelecionado, setFuncionarioSelecionado] = useState('');
   const [estatisticasWhatsapp, setEstatisticasWhatsapp] = useState<EstatisticasPontoWhatsapp | null>(null);
@@ -151,6 +155,9 @@ export default function GestaoDePonto() {
 
   // Lançamento manual de ponto pelo RH (sem depender de CSV ou WhatsApp)
   const [listaFuncionariosAtivos, setListaFuncionariosAtivos] = useState<string[]>([]);
+  // Mesmos funcionários, com admissão/desligamento — usado só para calcular
+  // faltas do mês (mesma regra de apurarPonto() em /admin/rh/holerite).
+  const [funcionariosAtivosDetalhe, setFuncionariosAtivosDetalhe] = useState<{ nome_completo: string; data_admissao: string | null; data_desligamento: string | null }[]>([]);
   const [manualFuncionario, setManualFuncionario] = useState('');
   const [manualData, setManualData] = useState('');
   const [manualE1, setManualE1] = useState('');
@@ -162,6 +169,14 @@ export default function GestaoDePonto() {
   // data — evita que o RH sobreponha uma batida sem perceber.
   const [registroExistente, setRegistroExistente] = useState<{ origem: string; entrada_1: string | null; saida_1: string | null; entrada_2: string | null; saida_2: string | null } | null | undefined>(undefined);
   const [verificandoExistente, setVerificandoExistente] = useState(false);
+
+  // Abonar dia (RH abona um dia inteiro direto por aqui)
+  const [abonoFuncionario, setAbonoFuncionario] = useState('');
+  const [abonoData, setAbonoData] = useState('');
+  const [abonoMotivo, setAbonoMotivo] = useState('');
+  const [abonando, setAbonando] = useState(false);
+  const [abonoExistente, setAbonoExistente] = useState<{ origem: string; motivo: string | null } | null | undefined>(undefined);
+  const [verificandoAbonoExistente, setVerificandoAbonoExistente] = useState(false);
 
   const [mesAnoSelecionado, setMesAnoSelecionado] = useState(() => {
     // Competência = mês anterior ao corrente (o mês corrente é o de pagamento)
@@ -176,12 +191,15 @@ export default function GestaoDePonto() {
 
   // O resultado da verificação de inconsistência é para o mês em que foi
   // gerado — muda o mês, o resultado anterior fica obsoleto.
-  useEffect(() => { setInconsistencias(null); }, [mesAnoSelecionado]);
+  useEffect(() => { setInconsistencias(null); setFaltasEncontradas(null); setFiltroFuncionarioPendencia(''); }, [mesAnoSelecionado]);
 
   useEffect(() => {
     if (authLoading || acessoNegado) return;
-    supabase.from('folha_funcionarios').select('nome_completo').eq('ativo', true).order('nome_completo')
-      .then(({ data }) => setListaFuncionariosAtivos((data || []).map(f => f.nome_completo)));
+    supabase.from('folha_funcionarios').select('nome_completo, data_admissao, data_desligamento').eq('ativo', true).order('nome_completo')
+      .then(({ data }) => {
+        setListaFuncionariosAtivos((data || []).map(f => f.nome_completo));
+        setFuncionariosAtivosDetalhe(data || []);
+      });
   }, [authLoading, acessoNegado]);
 
   const verificarRegistroExistente = async (funcionario: string, data: string) => {
@@ -209,6 +227,28 @@ export default function GestaoDePonto() {
     }
     verificarRegistroExistente(manualFuncionario, manualData);
   }, [manualFuncionario, manualData]);
+
+  const verificarAbonoExistente = async (funcionario: string, data: string) => {
+    setVerificandoAbonoExistente(true);
+    const { data: reg } = await supabase.from('folha_ponto_abono')
+      .select('origem, motivo')
+      .eq('funcionario_nome', funcionario)
+      .eq('data_abono', data)
+      .maybeSingle();
+    setAbonoExistente(reg || null);
+    setAbonoMotivo(reg?.motivo || '');
+    setVerificandoAbonoExistente(false);
+  };
+
+  // Mesma lógica do lançamento manual de ponto: ao escolher funcionário + data,
+  // busca ao vivo se já existe abono nesse dia pra nunca sobrepor sem ver.
+  useEffect(() => {
+    if (!abonoFuncionario || !abonoData) {
+      setAbonoExistente(undefined);
+      return;
+    }
+    verificarAbonoExistente(abonoFuncionario, abonoData);
+  }, [abonoFuncionario, abonoData]);
 
   const carregarAcessoEDados = async (mesAnoAlvo?: string) => {
     setLoading(true);
@@ -573,6 +613,50 @@ export default function GestaoDePonto() {
     }
   };
 
+  const handleAbonarDia = async () => {
+    if (!abonoFuncionario) { alert('Selecione o funcionário.'); return; }
+    if (!abonoData) { alert('Selecione a data.'); return; }
+    if (!abonoMotivo.trim()) { alert('Informe o motivo do abono.'); return; }
+
+    const sobrepondoWhatsapp = abonoExistente?.origem === 'WHATSAPP';
+
+    if (sobrepondoWhatsapp) {
+      if (!confirm(
+        `⚠ Este dia tem abono confirmado via WhatsApp.\n\n` +
+        `Você está corrigindo o abono de ${abonoFuncionario} em ${abonoData.split('-').reverse().join('/')}. Deseja continuar?`
+      )) return;
+    }
+
+    const avisoSobreposicao = abonoExistente
+      ? `\n\n⚠ Já existe abono lançado nesse dia (origem: ${abonoExistente.origem}) — vai SUBSTITUIR o que está gravado.`
+      : '';
+
+    if (!confirm(
+      `Abonar o dia de ${abonoFuncionario} em ${abonoData.split('-').reverse().join('/')}?\n\nMotivo: ${abonoMotivo}${avisoSobreposicao}`
+    )) return;
+
+    setAbonando(true);
+    try {
+      const res = await abonarDiaManualAction({
+        funcionarioNome: abonoFuncionario,
+        dataAbono: abonoData,
+        motivo: abonoMotivo,
+        usuarioNome: usuarioAtual,
+        confirmarSobreposicaoWhatsapp: sobrepondoWhatsapp
+      });
+      if (!res.ok) throw new Error(res.erro);
+
+      alert('Dia abonado com sucesso!');
+      await verificarAbonoExistente(abonoFuncionario, abonoData);
+      setMesAnoSelecionado(abonoData.slice(0, 7));
+      carregarAcessoEDados(abonoData.slice(0, 7));
+    } catch (e: any) {
+      alert('Erro ao abonar o dia: ' + e.message);
+    } finally {
+      setAbonando(false);
+    }
+  };
+
   const resumoGeral = useMemo(() => {
     const mapa: Record<string, { nome: string; totalMins: number; extraSemMins: number; extraSabMins: number; extraDomMins: number }> = {};
     
@@ -663,12 +747,92 @@ export default function GestaoDePonto() {
     return false;
   };
 
+  // Faltas: dia útil (não sáb/dom/feriado) dentro do mês selecionado, até
+  // hoje, dentro do período de contrato do funcionário (admissão/desligamento),
+  // sem nenhuma batida trabalhada e sem abono. Mesma regra de apurarPonto()
+  // em /admin/rh/holerite — só considera funcionários que já têm ao menos um
+  // registro/abono no mês (evita marcar falta em massa quando o CSV do mês
+  // ainda nem foi importado).
+  const calcularFaltasDoMes = (): { funcionario_nome: string; data: string }[] => {
+    const mapaDias: Record<string, { trabalhados: number; abonados: number }> = {};
+    registros.forEach(r => {
+      const key = `${r.funcionario_nome}|${r.data_registro}`;
+      mapaDias[key] = { trabalhados: r.minutos_trabalhados, abonados: mapaDias[key]?.abonados || 0 };
+    });
+    abonos.forEach(a => {
+      const key = `${a.funcionario_nome}|${a.data_abono}`;
+      mapaDias[key] = { trabalhados: mapaDias[key]?.trabalhados || 0, abonados: a.minutos_abonados };
+    });
+
+    const nomesComRegistroNoMes = new Set([
+      ...registros.map(r => r.funcionario_nome),
+      ...abonos.map(a => a.funcionario_nome)
+    ]);
+
+    const [ano, mes] = mesAnoSelecionado.split('-').map(Number);
+    const diasNoMes = new Date(ano, mes, 0).getDate();
+    const hoje = new Date(); hoje.setHours(23, 59, 59, 999);
+
+    const faltas: { funcionario_nome: string; data: string }[] = [];
+
+    funcionariosAtivosDetalhe.forEach(f => {
+      if (!nomesComRegistroNoMes.has(f.nome_completo)) return;
+
+      for (let d = 1; d <= diasNoMes; d++) {
+        const dataObj = new Date(ano, mes - 1, d);
+        if (dataObj > hoje) break;
+        const dataIso = `${ano}-${String(mes).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+        if (f.data_admissao && dataIso < f.data_admissao) continue;
+        if (f.data_desligamento && dataIso > f.data_desligamento) continue;
+
+        const diaSemana = dataObj.getDay();
+        if (diaSemana === 0 || diaSemana === 6 || feriadosGlobais.includes(dataIso)) continue;
+
+        const reg = mapaDias[`${f.nome_completo}|${dataIso}`];
+        const presente = reg && (reg.trabalhados > 0 || reg.abonados > 0);
+        if (!presente) faltas.push({ funcionario_nome: f.nome_completo, data: dataIso });
+      }
+    });
+
+    return faltas.sort((a, b) => a.funcionario_nome.localeCompare(b.funcionario_nome) || a.data.localeCompare(b.data));
+  };
+
   const verificarInconsistenciasPonto = () => {
     const problemas = registros
       .filter(r => !diaComBatidasOk(r))
       .sort((a, b) => a.funcionario_nome.localeCompare(b.funcionario_nome) || a.data_registro.localeCompare(b.data_registro));
     setInconsistencias(problemas);
+    setFaltasEncontradas(calcularFaltasDoMes());
   };
+
+  // Clicar numa linha de pendência (ponto ímpar ou falta) preenche o
+  // funcionário + data nos dois quadros ao lado (Lançar Ponto Manual e
+  // Abonar Dia) — o RH decide ali qual ação faz sentido para o caso.
+  const selecionarPendencia = (nome: string, data: string) => {
+    setManualFuncionario(nome);
+    setManualData(data);
+    setAbonoFuncionario(nome);
+    setAbonoData(data);
+  };
+
+  // Nomes disponíveis pro filtro: só quem aparece nas pendências apuradas.
+  const nomesComPendencia = useMemo(() => {
+    const nomes = new Set([
+      ...(inconsistencias || []).map(r => r.funcionario_nome),
+      ...(faltasEncontradas || []).map(f => f.funcionario_nome)
+    ]);
+    return [...nomes].sort();
+  }, [inconsistencias, faltasEncontradas]);
+
+  const inconsistenciasFiltradas = useMemo(
+    () => (inconsistencias || []).filter(r => !filtroFuncionarioPendencia || r.funcionario_nome === filtroFuncionarioPendencia),
+    [inconsistencias, filtroFuncionarioPendencia]
+  );
+  const faltasFiltradas = useMemo(
+    () => (faltasEncontradas || []).filter(f => !filtroFuncionarioPendencia || f.funcionario_nome === filtroFuncionarioPendencia),
+    [faltasEncontradas, filtroFuncionarioPendencia]
+  );
 
   const abrirEspelhoUnico = (nome: string) => { setFuncionarioSelecionado(nome); setViewMode('espelho'); };
   const abrirTodosEspelhos = () => setViewMode('espelho_todos');
@@ -1445,6 +1609,39 @@ export default function GestaoDePonto() {
                   </button>
                 </div>
               </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
+                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">Abonar Dia</h3>
+                <p className="text-xs text-[#64748B] mb-4">O RH pode abonar um dia inteiro de um funcionário direto por aqui.</p>
+                <div className="flex flex-col gap-2">
+                  <select value={abonoFuncionario} onChange={e => setAbonoFuncionario(e.target.value)} className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]">
+                    <option value="">Selecione o funcionário...</option>
+                    {listaFuncionariosAtivos.map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                  <input type="date" value={abonoData} onChange={e => setAbonoData(e.target.value)} className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]" />
+
+                  {verificandoAbonoExistente && (
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider">🔎 Verificando abonos já lançados...</p>
+                  )}
+                  {!verificandoAbonoExistente && abonoExistente === null && abonoFuncionario && abonoData && (
+                    <p className="text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 uppercase">✅ Nenhum abono lançado neste dia ainda.</p>
+                  )}
+                  {!verificandoAbonoExistente && abonoExistente && abonoExistente.origem === 'WHATSAPP' && (
+                    <p className="text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 uppercase">⚠ Abono confirmado via WhatsApp. Editar aqui substitui o abono gravado.</p>
+                  )}
+                  {!verificandoAbonoExistente && abonoExistente && abonoExistente.origem !== 'WHATSAPP' && (
+                    <p className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 uppercase">⚠ Já existe abono nesse dia (origem: {abonoExistente.origem}). Motivo pré-preenchido abaixo — editar e salvar SUBSTITUI o abono atual.</p>
+                  )}
+
+                  <div>
+                    <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Motivo</label>
+                    <textarea value={abonoMotivo} onChange={e => setAbonoMotivo(e.target.value)} rows={3} placeholder="Ex.: Atestado médico, folga combinada..." className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold resize-none" />
+                  </div>
+                  <button onClick={handleAbonarDia} disabled={abonando} className="w-full bg-[#336699] hover:bg-[#284B8C] text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors disabled:opacity-50">
+                    {abonando ? '⏳ Abonando...' : abonoExistente ? '💾 SUBSTITUIR ABONO' : '💾 ABONAR DIA'}
+                  </button>
+                </div>
+              </div>
             </aside>
 
             <main className="flex-grow flex flex-col gap-4">
@@ -1456,17 +1653,26 @@ export default function GestaoDePonto() {
                 <button onClick={verificarInconsistenciasPonto} disabled={loading} className="bg-amber-600 hover:bg-amber-700 text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition-colors disabled:opacity-50">
                   {loading ? '⏳ Carregando ponto do mês...' : '⚠️ VERIFICAR INCONSISTÊNCIA'}
                 </button>
+                {(inconsistencias !== null || faltasEncontradas !== null) && (
+                  <div>
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Filtrar por funcionário</label>
+                    <select value={filtroFuncionarioPendencia} onChange={e => setFiltroFuncionarioPendencia(e.target.value)} className="p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]">
+                      <option value="">Todos ({nomesComPendencia.length})</option>
+                      {nomesComPendencia.map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </div>
+                )}
               </div>
 
               {inconsistencias !== null && (
                 <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col">
                   <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC]">
                     <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Pontos Ímpar (Batidas Incompletas)</h2>
-                    <p className="text-sm text-[#64748B]">Competência: {mesAnoSelecionado.split('-').reverse().join('/')} • {inconsistencias.length} dia(s) com inconsistência</p>
+                    <p className="text-sm text-[#64748B]">Competência: {mesAnoSelecionado.split('-').reverse().join('/')} • {inconsistenciasFiltradas.length} de {inconsistencias.length} dia(s) com inconsistência • clique numa linha pra preencher os quadros ao lado</p>
                   </div>
 
-                  {inconsistencias.length === 0 ? (
-                    <div className="p-12 text-center text-[#94A3B8] font-bold">Nenhuma inconsistência encontrada — todas as batidas do mês estão completas.</div>
+                  {inconsistenciasFiltradas.length === 0 ? (
+                    <div className="p-12 text-center text-[#94A3B8] font-bold">{inconsistencias.length === 0 ? 'Nenhuma inconsistência encontrada — todas as batidas do mês estão completas.' : 'Nenhuma inconsistência para este funcionário.'}</div>
                   ) : (
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm text-left border-collapse">
@@ -1481,16 +1687,64 @@ export default function GestaoDePonto() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#E2E8F0]">
-                          {inconsistencias.map((r, idx) => (
-                            <tr key={r.id || idx} className="hover:bg-[#F8FAFC] transition-colors">
-                              <td className="p-4 font-black text-[#0C1D4D]">{r.funcionario_nome}</td>
-                              <td className="p-4 font-bold">{r.data_registro.split('-').reverse().join('/')}</td>
-                              <td className={`p-4 text-center font-bold ${!r.entrada_1 ? 'text-red-500' : ''}`}>{r.entrada_1 || '—'}</td>
-                              <td className={`p-4 text-center font-bold ${!r.saida_1 ? 'text-red-500' : ''}`}>{r.saida_1 || '—'}</td>
-                              <td className={`p-4 text-center font-bold ${!r.entrada_2 ? 'text-red-500' : ''}`}>{r.entrada_2 || '—'}</td>
-                              <td className={`p-4 text-center font-bold ${!r.saida_2 ? 'text-red-500' : ''}`}>{r.saida_2 || '—'}</td>
-                            </tr>
-                          ))}
+                          {inconsistenciasFiltradas.map((r, idx) => {
+                            const selecionada = manualFuncionario === r.funcionario_nome && manualData === r.data_registro;
+                            return (
+                              <tr
+                                key={r.id || idx}
+                                onClick={() => selecionarPendencia(r.funcionario_nome, r.data_registro)}
+                                className={`cursor-pointer transition-colors ${selecionada ? 'bg-blue-50' : 'hover:bg-[#F8FAFC]'}`}
+                                title="Clique para preencher Lançar Ponto Manual / Abonar Dia"
+                              >
+                                <td className="p-4 font-black text-[#0C1D4D]">{r.funcionario_nome}</td>
+                                <td className="p-4 font-bold">{r.data_registro.split('-').reverse().join('/')}</td>
+                                <td className={`p-4 text-center font-bold ${!r.entrada_1 ? 'text-red-500' : ''}`}>{r.entrada_1 || '—'}</td>
+                                <td className={`p-4 text-center font-bold ${!r.saida_1 ? 'text-red-500' : ''}`}>{r.saida_1 || '—'}</td>
+                                <td className={`p-4 text-center font-bold ${!r.entrada_2 ? 'text-red-500' : ''}`}>{r.entrada_2 || '—'}</td>
+                                <td className={`p-4 text-center font-bold ${!r.saida_2 ? 'text-red-500' : ''}`}>{r.saida_2 || '—'}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {faltasEncontradas !== null && (
+                <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col">
+                  <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC]">
+                    <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Faltas (Dias sem Registro)</h2>
+                    <p className="text-sm text-[#64748B]">Competência: {mesAnoSelecionado.split('-').reverse().join('/')} • {faltasFiltradas.length} de {faltasEncontradas.length} falta(s) • clique numa linha pra preencher os quadros ao lado</p>
+                  </div>
+
+                  {faltasFiltradas.length === 0 ? (
+                    <div className="p-12 text-center text-[#94A3B8] font-bold">{faltasEncontradas.length === 0 ? 'Nenhuma falta encontrada no mês.' : 'Nenhuma falta para este funcionário.'}</div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left border-collapse">
+                        <thead className="bg-white border-b-2 border-[#E2E8F0]">
+                          <tr className="text-[9px] xl:text-[10px] uppercase font-black tracking-widest text-[#64748B]">
+                            <th className="p-4">Colaborador</th>
+                            <th className="p-4">Data</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#E2E8F0]">
+                          {faltasFiltradas.map((f, idx) => {
+                            const selecionada = abonoFuncionario === f.funcionario_nome && abonoData === f.data;
+                            return (
+                              <tr
+                                key={idx}
+                                onClick={() => selecionarPendencia(f.funcionario_nome, f.data)}
+                                className={`cursor-pointer transition-colors ${selecionada ? 'bg-blue-50' : 'hover:bg-[#F8FAFC]'}`}
+                                title="Clique para preencher Lançar Ponto Manual / Abonar Dia"
+                              >
+                                <td className="p-4 font-black text-[#0C1D4D]">{f.funcionario_nome}</td>
+                                <td className="p-4 font-bold text-red-500">{f.data.split('-').reverse().join('/')}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>

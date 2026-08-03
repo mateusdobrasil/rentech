@@ -254,3 +254,68 @@ export async function lancarPontoManualAction(payload: {
     return { ok: false, erro: e.message };
   }
 }
+
+// ============================================================================
+// ABONAR DIA — o RH abona um dia inteiro de um funcionário direto por aqui,
+// sem depender de CSV ou do fluxo de aprovação via WhatsApp.
+// ============================================================================
+export async function abonarDiaManualAction(payload: {
+  funcionarioNome: string;
+  dataAbono: string; // YYYY-MM-DD
+  motivo: string;
+  usuarioNome: string;
+  confirmarSobreposicaoWhatsapp?: boolean;
+}): Promise<Resultado> {
+  const db = supabaseAdmin();
+  const { funcionarioNome, dataAbono, motivo, usuarioNome, confirmarSobreposicaoWhatsapp } = payload;
+
+  try {
+    if (!motivo?.trim()) return { ok: false, erro: 'Informe o motivo do abono.' };
+
+    const mesAno = dataAbono.slice(0, 7);
+    const fechados = await nomesComFolhaFechada(db, mesAno);
+    if (fechados.includes(funcionarioNome)) {
+      return { ok: false, erro: `A folha de ${mesAno} já foi fechada para ${funcionarioNome}. Reabra a folha desse mês na tela de Holerites antes de abonar o dia.` };
+    }
+
+    const { data: existente } = await db.from('folha_ponto_abono')
+      .select('id, origem')
+      .eq('funcionario_nome', funcionarioNome)
+      .eq('data_abono', dataAbono)
+      .maybeSingle();
+
+    // Abono aprovado via WhatsApp (origem legal) só é sobrescrito com
+    // confirmação explícita — mesma regra usada no lançamento manual de ponto.
+    const sobrepondoWhatsapp = existente?.origem === 'WHATSAPP';
+    if (sobrepondoWhatsapp && !confirmarSobreposicaoWhatsapp) {
+      return { ok: false, erro: 'Este dia já tem abono confirmado via WhatsApp. Confirme a sobreposição para corrigir mesmo assim.' };
+    }
+
+    if (existente) {
+      const { error } = await db.from('folha_ponto_abono').update({
+        dia_todo: true, hora_inicio: null, hora_fim: null,
+        minutos_abonados: 480, motivo, origem: 'MANUAL_RH'
+      }).eq('id', existente.id);
+      if (error) throw new Error(error.message);
+    } else {
+      const { error } = await db.from('folha_ponto_abono').insert({
+        funcionario_nome: funcionarioNome, data_abono: dataAbono,
+        dia_todo: true, hora_inicio: null, hora_fim: null,
+        minutos_abonados: 480, motivo, origem: 'MANUAL_RH'
+      });
+      if (error) throw new Error(error.message);
+    }
+
+    await registrarLogAuditoria({
+      usuario_nome: usuarioNome,
+      acao: sobrepondoWhatsapp
+        ? `CORREÇÃO DE ABONO SOBRE DIA CONFIRMADO VIA WHATSAPP — ${funcionarioNome} em ${dataAbono}`
+        : `ABONO DE DIA (MANUAL) — ${funcionarioNome} em ${dataAbono}: ${motivo}`,
+      setor: 'RECURSOS HUMANOS / PONTO'
+    });
+
+    return { ok: true, info: { sobrepondoWhatsapp } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}

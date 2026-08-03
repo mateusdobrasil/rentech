@@ -1,12 +1,14 @@
 import Image from 'next/image';
 import Link from 'next/link';
+import { Analytics } from "@vercel/analytics/next";
 import logoColorido from '../imgs/logo.png'; // Ajuste o caminho se necessário
 
 export default function Simuladores() {
   return (
     // Fundo alinhado à paleta oficial com gradiente radial sutil para manter o aspecto tecnológico
     <div className="min-h-screen bg-[#000000] bg-[radial-gradient(circle_at_20%_30%,_rgba(12,29,77,0.3)_0%,_transparent_40%),radial-gradient(circle_at_80%_70%,_rgba(51,102,153,0.15)_0%,_transparent_40%)] text-[#B3B3B3] font-sans flex flex-col items-center overflow-x-hidden">
-      
+      <Analytics />
+
       <div className="container mx-auto px-6 py-12 max-w-4xl flex-col flex flex-grow">
         
         {/* Cabeçalho */}

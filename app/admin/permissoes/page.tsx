@@ -50,6 +50,7 @@ interface AcessoPortal {
   funcionario_nome: string;
   cpf: string;
   criado_em: string | null;
+  ultimo_acesso: string | null;
   cargo: string | null;
   celular: string | null;
   funcionario_ativo: boolean | null;
@@ -843,13 +844,14 @@ export default function GestaoPermissoes() {
                     <th className="p-4">CPF</th>
                     <th className="p-4">Celular</th>
                     <th className="p-4">Cadastro do Acesso</th>
+                    <th className="p-4">Último Acesso</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#E2E8F0] text-sm">
                   {loadingPortal ? (
-                    <tr><td colSpan={5} className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Carregando colaboradores...</td></tr>
+                    <tr><td colSpan={6} className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Carregando colaboradores...</td></tr>
                   ) : acessosPortalFiltrados.length === 0 ? (
-                    <tr><td colSpan={5} className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Nenhum colaborador com cadastro de acesso encontrado.</td></tr>
+                    <tr><td colSpan={6} className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Nenhum colaborador com cadastro de acesso encontrado.</td></tr>
                   ) : (
                     acessosPortalFiltrados.map((a) => (
                       <tr key={a.id} className={`hover:bg-[#F8FAFC] transition-colors ${a.funcionario_ativo === false ? 'opacity-40 bg-gray-50' : ''}`}>
@@ -864,6 +866,11 @@ export default function GestaoPermissoes() {
                         <td className="p-4 text-xs text-[#64748B] font-bold">{a.celular || '—'}</td>
                         <td className="p-4 text-xs text-[#64748B] font-bold">
                           {a.criado_em ? new Date(a.criado_em).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'}
+                        </td>
+                        <td className="p-4 text-xs text-[#64748B] font-bold">
+                          {a.ultimo_acesso
+                            ? new Date(a.ultimo_acesso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                            : <span className="text-gray-400">Nunca acessou</span>}
                         </td>
                       </tr>
                     ))

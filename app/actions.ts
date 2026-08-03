@@ -271,6 +271,22 @@ export async function listarAcessosPortalAction() {
 
     const mapaFuncionarios = new Map((funcionarios || []).map((f: any) => [f.nome_completo, f]));
 
+    // O último acesso não é gravado em nenhuma tabela nossa — o login do
+    // Portal é feito via supabase.auth.signInWithPassword direto no cliente,
+    // então quem já registra isso é o próprio Supabase Auth (last_sign_in_at
+    // em auth.users). Busca-se por auth_user_id, um a um, via Admin API.
+    const ultimosAcessos = await Promise.all((acessos || []).map(async (a: any) => {
+      if (!a.auth_user_id) return [a.id, null] as const;
+      try {
+        const { data, error } = await supabaseAdmin.auth.admin.getUserById(a.auth_user_id);
+        if (error) return [a.id, null] as const;
+        return [a.id, data.user?.last_sign_in_at || null] as const;
+      } catch {
+        return [a.id, null] as const;
+      }
+    }));
+    const mapaUltimoAcesso = new Map(ultimosAcessos);
+
     const lista = (acessos || []).map((a: any) => {
       const funcionario = mapaFuncionarios.get(a.funcionario_nome);
       return {
@@ -278,6 +294,7 @@ export async function listarAcessosPortalAction() {
         funcionario_nome: a.funcionario_nome,
         cpf: a.cpf,
         criado_em: a.criado_em || a.created_at || null,
+        ultimo_acesso: mapaUltimoAcesso.get(a.id) || null,
         cargo: funcionario?.cargo || null,
         celular: funcionario?.celular || null,
         funcionario_ativo: funcionario?.ativo ?? null,

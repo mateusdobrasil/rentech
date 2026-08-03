@@ -7,7 +7,8 @@ import { supabase } from '../../lib/supabase';
 import {
   listarIntegracoesAction, salvarIntegracaoAction,
   statusTokenAutentiqueAction, estatisticasAutentiqueAction,
-  statusZapiAction, estatisticasZapiAction, statusMetaAction,
+  statusZapiAction, estatisticasZapiAction, statusMetaAction, statusItauApiAction,
+  statusGovBrConsignadoAction,
   obterRoteamentoWhatsAppAction, salvarRoteamentoWhatsAppAction,
   enviarTesteWhatsAppAction, enviarTesteTemplateWhatsAppAction,
   type ConfigRoteamentoWhatsApp
@@ -47,8 +48,14 @@ interface EstatisticasZapi {
 interface StatusMeta {
   tokenConfigurado: boolean; phoneNumberIdConfigurado: boolean; appSecretConfigurado: boolean; verifyTokenConfigurado: boolean;
 }
+interface StatusItauApi {
+  clientIdConfigurado: boolean; clientSecretConfigurado: boolean; certificadoConfigurado: boolean; certificadoSenhaConfigurada: boolean;
+}
+interface StatusGovBrConsignado {
+  cnpjConfigurado: boolean; certificadoConfigurado: boolean; senhaConfigurado: boolean; ambiente: string;
+}
 
-const ICONE_TIPO: Record<string, string> = { BANCO: '🏦', BENEFICIO: '🎁', ASSINATURA: '✍️', MENSAGERIA: '💬' };
+const ICONE_TIPO: Record<string, string> = { BANCO: '🏦', BENEFICIO: '🎁', ASSINATURA: '✍️', MENSAGERIA: '💬', CONSIGNADO: '🏛️' };
 const ROTULO_PROVEDOR: Record<'ZAPI' | 'META', string> = { ZAPI: 'Z-API', META: 'Meta (Cloud API)' };
 
 export default function IntegracaoPage() {
@@ -68,6 +75,8 @@ export default function IntegracaoPage() {
   const [statusZapi, setStatusZapi] = useState<StatusZapi | null>(null);
   const [statsZapi, setStatsZapi] = useState<EstatisticasZapi | null>(null);
   const [statusMeta, setStatusMeta] = useState<StatusMeta | null>(null);
+  const [statusItauApi, setStatusItauApi] = useState<StatusItauApi | null>(null);
+  const [statusGovBr, setStatusGovBr] = useState<StatusGovBrConsignado | null>(null);
   const [roteamento, setRoteamento] = useState<ConfigRoteamentoWhatsApp | null>(null);
 
   const [editParceiro, setEditParceiro] = useState<Integracao | null>(null);
@@ -149,11 +158,12 @@ export default function IntegracaoPage() {
   const carregar = async () => {
     setLoading(true);
     try {
-      const [integ, tokenRes, statsRes, zapiStatusRes, zapiStatsRes, metaStatusRes, roteamentoRes] = await Promise.all([
+      const [integ, tokenRes, statsRes, zapiStatusRes, zapiStatsRes, metaStatusRes, roteamentoRes, itauApiStatusRes, govBrStatusRes] = await Promise.all([
         listarIntegracoesAction(),
         statusTokenAutentiqueAction(), estatisticasAutentiqueAction(),
         statusZapiAction(), estatisticasZapiAction(),
-        statusMetaAction(), obterRoteamentoWhatsAppAction()
+        statusMetaAction(), obterRoteamentoWhatsAppAction(),
+        statusItauApiAction(), statusGovBrConsignadoAction()
       ]);
       if (integ.ok) setIntegracoes(integ.info.integracoes);
       if (tokenRes.ok) setTokenAutentiqueOk(tokenRes.info.configurado);
@@ -162,6 +172,8 @@ export default function IntegracaoPage() {
       if (zapiStatsRes.ok) setStatsZapi(zapiStatsRes.info);
       if (metaStatusRes.ok) setStatusMeta(metaStatusRes.info);
       if (roteamentoRes.ok) setRoteamento(roteamentoRes.info);
+      if (itauApiStatusRes.ok) setStatusItauApi(itauApiStatusRes.info);
+      if (govBrStatusRes.ok) setStatusGovBr(govBrStatusRes.info);
     } finally { setLoading(false); }
   };
 
@@ -365,11 +377,29 @@ export default function IntegracaoPage() {
               )}
 
               {i.parceiro === 'ITAU' && (
-                <div className="mb-3 pb-3 border-b border-gray-100">
+                <div className="mb-3 pb-3 border-b border-gray-100 space-y-2">
                   <span className="inline-block text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-blue-100 text-blue-700">📄 Arquivo manual (SISPAG)</span>
                   <p className="text-[10px] text-gray-400 font-semibold mt-1.5 leading-snug">
-                    Hoje: geração de arquivos SISPAG (CNAB240) em RH → Financeiro — PIX e Conta/TED, envio manual pelo Itaú Empresas. API própria está planejada para o futuro.
+                    Hoje: geração de arquivos SISPAG (CNAB240) em RH → Financeiro — PIX e Conta/TED, envio manual pelo Itaú Empresas.
                   </p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-gray-500 font-bold uppercase">Credenciais API (pendente)</span>
+                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusItauApi && statusItauApi.clientIdConfigurado && statusItauApi.clientSecretConfigurado && statusItauApi.certificadoConfigurado && statusItauApi.certificadoSenhaConfigurada ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {!statusItauApi ? '…' : (statusItauApi.clientIdConfigurado && statusItauApi.clientSecretConfigurado && statusItauApi.certificadoConfigurado && statusItauApi.certificadoSenhaConfigurada) ? '✓ Configuradas' : '✕ Não configuradas'}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {i.parceiro === 'GOVBR_CONSIGNADO' && (
+                <div className="mb-3 pb-3 border-b border-gray-100 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-gray-500 font-bold uppercase">Certificado no servidor</span>
+                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusGovBr && statusGovBr.cnpjConfigurado && statusGovBr.certificadoConfigurado && statusGovBr.senhaConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                      {!statusGovBr ? '…' : (statusGovBr.cnpjConfigurado && statusGovBr.certificadoConfigurado && statusGovBr.senhaConfigurado) ? '✓ Configurado' : '✕ Incompleto'}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-gray-400 font-semibold leading-snug">API "Crédito Trabalhador" da Dataprev (mTLS) — consulta consignados dos funcionários em RH → Consignado.</p>
                 </div>
               )}
 
@@ -692,6 +722,49 @@ export default function IntegracaoPage() {
                 </div>
               )}
 
+              {editParceiro.parceiro === 'GOVBR_CONSIGNADO' && (
+                <div className="space-y-3">
+                  <div className="p-3 bg-[#F8FAFC] rounded-xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-gray-500 uppercase">CNPJ do empregador</span>
+                      <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusGovBr?.cnpjConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                        {!statusGovBr ? '…' : statusGovBr.cnpjConfigurado ? '✓ Configurado' : '✕ Ausente'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-gray-500 uppercase">Certificado ICP-Brasil (mTLS)</span>
+                      <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusGovBr?.certificadoConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                        {!statusGovBr ? '…' : statusGovBr.certificadoConfigurado ? '✓ Configurado' : '✕ Ausente'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-gray-500 uppercase">Senha do certificado</span>
+                      <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusGovBr?.senhaConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                        {!statusGovBr ? '…' : statusGovBr.senhaConfigurado ? '✓ Configurada' : '✕ Ausente'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-gray-500 uppercase">Ambiente da API</span>
+                      <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-blue-100 text-blue-700">
+                        {statusGovBr?.ambiente === 'producao' ? 'Produção' : 'Homologação'}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-gray-400 font-semibold leading-snug">
+                      As credenciais (GOVBR_CONSIGNADO_CNPJ, GOVBR_CONSIGNADO_CERT_PFX_BASE64, GOVBR_CONSIGNADO_CERT_SENHA, GOVBR_CONSIGNADO_AMBIENTE) vivem só no ambiente do servidor — nunca são lidas, gravadas ou exibidas aqui. Autenticação por certificado digital (mTLS), não OAuth.
+                    </p>
+                  </div>
+                  <p className="text-[10px] text-gray-400 font-semibold leading-snug">
+                    Consulta ao vivo (com certificado) e importação manual do arquivo do Portal Emprega Brasil (sem certificado) alimentam a mesma lista, em RH → Consignado.
+                  </p>
+                  <button
+                    onClick={() => router.push('/admin/rh/consignado')}
+                    className="w-full bg-[#0C1D4D] hover:bg-[#284B8C] text-white font-black uppercase tracking-widest text-[11px] py-3 rounded-xl transition-all"
+                  >
+                    🏛️ Ir para RH → Consignado
+                  </button>
+                </div>
+              )}
+
               {editParceiro.tipo === 'BANCO' && (
                 <div className="space-y-3">
                   {editParceiro.parceiro === 'ITAU' && (
@@ -700,6 +773,39 @@ export default function IntegracaoPage() {
                       <p className="text-[10px] text-blue-800 font-semibold leading-snug">
                         Modo atual: geração de arquivo SISPAG (CNAB240) em RH → Financeiro, com envio manual pelo
                         Itaú Empresas. Integração via API está planejada para uma fase futura.
+                      </p>
+                    </div>
+                  )}
+
+                  {editParceiro.parceiro === 'ITAU' && (
+                    <div className="p-3 bg-[#F8FAFC] rounded-xl space-y-2">
+                      <p className="text-[10px] font-black text-gray-500 uppercase">Credenciais da API de Pagamentos (pendente)</p>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-gray-500 font-bold uppercase">Client ID</span>
+                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusItauApi?.clientIdConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                          {!statusItauApi ? '…' : statusItauApi.clientIdConfigurado ? '✓ Configurado' : '✕ Ausente'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-gray-500 font-bold uppercase">Client Secret</span>
+                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusItauApi?.clientSecretConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                          {!statusItauApi ? '…' : statusItauApi.clientSecretConfigurado ? '✓ Configurado' : '✕ Ausente'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-gray-500 font-bold uppercase">Certificado (mTLS)</span>
+                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusItauApi?.certificadoConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                          {!statusItauApi ? '…' : statusItauApi.certificadoConfigurado ? '✓ Configurado' : '✕ Ausente'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-gray-500 font-bold uppercase">Senha do certificado</span>
+                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusItauApi?.certificadoSenhaConfigurada ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                          {!statusItauApi ? '…' : statusItauApi.certificadoSenhaConfigurada ? '✓ Configurada' : '✕ Ausente'}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-gray-400 font-semibold leading-snug">
+                        As credenciais (ITAU_API_CLIENT_ID, ITAU_API_CLIENT_SECRET, ITAU_API_CERT_PFX_BASE64, ITAU_API_CERT_SENHA) vivem só no ambiente do servidor — nunca são lidas, gravadas ou exibidas aqui. A chamada de API ainda não foi implementada; o envio de pagamentos continua manual via SISPAG até essas credenciais chegarem e a integração ser construída.
                       </p>
                     </div>
                   )}

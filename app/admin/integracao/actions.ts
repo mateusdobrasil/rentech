@@ -89,6 +89,39 @@ export async function statusMetaAction(): Promise<Resultado> {
   };
 }
 
+// Confirma (sem nunca expor os valores) se as credenciais da API de
+// Pagamentos do Itaú (OAuth client_credentials + mTLS) estão definidas no
+// ambiente do servidor. Hoje nada as consome ainda — o fluxo real segue
+// manual via arquivo SISPAG (RH → Financeiro) — isto só prepara o terreno
+// para quando a chamada de API for implementada.
+export async function statusItauApiAction(): Promise<Resultado> {
+  return {
+    ok: true,
+    info: {
+      clientIdConfigurado: !!process.env.ITAU_API_CLIENT_ID,
+      clientSecretConfigurado: !!process.env.ITAU_API_CLIENT_SECRET,
+      certificadoConfigurado: !!(process.env.ITAU_API_CERT_PFX_BASE64 || process.env.ITAU_API_CERT_PFX_PATH),
+      certificadoSenhaConfigurada: !!process.env.ITAU_API_CERT_SENHA,
+    }
+  };
+}
+
+// Confirma (sem nunca expor os valores) se CNPJ/certificado digital ICP-Brasil
+// da API "Crédito Trabalhador" da Dataprev (GOV.BR) estão definidos no
+// ambiente do servidor. Usados por consultarConsignacoesEmpregadorGovBr em
+// app/admin/rh/actions/actions-consignado.ts (tela RH → Consignado).
+export async function statusGovBrConsignadoAction(): Promise<Resultado> {
+  return {
+    ok: true,
+    info: {
+      cnpjConfigurado: !!process.env.GOVBR_CONSIGNADO_CNPJ,
+      certificadoConfigurado: !!(process.env.GOVBR_CONSIGNADO_CERT_PFX_BASE64 || process.env.GOVBR_CONSIGNADO_CERT_PFX_PATH),
+      senhaConfigurado: !!process.env.GOVBR_CONSIGNADO_CERT_SENHA,
+      ambiente: (process.env.GOVBR_CONSIGNADO_AMBIENTE || 'homologacao').toLowerCase(),
+    }
+  };
+}
+
 export interface ConfigRoteamentoWhatsApp {
   modo: 'GLOBAL' | 'INDEPENDENTE';
   provedor_global: 'ZAPI' | 'META';

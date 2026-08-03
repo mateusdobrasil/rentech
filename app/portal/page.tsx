@@ -1,12 +1,11 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../lib/supabase';
-import { listarMeusDocumentosAction, urlMeuDocumentoAction, listarMeusHoleritesAction, urlMeuHoleriteAction } from './actions/actions-documentos';
-import { buscarMeuCrachaAction } from './actions/actions-cracha';
-import { podeDirigirAction } from './actions/actions-checklist-veiculo';
+import { urlMeuDocumentoAction, urlMeuHoleriteAction } from './actions/actions-documentos';
+import { carregarPortalHomeAction } from './actions/actions-home';
 import MeuCracha, { type DadosCracha } from './MeuCracha';
 import ChecklistVeiculo from './ChecklistVeiculo';
 
@@ -52,19 +51,28 @@ export default function PortalDashboardPage() {
 
   const carregar = async (token: string) => {
     setLoading(true);
-    const [docsRes, holeritesRes, crachaRes, dirigirRes] = await Promise.all([
-      listarMeusDocumentosAction(token),
-      listarMeusHoleritesAction(token),
-      buscarMeuCrachaAction(token),
-      podeDirigirAction(token),
-    ]);
-    if (docsRes.ok) setDocumentos(docsRes.info.documentos);
-    else setErro(docsRes.erro || 'Erro ao carregar documentos.');
-    if (holeritesRes.ok) setHolerites(holeritesRes.info.holerites);
-    if (crachaRes.ok) setCracha(crachaRes.info);
-    if (dirigirRes.ok) setPodeDirigir(dirigirRes.info.podeDirigir);
+    const res = await carregarPortalHomeAction(token);
+    if (res.ok) {
+      setDocumentos(res.info.documentos);
+      if (res.info.erroDocumentos) setErro(res.info.erroDocumentos);
+      setHolerites(res.info.holerites);
+      setCracha(res.info.cracha);
+      setPodeDirigir(res.info.podeDirigir);
+    } else {
+      setErro(res.erro || 'Erro ao carregar seus dados.');
+    }
     setLoading(false);
   };
+
+  // Compara só mês/dia (ignora o ano) com a data local do navegador — o
+  // aniversariante recebe a saudação o dia todo, sem depender de fuso do servidor.
+  const ehAniversarioHoje = useMemo(() => {
+    const dataNascimento = cracha?.dataNascimento;
+    if (!dataNascimento) return false;
+    const [, mesStr, diaStr] = dataNascimento.split('-');
+    const hoje = new Date();
+    return Number(mesStr) === hoje.getMonth() + 1 && Number(diaStr) === hoje.getDate();
+  }, [cracha?.dataNascimento]);
 
   const sair = async () => {
     await supabase.auth.signOut();
@@ -101,6 +109,14 @@ export default function PortalDashboardPage() {
           Sair
         </button>
       </div>
+
+      {ehAniversarioHoje && (
+        <div className="bg-gradient-to-r from-pink-500 via-fuchsia-500 to-amber-400 px-4 md:px-8 py-3 text-center shadow-sm">
+          <p className="text-white font-black text-sm md:text-base tracking-wide">
+            🎉🎈 Feliz Aniversário, {cracha?.nome?.split(' ')[0]}! Que Deus te abençoe muito! Muitas felicidades! 🎂🥳🎊
+          </p>
+        </div>
+      )}
 
       <div className="p-4 md:px-8 pt-6 max-w-[1200px] mx-auto w-full flex-grow flex flex-col lg:flex-row gap-6">
         {cracha && (

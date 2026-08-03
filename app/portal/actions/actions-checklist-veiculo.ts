@@ -26,7 +26,8 @@ interface ItemMarcado {
 // Confirma no servidor que o funcionário logado tem pode_dirigir = true —
 // chamada no início de toda ação que abre/fecha checklist, além do check de
 // visibilidade da aba feito em listarMeusChecklistsAction/podeDirigirAction.
-async function exigirPermissaoDirigir(db: ReturnType<typeof supabaseAdmin>, funcionarioNome: string): Promise<boolean> {
+// Exportada também pra carga combinada da home do Portal (actions-home.ts).
+export async function exigirPermissaoDirigir(db: ReturnType<typeof supabaseAdmin>, funcionarioNome: string): Promise<boolean> {
   const { data } = await db.from('folha_funcionarios').select('pode_dirigir').eq('nome_completo', funcionarioNome).maybeSingle();
   return !!data?.pode_dirigir;
 }

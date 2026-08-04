@@ -66,7 +66,9 @@ export function gerarHtmlEmailOP(op: any, comBotaoConfirmacao: boolean): string 
 
         <div style="background-color: #0C1D4D; padding: 20px; text-align: center; color: white;">
           <h2 style="margin: 0; font-size: 20px; letter-spacing: 1px; text-transform: uppercase;">Ordem de Pagamento</h2>
-          <p style="margin: 5px 0 0 0; color: #94A3B8; font-size: 13px;">Nº da OS: <strong>${escaparHtml(op.os_numero || 'S/N')}</strong></p>
+          <p style="margin: 5px 0 0 0; color: #94A3B8; font-size: 13px;">
+            ${op.numero_op ? `Nº da OP: <strong>${escaparHtml(op.numero_op)}</strong> &nbsp;|&nbsp; ` : ''}Nº da OS: <strong>${escaparHtml(op.os_numero || 'S/N')}</strong>
+          </p>
         </div>
 
         <div style="padding: 20px; border-bottom: 1px solid #E2E8F0;">
@@ -85,11 +87,31 @@ export function gerarHtmlEmailOP(op: any, comBotaoConfirmacao: boolean): string 
         </div>
 
         <div style="padding: 20px; border-bottom: 1px solid #E2E8F0; background-color: #F8FAFC;">
+          <h3 style="color: #336699; font-size: 14px; text-transform: uppercase; margin-top: 0; margin-bottom: 15px;">📁 Dados do Projeto / Evento</h3>
+          <table style="width: 100%; font-size: 13px; line-height: 1.5;">
+            <tr>
+              <td style="padding-bottom: 10px; width: 50%;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Cliente</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${escaparHtml(op.os_cliente || 'Não informado')}</span></td>
+              <td style="padding-bottom: 10px; width: 50%;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Evento</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${escaparHtml(op.os_evento || 'Não informado')}</span></td>
+            </tr>
+            <tr>
+              <td colspan="2" style="padding-bottom: 10px;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Período</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${escaparHtml(op.os_periodo || 'Não informado')}</span></td>
+            </tr>
+          </table>
+        </div>
+
+        <div style="padding: 20px; border-bottom: 1px solid #E2E8F0;">
           <h3 style="color: #336699; font-size: 14px; text-transform: uppercase; margin-top: 0; margin-bottom: 15px;">🏢 Dados do Favorecido</h3>
           <table style="width: 100%; font-size: 13px; line-height: 1.5;">
             <tr>
               <td style="padding-bottom: 10px; width: 50%;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Empresa / Nome</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${escaparHtml(op.empresa_recebedora)}</span></td>
               <td style="padding-bottom: 10px; width: 50%;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">CNPJ / CPF</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${escaparHtml(op.cnpj_cpf_recebedora || 'Não informado')}</span></td>
+            </tr>
+            <tr>
+              <td colspan="2" style="padding-bottom: 10px;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Endereço</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${escaparHtml(op.endereco_recebedora || 'Não informado')}</span></td>
+            </tr>
+            <tr>
+              <td style="padding-bottom: 10px; width: 50%;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">CPF do Signatário</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${escaparHtml(op.cpf_signatario || 'Não informado')}</span></td>
+              <td style="padding-bottom: 10px; width: 50%;"><strong style="color:#64748B; font-size: 10px; text-transform: uppercase;">Celular do Signatário</strong><br/><span style="color:#0C1D4D; font-weight: bold;">${escaparHtml(op.telefone_recebedora || 'Não informado')}</span></td>
             </tr>
           </table>
         </div>
@@ -123,6 +145,13 @@ export function gerarHtmlEmailOP(op: any, comBotaoConfirmacao: boolean): string 
           <div style="background-color: #F8FAFC; padding: 15px; border-radius: 8px; border: 1px solid #E2E8F0;">
             ${anexoHtml}
           </div>
+
+          ${op.observacao ? `
+          <div style="margin-top: 15px; background-color: #FEFCE8; padding: 15px; border-radius: 8px; border: 1px solid #FDE68A;">
+            <strong style="color:#92400E; font-size: 10px; text-transform: uppercase;">📝 Observações</strong><br/>
+            <span style="color:#78350F; font-size: 12px;">${escaparHtml(op.observacao)}</span>
+          </div>
+          ` : ''}
         </div>
 
         <div style="background-color: #E0F2FE; padding: 25px 20px; text-align: right; border-top: 2px solid #BAE6FD;">

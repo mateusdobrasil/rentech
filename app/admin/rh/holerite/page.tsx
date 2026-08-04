@@ -157,6 +157,12 @@ interface RegraContrato {
   direito_vt: boolean;
   modalidade_beneficio: 'POR_DIA' | 'VALOR_FECHADO';
   so_documental: boolean;
+  // Contrato com paga_salario_base=false pode ainda assim ter o salário pago
+  // por fora, pela contabilidade (ex.: CLT + BV) — essa flag é o sinal de
+  // verdade disso, usada por actions-assinatura.ts para somar o valor do
+  // holerite (lido por OCR) ao recibo. Não confundir com salario_folha, que é
+  // só um valor de referência para cálculo de hora, não um "recebe ou não".
+  recebe_holerite_contabilidade: boolean;
 }
 
 interface FuncionarioFin {
@@ -217,7 +223,8 @@ const REGRA_PADRAO: RegraContrato = {
   paga_salario_base: true, calcula_extras_padrao: true, percentual_extra_semana: 60,
   percentual_extra_sabado: 60, tipo_pagamento_fds: 'HORA_PERCENTUAL', percentual_extra_dom_fer: 100,
   valor_diaria_fds: 0, desconta_faltas: true,
-  direito_vr: false, direito_vt: false, modalidade_beneficio: 'POR_DIA', so_documental: false
+  direito_vr: false, direito_vt: false, modalidade_beneficio: 'POR_DIA', so_documental: false,
+  recebe_holerite_contabilidade: true
 };
 
 // ============================================================================
@@ -715,7 +722,8 @@ export default function HoleritePage() {
           valor_diaria_fds: r.valor_diaria_fds ?? 0, desconta_faltas: r.desconta_faltas,
           direito_vr: r.direito_vr ?? false, direito_vt: r.direito_vt ?? false,
           modalidade_beneficio: r.modalidade_beneficio || 'POR_DIA',
-          so_documental: r.so_documental ?? false
+          so_documental: r.so_documental ?? false,
+          recebe_holerite_contabilidade: r.recebe_holerite_contabilidade ?? true
         };
       });
       setRegrasContrato(mapaRegras);

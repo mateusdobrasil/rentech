@@ -148,18 +148,28 @@ async function buscarValorOcrPagamento(
 }
 
 // Quando o contrato tem "paga_salario_base" desligado (o parâmetro "Exibir
-// Salário Base no Holerite?" em /admin/rh/parametros) e o funcionário tem
-// Salário Folha > 0, o salário base NÃO entra no cálculo da nossa folha
-// (montarDadosHolerite zera salarioBaseExibido) — ele é pago à parte, pelo
-// holerite da contabilidade. Nesse caso o funcionário recebe os DOIS
-// pagamentos, então o recibo (que é a quitação de tudo) precisa somar
-// valorLiquidoReceber (só os extras/benefícios calculados por nós) com o
-// valor real do holerite de pagamento, lido do OCR (valorOcrPagamento).
-function calcularValorRecibo(dados: any, salarioFolha: number | null | undefined, valorOcrPagamento: number | null): number {
+// Salário Base no Holerite?" em /admin/rh/parametros), o salário base NÃO
+// entra no cálculo da nossa folha (montarDadosHolerite zera salarioBaseExibido)
+// — ele é pago à parte, pelo holerite da contabilidade. O sinal de verdade de
+// que o contrato de fato recebe esse holerite externo é a flag dedicada
+// `recebe_holerite_contabilidade` da regra (mesma usada em SepararHolerites.tsx
+// para decidir quem entra no fluxo de importação de holerites da contabilidade)
+// — NÃO o campo salario_folha do funcionário, que é só um valor de referência
+// para cálculo de hora extra/faltas e pode legitimamente estar zerado (ex.:
+// funcionário cadastrado sem esse campo preenchido), o que antes fazia o
+// gatilho falhar silenciosamente e o recibo sair sem o valor pago pela
+// contabilidade.
+function precisaHoleriteContabilidade(dados: any): boolean {
+  return dados?.regra?.paga_salario_base === false && dados?.regra?.recebe_holerite_contabilidade !== false;
+}
+
+// Nesse caso o funcionário recebe os DOIS pagamentos, então o recibo (que é a
+// quitação de tudo) precisa somar valorLiquidoReceber (só os extras/benefícios
+// calculados por nós) com o valor real do holerite de pagamento, lido do OCR
+// (valorOcrPagamento).
+function calcularValorRecibo(dados: any, valorOcrPagamento: number | null): number {
   const base = dados?.valorLiquidoReceber || 0;
-  const pagaSalarioBase = dados?.regra?.paga_salario_base;
-  const gatilhoDoisPagamentos = pagaSalarioBase === false && (salarioFolha || 0) > 0;
-  const complementoHoleriteContabil = gatilhoDoisPagamentos ? (valorOcrPagamento || 0) : 0;
+  const complementoHoleriteContabil = precisaHoleriteContabilidade(dados) ? (valorOcrPagamento || 0) : 0;
   return base + complementoHoleriteContabil;
 }
 
@@ -354,7 +364,7 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     // 2) Busca dados pessoais (CPF, celular, e-mail) da ficha
     const { data: func } = await db
       .from('folha_funcionarios')
-      .select('cpf, celular, email, data_admissao, data_desligamento, pix_chave, banco_conta, salario_folha')
+      .select('cpf, celular, email, data_admissao, data_desligamento, pix_chave, banco_conta')
       .eq('nome_completo', funcionarioNome)
       .maybeSingle();
 
@@ -362,9 +372,7 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     // o recibo precisa do valor real desse pagamento, lido do OCR. Contratos
     // só documentais usam esse mesmo OCR como o próprio valor do recibo —
     // não há folha calculada pra somar.
-    const gatilhoDoisPagamentos = !soDocumental
-      && fechamento?.dados?.regra?.paga_salario_base === false
-      && (func?.salario_folha || 0) > 0;
+    const gatilhoDoisPagamentos = !soDocumental && precisaHoleriteContabilidade(fechamento?.dados);
     const valorOcrPagamento = (gatilhoDoisPagamentos || soDocumental)
       ? await buscarValorOcrPagamento(db, funcionarioNome, mesReferencia)
       : null;
@@ -381,7 +389,7 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     // documental usa o valor lido do holerite OCR da contabilidade
     // (valorManual só entra se vier explícito, como ajuste pontual).
     const valorRecibo = !soDocumental
-      ? calcularValorRecibo(fechamento?.dados, func?.salario_folha, valorOcrPagamento)
+      ? calcularValorRecibo(fechamento?.dados, valorOcrPagamento)
       : (valorManual ?? valorOcrPagamento ?? 0);
     const detalhamentoRecibo = montarDetalhamentoRecibo(
       soDocumental, fechamento?.dados?.valorLiquidoReceber || 0, gatilhoDoisPagamentos, valorOcrPagamento, valorManual
@@ -628,13 +636,11 @@ export async function previaDocumentoAssinaturaAction(payload: {
 
     const { data: func } = await db
       .from('folha_funcionarios')
-      .select('cpf, data_admissao, data_desligamento, pix_chave, banco_conta, salario_folha')
+      .select('cpf, data_admissao, data_desligamento, pix_chave, banco_conta')
       .eq('nome_completo', funcionarioNome)
       .maybeSingle();
 
-    const gatilhoDoisPagamentos = !soDocumental
-      && dados?.regra?.paga_salario_base === false
-      && (func?.salario_folha || 0) > 0;
+    const gatilhoDoisPagamentos = !soDocumental && precisaHoleriteContabilidade(dados);
     const valorOcrPagamento = (gatilhoDoisPagamentos || soDocumental)
       ? await buscarValorOcrPagamento(db, funcionarioNome, mesReferencia)
       : null;
@@ -646,7 +652,7 @@ export async function previaDocumentoAssinaturaAction(payload: {
     }
 
     const valorRecibo = !soDocumental
-      ? calcularValorRecibo(dados, func?.salario_folha, valorOcrPagamento)
+      ? calcularValorRecibo(dados, valorOcrPagamento)
       : (valorManual ?? valorOcrPagamento ?? 0);
     const detalhamentoRecibo = montarDetalhamentoRecibo(
       soDocumental, dados?.valorLiquidoReceber || 0, gatilhoDoisPagamentos, valorOcrPagamento, valorManual

@@ -24,6 +24,16 @@ export interface GerarReciboPdfParams {
   formaPagamento: string; // 'PIX' | 'Transferência bancária' | 'A combinar'
   feriados?: string[]; // feriados do mês de pagamento, para calcular o 5º dia útil
   empresaNome?: string;
+  // Discrimina de onde vem o "VALOR RECEBIDO" (ex.: salário líquido calculado
+  // pela Rentech + holerite pago à parte pela contabilidade) — soma sempre
+  // igual a `valor`. Puramente informativo/transparência.
+  detalhamento?: { descricao: string; valor: number }[];
+  // Benefícios fixos ativos do funcionário referentes ao MÊS SEGUINTE à
+  // competência do holerite (ex.: holerite de julho → benefício de agosto,
+  // já que é creditado em cartão/plano para o mês que está por vir). Só
+  // informativo: NÃO entra na soma de `valor` nem na declaração de quitação.
+  beneficios?: { tipo: string; meio: string; valor: number }[];
+  mesReferenciaBeneficio?: string; // competência 'AAAA-MM' dos benefícios acima
 }
 
 const BRL = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -152,7 +162,19 @@ export async function gerarReciboPdf(p: GerarReciboPdfParams): Promise<Uint8Arra
   txtRight(BRL(p.valor), width - M - 8, y - 15, 14, bold, rgb(1, 1, 1));
   y -= 30;
   txt(extenso(p.valor), M + 2, y, 8, font, cinza);
-  y -= 30;
+  y -= 24;
+
+  // ===== Composição do valor (de onde vem o total acima) =====
+  if (p.detalhamento && p.detalhamento.length > 0) {
+    txt('COMPOSIÇÃO DO VALOR', M, y, 7.5, bold, cinza);
+    y -= 13;
+    p.detalhamento.forEach((item) => {
+      txt(item.descricao, M + 4, y, 8.5, font, preto);
+      txtRight(BRL(item.valor), width - M - 4, y, 8.5, bold, preto);
+      y -= 13;
+    });
+    y -= 10;
+  }
 
   // ===== Declaração =====
   const declaracao =
@@ -179,7 +201,24 @@ export async function gerarReciboPdf(p: GerarReciboPdfParams): Promise<Uint8Arra
     txtRight(valor, width - M - 8, yy - 7, 9, bold, preto);
   });
   const botDet = topDet - detalhes.length * linhaAltura + 5;
-  y = botDet - 40;
+  y = botDet - 24;
+
+  // ===== Benefícios do mês seguinte (informativo — fora da soma acima) =====
+  if (p.beneficios && p.beneficios.length > 0) {
+    const tituloBenef = p.mesReferenciaBeneficio
+      ? `BENEFÍCIOS — COMPETÊNCIA ${mesAnoBR(p.mesReferenciaBeneficio)}`
+      : 'BENEFÍCIOS';
+    txt(tituloBenef, M, y, 9, bold, azul);
+    y -= 12;
+    txt('Creditados para o mês seguinte (cartão/plano); não compõem o valor declarado acima.', M, y, 7, font, cinza);
+    y -= 14;
+    p.beneficios.forEach((b) => {
+      txt(`${b.tipo}${b.meio ? ` (${b.meio})` : ''}`, M + 4, y, 8.5, font, preto);
+      txtRight(BRL(b.valor), width - M - 4, y, 8.5, bold, preto);
+      y -= 13;
+    });
+    y -= 10;
+  }
 
   // ===== Assinatura =====
   const xSig = M + 60;

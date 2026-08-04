@@ -12,6 +12,7 @@ import { gerarHoleritePdf } from '../../../lib/gerarHoleritePdf';
 import { gerarEspelhoPontoPdf, RegistroPontoDia } from '../../../lib/gerarEspelhoPontoPdf';
 import { gerarReciboPdf } from '../../../lib/gerarReciboPdf';
 import { mergePdfs } from '../../../lib/mergePdf';
+import { calcularBeneficiosMes } from './actions-beneficios';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -162,6 +163,54 @@ function calcularValorRecibo(dados: any, salarioFolha: number | null | undefined
   return base + complementoHoleriteContabil;
 }
 
+// Discrimina de onde vem o valor total do recibo (soma sempre = calcularValorRecibo
+// acima) — puramente para transparência no PDF, não afeta o cálculo em si.
+function montarDetalhamentoRecibo(
+  soDocumental: boolean | undefined,
+  valorLiquidoReceber: number,
+  gatilhoDoisPagamentos: boolean,
+  valorOcrPagamento: number | null,
+  valorManual: number | undefined
+): { descricao: string; valor: number }[] {
+  if (soDocumental) {
+    return [{
+      descricao: valorManual !== undefined ? 'Valor informado manualmente' : 'Holerite pago pela contabilidade',
+      valor: valorManual ?? valorOcrPagamento ?? 0
+    }];
+  }
+  const itens = [{ descricao: 'Salário líquido — Holerite Rentech', valor: valorLiquidoReceber || 0 }];
+  if (gatilhoDoisPagamentos) {
+    itens.push({ descricao: 'Holerite pago pela contabilidade', valor: valorOcrPagamento || 0 });
+  }
+  return itens;
+}
+
+// Competência do mês seguinte — mesma regra de "pagamento sai no mês
+// seguinte" usada em todo o módulo de folha (ver calcularDataPagamento em
+// gerarReciboPdf.ts). Benefícios fixos (VA, plano de saúde etc.) são
+// creditados para o mês que está por vir, não para o mês trabalhado.
+function mesSeguinte(mesReferencia: string): string {
+  const [ano, mes] = mesReferencia.split('-').map(Number);
+  const anoSeg = mes === 12 ? ano + 1 : ano;
+  const mesSeg = mes === 12 ? 1 : mes + 1;
+  return `${anoSeg}-${String(mesSeg).padStart(2, '0')}`;
+}
+
+// Benefícios fixos ativos do funcionário referentes ao mês SEGUINTE à
+// competência do holerite sendo fechado — ver mesSeguinte() acima.
+async function buscarBeneficiosMesSeguinte(
+  db: ReturnType<typeof supabaseAdmin>,
+  funcionarioNome: string,
+  mesReferencia: string
+): Promise<{ itens: { tipo: string; meio: string; valor: number }[]; mesReferenciaBeneficio: string }> {
+  const mesReferenciaBeneficio = mesSeguinte(mesReferencia);
+  const { itens } = await calcularBeneficiosMes(db, mesReferenciaBeneficio);
+  const doFuncionario = itens
+    .filter(it => it.funcionario_nome === funcionarioNome)
+    .map(it => ({ tipo: it.tipo, meio: it.meio, valor: it.valorMes }));
+  return { itens: doFuncionario, mesReferenciaBeneficio };
+}
+
 // Recibo de pagamento — vai como o ÚLTIMO arquivo do pacote de assinatura de
 // TODOS os colaboradores (com ou sem folha calculada). Quem tem folha usa o
 // valorLiquidoReceber do snapshot fechado (mais o salário folha, se pago à
@@ -174,9 +223,13 @@ async function gerarReciboBytes(
   cpf: string | null,
   mesReferencia: string,
   valor: number,
-  formaPagamento: string
+  formaPagamento: string,
+  detalhamento: { descricao: string; valor: number }[]
 ): Promise<Uint8Array> {
-  const { data: fData } = await db.from('folha_feriados').select('data_feriado');
+  const [{ data: fData }, { itens: beneficios, mesReferenciaBeneficio }] = await Promise.all([
+    db.from('folha_feriados').select('data_feriado'),
+    buscarBeneficiosMesSeguinte(db, funcionarioNome, mesReferencia)
+  ]);
   return gerarReciboPdf({
     nome: funcionarioNome,
     cpf,
@@ -184,7 +237,10 @@ async function gerarReciboBytes(
     valor,
     formaPagamento,
     feriados: (fData || []).map((f: any) => f.data_feriado),
-    empresaNome: 'RENTECH'
+    empresaNome: 'RENTECH',
+    detalhamento,
+    beneficios,
+    mesReferenciaBeneficio
   });
 }
 
@@ -327,6 +383,9 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     const valorRecibo = !soDocumental
       ? calcularValorRecibo(fechamento?.dados, func?.salario_folha, valorOcrPagamento)
       : (valorManual ?? valorOcrPagamento ?? 0);
+    const detalhamentoRecibo = montarDetalhamentoRecibo(
+      soDocumental, fechamento?.dados?.valorLiquidoReceber || 0, gatilhoDoisPagamentos, valorOcrPagamento, valorManual
+    );
 
     const cpfLimpo = (func?.cpf || '').replace(/\D/g, '');
     if (cpfLimpo.length !== 11) {
@@ -377,7 +436,7 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     // 4d) Recibo de pagamento — sempre o ÚLTIMO arquivo do pacote.
     const formaPagamento = deduzirFormaPagamento(func);
     const reciboBytes = await gerarReciboBytes(
-      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento
+      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento, detalhamentoRecibo
     );
 
     // Ordem: nosso resumo (se houver) → espelho de ponto → adiantamento → holerite mensal → recibo.
@@ -589,6 +648,9 @@ export async function previaDocumentoAssinaturaAction(payload: {
     const valorRecibo = !soDocumental
       ? calcularValorRecibo(dados, func?.salario_folha, valorOcrPagamento)
       : (valorManual ?? valorOcrPagamento ?? 0);
+    const detalhamentoRecibo = montarDetalhamentoRecibo(
+      soDocumental, dados?.valorLiquidoReceber || 0, gatilhoDoisPagamentos, valorOcrPagamento, valorManual
+    );
 
     const resumoBytes = (!soDocumental && dados) ? await gerarHoleritePdf({
       nome: funcionarioNome,
@@ -609,7 +671,7 @@ export async function previaDocumentoAssinaturaAction(payload: {
 
     const formaPagamento = deduzirFormaPagamento(func);
     const reciboBytes = await gerarReciboBytes(
-      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento
+      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento, detalhamentoRecibo
     );
 
     const partes = [resumoBytes, espelhoBytes, adiantamento, holeriteMensal, reciboBytes].filter((p): p is Uint8Array => !!p);

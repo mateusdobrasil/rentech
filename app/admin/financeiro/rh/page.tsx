@@ -97,6 +97,7 @@ export default function FinanceiroPage() {
   // Gerar Lote pra não criar um lote duplicado sem querer.
   const [loteReaberto, setLoteReaberto] = useState<{ id: number; nome: string } | null>(null);
   const [abrindoLote, setAbrindoLote] = useState<number | null>(null);
+  const [enviandoLoteId, setEnviandoLoteId] = useState<number | null>(null);
 
   // Separação dos holerites da contabilidade — mesma tela usada em
   // /admin/rh/ponto (componente compartilhado), pra RH e Financeiro poderem
@@ -620,8 +621,20 @@ export default function FinanceiroPage() {
   };
 
   const enviarLote = async (loteId: number) => {
-    const res = await enviarLoteAoBancoAction({ loteId });
-    alert(res.erro || (res.ok ? 'Enviado.' : 'Não foi possível enviar.'));
+    if (!confirm(`Enviar os pagamentos PIX deste lote via API do Itaú, com data de pagamento ${dataPagamento.split('-').reverse().join('/')}?\n\nIsso move dinheiro de verdade (ou do sandbox, conforme o Ambiente configurado em Integrações). TED e outras formas não são enviadas por aqui — continue exportando o CNAB para elas.`)) return;
+    setEnviandoLoteId(loteId);
+    try {
+      const res = await enviarLoteAoBancoAction({ loteId, dataPagamento, usuarioNome: usuarioAtual });
+      if (res.info) {
+        const { sucesso, rejeitado, comErro, total } = res.info;
+        alert(`Envio concluído: ${sucesso}/${total} pagos, ${rejeitado} rejeitados pelo banco, ${comErro} com erro.` + (res.erro ? `\n\n${res.erro}` : ''));
+      } else {
+        alert(res.erro || (res.ok ? 'Enviado.' : 'Não foi possível enviar.'));
+      }
+      carregar();
+    } finally {
+      setEnviandoLoteId(null);
+    }
   };
 
   const alternarAtivoLote = async (lote: Lote) => {
@@ -986,7 +999,9 @@ export default function FinanceiroPage() {
                           <button onClick={() => abrirLoteParaExportar(l)} disabled={abrindoLote === l.id} className="text-[10px] font-black text-emerald-700 bg-white border border-emerald-600 hover:bg-emerald-600 hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors disabled:opacity-50">
                             {abrindoLote === l.id ? '⏳ Abrindo...' : '📤 Abrir p/ Exportar'}
                           </button>
-                          <button onClick={() => enviarLote(l.id)} disabled={l.ativo === false} className="text-[10px] font-black text-[#0C1D4D] bg-white border border-[#0C1D4D] hover:bg-[#0C1D4D] hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:text-[#0C1D4D]">↗ Enviar ao banco</button>
+                          <button onClick={() => enviarLote(l.id)} disabled={l.ativo === false || enviandoLoteId === l.id} className="text-[10px] font-black text-[#0C1D4D] bg-white border border-[#0C1D4D] hover:bg-[#0C1D4D] hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:text-[#0C1D4D]">
+                            {enviandoLoteId === l.id ? '⏳ Enviando...' : '↗ Enviar ao banco'}
+                          </button>
                           {l.ativo === false ? (
                             <button onClick={() => alternarAtivoLote(l)} className="text-[10px] font-black text-emerald-700 bg-white border border-emerald-600 hover:bg-emerald-600 hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors">✓ Reativar</button>
                           ) : (

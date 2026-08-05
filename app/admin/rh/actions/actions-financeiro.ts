@@ -3,15 +3,15 @@
 // app/admin/rh/actions/actions-financeiro.ts
 // Montagem de lotes de pagamento a partir da folha (fechamento, adiantamento,
 // pagamento e benefícios), leitura de comprovantes via OCR (AWS Textract) e
-// histórico de lotes. O envio real ao banco é um ponto de plugagem (stub) —
-// exige credenciais/certificado em variáveis de ambiente e homologação, que
-// entram numa fase posterior. Cadastro de parceiros/bancos vive em
-// app/admin/integracao/actions.ts (tela Integrações).
+// histórico de lotes. Envio real ao banco (enviarLoteAoBancoAction) cobre só
+// Itaú/PIX via API SISPAG hoje — ver app/lib/itauSispag.ts. Cadastro de
+// parceiros/bancos vive em app/admin/integracao/actions.ts (tela Integrações).
 import { supabaseAdmin } from '../../../lib/supabase';
 import { calcularBeneficiosMes } from './actions-beneficios';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
 import { extrairTextoPdf } from '../../../lib/textract';
 import { registrarLogAuditoria } from '../../../actions';
+import { enviarPixPorChave, credenciaisItauConfiguradas, type PagadorSispag } from '../../../lib/itauSispag';
 
 type Resultado = {
   ok: boolean;
@@ -399,28 +399,119 @@ export async function alternarAtivoLoteAction(payload: {
 }
 
 // ============================================================================
-// ENVIAR LOTE AO BANCO — PONTO DE PLUGAGEM (stub).
+// ENVIAR LOTE AO BANCO — hoje cobre só Itaú, e só os itens em PIX: a API
+// SISPAG (Cash Management) só aceita inclusão de pagamento via Pix por
+// chave — TED e demais formas continuam exigindo o arquivo CNAB manual
+// (exportarCnabContaCorrenteTed no front). Idempotente: itens já com
+// api_status de sucesso são pulados numa nova tentativa, pra nunca pagar em
+// dobro se o usuário clicar de novo após um envio parcial.
 // ============================================================================
-export async function enviarLoteAoBancoAction(payload: { loteId: number }): Promise<Resultado> {
+const STATUS_PIX_SUCESSO = ['Sucesso', 'Sucesso (pre-autorizado)'];
+
+export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPagamento: string; usuarioNome: string }): Promise<Resultado> {
   const db = supabaseAdmin();
   try {
-    const { data: lote } = await db.from('folha_lotes_pagamento')
-      .select('parceiro, status').eq('id', payload.loteId).maybeSingle();
+    const { data: lote, error: loteErr } = await db.from('folha_lotes_pagamento')
+      .select('id, parceiro, mes_referencia, tipo_lote, itens').eq('id', payload.loteId).maybeSingle();
+    if (loteErr) throw new Error(loteErr.message);
     if (!lote) return { ok: false, erro: 'Lote não encontrado.' };
 
-    const { data: integ } = await db.from('folha_integracoes')
-      .select('ativo, ambiente').eq('parceiro', lote.parceiro).maybeSingle();
-
-    if (!integ?.ativo) {
+    if (lote.parceiro !== 'ITAU') {
       return {
         ok: false,
-        erro: `A integração com ${lote.parceiro} ainda não está ativa. Configure as credenciais (certificado e OAuth) no servidor e ative a integração antes de enviar. O lote está salvo e pode ser exportado.`
+        erro: `Envio direto à API ainda não implementado para ${lote.parceiro}. Use a exportação do lote.`
       };
     }
 
+    const { data: integ } = await db.from('folha_integracoes')
+      .select('ativo, ambiente, config').eq('parceiro', 'ITAU').maybeSingle();
+    if (!integ?.ativo) {
+      return { ok: false, erro: 'A integração com o Itaú ainda não está ativa. Ative em Integrações → ⚙ Configurar antes de enviar. O lote está salvo e pode ser exportado.' };
+    }
+    const ambienteItau: 'SANDBOX' | 'PRODUCAO' = integ.ambiente === 'PRODUCAO' ? 'PRODUCAO' : 'SANDBOX';
+    if (!credenciaisItauConfiguradas(ambienteItau)) {
+      return { ok: false, erro: `Credenciais da API do Itaú não configuradas no servidor para o ambiente ${ambienteItau} (ver Integrações → ⚙ Configurar Itaú). O lote está salvo e pode ser exportado.` };
+    }
+
+    const cfg = integ.config || {};
+    const camposFaltando = (['cnpj', 'agencia_debito', 'conta_debito'] as const).filter(c => !String(cfg[c] || '').trim());
+    if (camposFaltando.length > 0) {
+      return { ok: false, erro: `Configure primeiro (Integrações → ⚙ Configurar Itaú): ${camposFaltando.join(', ')}.` };
+    }
+
+    const limpaNum = (s: string) => String(s || '').replace(/\D/g, '');
+    // pagador.conta é a conta + dígito verificador CONCATENADOS numa string
+    // só (confirmado na Especificação Técnica) — não em campos separados.
+    const [contaBase, dacBase] = String(cfg.conta_debito || '').split('-');
+    const pagador: PagadorSispag = {
+      tipo_conta: 'CC',
+      agencia: limpaNum(cfg.agencia_debito),
+      conta: limpaNum(contaBase) + limpaNum(dacBase || ''),
+      tipo_pessoa: 'J',
+      documento: limpaNum(cfg.cnpj),
+      // A Especificação Técnica só lista "Fornecedores" como domínio válido
+      // de ENTRADA para o POST /transferencias — ajustável via
+      // config.modulo_sispag se o Itaú orientar diferente pro cadastro.
+      modulo_sispag: cfg.modulo_sispag === 'Diversos' ? 'Diversos' : 'Fornecedores',
+    };
+
+    const itens: any[] = Array.isArray(lote.itens) ? lote.itens : [];
+    const pendentes = itens.filter(i => i.pronto && i.metodo === 'PIX' && !STATUS_PIX_SUCESSO.includes(i.api_status));
+    if (pendentes.length === 0) {
+      return { ok: false, erro: 'Nenhum pagamento pendente de envio via PIX neste lote (já enviados com sucesso, ou sem chave PIX cadastrada).' };
+    }
+
+    let sucesso = 0, rejeitado = 0, comErro = 0;
+    for (const item of pendentes) {
+      if (!item.pix_chave) {
+        item.api_status = 'Erro'; item.api_erro = 'Sem chave PIX cadastrada.'; item.api_enviado_em = new Date().toISOString();
+        comErro++;
+        continue;
+      }
+
+      const resultado = await enviarPixPorChave({
+        ambiente: ambienteItau,
+        valor_pagamento: Number(item.valor || 0),
+        // Data pura "yyyy-MM-dd" — confirmado na Especificação Técnica
+        // (tamanho 10, exemplos sem horário). dataPagamento já vem nesse
+        // formato do <input type="date"> no front.
+        data_pagamento: payload.dataPagamento,
+        chave: item.pix_chave,
+        referencia_empresa: `FOLHA ${lote.mes_referencia}`.slice(0, 20),
+        identificacao_comprovante: `Pagamento - ${item.funcionario_nome}`.slice(0, 100),
+        informacoes_entre_usuarios: `Pagamento de ${item.fonte_rotulo || 'folha'} - ${lote.mes_referencia}`,
+        pagador,
+      });
+
+      item.api_enviado_em = new Date().toISOString();
+      if (resultado.erro) {
+        item.api_status = 'Erro'; item.api_erro = resultado.erro;
+        comErro++;
+      } else {
+        item.api_status = resultado.statusPagamento || null;
+        item.api_cod_pagamento = resultado.codPagamento || null;
+        item.api_numero_lote = resultado.numeroLote || null;
+        item.api_motivo_recusa = resultado.motivoRecusa || null;
+        if (STATUS_PIX_SUCESSO.includes(resultado.statusPagamento || '')) sucesso++;
+        else rejeitado++;
+      }
+    }
+
+    const novoStatus = sucesso > 0 ? 'ENVIADO' : 'ERRO';
+    const { error: updErr } = await db.from('folha_lotes_pagamento')
+      .update({ itens, status: novoStatus }).eq('id', payload.loteId);
+    if (updErr) throw new Error(updErr.message);
+
+    await registrarLogAuditoria({
+      usuario_nome: payload.usuarioNome,
+      acao: `ENVIO DE LOTE PIX AO ITAÚ (LOTE #${payload.loteId}, ${lote.mes_referencia}): ${sucesso} enviados, ${rejeitado} rejeitados, ${comErro} com erro`,
+      setor: 'FINANCEIRO / RH'
+    });
+
     return {
-      ok: false,
-      erro: 'Envio direto à API do banco ainda não implementado nesta versão. Use a exportação do lote (CNAB/planilha) para processar no internet banking, ou aguarde a ativação da API homologada.'
+      ok: sucesso > 0,
+      erro: sucesso === 0 ? 'Nenhum pagamento foi enviado com sucesso — veja os detalhes por funcionário.' : undefined,
+      info: { sucesso, rejeitado, comErro, total: pendentes.length }
     };
   } catch (e: any) {
     return { ok: false, erro: e.message };

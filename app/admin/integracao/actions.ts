@@ -89,19 +89,32 @@ export async function statusMetaAction(): Promise<Resultado> {
   };
 }
 
-// Confirma (sem nunca expor os valores) se as credenciais da API de
-// Pagamentos do Itaú (OAuth client_credentials + mTLS) estão definidas no
-// ambiente do servidor. Hoje nada as consome ainda — o fluxo real segue
-// manual via arquivo SISPAG (RH → Financeiro) — isto só prepara o terreno
-// para quando a chamada de API for implementada.
+// Confirma (sem nunca expor os valores) se as credenciais da API SISPAG
+// (Cash Management) do Itaú estão definidas no ambiente do servidor: OAuth2
+// + header x-itau-apikey (= o próprio client_id, sem segredo à parte) + mTLS
+// (certificado cliente obtido via credenciamento próprio — ver
+// solicitarCertificadoItau em app/lib/itauSispag.ts). Sandbox e produção são
+// apps diferentes no portal do Itaú (client_id/secret/certificado próprios
+// de cada um — testado empiricamente que um certificado de um ambiente não
+// funciona com o token do outro), por isso todo o status é por ambiente.
+// Consumida por app/lib/itauSispag.ts, chamada em enviarLoteAoBancoAction
+// (app/admin/rh/actions/actions-financeiro.ts).
 export async function statusItauApiAction(): Promise<Resultado> {
   return {
     ok: true,
     info: {
-      clientIdConfigurado: !!process.env.ITAU_API_CLIENT_ID,
-      clientSecretConfigurado: !!process.env.ITAU_API_CLIENT_SECRET,
-      certificadoConfigurado: !!(process.env.ITAU_API_CERT_PFX_BASE64 || process.env.ITAU_API_CERT_PFX_PATH),
-      certificadoSenhaConfigurada: !!process.env.ITAU_API_CERT_SENHA,
+      sandbox: {
+        clientIdConfigurado: !!process.env.ITAU_API_CLIENT_ID_SANDBOX,
+        clientSecretConfigurado: !!process.env.ITAU_API_CLIENT_SECRET_SANDBOX,
+        certificadoConfigurado: !!(process.env.ITAU_API_CERT_PEM_BASE64_SANDBOX || process.env.ITAU_API_CERT_PEM_PATH_SANDBOX),
+        chaveConfigurada: !!(process.env.ITAU_API_CERT_KEY_BASE64_SANDBOX || process.env.ITAU_API_CERT_KEY_PATH_SANDBOX),
+      },
+      producao: {
+        clientIdConfigurado: !!process.env.ITAU_API_CLIENT_ID_PRODUCAO,
+        clientSecretConfigurado: !!process.env.ITAU_API_CLIENT_SECRET_PRODUCAO,
+        certificadoConfigurado: !!(process.env.ITAU_API_CERT_PEM_BASE64_PRODUCAO || process.env.ITAU_API_CERT_PEM_PATH_PRODUCAO),
+        chaveConfigurada: !!(process.env.ITAU_API_CERT_KEY_BASE64_PRODUCAO || process.env.ITAU_API_CERT_KEY_PATH_PRODUCAO),
+      },
     }
   };
 }

@@ -48,8 +48,12 @@ interface EstatisticasZapi {
 interface StatusMeta {
   tokenConfigurado: boolean; phoneNumberIdConfigurado: boolean; appSecretConfigurado: boolean; verifyTokenConfigurado: boolean;
 }
+interface StatusItauApiAmbiente {
+  clientIdConfigurado: boolean; clientSecretConfigurado: boolean;
+  certificadoConfigurado: boolean; chaveConfigurada: boolean;
+}
 interface StatusItauApi {
-  clientIdConfigurado: boolean; clientSecretConfigurado: boolean; certificadoConfigurado: boolean; certificadoSenhaConfigurada: boolean;
+  sandbox: StatusItauApiAmbiente; producao: StatusItauApiAmbiente;
 }
 interface StatusGovBrConsignado {
   cnpjConfigurado: boolean; certificadoConfigurado: boolean; senhaConfigurado: boolean; ambiente: string;
@@ -378,15 +382,24 @@ export default function IntegracaoPage() {
 
               {i.parceiro === 'ITAU' && (
                 <div className="mb-3 pb-3 border-b border-gray-100 space-y-2">
-                  <span className="inline-block text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-blue-100 text-blue-700">📄 Arquivo manual (SISPAG)</span>
+                  <span className="inline-block text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-emerald-100 text-emerald-700">🔌 API SISPAG (PIX)</span>
                   <p className="text-[10px] text-gray-400 font-semibold mt-1.5 leading-snug">
-                    Hoje: geração de arquivos SISPAG (CNAB240) em RH → Financeiro — PIX e Conta/TED, envio manual pelo Itaú Empresas.
+                    Envio de PIX da folha direto via API (Cash Management/SISPAG). TED e demais formas continuam pelo arquivo CNAB240 manual em RH → Financeiro.
                   </p>
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] text-gray-500 font-bold uppercase">Credenciais API (pendente)</span>
-                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusItauApi && statusItauApi.clientIdConfigurado && statusItauApi.clientSecretConfigurado && statusItauApi.certificadoConfigurado && statusItauApi.certificadoSenhaConfigurada ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                      {!statusItauApi ? '…' : (statusItauApi.clientIdConfigurado && statusItauApi.clientSecretConfigurado && statusItauApi.certificadoConfigurado && statusItauApi.certificadoSenhaConfigurada) ? '✓ Configuradas' : '✕ Não configuradas'}
-                    </span>
+                    <span className="text-[10px] text-gray-500 font-bold uppercase">Credenciais {i.ambiente === 'PRODUCAO' ? 'Produção (OAuth + mTLS)' : 'Sandbox (OAuth)'}</span>
+                    {(() => {
+                      const amb = i.ambiente === 'PRODUCAO' ? statusItauApi?.producao : statusItauApi?.sandbox;
+                      // mTLS só é exigido em produção — sandbox funciona só com OAuth.
+                      const ok = i.ambiente === 'PRODUCAO'
+                        ? !!(amb?.clientIdConfigurado && amb?.clientSecretConfigurado && amb?.certificadoConfigurado && amb?.chaveConfigurada)
+                        : !!(amb?.clientIdConfigurado && amb?.clientSecretConfigurado);
+                      return (
+                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${ok ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                          {!statusItauApi ? '…' : ok ? '✓ Configuradas' : '✕ Não configuradas'}
+                        </span>
+                      );
+                    })()}
                   </div>
                 </div>
               )}
@@ -768,44 +781,60 @@ export default function IntegracaoPage() {
               {editParceiro.tipo === 'BANCO' && (
                 <div className="space-y-3">
                   {editParceiro.parceiro === 'ITAU' && (
-                    <div className="p-3 bg-blue-50 rounded-xl space-y-1">
-                      <span className="inline-block text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-blue-100 text-blue-700">📄 Arquivo manual (SISPAG)</span>
-                      <p className="text-[10px] text-blue-800 font-semibold leading-snug">
-                        Modo atual: geração de arquivo SISPAG (CNAB240) em RH → Financeiro, com envio manual pelo
-                        Itaú Empresas. Integração via API está planejada para uma fase futura.
+                    <div className="p-3 bg-emerald-50 rounded-xl space-y-1">
+                      <span className="inline-block text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-emerald-100 text-emerald-700">🔌 API SISPAG (PIX)</span>
+                      <p className="text-[10px] text-emerald-900 font-semibold leading-snug">
+                        Pagamentos via PIX (chave) são enviados direto pela API Cash Management/SISPAG do Itaú, disparado pelo botão
+                        "↗ Enviar ao banco" no histórico de lotes. TED e demais formas continuam pelo arquivo CNAB240 manual.
                       </p>
                     </div>
                   )}
 
                   {editParceiro.parceiro === 'ITAU' && (
-                    <div className="p-3 bg-[#F8FAFC] rounded-xl space-y-2">
-                      <p className="text-[10px] font-black text-gray-500 uppercase">Credenciais da API de Pagamentos (pendente)</p>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-gray-500 font-bold uppercase">Client ID</span>
-                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusItauApi?.clientIdConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
-                          {!statusItauApi ? '…' : statusItauApi.clientIdConfigurado ? '✓ Configurado' : '✕ Ausente'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-gray-500 font-bold uppercase">Client Secret</span>
-                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusItauApi?.clientSecretConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
-                          {!statusItauApi ? '…' : statusItauApi.clientSecretConfigurado ? '✓ Configurado' : '✕ Ausente'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-gray-500 font-bold uppercase">Certificado (mTLS)</span>
-                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusItauApi?.certificadoConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
-                          {!statusItauApi ? '…' : statusItauApi.certificadoConfigurado ? '✓ Configurado' : '✕ Ausente'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-gray-500 font-bold uppercase">Senha do certificado</span>
-                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusItauApi?.certificadoSenhaConfigurada ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
-                          {!statusItauApi ? '…' : statusItauApi.certificadoSenhaConfigurada ? '✓ Configurada' : '✕ Ausente'}
-                        </span>
-                      </div>
+                    <div className="p-3 bg-[#F8FAFC] rounded-xl space-y-3">
+                      <p className="text-[10px] font-black text-gray-500 uppercase">Credenciais da API SISPAG</p>
+                      <p className="text-[10px] text-gray-400 font-semibold leading-snug -mt-2">Sandbox e Produção são apps separados no portal do Itaú — client_id/secret próprios de cada um. mTLS (certificado) só é exigido em produção; o sandbox funciona só com OAuth.</p>
+
+                      {([['sandbox', 'Sandbox'], ['producao', 'Produção']] as const).map(([chave, rotulo]) => {
+                        const amb = statusItauApi?.[chave];
+                        const exigeCertificado = chave === 'producao';
+                        return (
+                          <div key={chave} className="space-y-1.5 pt-1 border-t border-gray-200 first:border-t-0 first:pt-0">
+                            <p className="text-[10px] font-black text-gray-600 uppercase">{rotulo}</p>
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-gray-500 font-bold uppercase">Client ID</span>
+                              <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${amb?.clientIdConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                                {!statusItauApi ? '…' : amb?.clientIdConfigurado ? '✓ Configurado' : '✕ Ausente'}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-gray-500 font-bold uppercase">Client Secret</span>
+                              <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${amb?.clientSecretConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                                {!statusItauApi ? '…' : amb?.clientSecretConfigurado ? '✓ Configurado' : '✕ Ausente'}
+                              </span>
+                            </div>
+                            {exigeCertificado && (
+                              <>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] text-gray-500 font-bold uppercase">Chave privada (mTLS)</span>
+                                  <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${amb?.chaveConfigurada ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                                    {!statusItauApi ? '…' : amb?.chaveConfigurada ? '✓ Configurada' : '✕ Ausente'}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] text-gray-500 font-bold uppercase">Certificado (CRT, mTLS)</span>
+                                  <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${amb?.certificadoConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                                    {!statusItauApi ? '…' : amb?.certificadoConfigurado ? '✓ Configurado' : '✕ Aguardando emissão pelo Itaú'}
+                                  </span>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+
                       <p className="text-[10px] text-gray-400 font-semibold leading-snug">
-                        As credenciais (ITAU_API_CLIENT_ID, ITAU_API_CLIENT_SECRET, ITAU_API_CERT_PFX_BASE64, ITAU_API_CERT_SENHA) vivem só no ambiente do servidor — nunca são lidas, gravadas ou exibidas aqui. A chamada de API ainda não foi implementada; o envio de pagamentos continua manual via SISPAG até essas credenciais chegarem e a integração ser construída.
+                        As credenciais (ITAU_API_CLIENT_ID_SANDBOX/PRODUCAO, ITAU_API_CLIENT_SECRET_SANDBOX/PRODUCAO, ITAU_API_CERT_KEY_BASE64_SANDBOX/PRODUCAO, ITAU_API_CERT_PEM_BASE64_SANDBOX/PRODUCAO) vivem só no ambiente do servidor — nunca são lidas, gravadas ou exibidas aqui. O header x-itau-apikey usa o próprio client_id, sem segredo à parte. A base URL de negócio (produção/sandbox) é escolhida automaticamente pelo Ambiente selecionado acima.
                       </p>
                     </div>
                   )}
@@ -829,7 +858,7 @@ export default function IntegracaoPage() {
                       <input type="text" value={edRazaoSocial} onChange={e => setEdRazaoSocial(e.target.value)} placeholder="Razão social" className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold" />
                     </div>
                   </div>
-                  <p className="text-[10px] text-gray-400 font-semibold leading-snug">Esses dados são usados para montar os arquivos SISPAG (CNAB240) do Itaú. Sem eles, os botões "Gerar SISPAG Itaú" ficam bloqueados. A conta débito deve ser informada como "número-dígito" (ex: 09312-4).</p>
+                  <p className="text-[10px] text-gray-400 font-semibold leading-snug">Esses dados são usados para montar os arquivos SISPAG (CNAB240) e também como conta pagadora nos envios de PIX via API. Sem eles, os botões "Gerar SISPAG Itaú" ficam bloqueados e o envio via API falha. A conta débito deve ser informada como "número-dígito" (ex: 09312-4).</p>
                 </div>
               )}
             </div>

@@ -6,7 +6,7 @@ import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../../lib/supabase';
 import { normalizarPermissao } from '../../../lib/permissoes';
 import { consultarPagamentosItauAction, consultarPagamentoItauAction, type FiltrosConsultaItau } from './actions';
-import { listarIntegracoesAction, statusItauApiAction } from '../../integracao/actions';
+import { listarIntegracoesAction, statusItauApiAction } from '../../parametros/integracao/actions';
 import ExigirMFA from '../ExigirMFA';
 
 const BRL = (v: string | number | null | undefined) => 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });

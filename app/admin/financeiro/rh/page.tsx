@@ -8,7 +8,7 @@ import {
   montarLoteSalariosAction, salvarLoteAction, listarLotesAction, enviarLoteAoBancoAction,
   listarPdfsContabilidadeAction, processarOcrAwsAction, alternarAtivoLoteAction, buscarLoteAction
 } from '../../rh/actions/actions-financeiro';
-import { listarIntegracoesAction } from '../../integracao/actions';
+import { listarIntegracoesAction } from '../../parametros/integracao/actions';
 import SepararHolerites from '../../rh/ponto/SepararHolerites';
 import ExigirMFA from '../ExigirMFA';
 

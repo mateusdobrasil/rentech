@@ -82,11 +82,13 @@ export async function montarLoteSalariosAction(payload: {
       });
     }
 
-    // BENEFÍCIOS
+    // BENEFÍCIOS — só entram no lote bancário os benefícios pagos por
+    // transferência (Cartão Flash é carregado à parte, fora deste lote).
     const beneficiosPorNome: Record<string, number> = {};
     if (fontes.includes('BENEFICIOS')) {
+      const normMeio = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
       const { itens: itensBenef } = await calcularBeneficiosMes(db, mesReferencia);
-      itensBenef.forEach(it => {
+      itensBenef.filter(it => normMeio(it.meio).includes('TRANSFER')).forEach(it => {
         beneficiosPorNome[it.funcionario_nome] = (beneficiosPorNome[it.funcionario_nome] || 0) + it.valorMes;
       });
     }

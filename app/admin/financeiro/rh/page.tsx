@@ -1062,19 +1062,23 @@ export default function FinanceiroPage() {
                         {l.ativo === false && <span className="block mt-1 text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-red-100 text-red-600">Inativo</span>}
                       </td>
                       <td className="p-3 text-right">
-                        <div className="flex justify-end gap-2">
-                          <button onClick={() => abrirLoteParaExportar(l)} disabled={abrindoLote === l.id} className="text-[10px] font-black text-emerald-700 bg-white border border-emerald-600 hover:bg-emerald-600 hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors disabled:opacity-50">
-                            {abrindoLote === l.id ? '⏳ Abrindo...' : '📤 Abrir p/ Exportar'}
-                          </button>
-                          <button onClick={() => enviarLote(l.id)} disabled={l.ativo === false || enviandoLoteId === l.id} className="text-[10px] font-black text-[#0C1D4D] bg-white border border-[#0C1D4D] hover:bg-[#0C1D4D] hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:text-[#0C1D4D]">
-                            {enviandoLoteId === l.id ? '⏳ Enviando...' : '↗ Enviar ao banco'}
-                          </button>
-                          {l.ativo === false ? (
-                            <button onClick={() => alternarAtivoLote(l)} className="text-[10px] font-black text-emerald-700 bg-white border border-emerald-600 hover:bg-emerald-600 hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors">✓ Reativar</button>
-                          ) : (
-                            <button onClick={() => alternarAtivoLote(l)} className="text-[10px] font-black text-red-600 bg-white border border-red-500 hover:bg-red-500 hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors">🚫 Inativar</button>
-                          )}
-                        </div>
+                        {(l.status === 'ENVIADO' || l.status === 'PROCESSADO') ? (
+                          <span className="text-[10px] font-black text-emerald-700 uppercase tracking-wider">✓ Enviado ao banco</span>
+                        ) : (
+                          <div className="flex justify-end gap-2">
+                            <button onClick={() => abrirLoteParaExportar(l)} disabled={abrindoLote === l.id} className="text-[10px] font-black text-emerald-700 bg-white border border-emerald-600 hover:bg-emerald-600 hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors disabled:opacity-50">
+                              {abrindoLote === l.id ? '⏳ Abrindo...' : '📤 Abrir p/ Exportar'}
+                            </button>
+                            <button onClick={() => enviarLote(l.id)} disabled={l.ativo === false || enviandoLoteId === l.id} className="text-[10px] font-black text-[#0C1D4D] bg-white border border-[#0C1D4D] hover:bg-[#0C1D4D] hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:text-[#0C1D4D]">
+                              {enviandoLoteId === l.id ? '⏳ Enviando...' : '↗ Enviar ao banco'}
+                            </button>
+                            {l.ativo === false ? (
+                              <button onClick={() => alternarAtivoLote(l)} className="text-[10px] font-black text-emerald-700 bg-white border border-emerald-600 hover:bg-emerald-600 hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors">✓ Reativar</button>
+                            ) : (
+                              <button onClick={() => alternarAtivoLote(l)} className="text-[10px] font-black text-red-600 bg-white border border-red-500 hover:bg-red-500 hover:text-white px-3 py-1.5 rounded-lg uppercase transition-colors">🚫 Inativar</button>
+                            )}
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}

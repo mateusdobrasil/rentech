@@ -3,9 +3,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation'; // <-- CORRIGIDO: Import adicionado
-import { supabase } from '../../lib/supabase';
-import { registrarLogAuditoria, criarUsuarioAcesso, listarAcessosPortalAction } from '../../actions';
-import { formatarCpf } from '../../portal/lib/cpf';
+import { supabase } from '../../../lib/supabase';
+import { registrarLogAuditoria, criarUsuarioAcesso, listarAcessosPortalAction } from '../../../actions';
+import { formatarCpf } from '../../../portal/lib/cpf';
 import { Analytics } from "@vercel/analytics/next"; // <-- CORRIGIDO: Barra adicionada
 
 const normalizarPermissao = (permissaoBruta: string): string => {

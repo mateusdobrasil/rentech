@@ -39,7 +39,7 @@ const normalizarPermissao = (permissaoBruta: string): string => {
 };
 
 // Estrutura dos módulos do sistema. As permissões de cada um NÃO ficam mais
-// aqui — vêm da tabela folha_paginas_permissoes (gerida em /admin/permissoes),
+// aqui — vêm da tabela folha_paginas_permissoes (gerida em /admin/parametros/permissoes),
 // buscadas pelo campo "link" (= endereco_route). Isso mantém o hub sempre em
 // sincronia com o que a própria página de destino já exige para entrar.
 const MODULOS_SISTEMA = [
@@ -100,44 +100,12 @@ const MODULOS_SISTEMA = [
     bgIcon: 'bg-cyan-50 text-cyan-600'
   },
   {
-    titulo: 'Conteúdo Site',
-    descricao: 'Gerencie os textos principais, vídeos e canais de contato da página inicial em tempo real.',
-    icone: '🌐',
-    link: '/admin/conteudo',
-    cor: 'border-[#336699]/50 hover:border-[#336699]',
-    bgIcon: 'bg-blue-50 text-[#336699]'
-  },
-  {
-    titulo: 'Agendamentos e Disparos',
-    descricao: 'Gestão de agendas, lembretes e rotinas diárias para os colaboradores.',
-    icone: '⏰',
-    link: '/admin/agendamentos',
+    titulo: 'Parâmetros',
+    descricao: 'Controle de acesso, conteúdo do site, integrações, agendamentos e log de auditoria.',
+    icone: '⚙️',
+    link: '/admin/parametros',
     cor: 'border-purple-500/50 hover:border-purple-500',
     bgIcon: 'bg-purple-50 text-purple-600'
-  },
-  {
-    titulo: 'Integrações',
-    descricao: 'Bancos e parceiros para pagamentos e envio de informações.',
-    icone: '🔗',
-    link: '/admin/integracao',
-    cor: 'border-blue-500/50 hover:border-blue-500',
-    bgIcon: 'bg-blue-50 text-blue-600'
-  },
-  {
-    titulo: 'Controle de Acesso',
-    descricao: 'Controle de usuários, blocks e alteração de níveis de permissão da equipe.',
-    icone: '🔐',
-    link: '/admin/permissoes',
-    cor: 'border-purple-500/50 hover:border-purple-500',
-    bgIcon: 'bg-purple-50 text-purple-600'
-  },
-  {
-    titulo: 'Log de Auditoria',
-    descricao: 'Histórico completo de todas as ações realizadas no sistema: acessos, edições e alterações.',
-    icone: '🔍',
-    link: '/admin/log',
-    cor: 'border-slate-500/50 hover:border-slate-500',
-    bgIcon: 'bg-slate-50 text-slate-600'
   }
 ];
 

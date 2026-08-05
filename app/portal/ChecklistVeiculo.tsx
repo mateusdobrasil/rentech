@@ -2,10 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import {
-  listarVeiculosParaChecklistAction,
-  listarModeloItensAction,
-  buscarChecklistAbertoAction,
-  listarMeusChecklistsAction,
+  carregarChecklistVeiculoAction,
   abrirChecklistAction,
   finalizarChecklistAction,
   registrarAvariaChecklistAction,
@@ -62,17 +59,15 @@ export default function ChecklistVeiculo({ accessToken }: { accessToken: string 
 
   const carregar = async () => {
     setCarregando(true);
-    const [veiculosRes, abertoRes, historicoRes] = await Promise.all([
-      listarVeiculosParaChecklistAction(accessToken),
-      buscarChecklistAbertoAction(accessToken),
-      listarMeusChecklistsAction(accessToken),
-    ]);
-    if (veiculosRes.ok) setVeiculos(veiculosRes.info.veiculos);
-    if (abertoRes.ok) setChecklistAberto(abertoRes.info.checklist);
-    if (historicoRes.ok) setHistorico(historicoRes.info.checklists);
-
-    const itensRes = await listarModeloItensAction(accessToken, abertoRes.ok && abertoRes.info.checklist ? 'RETORNO' : 'SAIDA');
-    if (itensRes.ok) setItensModelo(itensRes.info.itens);
+    const res = await carregarChecklistVeiculoAction(accessToken);
+    if (res.ok) {
+      setVeiculos(res.info.veiculos);
+      setChecklistAberto(res.info.checklistAberto);
+      setHistorico(res.info.historico);
+      setItensModelo(res.info.itensModelo);
+    } else {
+      setMensagem({ tipo: 'erro', texto: res.erro || 'Erro ao carregar o checklist.' });
+    }
     setItensMarcados({});
     setAvarias([]);
     setCarregando(false);

@@ -25,7 +25,7 @@ interface ItemMarcado {
 
 // Confirma no servidor que o funcionário logado tem pode_dirigir = true —
 // chamada no início de toda ação que abre/fecha checklist, além do check de
-// visibilidade da aba feito em listarMeusChecklistsAction/podeDirigirAction.
+// visibilidade da aba feito em carregarChecklistVeiculoAction/podeDirigirAction.
 // Exportada também pra carga combinada da home do Portal (actions-home.ts).
 export async function exigirPermissaoDirigir(db: ReturnType<typeof supabaseAdmin>, funcionarioNome: string): Promise<boolean> {
   const { data } = await db.from('folha_funcionarios').select('pode_dirigir').eq('nome_completo', funcionarioNome).maybeSingle();
@@ -42,9 +42,17 @@ export async function podeDirigirAction(accessToken: string): Promise<Resultado>
 }
 
 // ============================================================================
-// VEÍCULOS DISPONÍVEIS PARA O SELETOR
+// CARGA COMBINADA DA ABA — veículos disponíveis, checklist em andamento (se
+// houver), histórico do motorista e o modelo de itens já para a etapa certa
+// (SAÍDA ou RETORNO, deduzida do checklist em andamento). Antes eram 4
+// Server Actions independentes (3 em paralelo + 1 sequencial), cada uma
+// resolvendo a sessão do zero — mesmo desperdício que motivou juntar a home
+// do Portal em carregarPortalHomeAction (actions-home.ts). Aqui a sessão é
+// resolvida uma única vez e as consultas seguem em 2 levas paralelas (a
+// segunda leva depende da primeira só para saber a etapa e os IDs de veículo
+// do histórico).
 // ============================================================================
-export async function listarVeiculosParaChecklistAction(accessToken: string): Promise<Resultado> {
+export async function carregarChecklistVeiculoAction(accessToken: string): Promise<Resultado> {
   const func = await resolverFuncionarioPortal(accessToken);
   if (!func) return { ok: false, erro: ERRO_SESSAO };
 
@@ -52,94 +60,42 @@ export async function listarVeiculosParaChecklistAction(accessToken: string): Pr
   if (!(await exigirPermissaoDirigir(db, func.funcionarioNome))) return { ok: false, erro: ERRO_SEM_PERMISSAO };
 
   try {
-    const { data, error } = await db
-      .from('frota_veiculos')
-      .select('id, apelido, tipo, placa')
-      .eq('status', 'ATIVO')
-      .eq('exibir_na_frota', true)
-      .order('apelido', { ascending: true });
-    if (error) throw new Error(error.message);
-    return { ok: true, info: { veiculos: data || [] } };
-  } catch (e: any) {
-    return { ok: false, erro: e.message };
-  }
-}
+    const [{ data: veiculos, error: erroVeiculos }, { data: checklistAberto, error: erroAberto }, { data: checklistsHistorico, error: erroHistorico }] = await Promise.all([
+      db.from('frota_veiculos').select('id, apelido, tipo, placa').eq('status', 'ATIVO').eq('exibir_na_frota', true).order('apelido', { ascending: true }),
+      db.from('frota_checklists').select('id, numero, veiculo_id, destino, km_inicial, combustivel_saida, saida_em')
+        .eq('motorista_nome', func.funcionarioNome).eq('status', 'EM_ANDAMENTO').order('saida_em', { ascending: false }).limit(1).maybeSingle(),
+      db.from('frota_checklists').select('id, numero, veiculo_id, status, destino, km_inicial, km_final, saida_em, retorno_em')
+        .eq('motorista_nome', func.funcionarioNome).order('saida_em', { ascending: false }).limit(20),
+    ]);
+    if (erroVeiculos) throw new Error(erroVeiculos.message);
+    if (erroAberto) throw new Error(erroAberto.message);
+    if (erroHistorico) throw new Error(erroHistorico.message);
 
-// ============================================================================
-// MODELO DE ITENS (catálogo fixo, por etapa)
-// ============================================================================
-export async function listarModeloItensAction(accessToken: string, etapa: Etapa): Promise<Resultado> {
-  const func = await resolverFuncionarioPortal(accessToken);
-  if (!func) return { ok: false, erro: ERRO_SESSAO };
+    const etapa: Etapa = checklistAberto ? 'RETORNO' : 'SAIDA';
+    const veiculoIds = Array.from(new Set((checklistsHistorico || []).map(c => c.veiculo_id)));
 
-  const db = supabaseAdmin();
-  try {
-    const { data, error } = await db
-      .from('frota_checklist_modelo_itens')
-      .select('id, ordem, descricao')
-      .eq('etapa', etapa)
-      .eq('ativo', true)
-      .order('ordem', { ascending: true });
-    if (error) throw new Error(error.message);
-    return { ok: true, info: { itens: data || [] } };
-  } catch (e: any) {
-    return { ok: false, erro: e.message };
-  }
-}
+    const [{ data: veiculosHistorico }, { data: itensModelo, error: erroItens }] = await Promise.all([
+      veiculoIds.length > 0
+        ? db.from('frota_veiculos').select('id, apelido, placa').in('id', veiculoIds)
+        : Promise.resolve({ data: [] as { id: string; apelido: string; placa: string }[] }),
+      db.from('frota_checklist_modelo_itens').select('id, ordem, descricao').eq('etapa', etapa).eq('ativo', true).order('ordem', { ascending: true }),
+    ]);
+    if (erroItens) throw new Error(erroItens.message);
 
-// ============================================================================
-// CHECKLIST EM ANDAMENTO DO PRÓPRIO MOTORISTA (define se a tela mostra
-// "abrir saída" ou "fechar retorno")
-// ============================================================================
-export async function buscarChecklistAbertoAction(accessToken: string): Promise<Resultado> {
-  const func = await resolverFuncionarioPortal(accessToken);
-  if (!func) return { ok: false, erro: ERRO_SESSAO };
-
-  const db = supabaseAdmin();
-  try {
-    const { data, error } = await db
-      .from('frota_checklists')
-      .select('id, numero, veiculo_id, destino, km_inicial, combustivel_saida, saida_em')
-      .eq('motorista_nome', func.funcionarioNome)
-      .eq('status', 'EM_ANDAMENTO')
-      .order('saida_em', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    return { ok: true, info: { checklist: data || null } };
-  } catch (e: any) {
-    return { ok: false, erro: e.message };
-  }
-}
-
-// ============================================================================
-// HISTÓRICO DO PRÓPRIO MOTORISTA
-// ============================================================================
-export async function listarMeusChecklistsAction(accessToken: string): Promise<Resultado> {
-  const func = await resolverFuncionarioPortal(accessToken);
-  if (!func) return { ok: false, erro: ERRO_SESSAO };
-
-  const db = supabaseAdmin();
-  try {
-    const { data, error } = await db
-      .from('frota_checklists')
-      .select('id, numero, veiculo_id, status, destino, km_inicial, km_final, saida_em, retorno_em')
-      .eq('motorista_nome', func.funcionarioNome)
-      .order('saida_em', { ascending: false })
-      .limit(20);
-    if (error) throw new Error(error.message);
-
-    const veiculoIds = Array.from(new Set((data || []).map(c => c.veiculo_id)));
-    const { data: veiculos } = veiculoIds.length > 0
-      ? await db.from('frota_veiculos').select('id, apelido, placa').in('id', veiculoIds)
-      : { data: [] as { id: string; apelido: string; placa: string }[] };
-
-    const checklists = (data || []).map(c => ({
+    const historico = (checklistsHistorico || []).map(c => ({
       ...c,
-      veiculo: veiculos?.find(v => v.id === c.veiculo_id) || null,
+      veiculo: veiculosHistorico?.find(v => v.id === c.veiculo_id) || null,
     }));
 
-    return { ok: true, info: { checklists } };
+    return {
+      ok: true,
+      info: {
+        veiculos: veiculos || [],
+        checklistAberto: checklistAberto || null,
+        historico,
+        itensModelo: itensModelo || [],
+      },
+    };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

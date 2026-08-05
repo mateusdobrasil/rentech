@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { supabase } from '../../lib/supabase';
+import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 
 // ============================================================================
@@ -216,7 +216,7 @@ export default function PainelAuditoria() {
           <p className="text-[#94A3B8] text-xs font-medium mt-0.5">Histórico completo de ações no sistema Rentech</p>
         </div>
         <button
-          onClick={() => router.push('/admin')}
+          onClick={() => router.push('/admin/parametros')}
           className="text-[10px] md:text-xs font-black bg-white/10 hover:bg-white/20 border border-white/20 text-white px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase"
         >
           ⬅ Voltar ao Hub

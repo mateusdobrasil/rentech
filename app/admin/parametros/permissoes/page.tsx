@@ -507,7 +507,7 @@ export default function GestaoPermissoes() {
           <h1 className="text-2xl font-black text-[#0C1D4D] uppercase tracking-wider">Gestão de Acessos e Diretórios</h1>
           <p className="text-sm font-medium text-gray-500">Controle contas de usuários e regras de segurança de páginas dinamicamente.</p>
         </div>
-        <Link href="/admin" className="text-xs font-bold bg-white hover:bg-gray-100 border border-gray-300 text-gray-600 px-6 py-3 rounded-lg transition-colors uppercase tracking-wider shadow-sm">
+        <Link href="/admin/parametros" className="text-xs font-bold bg-white hover:bg-gray-100 border border-gray-300 text-gray-600 px-6 py-3 rounded-lg transition-colors uppercase tracking-wider shadow-sm">
           ⬅ Voltar ao Hub
         </Link>
       </div>

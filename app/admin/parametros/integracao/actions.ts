@@ -5,9 +5,9 @@
 // ambiente (sandbox/produção) e metadados de configuração (nunca segredos).
 // A montagem de lotes de pagamento e geração de arquivos CNAB vive em
 // app/admin/rh/actions/actions-financeiro.ts (tela RH → Financeiro).
-import { supabaseAdmin } from '../../lib/supabase';
-import { enviarComProvedor, type ProvedorWhatsApp } from '../../lib/whatsapp';
-import { enviarWhatsAppMetaTemplate } from '../../lib/metaWhatsapp';
+import { supabaseAdmin } from '../../../lib/supabase';
+import { enviarComProvedor, type ProvedorWhatsApp } from '../../../lib/whatsapp';
+import { enviarWhatsAppMetaTemplate } from '../../../lib/metaWhatsapp';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 

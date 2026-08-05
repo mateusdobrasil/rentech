@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { supabase } from '../../lib/supabase';
-import { registrarLogAuditoria } from '../../actions';
+import { supabase } from '../../../lib/supabase';
+import { registrarLogAuditoria } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
 
 // ============================================================================
@@ -249,7 +249,7 @@ export default function GestaoConteudo() {
           🌐 <strong>Olá, {usuarioAtual}</strong>. Gestão Avançada de Conteúdo e Mídias.
         </p>
         <button 
-          onClick={() => router.push('/admin')} 
+          onClick={() => router.push('/admin/parametros')} 
           className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase"
         >
           ⬅ VOLTAR AO HUB

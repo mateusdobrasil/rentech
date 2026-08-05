@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-import { supabase } from '../../lib/supabase';
+import { supabase } from '../../../lib/supabase';
 import {
   listarIntegracoesAction, salvarIntegracaoAction,
   statusTokenAutentiqueAction, estatisticasAutentiqueAction,
@@ -273,7 +273,7 @@ export default function IntegracaoPage() {
         <p className="text-[#1E40AF] font-medium text-sm">
           🔗 <strong>Integrações</strong>. Bancos e parceiros para pagamentos e envio de informações.
         </p>
-        <button onClick={() => router.push('/admin')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BFDBFE] text-[#1E40AF] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
+        <button onClick={() => router.push('/admin/parametros')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BFDBFE] text-[#1E40AF] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
           ⬅ VOLTAR AO HUB
         </button>
       </div>

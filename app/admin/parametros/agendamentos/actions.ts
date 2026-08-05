@@ -4,8 +4,8 @@
 // A tabela folha_automacoes é o "disjuntor": o Cron (app/api/cron/*) lê o
 // campo `ativo` antes de disparar qualquer mensagem. Desligar aqui impede
 // o envio sem precisar mexer em código ou na Vercel.
-import { supabaseAdmin } from '../../lib/supabase';
-import { verificarConexaoZapi } from '../../lib/zapi';
+import { supabaseAdmin } from '../../../lib/supabase';
+import { verificarConexaoZapi } from '../../../lib/zapi';
 
 export interface RotinaAutomacaoDB {
   id: number;

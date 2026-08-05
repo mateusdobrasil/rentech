@@ -51,6 +51,14 @@ interface ItemLote {
   pix_tipo: string | null; pix_chave: string | null;
   banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null;
   pronto: boolean;
+  // Preenchidos por enviarLoteAoBancoAction após a chamada à API do Itaú
+  // (app/lib/itauSispag.ts) — ausentes até o item ser realmente enviado.
+  api_status?: string | null;
+  api_cod_pagamento?: string | null;
+  api_numero_lote?: string | null;
+  api_motivo_recusa?: { codigo?: string; nome?: string }[] | null;
+  api_erro?: string | null;
+  api_enviado_em?: string | null;
 }
 interface Lote {
   id: number; parceiro: string; mes_referencia: string; tipo_lote: string;
@@ -104,6 +112,13 @@ export default function FinanceiroPage() {
   // importar independentemente.
   const [viewMode, setViewMode] = useState<'resumo' | 'separar_holerites'>('resumo');
   const [elegiveisContabilidade, setElegiveisContabilidade] = useState<{ nome_completo: string; tipo_contrato: string }[]>([]);
+
+  // Aba "Retorno API Itaú" — consulta o que foi persistido em
+  // folha_lotes_pagamento.itens por enviarLoteAoBancoAction, item a item.
+  const [abaAtiva, setAbaAtiva] = useState<'lotes' | 'retorno_itau'>('lotes');
+  const [loteRetornoId, setLoteRetornoId] = useState<number | null>(null);
+  const [itensRetorno, setItensRetorno] = useState<ItemLote[]>([]);
+  const [carregandoRetorno, setCarregandoRetorno] = useState(false);
 
   // Valida a sessão e a permissão (dinâmica, via banco) antes de liberar a página
   useEffect(() => {
@@ -632,6 +647,7 @@ export default function FinanceiroPage() {
         alert(res.erro || (res.ok ? 'Enviado.' : 'Não foi possível enviar.'));
       }
       carregar();
+      if (loteRetornoId === loteId) carregarRetornoLote(loteId);
     } finally {
       setEnviandoLoteId(null);
     }
@@ -671,6 +687,47 @@ export default function FinanceiroPage() {
   const fecharLoteReaberto = () => {
     setItens([]);
     setLoteReaberto(null);
+  };
+
+  // Carrega os itens salvos de um lote pra exibir na aba "Retorno API Itaú"
+  // — reaproveita buscarLoteAction (já usada em abrirLoteParaExportar), só
+  // muda o destino do resultado.
+  const carregarRetornoLote = async (loteId: number) => {
+    setCarregandoRetorno(true);
+    try {
+      const res = await buscarLoteAction({ loteId });
+      if (!res.ok) { alert(res.erro || 'Não foi possível abrir o lote.'); setItensRetorno([]); return; }
+      const itensSalvos: ItemLote[] = res.info.lote.itens || [];
+      setItensRetorno(itensSalvos.filter(i => i.metodo === 'PIX' && i.pronto));
+    } finally {
+      setCarregandoRetorno(false);
+    }
+  };
+
+  // Ao abrir a aba pela primeira vez, seleciona automaticamente o lote Itaú
+  // mais recente (lotes já vem ordenado por criado_em desc de listarLotesAction).
+  useEffect(() => {
+    if (abaAtiva !== 'retorno_itau' || loteRetornoId !== null) return;
+    const maisRecente = lotes.find(l => l.parceiro === 'ITAU');
+    if (maisRecente) {
+      setLoteRetornoId(maisRecente.id);
+      carregarRetornoLote(maisRecente.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [abaAtiva, lotes]);
+
+  const badgeApiStatus = (item: ItemLote) => {
+    if (!item.api_status) {
+      return <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-gray-100 text-gray-500">— Não enviado</span>;
+    }
+    const cores: Record<string, string> = {
+      'Sucesso': 'bg-emerald-100 text-emerald-700',
+      'Sucesso (pre-autorizado)': 'bg-emerald-100 text-emerald-700',
+      'Rejeitado': 'bg-red-100 text-red-600',
+      'Nao incluido': 'bg-amber-100 text-amber-700',
+      'Erro': 'bg-red-100 text-red-600',
+    };
+    return <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${cores[item.api_status] || 'bg-gray-100 text-gray-500'}`}>{item.api_status}</span>;
   };
 
   const badgeStatus = (s: string) => {
@@ -735,6 +792,16 @@ export default function FinanceiroPage() {
 
       {viewMode === 'resumo' && (
       <div className="p-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full">
+        <div className="flex bg-white p-1 rounded-xl border border-[#E2E8F0] w-fit shadow-sm mb-4">
+          <button onClick={() => setAbaAtiva('lotes')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'lotes' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>
+            💰 Lotes de Pagamento
+          </button>
+          <button onClick={() => setAbaAtiva('retorno_itau')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'retorno_itau' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>
+            🔌 Retorno API Itaú
+          </button>
+        </div>
+
+        {abaAtiva === 'lotes' && (<>
         <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider mb-1">📄 Holerites da Contabilidade</h3>
@@ -1016,6 +1083,89 @@ export default function FinanceiroPage() {
             </div>
           )}
         </div>
+        </>)}
+
+        {abaAtiva === 'retorno_itau' && (
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0]">
+            <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider mb-1">🔌 Retorno da API Itaú (SISPAG)</h3>
+            <p className="text-[11px] text-gray-500 mb-4">Status devolvido pelo Itaú, item a item, para cada pagamento PIX enviado via API. TED e demais formas não passam pela API — continuam só no arquivo CNAB.</p>
+
+            <div className="mb-4 max-w-md">
+              <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Lote</label>
+              <select
+                value={loteRetornoId ?? ''}
+                onChange={e => {
+                  const id = e.target.value ? Number(e.target.value) : null;
+                  setLoteRetornoId(id);
+                  if (id) carregarRetornoLote(id);
+                  else setItensRetorno([]);
+                }}
+                className="w-full p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]"
+              >
+                <option value="">Selecione um lote</option>
+                {lotes.filter(l => l.parceiro === 'ITAU').map(l => (
+                  <option key={l.id} value={l.id}>
+                    {(l.nome_lote || l.tipo_lote)} · {fmtMesBR(l.mes_referencia)} · {l.status}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {carregandoRetorno && (
+              <div className="p-12 text-center text-gray-400 font-bold uppercase tracking-wider">Carregando...</div>
+            )}
+
+            {!carregandoRetorno && loteRetornoId && itensRetorno.length === 0 && (
+              <div className="p-12 text-center text-gray-400 font-bold uppercase tracking-wider">Nenhum pagamento PIX pronto neste lote.</div>
+            )}
+
+            {!carregandoRetorno && !loteRetornoId && (
+              <div className="p-12 text-center text-gray-400 font-bold uppercase tracking-wider">Selecione um lote acima para ver o retorno da API.</div>
+            )}
+
+            {!carregandoRetorno && itensRetorno.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr className="bg-[#F8FAFC] border-b-2 border-[#E2E8F0]">
+                      <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px]">Funcionário</th>
+                      <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px]">Chave PIX</th>
+                      <th className="p-3 text-right font-black text-[#0C1D4D] uppercase text-[10px]">Valor</th>
+                      <th className="p-3 text-center font-black text-[#0C1D4D] uppercase text-[10px]">Status Itaú</th>
+                      <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px]">Código / Lote Itaú</th>
+                      <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px]">Motivo / Erro</th>
+                      <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px]">Enviado em</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {itensRetorno.map((item, idx) => (
+                      <tr key={`${item.funcionario_nome}-${idx}`} className={`${idx % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white'} border-b border-[#E2E8F0]`}>
+                        <td className="p-3">
+                          <span className="font-black text-[#0C1D4D] block">{item.funcionario_nome}</span>
+                          <span className="text-[10px] font-bold text-gray-400 uppercase">{item.fonte_rotulo}</span>
+                        </td>
+                        <td className="p-3 text-[11px] text-gray-600">{item.pix_tipo}: {item.pix_chave}</td>
+                        <td className="p-3 text-right font-black text-[#0C1D4D] tabular-nums">{BRL(item.valor)}</td>
+                        <td className="p-3 text-center">{badgeApiStatus(item)}</td>
+                        <td className="p-3 text-[10px] text-gray-500 font-mono">
+                          {item.api_cod_pagamento && <span className="block break-all">{item.api_cod_pagamento}</span>}
+                          {item.api_numero_lote && <span className="block text-gray-400">lote {item.api_numero_lote}</span>}
+                        </td>
+                        <td className="p-3 text-[11px] text-gray-600">
+                          {item.api_erro && <span className="text-red-600 font-bold">{item.api_erro}</span>}
+                          {item.api_motivo_recusa && item.api_motivo_recusa.length > 0 && (
+                            <span className="text-red-600">{item.api_motivo_recusa.map(m => m.nome).filter(Boolean).join('; ')}</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-[11px] text-gray-500">{item.api_enviado_em ? fmtDataHora(item.api_enviado_em) : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
       )}
     </div>

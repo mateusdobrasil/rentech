@@ -46,6 +46,12 @@ const modulosFinanceiro = [
     descricao: 'OPs, Lotes de Pagamento e Consignado consolidados para decisão e auditoria.',
     icone: '📊', link: '/admin/financeiro/relatorios',
     cor: 'bg-indigo-50 border-indigo-200 text-indigo-700', hover: 'hover:border-indigo-500'
+  },
+  {
+    titulo: 'Integração Bancária',
+    descricao: 'Consulta direta às APIs dos bancos integrados (Itaú SISPAG) para conciliação.',
+    icone: '🔌', link: '/admin/financeiro/integracao',
+    cor: 'bg-amber-50 border-amber-200 text-amber-700', hover: 'hover:border-amber-500'
   }
 ];
 

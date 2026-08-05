@@ -32,6 +32,7 @@ export default function PortalDashboardPage() {
   const [accessToken, setAccessToken] = useState('');
 
   const [aba, setAba] = useState<'documentos' | 'holerites' | 'ponto' | 'checklist'>('documentos');
+  const [menuAbasAberto, setMenuAbasAberto] = useState(false);
   const [documentos, setDocumentos] = useState<DocumentoPortal[]>([]);
   const [holerites, setHolerites] = useState<HoleritePortal[]>([]);
   const [cracha, setCracha] = useState<DadosCracha | null>(null);
@@ -75,6 +76,17 @@ export default function PortalDashboardPage() {
     return Number(mesStr) === hoje.getMonth() + 1 && Number(diaStr) === hoje.getDate();
   }, [cracha?.dataNascimento]);
 
+  const abas = useMemo(() => {
+    const lista: { id: typeof aba; label: string; icone: string }[] = [
+      { id: 'documentos', label: 'Meus Documentos', icone: '📁' },
+      { id: 'holerites', label: 'Holerites', icone: '💰' },
+      { id: 'ponto', label: 'Espelho de Ponto', icone: '🕒' },
+    ];
+    if (podeDirigir) lista.push({ id: 'checklist', label: 'Checklist Veículos', icone: '✅' });
+    return lista;
+  }, [podeDirigir]);
+  const abaSelecionada = abas.find(a => a.id === aba) || abas[0];
+
   const sair = async () => {
     await supabase.auth.signOut();
     router.push('/portal/login');
@@ -104,9 +116,11 @@ export default function PortalDashboardPage() {
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">
       <Analytics />
 
-      <div className="bg-[#DBEAFE] border-b border-[#BFDBFE] px-4 md:px-8 py-4 flex justify-between items-center shadow-sm">
-        <p className="text-[#1E40AF] font-medium text-sm">👤 <strong>Portal do Funcionário</strong>. Seus documentos pessoais e holerites.</p>
-        <button onClick={sair} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BFDBFE] text-[#1E40AF] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
+      <div className="bg-[#DBEAFE] border-b border-[#BFDBFE] px-4 md:px-8 py-3 md:py-4 flex flex-wrap justify-between items-center gap-2 shadow-sm">
+        <p className="text-[#1E40AF] font-medium text-xs md:text-sm">
+          👤 <strong>Portal do Funcionário</strong><span className="hidden sm:inline">. Seus documentos pessoais e holerites.</span>
+        </p>
+        <button onClick={sair} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BFDBFE] text-[#1E40AF] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase shrink-0">
           Sair
         </button>
       </div>
@@ -127,33 +141,45 @@ export default function PortalDashboardPage() {
         )}
 
         <div className="flex flex-col gap-4 flex-grow min-w-0">
-          <div className="flex gap-2 border-b border-[#E2E8F0] bg-white rounded-t-xl">
+          {/* Celular: botão "sanduíche" que abre um menu suspenso com as
+              abas — a faixa horizontal (mesmo com rolagem) exigia largura
+              maior do que a tela e cortava a última aba fora da janela.
+              Desktop: mantém a faixa horizontal de sempre. */}
+          <div className="md:hidden relative">
             <button
-              onClick={() => setAba('documentos')}
-              className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${aba === 'documentos' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
+              onClick={() => setMenuAbasAberto(v => !v)}
+              className="w-full flex items-center justify-between gap-2 bg-white border border-[#E2E8F0] rounded-xl px-4 py-3 shadow-sm"
             >
-              📁 Meus Documentos
+              <span className="text-xs font-black uppercase tracking-wider text-[#0C1D4D]">
+                {abaSelecionada.icone} {abaSelecionada.label}
+              </span>
+              <span className="text-[#336699] text-lg leading-none">{menuAbasAberto ? '✕' : '☰'}</span>
             </button>
-            <button
-              onClick={() => setAba('holerites')}
-              className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${aba === 'holerites' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
-            >
-              💰 Holerites
-            </button>
-            <button
-              onClick={() => setAba('ponto')}
-              className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${aba === 'ponto' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
-            >
-              🕒 Espelho de Ponto
-            </button>
-            {podeDirigir && (
-              <button
-                onClick={() => setAba('checklist')}
-                className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${aba === 'checklist' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
-              >
-                ✅ Checklist Veículos
-              </button>
+            {menuAbasAberto && (
+              <div className="absolute z-20 mt-1.5 w-full bg-white border border-[#E2E8F0] rounded-xl shadow-lg overflow-hidden">
+                {abas.map(a => (
+                  <button
+                    key={a.id}
+                    onClick={() => { setAba(a.id); setMenuAbasAberto(false); }}
+                    className={`w-full text-left px-4 py-3 text-xs font-black uppercase tracking-wider transition-colors ${aba === a.id ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
+                  >
+                    {a.icone} {a.label}
+                  </button>
+                ))}
+              </div>
             )}
+          </div>
+
+          <div className="hidden md:flex gap-2 border-b border-[#E2E8F0] bg-white rounded-t-xl">
+            {abas.map(a => (
+              <button
+                key={a.id}
+                onClick={() => setAba(a.id)}
+                className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${aba === a.id ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
+              >
+                {a.icone} {a.label}
+              </button>
+            ))}
           </div>
 
           {erro && <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-bold px-4 py-3 rounded-lg">{erro}</div>}
@@ -169,10 +195,10 @@ export default function PortalDashboardPage() {
                   <div className="text-2xl">📎</div>
                   <div className="flex-1 min-w-0">
                     <span className="font-black text-[#0C1D4D] text-[13px] uppercase">{doc.categoria}</span>
-                    {doc.titulo && <p className="text-[11px] text-gray-600">{doc.titulo}</p>}
-                    <p className="text-[10px] text-gray-400">{doc.nome_arquivo}{doc.data_validade && <> · vence {fmtData(doc.data_validade)}</>}</p>
+                    {doc.titulo && <p className="text-[11px] text-gray-600 break-words">{doc.titulo}</p>}
+                    <p className="text-[10px] text-gray-400 break-words">{doc.nome_arquivo}{doc.data_validade && <> · vence {fmtData(doc.data_validade)}</>}</p>
                   </div>
-                  <span className="text-gray-400">⬇</span>
+                  <span className="text-gray-400 shrink-0">⬇</span>
                 </button>
               ))}
             </div>

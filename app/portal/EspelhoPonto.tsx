@@ -164,7 +164,7 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
                   ))}
                 </div>
                 {l.observacao && (
-                  <p className={`text-[10px] font-bold uppercase ${l.alerta ? 'text-red-600' : 'text-gray-500'}`}>{l.observacao}</p>
+                  <p className={`text-[10px] font-bold uppercase break-words ${l.alerta ? 'text-red-600' : 'text-gray-500'}`}>{l.observacao}</p>
                 )}
               </div>
             ))}

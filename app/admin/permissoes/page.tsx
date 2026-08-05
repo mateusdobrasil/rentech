@@ -514,18 +514,18 @@ export default function GestaoPermissoes() {
 
       {/* ABA DE SELEÇÃO DE GERENCIAMENTO */}
       <div className="px-4 md:px-8 pb-4 flex-shrink-0">
-        <div className="flex bg-white p-1 rounded-xl border border-[#E2E8F0] w-fit shadow-sm gap-1">
-          <button onClick={() => setAbaAtiva('usuarios')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'usuarios' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>
-            👤 Colaboradores e Contas
+        <div className="flex bg-white p-1 rounded-xl border border-[#E2E8F0] w-fit shadow-sm gap-1 flex-wrap">
+          <button onClick={() => setAbaAtiva('usuarios')} className={`px-4 md:px-5 py-2.5 text-[11px] md:text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'usuarios' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>
+            👤 Colaboradores
           </button>
-          <button onClick={() => setAbaAtiva('paginas')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'paginas' ? 'bg-[#336699] text-white shadow-sm' : 'text-[#64748B] hover:text-[#336699]'}`}>
-            🖥️ Páginas do Sistema
+          <button onClick={() => setAbaAtiva('paginas')} className={`px-4 md:px-5 py-2.5 text-[11px] md:text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'paginas' ? 'bg-[#336699] text-white shadow-sm' : 'text-[#64748B] hover:text-[#336699]'}`}>
+            🖥️ Páginas
           </button>
-          <button onClick={() => setAbaAtiva('setores')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'setores' ? 'bg-amber-600 text-white shadow-sm' : 'text-[#64748B] hover:text-amber-600'}`}>
-            🏷️ Setores de Permissão
+          <button onClick={() => setAbaAtiva('setores')} className={`px-4 md:px-5 py-2.5 text-[11px] md:text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'setores' ? 'bg-amber-600 text-white shadow-sm' : 'text-[#64748B] hover:text-amber-600'}`}>
+            🏷️ Setores
           </button>
-          <button onClick={() => setAbaAtiva('portal')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'portal' ? 'bg-emerald-600 text-white shadow-sm' : 'text-[#64748B] hover:text-emerald-600'}`}>
-            📱 Acessos ao Portal
+          <button onClick={() => setAbaAtiva('portal')} className={`px-4 md:px-5 py-2.5 text-[11px] md:text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'portal' ? 'bg-emerald-600 text-white shadow-sm' : 'text-[#64748B] hover:text-emerald-600'}`}>
+            📱 Portal
           </button>
         </div>
       </div>
@@ -561,47 +561,76 @@ export default function GestaoPermissoes() {
           </div>
 
           <div className="px-4 md:px-8 pb-8 flex-grow overflow-hidden flex flex-col">
-            <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto">
-              <table className="w-full text-left border-collapse min-w-[800px]">
-                <thead className="bg-[#F8FAFC] sticky top-0 shadow-sm z-10 border-b border-[#E2E8F0]">
-                  <tr className="text-[#64748B] text-[10px] uppercase tracking-widest font-black">
-                    <th className="p-4 w-20 text-center">Status</th>
-                    <th className="p-4">Colaborador / E-mail</th>
-                    <th className="p-4">Nível de Permissão Atribuído</th>
-                    <th className="p-4 text-center w-40">Configuração</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#E2E8F0] text-sm">
-                  {loading ? (
-                    <tr><td colSpan={4} className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Carregando lista de segurança...</td></tr>
-                  ) : usuariosFiltrados.length === 0 ? (
-                    <tr><td colSpan={4} className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Nenhum registro localizado.</td></tr>
-                  ) : (
-                    usuariosFiltrados.map((user) => (
-                      <tr key={user.id} className={`hover:bg-[#F8FAFC] transition-colors ${!user.ativo ? 'opacity-40 bg-gray-50' : ''}`}>
-                        <td className="p-4 text-center">
-                          <div className={`w-3 h-3 rounded-full mx-auto ${user.ativo ? 'bg-green-500 shadow-sm' : 'bg-red-500 shadow-sm'}`}></div>
-                        </td>
-                        <td className="p-4">
-                          <strong className="block text-[#0C1D4D] font-black uppercase tracking-tight">{user.nome}</strong>
-                          <span className="text-xs text-[#64748B] font-bold">{user.email}</span>
-                        </td>
-                        <td className="p-4">
-                          <span className={`px-3 py-1 border rounded-full text-[10px] font-black tracking-widest ${getBadgeColor(user.permissao)}`}>
-                            {user.permissao}
-                          </span>
-                        </td>
-                        <td className="p-4 text-center">
-                          <button onClick={() => setModalEdicao({ open: true, user: { ...user } })} className="bg-white hover:bg-gray-50 border border-gray-300 font-black text-[10px] uppercase tracking-wider px-4 py-2 rounded-lg transition-colors shadow-sm text-[#0C1D4D]">
-                            ⚙️ Gerenciar
-                          </button>
-                        </td>
+            {loading ? (
+              <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Carregando lista de segurança...</div>
+            ) : usuariosFiltrados.length === 0 ? (
+              <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Nenhum registro localizado.</div>
+            ) : (
+              <>
+                {/* Mobile: cartões empilhados — a tabela de 4 colunas fica
+                    apertada demais numa tela de celular. */}
+                <div className="md:hidden space-y-3 overflow-auto">
+                  {usuariosFiltrados.map(user => (
+                    <div key={user.id} className={`bg-white rounded-xl shadow-sm border border-[#E2E8F0] p-4 ${!user.ativo ? 'opacity-40 bg-gray-50' : ''}`}>
+                      <div className="flex items-start justify-between gap-2 mb-3">
+                        <div className="flex items-start gap-2 min-w-0">
+                          <div className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${user.ativo ? 'bg-green-500 shadow-sm' : 'bg-red-500 shadow-sm'}`}></div>
+                          <div className="min-w-0">
+                            <strong className="block text-[#0C1D4D] font-black uppercase tracking-tight leading-tight">{user.nome}</strong>
+                            <span className="text-xs text-[#64748B] font-bold break-all">{user.email}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`px-3 py-1 border rounded-full text-[10px] font-black tracking-widest ${getBadgeColor(user.permissao)}`}>
+                          {user.permissao}
+                        </span>
+                        <button onClick={() => setModalEdicao({ open: true, user: { ...user } })} className="bg-white hover:bg-gray-50 border border-gray-300 font-black text-[10px] uppercase tracking-wider px-3 py-2 rounded-lg transition-colors shadow-sm text-[#0C1D4D] shrink-0">
+                          ⚙️ Gerenciar
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Desktop: tabela completa */}
+                <div className="hidden md:block bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto">
+                  <table className="w-full text-left border-collapse min-w-[800px]">
+                    <thead className="bg-[#F8FAFC] sticky top-0 shadow-sm z-10 border-b border-[#E2E8F0]">
+                      <tr className="text-[#64748B] text-[10px] uppercase tracking-widest font-black">
+                        <th className="p-4 w-20 text-center">Status</th>
+                        <th className="p-4">Colaborador / E-mail</th>
+                        <th className="p-4">Nível de Permissão Atribuído</th>
+                        <th className="p-4 text-center w-40">Configuração</th>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0] text-sm">
+                      {usuariosFiltrados.map((user) => (
+                        <tr key={user.id} className={`hover:bg-[#F8FAFC] transition-colors ${!user.ativo ? 'opacity-40 bg-gray-50' : ''}`}>
+                          <td className="p-4 text-center">
+                            <div className={`w-3 h-3 rounded-full mx-auto ${user.ativo ? 'bg-green-500 shadow-sm' : 'bg-red-500 shadow-sm'}`}></div>
+                          </td>
+                          <td className="p-4">
+                            <strong className="block text-[#0C1D4D] font-black uppercase tracking-tight">{user.nome}</strong>
+                            <span className="text-xs text-[#64748B] font-bold">{user.email}</span>
+                          </td>
+                          <td className="p-4">
+                            <span className={`px-3 py-1 border rounded-full text-[10px] font-black tracking-widest ${getBadgeColor(user.permissao)}`}>
+                              {user.permissao}
+                            </span>
+                          </td>
+                          <td className="p-4 text-center">
+                            <button onClick={() => setModalEdicao({ open: true, user: { ...user } })} className="bg-white hover:bg-gray-50 border border-gray-300 font-black text-[10px] uppercase tracking-wider px-4 py-2 rounded-lg transition-colors shadow-sm text-[#0C1D4D]">
+                              ⚙️ Gerenciar
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </div>
         </>
       )}
@@ -681,23 +710,17 @@ export default function GestaoPermissoes() {
             </div>
             
             <div className="overflow-auto flex-grow">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-[#F8FAFC] border-b border-[#E2E8F0] sticky top-0 text-[10px] font-black uppercase text-gray-400 tracking-wider">
-                  <tr>
-                    <th className="p-4">Página Mapeada / Rota de Endereço</th>
-                    <th className="p-4">Setores com Permissão Concedida</th>
-                    <th className="p-4 text-center w-48">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#E2E8F0] text-sm font-medium">
-                  {paginasFiltradas.map(p => (
-                    <tr key={p.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="p-4">
+              {paginasFiltradas.length === 0 ? (
+                <p className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider text-xs">Nenhuma rota configurada nesta visualização.</p>
+              ) : (
+                <>
+                  {/* Mobile: cartões empilhados */}
+                  <div className="md:hidden space-y-3 p-4">
+                    {paginasFiltradas.map(p => (
+                      <div key={p.id} className="bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] p-3">
                         <strong className="block text-[#0C1D4D] font-black uppercase tracking-tight">{p.nome_pagina}</strong>
                         <code className="text-xs text-[#336699] font-mono bg-blue-50/70 border border-blue-100 rounded px-1.5 py-0.5 mt-1 inline-block">{p.endereco_route}</code>
-                      </td>
-                      <td className="p-4">
-                        <div className="flex flex-wrap gap-1 max-w-[400px]">
+                        <div className="flex flex-wrap gap-1 mt-2">
                           {p.permissoes_permitidas.map(perm => (
                             <span key={perm} className={`px-2 py-0.5 border rounded-full text-[9px] font-black tracking-wider ${getBadgeColor(perm)}`}>
                               {perm}
@@ -707,26 +730,62 @@ export default function GestaoPermissoes() {
                             <span className="text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider">⛔ BLOQUEIO TOTAL (Sem acessos)</span>
                           )}
                         </div>
-                      </td>
-                      <td className="p-4 text-center">
-                        <div className="flex justify-center items-center gap-2">
-                          <button onClick={() => prepararEdicaoPagina(p)} className="bg-blue-50 border border-blue-200 text-[#0369A1] font-bold text-[10px] uppercase px-3 py-1.5 rounded-md hover:bg-blue-100 transition-colors">
+                        <div className="flex items-center gap-2 mt-3">
+                          <button onClick={() => prepararEdicaoPagina(p)} className="flex-1 bg-blue-50 border border-blue-200 text-[#0369A1] font-bold text-[10px] uppercase px-3 py-2 rounded-md hover:bg-blue-100 transition-colors">
                             Editar
                           </button>
-                          <button onClick={() => deletarMapeamentoPagina(p.id!, p.nome_pagina)} className="bg-red-50 border border-red-200 text-red-600 font-bold text-[10px] uppercase px-3 py-1.5 rounded-md hover:bg-red-100 transition-colors">
+                          <button onClick={() => deletarMapeamentoPagina(p.id!, p.nome_pagina)} className="flex-1 bg-red-50 border border-red-200 text-red-600 font-bold text-[10px] uppercase px-3 py-2 rounded-md hover:bg-red-100 transition-colors">
                             Excluir
                           </button>
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {paginasFiltradas.length === 0 && (
-                    <tr>
-                      <td colSpan={3} className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider text-xs">Nenhuma rota configurada nesta visualização.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Desktop: tabela completa */}
+                  <table className="hidden md:table w-full text-left border-collapse">
+                    <thead className="bg-[#F8FAFC] border-b border-[#E2E8F0] sticky top-0 text-[10px] font-black uppercase text-gray-400 tracking-wider">
+                      <tr>
+                        <th className="p-4">Página Mapeada / Rota de Endereço</th>
+                        <th className="p-4">Setores com Permissão Concedida</th>
+                        <th className="p-4 text-center w-48">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0] text-sm font-medium">
+                      {paginasFiltradas.map(p => (
+                        <tr key={p.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="p-4">
+                            <strong className="block text-[#0C1D4D] font-black uppercase tracking-tight">{p.nome_pagina}</strong>
+                            <code className="text-xs text-[#336699] font-mono bg-blue-50/70 border border-blue-100 rounded px-1.5 py-0.5 mt-1 inline-block">{p.endereco_route}</code>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex flex-wrap gap-1 max-w-[400px]">
+                              {p.permissoes_permitidas.map(perm => (
+                                <span key={perm} className={`px-2 py-0.5 border rounded-full text-[9px] font-black tracking-wider ${getBadgeColor(perm)}`}>
+                                  {perm}
+                                </span>
+                              ))}
+                              {p.permissoes_permitidas.length === 0 && (
+                                <span className="text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider">⛔ BLOQUEIO TOTAL (Sem acessos)</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-4 text-center">
+                            <div className="flex justify-center items-center gap-2">
+                              <button onClick={() => prepararEdicaoPagina(p)} className="bg-blue-50 border border-blue-200 text-[#0369A1] font-bold text-[10px] uppercase px-3 py-1.5 rounded-md hover:bg-blue-100 transition-colors">
+                                Editar
+                              </button>
+                              <button onClick={() => deletarMapeamentoPagina(p.id!, p.nome_pagina)} className="bg-red-50 border border-red-200 text-red-600 font-bold text-[10px] uppercase px-3 py-1.5 rounded-md hover:bg-red-100 transition-colors">
+                                Excluir
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
             </div>
           </div>
 
@@ -771,43 +830,68 @@ export default function GestaoPermissoes() {
           {/* Lista de setores cadastrados */}
           <div className="flex-grow bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col h-full">
             <div className="overflow-auto flex-grow">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-[#F8FAFC] border-b border-[#E2E8F0] sticky top-0 text-[10px] font-black uppercase text-gray-400 tracking-wider">
-                  <tr>
-                    <th className="p-4">Setor</th>
-                    <th className="p-4">Em uso</th>
-                    <th className="p-4 text-center w-32">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#E2E8F0] text-sm font-medium">
-                  {setores.map(s => {
-                    const paginasComUso = paginas.filter(p => p.permissoes_permitidas.includes(s.nome)).length;
-                    const usuariosComUso = usuarios.filter(u => u.permissao === s.nome).length;
-                    return (
-                      <tr key={s.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="p-4">
-                          <span className={`px-3 py-1 border rounded-full text-[10px] font-black tracking-widest ${getBadgeColor(s.nome)}`}>
-                            {s.nome}
-                          </span>
-                        </td>
-                        <td className="p-4 text-xs text-gray-500 font-semibold">
-                          {paginasComUso} página(s) · {usuariosComUso} colaborador(es)
-                        </td>
-                        <td className="p-4 text-center">
-                          <button onClick={() => removerSetor(s)} className="bg-red-50 border border-red-200 text-red-600 font-bold text-[10px] uppercase px-3 py-1.5 rounded-md hover:bg-red-100 transition-colors">
+              {setores.length === 0 ? (
+                <p className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider text-xs">Nenhum setor cadastrado.</p>
+              ) : (
+                <>
+                  {/* Mobile: cartões empilhados */}
+                  <div className="md:hidden space-y-2 p-4">
+                    {setores.map(s => {
+                      const paginasComUso = paginas.filter(p => p.permissoes_permitidas.includes(s.nome)).length;
+                      const usuariosComUso = usuarios.filter(u => u.permissao === s.nome).length;
+                      return (
+                        <div key={s.id} className="bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] p-3 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <span className={`inline-block px-3 py-1 border rounded-full text-[10px] font-black tracking-widest ${getBadgeColor(s.nome)}`}>
+                              {s.nome}
+                            </span>
+                            <p className="text-[10px] text-gray-500 font-semibold mt-1.5">
+                              {paginasComUso} página(s) · {usuariosComUso} colaborador(es)
+                            </p>
+                          </div>
+                          <button onClick={() => removerSetor(s)} className="shrink-0 bg-red-50 border border-red-200 text-red-600 font-bold text-[10px] uppercase px-3 py-1.5 rounded-md hover:bg-red-100 transition-colors">
                             Excluir
                           </button>
-                        </td>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Desktop: tabela completa */}
+                  <table className="hidden md:table w-full text-left border-collapse">
+                    <thead className="bg-[#F8FAFC] border-b border-[#E2E8F0] sticky top-0 text-[10px] font-black uppercase text-gray-400 tracking-wider">
+                      <tr>
+                        <th className="p-4">Setor</th>
+                        <th className="p-4">Em uso</th>
+                        <th className="p-4 text-center w-32">Ações</th>
                       </tr>
-                    );
-                  })}
-                  {setores.length === 0 && (
-                    <tr>
-                      <td colSpan={3} className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider text-xs">Nenhum setor cadastrado.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0] text-sm font-medium">
+                      {setores.map(s => {
+                        const paginasComUso = paginas.filter(p => p.permissoes_permitidas.includes(s.nome)).length;
+                        const usuariosComUso = usuarios.filter(u => u.permissao === s.nome).length;
+                        return (
+                          <tr key={s.id} className="hover:bg-gray-50 transition-colors">
+                            <td className="p-4">
+                              <span className={`px-3 py-1 border rounded-full text-[10px] font-black tracking-widest ${getBadgeColor(s.nome)}`}>
+                                {s.nome}
+                              </span>
+                            </td>
+                            <td className="p-4 text-xs text-gray-500 font-semibold">
+                              {paginasComUso} página(s) · {usuariosComUso} colaborador(es)
+                            </td>
+                            <td className="p-4 text-center">
+                              <button onClick={() => removerSetor(s)} className="bg-red-50 border border-red-200 text-red-600 font-bold text-[10px] uppercase px-3 py-1.5 rounded-md hover:bg-red-100 transition-colors">
+                                Excluir
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </>
+              )}
             </div>
           </div>
 
@@ -835,49 +919,84 @@ export default function GestaoPermissoes() {
           </div>
 
           <div className="px-4 md:px-8 pb-8 flex-grow overflow-hidden flex flex-col">
-            <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto">
-              <table className="w-full text-left border-collapse min-w-[800px]">
-                <thead className="bg-[#F8FAFC] sticky top-0 shadow-sm z-10 border-b border-[#E2E8F0]">
-                  <tr className="text-[#64748B] text-[10px] uppercase tracking-widest font-black">
-                    <th className="p-4">Colaborador</th>
-                    <th className="p-4">Cargo</th>
-                    <th className="p-4">CPF</th>
-                    <th className="p-4">Celular</th>
-                    <th className="p-4">Cadastro do Acesso</th>
-                    <th className="p-4">Último Acesso</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#E2E8F0] text-sm">
-                  {loadingPortal ? (
-                    <tr><td colSpan={6} className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Carregando colaboradores...</td></tr>
-                  ) : acessosPortalFiltrados.length === 0 ? (
-                    <tr><td colSpan={6} className="text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Nenhum colaborador com cadastro de acesso encontrado.</td></tr>
-                  ) : (
-                    acessosPortalFiltrados.map((a) => (
-                      <tr key={a.id} className={`hover:bg-[#F8FAFC] transition-colors ${a.funcionario_ativo === false ? 'opacity-40 bg-gray-50' : ''}`}>
-                        <td className="p-4">
-                          <strong className="block text-[#0C1D4D] font-black uppercase tracking-tight">{a.funcionario_nome}</strong>
-                          {a.funcionario_ativo === false && (
-                            <span className="text-[10px] text-red-600 font-black uppercase">Funcionário inativo</span>
-                          )}
-                        </td>
-                        <td className="p-4 text-xs text-[#64748B] font-bold">{a.cargo || '—'}</td>
-                        <td className="p-4 text-xs text-[#64748B] font-mono font-semibold">{formatarCpf(a.cpf)}</td>
-                        <td className="p-4 text-xs text-[#64748B] font-bold">{a.celular || '—'}</td>
-                        <td className="p-4 text-xs text-[#64748B] font-bold">
-                          {a.criado_em ? new Date(a.criado_em).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'}
-                        </td>
-                        <td className="p-4 text-xs text-[#64748B] font-bold">
-                          {a.ultimo_acesso
-                            ? new Date(a.ultimo_acesso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-                            : <span className="text-gray-400">Nunca acessou</span>}
-                        </td>
+            {loadingPortal ? (
+              <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Carregando colaboradores...</div>
+            ) : acessosPortalFiltrados.length === 0 ? (
+              <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Nenhum colaborador com cadastro de acesso encontrado.</div>
+            ) : (
+              <>
+                {/* Mobile: cartões empilhados — 6 colunas não cabem numa
+                    tela de celular sem espremer ou cortar texto. */}
+                <div className="md:hidden space-y-3 overflow-auto">
+                  {acessosPortalFiltrados.map(a => (
+                    <div key={a.id} className={`bg-white rounded-xl shadow-sm border border-[#E2E8F0] p-4 ${a.funcionario_ativo === false ? 'opacity-40 bg-gray-50' : ''}`}>
+                      <div className="mb-2">
+                        <strong className="block text-[#0C1D4D] font-black uppercase tracking-tight leading-tight">{a.funcionario_nome}</strong>
+                        <span className="text-[11px] text-gray-400 font-medium">{a.cargo || 'Sem cargo'}</span>
+                        {a.funcionario_ativo === false && (
+                          <span className="block text-[10px] text-red-600 font-black uppercase">Funcionário inativo</span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-[11px] mb-2">
+                        <div className="bg-[#F8FAFC] rounded-lg px-2.5 py-1.5">
+                          <span className="block text-gray-400 font-black uppercase text-[9px] tracking-wide">CPF</span>
+                          <span className="font-mono font-semibold text-[#0C1D4D]">{formatarCpf(a.cpf)}</span>
+                        </div>
+                        <div className="bg-[#F8FAFC] rounded-lg px-2.5 py-1.5">
+                          <span className="block text-gray-400 font-black uppercase text-[9px] tracking-wide">Celular</span>
+                          <span className="font-semibold text-[#0C1D4D]">{a.celular || '—'}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 text-[10px] text-gray-500 font-bold">
+                        <span>Cadastro: {a.criado_em ? new Date(a.criado_em).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'}</span>
+                        <span>{a.ultimo_acesso
+                          ? `Acesso: ${new Date(a.ultimo_acesso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })}`
+                          : <span className="text-gray-400">Nunca acessou</span>}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Desktop: tabela completa */}
+                <div className="hidden md:block bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto">
+                  <table className="w-full text-left border-collapse min-w-[800px]">
+                    <thead className="bg-[#F8FAFC] sticky top-0 shadow-sm z-10 border-b border-[#E2E8F0]">
+                      <tr className="text-[#64748B] text-[10px] uppercase tracking-widest font-black">
+                        <th className="p-4">Colaborador</th>
+                        <th className="p-4">Cargo</th>
+                        <th className="p-4">CPF</th>
+                        <th className="p-4">Celular</th>
+                        <th className="p-4">Cadastro do Acesso</th>
+                        <th className="p-4">Último Acesso</th>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0] text-sm">
+                      {acessosPortalFiltrados.map((a) => (
+                        <tr key={a.id} className={`hover:bg-[#F8FAFC] transition-colors ${a.funcionario_ativo === false ? 'opacity-40 bg-gray-50' : ''}`}>
+                          <td className="p-4">
+                            <strong className="block text-[#0C1D4D] font-black uppercase tracking-tight">{a.funcionario_nome}</strong>
+                            {a.funcionario_ativo === false && (
+                              <span className="text-[10px] text-red-600 font-black uppercase">Funcionário inativo</span>
+                            )}
+                          </td>
+                          <td className="p-4 text-xs text-[#64748B] font-bold">{a.cargo || '—'}</td>
+                          <td className="p-4 text-xs text-[#64748B] font-mono font-semibold">{formatarCpf(a.cpf)}</td>
+                          <td className="p-4 text-xs text-[#64748B] font-bold">{a.celular || '—'}</td>
+                          <td className="p-4 text-xs text-[#64748B] font-bold">
+                            {a.criado_em ? new Date(a.criado_em).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'}
+                          </td>
+                          <td className="p-4 text-xs text-[#64748B] font-bold">
+                            {a.ultimo_acesso
+                              ? new Date(a.ultimo_acesso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                              : <span className="text-gray-400">Nunca acessou</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </div>
         </>
       )}

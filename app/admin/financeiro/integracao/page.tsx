@@ -7,6 +7,7 @@ import { supabase } from '../../../lib/supabase';
 import { normalizarPermissao } from '../../../lib/permissoes';
 import { consultarPagamentosItauAction, consultarPagamentoItauAction, type FiltrosConsultaItau } from './actions';
 import { listarIntegracoesAction, statusItauApiAction } from '../../integracao/actions';
+import ExigirMFA from '../ExigirMFA';
 
 const BRL = (v: string | number | null | undefined) => 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtData = (d: string | null | undefined) => {
@@ -169,6 +170,7 @@ export default function IntegracaoFinanceiraPage() {
   const credenciaisAmbiente = statusItauApi ? (ambienteAtual === 'PRODUCAO' ? statusItauApi.producao : statusItauApi.sandbox) : null;
 
   return (
+    <ExigirMFA>
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">
       <Analytics />
 
@@ -354,5 +356,6 @@ export default function IntegracaoFinanceiraPage() {
         </div>
       )}
     </div>
+    </ExigirMFA>
   );
 }

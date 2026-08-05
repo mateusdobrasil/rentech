@@ -10,6 +10,7 @@ import logoColorido from '../../../../app/imgs/logo.png';
 import { useAcessoRota } from '../../op/useAcessoRota';
 import { normalizarItensOP, ItemOPNormalizado } from '../../op/utils';
 import { DialogOP, DialogOPState, BotaoLinkAssinatura } from '../../op/DialogOP';
+import ExigirMFA from '../ExigirMFA';
 
 // Os itens em memória já chegam normalizados (ver normalizarItensOP) — não há
 // mais motivo para este tipo carregar os campos legados (description/quantity)
@@ -303,6 +304,7 @@ export default function PainelFinanceiro() {
   );
 
   return (
+    <ExigirMFA>
     <>
       {/* Interface Admin (Escondida na hora de imprimir) */}
       <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-16 print:hidden">
@@ -545,5 +547,6 @@ export default function PainelFinanceiro() {
         </div>
       )}
     </>
+    </ExigirMFA>
   );
 }

@@ -5,6 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../../lib/supabase';
 import { buscarRelatorioFinanceiroAction } from '../actions';
+import ExigirMFA from '../ExigirMFA';
 
 // ============================================================================
 // MOTOR DE NORMALIZAÇÃO DE PERMISSÕES (mesmo padrão das páginas irmãs)
@@ -258,6 +259,7 @@ export default function RelatoriosFinanceiroPage() {
   };
 
   return (
+    <ExigirMFA>
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">
       <Analytics />
 
@@ -444,5 +446,6 @@ export default function RelatoriosFinanceiroPage() {
         )}
       </div>
     </div>
+    </ExigirMFA>
   );
 }

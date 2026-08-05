@@ -10,6 +10,7 @@ import {
 } from '../../rh/actions/actions-financeiro';
 import { listarIntegracoesAction } from '../../integracao/actions';
 import SepararHolerites from '../../rh/ponto/SepararHolerites';
+import ExigirMFA from '../ExigirMFA';
 
 // ============================================================================
 // MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
@@ -767,6 +768,7 @@ export default function FinanceiroPage() {
   }
 
   return (
+    <ExigirMFA>
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">
       <Analytics />
 
@@ -1173,5 +1175,6 @@ export default function FinanceiroPage() {
       </div>
       )}
     </div>
+    </ExigirMFA>
   );
 }

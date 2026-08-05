@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../lib/supabase';
 import { normalizarPermissao } from '../../lib/permissoes';
+import ExigirMFA from './ExigirMFA';
 
 // Tipagem do Perfil
 interface PerfilUsuario {
@@ -140,6 +141,7 @@ export default function FinanceiroHub() {
   );
 
   return (
+    <ExigirMFA>
     <div className="min-h-screen bg-[#F0F4F8] font-sans pt-12 px-4">
       <Analytics />
       <div className="max-w-6xl mx-auto">
@@ -172,5 +174,6 @@ export default function FinanceiroHub() {
         </div>
       </div>
     </div>
+    </ExigirMFA>
   );
 }

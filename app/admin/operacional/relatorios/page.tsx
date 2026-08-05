@@ -253,6 +253,10 @@ export default function RelatoriosOperacional() {
 
   const [calSemanaInicio, setCalSemanaInicio] = useState<Date>(() => domingoDaSemana(new Date()));
   const [calNumSemanas, setCalNumSemanas] = useState(3);
+  // Visualização "dia" mostra um único dia (calSemanaInicio deixa de estar
+  // preso ao domingo da semana e passa a ser o próprio dia selecionado) em
+  // vez da grade de semanas — útil pra conferir a agenda de uma data específica.
+  const [calVisualizacao, setCalVisualizacao] = useState<'semanas' | 'dia'>('semanas');
   const [fichasCalendario, setFichasCalendario] = useState<FichaCalendario[]>([]);
   const [calLoading, setCalLoading] = useState(false);
   const [mapaLocaisEventos, setMapaLocaisEventos] = useState<Record<string, string>>({});
@@ -330,12 +334,14 @@ export default function RelatoriosOperacional() {
     setLoading(false);
   };
 
-  // Busca as fichas de reserva que se sobrepõem à janela de semanas visível no calendário.
+  // Busca as fichas de reserva que se sobrepõem à janela visível no calendário
+  // (um único dia, ou a grade de semanas).
   const calDataFim = useMemo(() => {
+    if (calVisualizacao === 'dia') return new Date(calSemanaInicio);
     const fim = new Date(calSemanaInicio);
     fim.setDate(fim.getDate() + calNumSemanas * 7 - 1);
     return fim;
-  }, [calSemanaInicio, calNumSemanas]);
+  }, [calSemanaInicio, calNumSemanas, calVisualizacao]);
 
   // Recarrega os eventos manuais da janela de semanas visível — reutilizada após criar/excluir um evento.
   const carregarAgendaManual = async () => {
@@ -892,29 +898,48 @@ export default function RelatoriosOperacional() {
                   <div>
                     <h1 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Calendário Operacional de Logística</h1>
                     <p className="text-sm text-[#64748B]">
-                      Período: {toISO(calSemanaInicio).split('-').reverse().join('/')} a {toISO(calDataFim).split('-').reverse().join('/')}
+                      {calVisualizacao === 'dia'
+                        ? <>Dia: {toISO(calSemanaInicio).split('-').reverse().join('/')}</>
+                        : <>Período: {toISO(calSemanaInicio).split('-').reverse().join('/')} a {toISO(calDataFim).split('-').reverse().join('/')}</>}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                     <select
-                      value={calNumSemanas}
-                      onChange={(e) => setCalNumSemanas(Number(e.target.value))}
+                      value={calVisualizacao === 'dia' ? 'dia' : String(calNumSemanas)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === 'dia') {
+                          setCalVisualizacao('dia');
+                        } else {
+                          setCalVisualizacao('semanas');
+                          setCalNumSemanas(Number(v));
+                        }
+                      }}
                       className="border border-[#E2E8F0] rounded-lg px-3 py-2.5 text-xs font-bold text-[#0C1D4D] focus:outline-none focus:ring-2 focus:ring-[#336699]"
                     >
-                      <option value={2}>2 semanas</option>
-                      <option value={3}>3 semanas</option>
-                      <option value={4}>4 semanas</option>
-                      <option value={6}>6 semanas</option>
+                      <option value="dia">1 dia</option>
+                      <option value="2">2 semanas</option>
+                      <option value="3">3 semanas</option>
+                      <option value="4">4 semanas</option>
+                      <option value="6">6 semanas</option>
                     </select>
-                    <button onClick={() => setCalSemanaInicio(d => { const x = new Date(d); x.setDate(x.getDate() - 7); return x; })} className="bg-[#F0F4F8] hover:bg-[#E2E8F0] text-[#0C1D4D] font-black text-xs uppercase px-4 py-2.5 rounded-lg transition-colors">
+                    <button onClick={() => setCalSemanaInicio(d => { const x = new Date(d); x.setDate(x.getDate() - (calVisualizacao === 'dia' ? 1 : 7)); return x; })} className="bg-[#F0F4F8] hover:bg-[#E2E8F0] text-[#0C1D4D] font-black text-xs uppercase px-4 py-2.5 rounded-lg transition-colors">
                       ⬅
                     </button>
-                    <button onClick={() => setCalSemanaInicio(domingoDaSemana(new Date()))} className="bg-[#F0F4F8] hover:bg-[#E2E8F0] text-[#0C1D4D] font-black text-xs uppercase px-4 py-2.5 rounded-lg transition-colors">
+                    <button onClick={() => setCalSemanaInicio(calVisualizacao === 'dia' ? new Date() : domingoDaSemana(new Date()))} className="bg-[#F0F4F8] hover:bg-[#E2E8F0] text-[#0C1D4D] font-black text-xs uppercase px-4 py-2.5 rounded-lg transition-colors">
                       Hoje
                     </button>
-                    <button onClick={() => setCalSemanaInicio(d => { const x = new Date(d); x.setDate(x.getDate() + 7); return x; })} className="bg-[#F0F4F8] hover:bg-[#E2E8F0] text-[#0C1D4D] font-black text-xs uppercase px-4 py-2.5 rounded-lg transition-colors">
+                    <button onClick={() => setCalSemanaInicio(d => { const x = new Date(d); x.setDate(x.getDate() + (calVisualizacao === 'dia' ? 1 : 7)); return x; })} className="bg-[#F0F4F8] hover:bg-[#E2E8F0] text-[#0C1D4D] font-black text-xs uppercase px-4 py-2.5 rounded-lg transition-colors">
                       ➡
                     </button>
+                    {calVisualizacao === 'dia' && (
+                      <input
+                        type="date"
+                        value={toISO(calSemanaInicio)}
+                        onChange={(e) => { if (e.target.value) setCalSemanaInicio(new Date(`${e.target.value}T00:00:00`)); }}
+                        className="border border-[#E2E8F0] rounded-lg px-3 py-2.5 text-xs font-bold text-[#0C1D4D] focus:outline-none focus:ring-2 focus:ring-[#336699]"
+                      />
+                    )}
                     <button onClick={() => abrirModalAgenda()} className="bg-[#336699] text-white font-black uppercase tracking-widest text-xs px-4 py-2.5 rounded-lg shadow-md hover:bg-[#284B8C] transition-all">
                       ➕ Nova Agenda
                     </button>
@@ -927,7 +952,9 @@ export default function RelatoriosOperacional() {
                 <div className="hidden print:block mb-1 border-b-2 border-black pb-1">
                   <h1 className="text-base font-black uppercase">Calendário Operacional de Logística</h1>
                   <p className="text-xs">
-                    Período: {toISO(calSemanaInicio).split('-').reverse().join('/')} a {toISO(calDataFim).split('-').reverse().join('/')}
+                    {calVisualizacao === 'dia'
+                      ? <>Dia: {toISO(calSemanaInicio).split('-').reverse().join('/')}</>
+                      : <>Período: {toISO(calSemanaInicio).split('-').reverse().join('/')} a {toISO(calDataFim).split('-').reverse().join('/')}</>}
                   </p>
                 </div>
 
@@ -957,6 +984,61 @@ export default function RelatoriosOperacional() {
                   })}
                 </div>
 
+                {calVisualizacao === 'dia' ? (() => {
+                  const iso = toISO(calSemanaInicio);
+                  const ops = operacoesDoDia(fichasCalendario, iso, mapaLocaisEventos).filter(op => filtroOperacoes[op.tipo]);
+                  const eventosManuais = agendaManual.filter(e => e.data === iso && (filtroCategoriasManual[e.categoria_id] ?? true));
+                  const ehHoje = iso === hojeISO;
+                  return (
+                    <div className="calendario-grid-print bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden relative">
+                      {calLoading && (
+                        <div className="absolute inset-0 bg-white/70 flex items-center justify-center z-10 no-print">
+                          <div className="w-8 h-8 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin"></div>
+                        </div>
+                      )}
+                      <div className={`p-5 print:p-1.5 ${ehHoje ? 'bg-blue-50/50' : ''}`}>
+                        <div className={`text-sm print:text-xs font-black mb-4 print:mb-1 uppercase tracking-wide ${ehHoje ? 'text-[#336699]' : 'text-[#0C1D4D]'}`}>
+                          {DIAS_SEMANA[calSemanaInicio.getDay()]}, {String(calSemanaInicio.getDate()).padStart(2, '0')}/{String(calSemanaInicio.getMonth() + 1).padStart(2, '0')}/{calSemanaInicio.getFullYear()}
+                          {ehHoje && <span className="ml-2 text-xs print:text-[8px] font-black text-[#336699]">(HOJE)</span>}
+                        </div>
+                        <div className="space-y-2 print:space-y-1 max-w-xl">
+                          {ops.length === 0 && eventosManuais.length === 0 && (
+                            <p className="text-xs text-[#94A3B8] font-bold uppercase py-8 text-center">Nenhuma operação ou evento agendado para este dia.</p>
+                          )}
+                          {ops.map((op, oi) => {
+                            const cor = COR_OPERACAO[op.tipo];
+                            return (
+                              <div key={oi} className={`text-xs print:text-[8px] leading-snug font-bold px-3 py-2.5 print:px-1.5 print:py-1 rounded-lg border ${cor.bg} ${cor.text} ${cor.border}`}>
+                                {op.texto}
+                                {op.local && <div className="font-normal opacity-75 mt-0.5">📍 {op.local}</div>}
+                              </div>
+                            );
+                          })}
+                          {eventosManuais.map(e => {
+                            const catCor = agendaCategorias.find(c => c.id === e.categoria_id)?.cor || '#64748B';
+                            return (
+                              <div
+                                key={e.id}
+                                className="group relative text-xs print:text-[8px] leading-snug font-bold px-3 py-2.5 print:px-1.5 print:py-1 rounded-lg border"
+                                style={{ backgroundColor: `${catCor}1A`, borderColor: `${catCor}4D`, color: catCor }}
+                              >
+                                <button
+                                  onClick={() => excluirAgendaManual(e.id)}
+                                  className="no-print absolute top-1.5 right-2 opacity-0 group-hover:opacity-100 text-xs leading-none px-1 hover:text-red-600 transition-opacity"
+                                  title="Excluir evento manual"
+                                >
+                                  &times;
+                                </button>
+                                📌 {e.texto}
+                                {e.local && <div className="font-normal opacity-75 mt-0.5">📍 {e.local}</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })() : (
                 <div className="calendario-grid-print bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden relative">
                   {calLoading && (
                     <div className="absolute inset-0 bg-white/70 flex items-center justify-center z-10 no-print">
@@ -1026,6 +1108,7 @@ export default function RelatoriosOperacional() {
                     </div>
                   ))}
                 </div>
+                )}
               </>
             )}
 

@@ -22,6 +22,15 @@ export default function MinhaConta() {
   const [salvando, setSalvando] = useState(false);
   const [feedback, setFeedback] = useState<{ show: boolean; msg: string; type: 'success' | 'error' }>({ show: false, msg: '', type: 'success' });
 
+  // Autenticação em duas etapas (2FA/TOTP) — exigida pra entrar na área
+  // Financeira (ver app/admin/financeiro/ExigirMFA.tsx), ativada aqui.
+  const [fatorMfa, setFatorMfa] = useState<{ id: string; status: string } | null>(null);
+  const [carregandoMfa, setCarregandoMfa] = useState(true);
+  const [ativacaoMfa, setAtivacaoMfa] = useState<{ factorId: string; qrCode: string; segredo: string } | null>(null);
+  const [codigoMfa, setCodigoMfa] = useState('');
+  const [processandoMfa, setProcessandoMfa] = useState(false);
+  const [erroMfa, setErroMfa] = useState('');
+
   useEffect(() => {
     async function carregar() {
       const { data: { session } } = await supabase.auth.getSession();
@@ -42,10 +51,76 @@ export default function MinhaConta() {
         permissao: data?.permissao || '',
       });
       setAuthLoading(false);
+      carregarFatorMfa();
     }
 
     carregar();
   }, [router]);
+
+  const carregarFatorMfa = async () => {
+    setCarregandoMfa(true);
+    const { data } = await supabase.auth.mfa.listFactors();
+    const fator = data?.totp?.[0];
+    setFatorMfa(fator ? { id: fator.id, status: fator.status } : null);
+    setCarregandoMfa(false);
+  };
+
+  // Inicia o cadastro: gera o QR code + segredo (fallback caso não dê pra
+  // escanear) e deixa pronto pra receber o código de confirmação.
+  const iniciarAtivacaoMfa = async () => {
+    setErroMfa('');
+    const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp' });
+    if (error) { mostrarFeedback(error.message, 'error'); return; }
+    setAtivacaoMfa({ factorId: data.id, qrCode: data.totp.qr_code, segredo: data.totp.secret });
+  };
+
+  // Cancela um cadastro em andamento (fator ainda não verificado) — não
+  // exige aal2, diferente de desativar um fator já ativo.
+  const cancelarAtivacaoMfa = async () => {
+    if (ativacaoMfa) await supabase.auth.mfa.unenroll({ factorId: ativacaoMfa.factorId });
+    setAtivacaoMfa(null);
+    setCodigoMfa('');
+    setErroMfa('');
+  };
+
+  const confirmarAtivacaoMfa = async () => {
+    if (!ativacaoMfa || codigoMfa.length !== 6) return;
+    setProcessandoMfa(true); setErroMfa('');
+    try {
+      const { data: desafio, error: desafioErro } = await supabase.auth.mfa.challenge({ factorId: ativacaoMfa.factorId });
+      if (desafioErro) throw desafioErro;
+      const { error: verifyErro } = await supabase.auth.mfa.verify({ factorId: ativacaoMfa.factorId, challengeId: desafio.id, code: codigoMfa });
+      if (verifyErro) throw verifyErro;
+
+      registrarLogAuditoria({ usuario_nome: perfil?.nome || 'Usuário', acao: 'ATIVOU AUTENTICAÇÃO EM DUAS ETAPAS (2FA)', setor: 'ACESSO' });
+      mostrarFeedback('2FA ativado com sucesso!', 'success');
+      setAtivacaoMfa(null);
+      setCodigoMfa('');
+      carregarFatorMfa();
+    } catch (e: any) {
+      setErroMfa('Código inválido ou expirado. Tente novamente.');
+      setCodigoMfa('');
+    } finally {
+      setProcessandoMfa(false);
+    }
+  };
+
+  const desativarMfa = async () => {
+    if (!fatorMfa) return;
+    if (!confirm('Desativar a autenticação em duas etapas? Você perderá a camada extra de proteção da área Financeira até ativar de novo.')) return;
+    setProcessandoMfa(true);
+    try {
+      const { error } = await supabase.auth.mfa.unenroll({ factorId: fatorMfa.id });
+      if (error) throw error;
+      registrarLogAuditoria({ usuario_nome: perfil?.nome || 'Usuário', acao: 'DESATIVOU AUTENTICAÇÃO EM DUAS ETAPAS (2FA)', setor: 'ACESSO' });
+      mostrarFeedback('2FA desativado.', 'success');
+      setFatorMfa(null);
+    } catch (e: any) {
+      mostrarFeedback('Não foi possível desativar: confirme seu código atual primeiro (abra qualquer página do Financeiro) e tente de novo.', 'error');
+    } finally {
+      setProcessandoMfa(false);
+    }
+  };
 
   const mostrarFeedback = (msg: string, type: 'success' | 'error') => {
     setFeedback({ show: true, msg, type });
@@ -163,6 +238,70 @@ export default function MinhaConta() {
             >
               {salvando ? '...' : '🔒 Salvar Nova Senha'}
             </button>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0] space-y-4">
+            <div className="border-b border-gray-100 pb-2 flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider">🔐 Autenticação em Duas Etapas</h2>
+                <p className="text-[11px] text-gray-400 font-bold uppercase mt-0.5">Obrigatória para acessar a área Financeira</p>
+              </div>
+              {!carregandoMfa && fatorMfa && !ativacaoMfa && (
+                <span className="text-[9px] font-black px-2.5 py-1 rounded-full uppercase bg-emerald-100 text-emerald-700 shrink-0">✓ Ativado</span>
+              )}
+            </div>
+
+            {carregandoMfa && <p className="text-xs text-gray-400 text-center py-2">Carregando...</p>}
+
+            {!carregandoMfa && !ativacaoMfa && !fatorMfa && (
+              <div className="text-center py-2">
+                <p className="text-xs text-gray-500 mb-4">Ative um aplicativo autenticador (Google Authenticator, Authy, etc.) para proteger seu acesso ao Financeiro com um código extra.</p>
+                <button onClick={iniciarAtivacaoMfa} className="w-full bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs py-3 rounded-xl hover:bg-[#284B8C] transition-all shadow-md">
+                  🔐 Ativar 2FA
+                </button>
+              </div>
+            )}
+
+            {!carregandoMfa && !ativacaoMfa && fatorMfa && (
+              <div className="text-center py-2">
+                <p className="text-xs text-gray-500 mb-4">Seu acesso à área Financeira está protegido por um código de verificação adicional.</p>
+                <button onClick={desativarMfa} disabled={processandoMfa} className="w-full bg-white border-2 border-red-300 text-red-600 font-black uppercase tracking-widest text-xs py-3 rounded-xl hover:bg-red-50 transition-all disabled:opacity-50">
+                  {processandoMfa ? '...' : 'Desativar 2FA'}
+                </button>
+              </div>
+            )}
+
+            {ativacaoMfa && (
+              <div className="space-y-3">
+                <p className="text-xs text-gray-500 text-center">Escaneie o QR code com seu aplicativo autenticador, ou digite o código manualmente.</p>
+                <div className="flex justify-center">
+                  <img src={ativacaoMfa.qrCode} alt="QR code para ativar 2FA" className="w-40 h-40 border border-gray-200 rounded-lg" />
+                </div>
+                <div className="bg-gray-50 rounded-lg p-2 text-center">
+                  <p className="text-[9px] font-black text-gray-400 uppercase mb-1">Código manual</p>
+                  <p className="text-xs font-mono font-bold text-[#0C1D4D] break-all">{ativacaoMfa.segredo}</p>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Código de 6 dígitos do app</label>
+                  <input
+                    type="text" inputMode="numeric" maxLength={6} value={codigoMfa} autoFocus
+                    onChange={e => setCodigoMfa(e.target.value.replace(/\D/g, ''))}
+                    onKeyDown={e => e.key === 'Enter' && confirmarAtivacaoMfa()}
+                    placeholder="000000"
+                    className="w-full text-center text-xl font-black tracking-[0.4em] p-3 border-2 border-[#CBD5E1] rounded-xl outline-none focus:border-[#336699]"
+                  />
+                </div>
+                {erroMfa && <p className="text-xs text-red-600 font-bold text-center">{erroMfa}</p>}
+                <div className="flex gap-2">
+                  <button onClick={cancelarAtivacaoMfa} className="flex-1 bg-white border-2 border-gray-300 text-gray-500 font-black uppercase tracking-widest text-xs py-3 rounded-xl hover:bg-gray-50 transition-all">
+                    Cancelar
+                  </button>
+                  <button onClick={confirmarAtivacaoMfa} disabled={processandoMfa || codigoMfa.length !== 6} className="flex-1 bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs py-3 rounded-xl hover:bg-[#284B8C] transition-all disabled:opacity-50">
+                    {processandoMfa ? '...' : 'Confirmar'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
         </div>

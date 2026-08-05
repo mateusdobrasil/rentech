@@ -8,6 +8,7 @@ import {
   listarConsignadosAction, importarConsignacoesArquivoAction, listarConsignadosPersistidosAction,
   type ConsignadoFuncionario
 } from '../../rh/actions/actions-consignado';
+import ExigirMFA from '../ExigirMFA';
 
 // ============================================================================
 // MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
@@ -232,6 +233,7 @@ export default function GestaoDeConsignado() {
   }
 
   return (
+    <ExigirMFA>
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">
       <Analytics />
 
@@ -409,5 +411,6 @@ export default function GestaoDeConsignado() {
         </div>
       </div>
     </div>
+    </ExigirMFA>
   );
 }

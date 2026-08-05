@@ -8,6 +8,7 @@ import { urlMeuDocumentoAction, urlMeuHoleriteAction } from './actions/actions-d
 import { carregarPortalHomeAction } from './actions/actions-home';
 import MeuCracha, { type DadosCracha } from './MeuCracha';
 import ChecklistVeiculo from './ChecklistVeiculo';
+import EspelhoPonto from './EspelhoPonto';
 
 interface DocumentoPortal {
   id: number; categoria: string; titulo: string | null; nome_arquivo: string;
@@ -30,7 +31,7 @@ export default function PortalDashboardPage() {
   const [carregandoSessao, setCarregandoSessao] = useState(true);
   const [accessToken, setAccessToken] = useState('');
 
-  const [aba, setAba] = useState<'documentos' | 'holerites' | 'checklist'>('documentos');
+  const [aba, setAba] = useState<'documentos' | 'holerites' | 'ponto' | 'checklist'>('documentos');
   const [documentos, setDocumentos] = useState<DocumentoPortal[]>([]);
   const [holerites, setHolerites] = useState<HoleritePortal[]>([]);
   const [cracha, setCracha] = useState<DadosCracha | null>(null);
@@ -139,6 +140,12 @@ export default function PortalDashboardPage() {
             >
               💰 Holerites
             </button>
+            <button
+              onClick={() => setAba('ponto')}
+              className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${aba === 'ponto' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
+            >
+              🕒 Espelho de Ponto
+            </button>
             {podeDirigir && (
               <button
                 onClick={() => setAba('checklist')}
@@ -188,6 +195,10 @@ export default function PortalDashboardPage() {
                 </button>
               ))}
             </div>
+          )}
+
+          {aba === 'ponto' && accessToken && (
+            <EspelhoPonto accessToken={accessToken} />
           )}
 
           {aba === 'checklist' && podeDirigir && accessToken && (

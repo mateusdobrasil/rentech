@@ -69,7 +69,23 @@ export default function MinhaConta() {
   // escanear) e deixa pronto pra receber o código de confirmação.
   const iniciarAtivacaoMfa = async () => {
     setErroMfa('');
-    const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp' });
+
+    // Uma tentativa anterior abandonada (fechou a aba, removeu do app
+    // autenticador sem clicar em "Cancelar" aqui, deu erro de rede entre o
+    // enroll e o verify) deixa um fator TOTP "unverified" pendurado no
+    // Supabase. Como o friendly_name vazio ("") é o mesmo em toda tentativa,
+    // o próximo enroll esbarra nesse fator órfão com "A factor with the
+    // friendly name... already exists" — limpa qualquer fator TOTP não
+    // verificado antes de tentar de novo.
+    // `data.totp` vem tipado como sempre 'verified' (imprecisão da lib), então
+    // usamos `data.all` — que carrega o status real — pra achar os órfãos.
+    const { data: fatoresAtuais } = await supabase.auth.mfa.listFactors();
+    const orfaos = (fatoresAtuais?.all || []).filter(f => f.factor_type === 'totp' && f.status === 'unverified');
+    for (const orfao of orfaos) {
+      await supabase.auth.mfa.unenroll({ factorId: orfao.id });
+    }
+
+    const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp', issuer: 'Rentech' });
     if (error) { mostrarFeedback(error.message, 'error'); return; }
     setAtivacaoMfa({ factorId: data.id, qrCode: data.totp.qr_code, segredo: data.totp.secret });
   };

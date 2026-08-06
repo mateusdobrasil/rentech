@@ -581,7 +581,7 @@ export default function GestaoPermissoes() {
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center justify-between gap-2 mb-2">
                         <span className={`px-3 py-1 border rounded-full text-[10px] font-black tracking-widest ${getBadgeColor(user.permissao)}`}>
                           {user.permissao}
                         </span>
@@ -589,18 +589,24 @@ export default function GestaoPermissoes() {
                           ⚙️ Gerenciar
                         </button>
                       </div>
+                      <p className="text-[10px] text-[#94A3B8] font-bold uppercase">
+                        {user.ultimo_acesso
+                          ? `Último acesso: ${new Date(user.ultimo_acesso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+                          : 'Nunca acessou'}
+                      </p>
                     </div>
                   ))}
                 </div>
 
                 {/* Desktop: tabela completa */}
                 <div className="hidden md:block bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto">
-                  <table className="w-full text-left border-collapse min-w-[800px]">
+                  <table className="w-full text-left border-collapse min-w-[900px]">
                     <thead className="bg-[#F8FAFC] sticky top-0 shadow-sm z-10 border-b border-[#E2E8F0]">
                       <tr className="text-[#64748B] text-[10px] uppercase tracking-widest font-black">
                         <th className="p-4 w-20 text-center">Status</th>
                         <th className="p-4">Colaborador / E-mail</th>
                         <th className="p-4">Nível de Permissão Atribuído</th>
+                        <th className="p-4 w-44">Último Acesso</th>
                         <th className="p-4 text-center w-40">Configuração</th>
                       </tr>
                     </thead>
@@ -618,6 +624,11 @@ export default function GestaoPermissoes() {
                             <span className={`px-3 py-1 border rounded-full text-[10px] font-black tracking-widest ${getBadgeColor(user.permissao)}`}>
                               {user.permissao}
                             </span>
+                          </td>
+                          <td className="p-4 text-xs text-[#64748B] font-bold">
+                            {user.ultimo_acesso
+                              ? new Date(user.ultimo_acesso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                              : <span className="text-gray-400">Nunca acessou</span>}
                           </td>
                           <td className="p-4 text-center">
                             <button onClick={() => setModalEdicao({ open: true, user: { ...user } })} className="bg-white hover:bg-gray-50 border border-gray-300 font-black text-[10px] uppercase tracking-wider px-4 py-2 rounded-lg transition-colors shadow-sm text-[#0C1D4D]">

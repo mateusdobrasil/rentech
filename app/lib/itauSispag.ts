@@ -241,8 +241,9 @@ async function chamarApi(
 
 export interface ResultadoSolicitacaoCertificado {
   ok: boolean;
-  crt?: string;          // conteúdo do certificado assinado, se a resposta vier em PEM puro
-  respostaBruta?: string; // fallback — o formato de resposta desse endpoint não veio documentado na coleção Postman
+  clientSecret?: string; // 1ª linha da resposta — só é emitido neste momento, não há como recuperar depois
+  crt?: string;          // linhas seguintes da resposta — o certificado PEM assinado
+  respostaBruta?: string; // fallback — usado se o formato não bater com o esperado (1ª linha = secret, resto = PEM)
   erro?: string;
 }
 
@@ -250,15 +251,22 @@ export interface ResultadoSolicitacaoCertificado {
 // junto com a chave privada) para o Itaú assinar e devolver o certificado
 // (CRT) que passa a ser usado via ITAU_API_CERT_PEM_BASE64 em toda chamada
 // de negócio (ver chamarApi). Só precisa rodar uma vez por certificado
-// emitido.
+// emitido — e é o ÚNICO momento em que o client_secret é revelado (confirmado
+// por escrito pelo suporte do Itaú em 2026-08-05: o secret "é disponibilizado
+// no momento da geração do certificado", sem endpoint separado pra consultar
+// depois — se perder, só regerando o certificado pra receber outro).
 //
-// Segundo a Especificação Técnica, essa chamada é autenticada com um TOKEN
-// TEMPORÁRIO DE ATIVAÇÃO fornecido pelo agente comercial do Itaú no momento
-// da contratação — NÃO com o access_token OAuth normal (que nem faria
-// sentido nesse ponto, já que o certificado ainda não existe). Por isso essa
-// função recebe o token de ativação como parâmetro em vez de chamar
-// obterToken(). O formato de resposta não veio documentado, então o
-// resultado bruto é devolvido para inspeção manual na primeira execução real.
+// Autenticada com um TOKEN TEMPORÁRIO DE ATIVAÇÃO (validade de 7 dias)
+// enviado por e-mail pelo time de implantação do Itaú — NÃO o access_token
+// OAuth normal (que nem faria sentido aqui, já que o certificado ainda não
+// existe). Por isso recebe o token de ativação como parâmetro em vez de
+// chamar obterToken().
+//
+// Formato de resposta CONFIRMADO por escrito pelo suporte do Itaú
+// (2026-08-05): texto puro, 1ª linha = client_secret, linhas 2 em diante =
+// o certificado assinado (PEM, ~21 linhas). Fazemos o parse por posição
+// (split por linha) em vez de procurar "BEGIN CERTIFICATE" no meio do texto,
+// porque a 1ª linha (o secret) viria junto e quebraria uma busca ingênua.
 export async function solicitarCertificadoItau(csrPem: string, tokenAtivacao: string): Promise<ResultadoSolicitacaoCertificado> {
   try {
     const url = process.env.ITAU_API_CERT_SOLICITACAO_URL || CERTIFICADO_SOLICITACAO_URL_PADRAO;
@@ -270,8 +278,16 @@ export async function solicitarCertificadoItau(csrPem: string, tokenAtivacao: st
     });
     const texto = await res.text();
     if (!res.ok) return { ok: false, erro: `HTTP ${res.status}: ${texto.slice(0, 500)}` };
-    if (texto.includes('BEGIN CERTIFICATE')) return { ok: true, crt: texto };
-    return { ok: true, respostaBruta: texto.slice(0, 2000) };
+
+    const linhas = texto.split(/\r?\n/).filter(l => l.trim() !== '');
+    const clientSecret = linhas[0]?.trim();
+    const crt = linhas.slice(1).join('\n').trim();
+    if (clientSecret && crt.includes('BEGIN CERTIFICATE')) {
+      return { ok: true, clientSecret, crt };
+    }
+    // Formato inesperado — devolve bruto pra inspeção manual em vez de
+    // arriscar salvar um secret/certificado errado nas env vars.
+    return { ok: true, respostaBruta: texto.slice(0, 3000) };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

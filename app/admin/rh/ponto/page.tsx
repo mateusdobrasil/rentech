@@ -15,6 +15,7 @@ import {
 } from '../actions/actions-ponto-whatsapp';
 import SepararHolerites from './SepararHolerites';
 import RegistroPontoConsulta from '../../operacional/registro-ponto/RegistroPontoConsulta';
+import SolicitacoesFolga from '../../operacional/registro-ponto/SolicitacoesFolga';
 import logoColorido from '../../../../app/imgs/logo.png';
 
 // ============================================================================
@@ -137,7 +138,7 @@ export default function GestaoDePonto() {
   const [estatisticasWhatsapp, setEstatisticasWhatsapp] = useState<EstatisticasPontoWhatsapp | null>(null);
   const [ledgerWhatsapp, setLedgerWhatsapp] = useState<RegistroLedger[]>([]);
   const [carregandoLedger, setCarregandoLedger] = useState(false);
-  const [abaWhatsapp, setAbaWhatsapp] = useState<'ledger' | 'solicitacoes' | 'historico'>('ledger');
+  const [abaWhatsapp, setAbaWhatsapp] = useState<'ledger' | 'solicitacoes' | 'historico' | 'folga'>('ledger');
   const [solicitacoesPendentes, setSolicitacoesPendentes] = useState<SolicitacaoPendente[]>([]);
   const [carregandoSolicitacoes, setCarregandoSolicitacoes] = useState(false);
   const [processandoSolicitacaoId, setProcessandoSolicitacaoId] = useState<number | null>(null);
@@ -896,6 +897,17 @@ export default function GestaoDePonto() {
     carregarHistoricoSolicitacoes();
   };
 
+  const abrirFolga = () => {
+    setViewMode('ponto_whatsapp');
+    setAbaWhatsapp('folga');
+  };
+
+  // SolicitacoesFolga busca os próprios dados; isso só mantém o badge do
+  // botão de entrada ("2. Ponto via WhatsApp") em sincronia após aprovar/rejeitar.
+  const atualizarFolgasPendentes = (pendentes: number) => {
+    setEstatisticasWhatsapp(prev => prev ? { ...prev, folgasPendentes: pendentes } : prev);
+  };
+
   const verAnexoSolicitacao = async (id: number) => {
     const res = await urlAnexoSolicitacaoAction({ id });
     if (!res.ok || !res.info) { alert(res.erro || 'Não foi possível abrir o anexo.'); return; }
@@ -1149,6 +1161,12 @@ export default function GestaoDePonto() {
                   <button onClick={abrirHistoricoSolicitacoes} className="w-full bg-white border-2 border-[#0C1D4D] text-[#0C1D4D] hover:bg-[#0C1D4D] hover:text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
                     📜 HISTÓRICO DE SOLICITAÇÕES
                   </button>
+                  <button onClick={abrirFolga} className="w-full bg-cyan-600 hover:bg-cyan-700 text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
+                    🏖️ SOLICITAÇÃO FOLGA
+                    {!!estatisticasWhatsapp?.folgasPendentes && (
+                      <span className="bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{estatisticasWhatsapp.folgasPendentes}</span>
+                    )}
+                  </button>
                 </div>
               </div>
 
@@ -1289,6 +1307,10 @@ export default function GestaoDePonto() {
                     {solicitacoesPendentes.length > 0 && <span className="ml-1.5 bg-white/25 px-1.5 py-0.5 rounded-full text-[9px]">{solicitacoesPendentes.length}</span>}
                   </button>
                   <button onClick={() => setAbaWhatsapp('historico')} className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abaWhatsapp === 'historico' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>📜 Histórico</button>
+                  <button onClick={() => setAbaWhatsapp('folga')} className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abaWhatsapp === 'folga' ? 'bg-cyan-600 text-white shadow-sm' : 'text-[#64748B] hover:text-cyan-700'}`}>
+                    🏖️ Folga
+                    {!!estatisticasWhatsapp?.folgasPendentes && <span className="ml-1.5 bg-white/25 px-1.5 py-0.5 rounded-full text-[9px]">{estatisticasWhatsapp.folgasPendentes}</span>}
+                  </button>
                 </div>
               </div>
             </div>
@@ -1448,6 +1470,10 @@ export default function GestaoDePonto() {
                   </table>
                 </div>
               </main>
+            )}
+
+            {abaWhatsapp === 'folga' && (
+              <SolicitacoesFolga usuarioAtual={usuarioAtual} onCountChange={atualizarFolgasPendentes} />
             )}
           </div>
         )}

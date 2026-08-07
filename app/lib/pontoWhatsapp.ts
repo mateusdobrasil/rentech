@@ -103,7 +103,9 @@ function formatarDataBR(dataIso: string): string {
   return dataIso.split('-').reverse().join('/');
 }
 
-function formatarPeriodoBR(inicio: string, fim: string): string {
+// Exportada porque actions-ponto-whatsapp.ts reusa a mesma formatação nas
+// mensagens de aprovação/rejeição de FOLGA_DIA.
+export function formatarPeriodoBR(inicio: string, fim: string): string {
   return inicio === fim ? formatarDataBR(inicio) : `${formatarDataBR(inicio)} a ${formatarDataBR(fim)}`;
 }
 
@@ -642,6 +644,77 @@ async function avancarAbonar(db: Db, pendencia: PendenciaPonto, texto: string, a
 }
 
 // ============================================================================
+// FLUXO: FOLGAR (solicitar folga — data específica ou período, sem anexo)
+// ============================================================================
+async function iniciarFluxoFolgar(db: Db, funcionarioNome: string, celular: string, agora: Date): Promise<ResultadoPonto> {
+  await salvarPendencia(db, celular, funcionarioNome, 'FOLGAR', 'INFORMAR_DATA', {}, agora);
+  return { mensagem: 'Para qual data você quer folgar? Responda no formato DD/MM/AAAA (ex: 20/08/2026) ou um período (ex: 20/08/2026 a 22/08/2026).\n\nOu envie CANCELAR para desistir.' };
+}
+
+async function avancarFolgar(db: Db, pendencia: PendenciaPonto, texto: string, agora: Date): Promise<ResultadoPonto> {
+  const contexto = pendencia.contexto;
+
+  if (pendencia.etapa === 'INFORMAR_DATA') {
+    const resultado = parsePeriodoFolga(texto, agora);
+    if (!resultado.ok) {
+      const mensagens: Record<typeof resultado.erro, string> = {
+        FORMATO: 'Não entendi a data. Responda no formato DD/MM/AAAA (ex: 20/08/2026) ou um período (ex: 20/08/2026 a 22/08/2026).',
+        PASSADO: 'A data não pode ser no passado. Informe uma data a partir de hoje.',
+        ORDEM: 'A data final do período não pode ser antes da data inicial.',
+        PERIODO_LONGO: `O período não pode passar de ${MAX_DIAS_PERIODO_FOLGA} dias corridos. Se precisar de mais tempo, fale com o RH.`,
+      };
+      return { mensagem: mensagens[resultado.erro] };
+    }
+
+    await salvarPendencia(db, pendencia.celular, pendencia.funcionario_nome, 'FOLGAR', 'INFORMAR_MOTIVO', {
+      data_referencia: resultado.periodo.inicio,
+      data_referencia_fim: resultado.periodo.fim,
+    }, agora);
+    return { mensagem: `Qual o motivo da folga em ${formatarPeriodoBR(resultado.periodo.inicio, resultado.periodo.fim)}?` };
+  }
+
+  if (pendencia.etapa === 'INFORMAR_MOTIVO') {
+    const motivo = texto.trim();
+    if (!motivo) {
+      return { mensagem: 'Preciso de um motivo, mesmo que curto. Pode escrever?' };
+    }
+
+    const { data_referencia: dataReferencia, data_referencia_fim: dataReferenciaFim } = contexto;
+    if (!dataReferencia || !dataReferenciaFim) {
+      await limparPendencia(db, pendencia.celular);
+      return { mensagem: 'Ocorreu um erro no fluxo. Envie qualquer mensagem para recomeçar.' };
+    }
+
+    const jaExiste = await existeSolicitacaoPendente(db, pendencia.funcionario_nome, dataReferencia, 'FOLGA_DIA', null);
+    await limparPendencia(db, pendencia.celular);
+    if (jaExiste) {
+      return { mensagem: 'Você já tem uma solicitação de folga pendente começando nessa data. Aguarde o RH ou seu gestor analisar.' };
+    }
+
+    await db.from('folha_ponto_whatsapp_solicitacoes').insert({
+      tipo: 'FOLGA_DIA',
+      funcionario_nome: pendencia.funcionario_nome,
+      celular: pendencia.celular,
+      data_referencia: dataReferencia,
+      data_referencia_fim: dataReferenciaFim,
+      dia_todo: true,
+      motivo,
+    });
+
+    await registrarLogAuditoria({
+      usuario_nome: 'SISTEMA (WHATSAPP)',
+      acao: `SOLICITAÇÃO DE FOLGA: ${pendencia.funcionario_nome} — ${formatarPeriodoBR(dataReferencia, dataReferenciaFim)}`,
+      setor: 'RECURSOS HUMANOS / PONTO WHATSAPP',
+    });
+
+    return { mensagem: `✅ Solicitação de folga enviada para aprovação: ${formatarPeriodoBR(dataReferencia, dataReferenciaFim)}. Você será avisado quando for analisada.` };
+  }
+
+  await limparPendencia(db, pendencia.celular);
+  return { mensagem: 'Ocorreu um erro no fluxo. Envie qualquer mensagem para recomeçar.' };
+}
+
+// ============================================================================
 // FLUXO: MENU_INICIAL (toda primeira mensagem do funcionário cai aqui)
 // ============================================================================
 async function avancarMenuInicial(db: Db, pendencia: PendenciaPonto, texto: string, agora: Date): Promise<ResultadoPonto> {
@@ -654,6 +727,9 @@ async function avancarMenuInicial(db: Db, pendencia: PendenciaPonto, texto: stri
   }
   if (['3', 'ABONAR'].includes(escolha)) {
     return await iniciarFluxoAbonar(db, pendencia.funcionario_nome, pendencia.celular, agora);
+  }
+  if (['4', 'FOLGA', 'FOLGAR'].includes(escolha)) {
+    return await iniciarFluxoFolgar(db, pendencia.funcionario_nome, pendencia.celular, agora);
   }
   return { mensagem: `Não entendi. Responda só com o número:\n${montarMenuInicial()}` };
 }
@@ -694,7 +770,7 @@ export async function processarMensagemPontoWhatsApp(payload: {
   const pendencia = await buscarPendenciaValida(db, payload.telefone, agora);
 
   if (pendencia) {
-    if (texto.toUpperCase() === 'CANCELAR' && (pendencia.fluxo === 'JUSTIFICAR' || pendencia.fluxo === 'ABONAR')) {
+    if (texto.toUpperCase() === 'CANCELAR' && (pendencia.fluxo === 'JUSTIFICAR' || pendencia.fluxo === 'ABONAR' || pendencia.fluxo === 'FOLGAR')) {
       await limparPendencia(db, payload.telefone);
       return { mensagem: 'Ok, solicitação cancelada.' };
     }
@@ -706,6 +782,9 @@ export async function processarMensagemPontoWhatsApp(payload: {
     }
     if (pendencia.fluxo === 'JUSTIFICAR') {
       return await avancarJustificar(db, pendencia, texto, agora);
+    }
+    if (pendencia.fluxo === 'FOLGAR') {
+      return await avancarFolgar(db, pendencia, texto, agora);
     }
     return await avancarAbonar(db, pendencia, texto, agora, payload.anexo ?? null);
   }

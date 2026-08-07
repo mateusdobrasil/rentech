@@ -9,7 +9,7 @@
 // de verdade quando aprovadas aqui pelo RH — o funcionário nunca aprova a
 // própria exceção.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { consolidarDia, timestampBR } from '../../../lib/pontoWhatsapp';
+import { consolidarDia, timestampBR, formatarPeriodoBR } from '../../../lib/pontoWhatsapp';
 import { notificarPontoWhatsApp } from '../../../lib/whatsapp';
 import { registrarLogAuditoria } from '../../../actions';
 
@@ -20,6 +20,7 @@ export interface EstatisticasPontoWhatsapp {
   batidasHoje: number;
   batidasMes: number;
   solicitacoesPendentes: number;
+  folgasPendentes: number;
 }
 
 export async function estatisticasPontoWhatsappAction(mesAno: string): Promise<Resultado<EstatisticasPontoWhatsapp>> {
@@ -31,11 +32,13 @@ export async function estatisticasPontoWhatsappAction(mesAno: string): Promise<R
     const dataFim = `${ano}-${mes}-${String(ultimoDia).padStart(2, '0')}`;
     const hojeIso = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 
-    const [{ count: habilitados }, { count: hoje }, { count: mesTotal }, { count: pendentes }] = await Promise.all([
+    const [{ count: habilitados }, { count: hoje }, { count: mesTotal }, { count: pendentes }, { count: folgasPendentes }] = await Promise.all([
       db.from('folha_funcionarios').select('nome_completo', { count: 'exact', head: true }).eq('ativo', true).eq('ponto_whatsapp_ativo', true),
       db.from('folha_ponto_whatsapp_registros').select('nsr', { count: 'exact', head: true }).eq('data_referencia', hojeIso),
       db.from('folha_ponto_whatsapp_registros').select('nsr', { count: 'exact', head: true }).gte('data_referencia', dataInicio).lte('data_referencia', dataFim),
-      db.from('folha_ponto_whatsapp_solicitacoes').select('id', { count: 'exact', head: true }).eq('status', 'PENDENTE'),
+      // Só Justificativa/Abono — Folga tem contador e aba próprios (ver folgasPendentes).
+      db.from('folha_ponto_whatsapp_solicitacoes').select('id', { count: 'exact', head: true }).eq('status', 'PENDENTE').neq('tipo', 'FOLGA_DIA'),
+      db.from('folha_ponto_whatsapp_solicitacoes').select('id', { count: 'exact', head: true }).eq('status', 'PENDENTE').eq('tipo', 'FOLGA_DIA'),
     ]);
 
     return {
@@ -45,6 +48,7 @@ export async function estatisticasPontoWhatsappAction(mesAno: string): Promise<R
         batidasHoje: hoje || 0,
         batidasMes: mesTotal || 0,
         solicitacoesPendentes: pendentes || 0,
+        folgasPendentes: folgasPendentes || 0,
       },
     };
   } catch (e: any) {
@@ -87,9 +91,10 @@ export async function listarLedgerPontoWhatsappAction(mesAno: string): Promise<R
 
 export interface SolicitacaoPendente {
   id: number;
-  tipo: 'JUSTIFICATIVA_BATIDA' | 'ABONO_DIA';
+  tipo: 'JUSTIFICATIVA_BATIDA' | 'ABONO_DIA' | 'FOLGA_DIA';
   funcionario_nome: string;
   data_referencia: string;
+  data_referencia_fim: string | null;
   tipo_batida: string | null;
   horario_solicitado: string | null;
   motivo: string;
@@ -98,15 +103,35 @@ export interface SolicitacaoPendente {
 }
 
 // Fila de solicitações de JUSTIFICAR/ABONAR feitas pelo funcionário via
-// WhatsApp, ainda não analisadas pelo RH.
+// WhatsApp, ainda não analisadas pelo RH. FOLGA_DIA fica de fora — tem
+// listagem e aba próprias (ver listarSolicitacoesFolgaAction).
 export async function listarSolicitacoesPendentesAction(): Promise<Resultado<SolicitacaoPendente[]>> {
   const db = supabaseAdmin();
   try {
     const { data, error } = await db
       .from('folha_ponto_whatsapp_solicitacoes')
-      .select('id, tipo, funcionario_nome, data_referencia, tipo_batida, horario_solicitado, motivo, anexo_nome, criado_em')
+      .select('id, tipo, funcionario_nome, data_referencia, data_referencia_fim, tipo_batida, horario_solicitado, motivo, anexo_nome, criado_em')
       .eq('status', 'PENDENTE')
+      .neq('tipo', 'FOLGA_DIA')
       .order('criado_em', { ascending: true });
+    if (error) throw new Error(error.message);
+    return { ok: true, info: data || [] };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// Todas as solicitações de FOLGA_DIA (qualquer status), mais recentes
+// primeiro — fonte única da aba "Solicitação Folga", usada tanto em
+// /admin/rh/ponto quanto em /admin/operacional/registro-ponto.
+export async function listarSolicitacoesFolgaAction(): Promise<Resultado<SolicitacaoHistorico[]>> {
+  const db = supabaseAdmin();
+  try {
+    const { data, error } = await db
+      .from('folha_ponto_whatsapp_solicitacoes')
+      .select('id, tipo, funcionario_nome, data_referencia, data_referencia_fim, tipo_batida, horario_solicitado, motivo, anexo_nome, status, resolvido_por, resolvido_em, motivo_rejeicao, criado_em')
+      .eq('tipo', 'FOLGA_DIA')
+      .order('criado_em', { ascending: false });
     if (error) throw new Error(error.message);
     return { ok: true, info: data || [] };
   } catch (e: any) {
@@ -121,10 +146,13 @@ export interface AbonoPendenteResumo {
 }
 
 // Usada pelo fechamento de folha (Holerite): enquanto uma solicitação de
-// ABONO_DIA estiver PENDENTE, o dia aparece como falta no cálculo (o abono
-// só vira linha em folha_ponto_abono quando aprovado — ver
-// aprovarSolicitacaoAction) — por isso a folha não deve fechar até o RH
-// decidir.
+// ABONO_DIA (ou FOLGA_DIA, que abona da mesma forma quando aprovada) estiver
+// PENDENTE, o dia aparece como falta no cálculo (o abono só vira linha em
+// folha_ponto_abono quando aprovado — ver aprovarSolicitacaoAction) — por
+// isso a folha não deve fechar até o RH/gestor decidir. Limitação conhecida:
+// compara só data_referencia (início) contra o mês, não o intervalo inteiro
+// de uma folga em período — revisitar se aparecer caso de período cruzando
+// virada de mês.
 export async function listarAbonosPendentesDoMesAction(payload: { mesAno: string; nomes: string[] }): Promise<Resultado<AbonoPendenteResumo[]>> {
   const db = supabaseAdmin();
   try {
@@ -138,7 +166,7 @@ export async function listarAbonosPendentesDoMesAction(payload: { mesAno: string
       .from('folha_ponto_whatsapp_solicitacoes')
       .select('funcionario_nome, data_referencia, motivo')
       .eq('status', 'PENDENTE')
-      .eq('tipo', 'ABONO_DIA')
+      .in('tipo', ['ABONO_DIA', 'FOLGA_DIA'])
       .gte('data_referencia', dataInicio)
       .lte('data_referencia', dataFim)
       .in('funcionario_nome', payload.nomes);
@@ -156,15 +184,17 @@ export interface SolicitacaoHistorico extends SolicitacaoPendente {
   motivo_rejeicao: string | null;
 }
 
-// Histórico completo (todas as solicitações, qualquer status) para
-// auditoria — nada aqui é apagado quando aprovado/rejeitado, só muda de
-// status.
+// Histórico completo (todas as solicitações de Justificativa/Abono, qualquer
+// status) para auditoria — nada aqui é apagado quando aprovado/rejeitado, só
+// muda de status. FOLGA_DIA fica de fora, tem histórico próprio dentro da
+// aba "Solicitação Folga" (ver listarSolicitacoesFolgaAction).
 export async function listarHistoricoSolicitacoesAction(mesAno?: string): Promise<Resultado<SolicitacaoHistorico[]>> {
   const db = supabaseAdmin();
   try {
     let query = db
       .from('folha_ponto_whatsapp_solicitacoes')
-      .select('id, tipo, funcionario_nome, data_referencia, tipo_batida, horario_solicitado, motivo, anexo_nome, status, resolvido_por, resolvido_em, motivo_rejeicao, criado_em')
+      .select('id, tipo, funcionario_nome, data_referencia, data_referencia_fim, tipo_batida, horario_solicitado, motivo, anexo_nome, status, resolvido_por, resolvido_em, motivo_rejeicao, criado_em')
+      .neq('tipo', 'FOLGA_DIA')
       .order('criado_em', { ascending: false });
 
     if (mesAno) {
@@ -207,10 +237,56 @@ export async function urlAnexoSolicitacaoAction(payload: { id: number }): Promis
   }
 }
 
+// Rótulo/data usados nas mensagens de aprovação/rejeição — período formatado
+// quando é FOLGA_DIA com data_referencia_fim diferente da data inicial.
+function rotuloEDataSolicitacao(solicitacao: { tipo: string; data_referencia: string; data_referencia_fim: string | null }): { rotuloTipo: string; dataBR: string } {
+  if (solicitacao.tipo === 'JUSTIFICATIVA_BATIDA') return { rotuloTipo: 'sua justificativa de ponto', dataBR: String(solicitacao.data_referencia).split('-').reverse().join('/') };
+  if (solicitacao.tipo === 'FOLGA_DIA') return { rotuloTipo: 'sua solicitação de folga', dataBR: formatarPeriodoBR(solicitacao.data_referencia, solicitacao.data_referencia_fim || solicitacao.data_referencia) };
+  return { rotuloTipo: 'seu abono', dataBR: String(solicitacao.data_referencia).split('-').reverse().join('/') };
+}
+
+// Data (YYYY-MM-DD) inclusive entre início e fim, como valores de calendário
+// puros (sem hora) — usada pra abonar cada dia útil ou não de um período de
+// FOLGA_DIA aprovado.
+function diasEntre(inicioIso: string, fimIso: string): string[] {
+  const dias: string[] = [];
+  const [anoI, mesI, diaI] = inicioIso.split('-').map(Number);
+  const cursor = new Date(Date.UTC(anoI, mesI - 1, diaI));
+  const fim = new Date(`${fimIso}T00:00:00Z`).getTime();
+  while (cursor.getTime() <= fim) {
+    dias.push(cursor.toISOString().split('T')[0]);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return dias;
+}
+
+// Grava (ou atualiza, se já existir) uma linha de folha_ponto_abono pra um
+// dia — mesmo padrão de abonarDiaManualAction (actions-ponto.ts), reusado
+// aqui tanto pro Abono de dia único quanto, em loop, pro período de Folga.
+async function gravarAbonoDoDia(db: ReturnType<typeof supabaseAdmin>, funcionarioNome: string, dataAbono: string, motivo: string): Promise<void> {
+  const { data: existente } = await db.from('folha_ponto_abono')
+    .select('id')
+    .eq('funcionario_nome', funcionarioNome)
+    .eq('data_abono', dataAbono)
+    .maybeSingle();
+
+  const payload = { dia_todo: true, hora_inicio: null, hora_fim: null, minutos_abonados: 480, motivo, origem: 'WHATSAPP' as const };
+  if (existente) {
+    const { error } = await db.from('folha_ponto_abono').update(payload).eq('id', existente.id);
+    if (error) throw new Error(`Falha ao gravar o abono de ${dataAbono}: ${error.message}`);
+  } else {
+    const { error } = await db.from('folha_ponto_abono').insert({ funcionario_nome: funcionarioNome, data_abono: dataAbono, ...payload });
+    if (error) throw new Error(`Falha ao gravar o abono de ${dataAbono}: ${error.message}`);
+  }
+}
+
 // Aprova a solicitação: JUSTIFICATIVA_BATIDA vira um ajuste aditivo no
 // ledger (e recalcula o dia em folha_ponto_diaria); ABONO_DIA vira uma linha
-// em folha_ponto_abono. Nunca edita o ledger em si. Avisa o funcionário pelo
-// próprio WhatsApp.
+// em folha_ponto_abono; FOLGA_DIA vira uma linha em folha_ponto_abono pra
+// cada dia do período (dias não-úteis só não geram crédito de horas na
+// exibição — mesma regra do Abono de dia único, ver isDiaNaoUtil em
+// app/admin/rh/ponto/page.tsx). Nunca edita o ledger em si. Avisa o
+// funcionário pelo próprio WhatsApp.
 export async function aprovarSolicitacaoAction(payload: { id: number; aprovadorNome: string }): Promise<Resultado<null>> {
   const db = supabaseAdmin();
   const { id, aprovadorNome } = payload;
@@ -234,6 +310,11 @@ export async function aprovarSolicitacaoAction(payload: { id: number; aprovadorN
       });
       if (ajusteErr) throw new Error(`Falha ao gravar o ajuste: ${ajusteErr.message}`);
       await consolidarDia(db, solicitacao.funcionario_nome, solicitacao.data_referencia);
+    } else if (solicitacao.tipo === 'FOLGA_DIA') {
+      const dias = diasEntre(solicitacao.data_referencia, solicitacao.data_referencia_fim || solicitacao.data_referencia);
+      for (const dia of dias) {
+        await gravarAbonoDoDia(db, solicitacao.funcionario_nome, dia, solicitacao.motivo);
+      }
     } else {
       const { error: abonoErr } = await db.from('folha_ponto_abono').insert({
         funcionario_nome: solicitacao.funcionario_nome,
@@ -260,8 +341,7 @@ export async function aprovarSolicitacaoAction(payload: { id: number; aprovadorN
       setor: 'RECURSOS HUMANOS / PONTO WHATSAPP',
     });
 
-    const rotuloTipo = solicitacao.tipo === 'JUSTIFICATIVA_BATIDA' ? 'sua justificativa de ponto' : 'seu abono';
-    const dataBR = String(solicitacao.data_referencia).split('-').reverse().join('/');
+    const { rotuloTipo, dataBR } = rotuloEDataSolicitacao(solicitacao);
     await notificarPontoWhatsApp(
       solicitacao.celular,
       `✅ O RH aprovou ${rotuloTipo} referente a ${dataBR}.`,
@@ -301,8 +381,7 @@ export async function rejeitarSolicitacaoAction(payload: { id: number; aprovador
       setor: 'RECURSOS HUMANOS / PONTO WHATSAPP',
     });
 
-    const rotuloTipo = solicitacao.tipo === 'JUSTIFICATIVA_BATIDA' ? 'sua justificativa de ponto' : 'seu abono';
-    const dataBR = String(solicitacao.data_referencia).split('-').reverse().join('/');
+    const { rotuloTipo, dataBR } = rotuloEDataSolicitacao(solicitacao);
     await notificarPontoWhatsApp(
       solicitacao.celular,
       `❌ O RH não aprovou ${rotuloTipo} referente a ${dataBR}. Motivo: ${motivoRejeicao}. Fale com o RH se tiver dúvidas.`,

@@ -382,9 +382,12 @@ export async function rejeitarSolicitacaoAction(payload: { id: number; aprovador
     });
 
     const { rotuloTipo, dataBR } = rotuloEDataSolicitacao(solicitacao);
+    // FOLGA_DIA pode ser rejeitada tanto pelo RH quanto por um gestor do
+    // Operacional — encaminha a dúvida pro gestor, não especificamente pro RH.
+    const encaminhamento = solicitacao.tipo === 'FOLGA_DIA' ? 'Fale com o seu Gestor se tiver dúvidas.' : 'Fale com o RH se tiver dúvidas.';
     await notificarPontoWhatsApp(
       solicitacao.celular,
-      `❌ O RH não aprovou ${rotuloTipo} referente a ${dataBR}. Motivo: ${motivoRejeicao}. Fale com o RH se tiver dúvidas.`,
+      `❌ O RH não aprovou ${rotuloTipo} referente a ${dataBR}. Motivo: ${motivoRejeicao}. ${encaminhamento}`,
       { nome: 'ponto_solicitacao_rejeitada', idioma: 'pt_BR', parametros: [rotuloTipo, dataBR, motivoRejeicao] }
     );
 

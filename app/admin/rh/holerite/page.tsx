@@ -623,6 +623,25 @@ export default function HoleritePage() {
   const [enviandoAssinatura, setEnviandoAssinatura] = useState<string | null>(null);
   const [gerandoPrevia, setGerandoPrevia] = useState<string | null>(null);
   const [sandboxAssinatura, setSandboxAssinatura] = useState(true);
+  const [buscaHolerite, setBuscaHolerite] = useState('');
+  // Holerites começam todos recolhidos — só nome/status/ações aparecem, o
+  // documento em si só some na tela quando expandido (não some do DOM: a
+  // classe print:block garante que "Imprimir Todos" continua imprimindo
+  // todo mundo, recolhido ou não).
+  const [holeritesExpandidos, setHoleritesExpandidos] = useState<Set<string>>(new Set());
+  const toggleHoleriteExpandido = (nome: string) => {
+    setHoleritesExpandidos(prev => {
+      const novo = new Set(prev);
+      if (novo.has(nome)) novo.delete(nome); else novo.add(nome);
+      return novo;
+    });
+  };
+
+  const loteFiltrado = useMemo(() => {
+    const termo = buscaHolerite.trim().toLowerCase();
+    if (!termo) return lote;
+    return lote.filter(item => item.func.nome_completo.toLowerCase().includes(termo));
+  }, [lote, buscaHolerite]);
 
   const [fechamentoSelecionado, setFechamentoSelecionado] = useState<Fechamento | null>(null);
   const [apuracaoSelecionado, setApuracaoSelecionado] = useState({ mins60: 0, mins100: 0, diasFds: 0, faltas: 0, qtdVr: 0, qtdVt: 0 });
@@ -1506,6 +1525,15 @@ export default function HoleritePage() {
                 Competência: {formatarMesAnoBR(mesReferencia)} • {lote.length} funcionário(s) ativo(s) • {totalFechados} fechado(s)
               </p>
             </div>
+            <div className="pt-4 border-t border-gray-100">
+              <input
+                type="text"
+                placeholder="🔍 Buscar colaborador pelo nome..."
+                value={buscaHolerite}
+                onChange={(e) => setBuscaHolerite(e.target.value)}
+                className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]"
+              />
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-gray-100">
               <div>
                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Competência</label>
@@ -1572,8 +1600,12 @@ export default function HoleritePage() {
             <div className="w-full max-w-5xl bg-white border-2 border-dashed border-gray-300 rounded-2xl p-16 text-center text-gray-400 font-bold uppercase tracking-wider print:hidden">
               Nenhum funcionário ativo encontrado.
             </div>
+          ) : loteFiltrado.length === 0 ? (
+            <div className="w-full max-w-5xl bg-white border-2 border-dashed border-gray-300 rounded-2xl p-16 text-center text-gray-400 font-bold uppercase tracking-wider print:hidden">
+              Nenhum colaborador encontrado para "{buscaHolerite}".
+            </div>
           ) : (
-            lote.map(item => (
+            loteFiltrado.map(item => (
               item.soDocumental ? (
                 <div key={item.func.nome_completo} className="w-full max-w-5xl print:hidden">
                   <div className="bg-white border-2 border-dashed border-indigo-200 rounded-2xl p-5 flex flex-col sm:flex-row justify-between items-center gap-3 mb-6">
@@ -1610,8 +1642,9 @@ export default function HoleritePage() {
                 </div>
               ) : (
               <div key={item.func.nome_completo} className="w-full max-w-5xl flex flex-col items-center">
-                <div className="w-full flex justify-between items-center mb-2 print:hidden">
+                <div className="w-full flex flex-col sm:flex-row justify-between sm:items-center gap-2 mb-2 print:hidden bg-white border border-[#E2E8F0] rounded-xl px-4 py-3">
                   <div className="flex items-center gap-2 flex-wrap">
+                    <strong className="text-sm font-black text-[#0C1D4D] uppercase tracking-tight mr-1">{item.func.nome_completo}</strong>
                     <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider ${item.fechamento ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
                       {item.fechamento
                         ? `🔒 Fechada em ${new Date(item.fechamento.fechado_em).toLocaleDateString('pt-BR')} por ${item.fechamento.fechado_por || '—'}`
@@ -1630,7 +1663,10 @@ export default function HoleritePage() {
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <button onClick={() => toggleHoleriteExpandido(item.func.nome_completo)} className="text-[10px] font-black text-[#336699] uppercase tracking-wider hover:bg-blue-50 px-3 py-1 rounded disabled:opacity-50 border border-blue-200">
+                      {holeritesExpandidos.has(item.func.nome_completo) ? '▲ Ocultar Holerite' : '▼ Ver Holerite'}
+                    </button>
                     <button onClick={() => previaPdf(item)} disabled={gerandoPrevia !== null} className="text-[10px] font-black text-gray-500 uppercase tracking-wider hover:bg-gray-100 px-3 py-1 rounded disabled:opacity-50 border border-gray-200">
                       {gerandoPrevia === item.func.nome_completo ? '⏳' : '👁 Prévia PDF'}
                     </button>
@@ -1646,12 +1682,14 @@ export default function HoleritePage() {
                     )}
                   </div>
                 </div>
-                <HoleriteDoc
-                  nome={item.func.nome_completo}
-                  dados={item.fechamento ? item.fechamento.dados : item.dados}
-                  mesRef={mesReferencia}
-                  fechamento={item.fechamento}
-                />
+                <div className={`w-full flex flex-col items-center ${holeritesExpandidos.has(item.func.nome_completo) ? '' : 'hidden'} print:flex`}>
+                  <HoleriteDoc
+                    nome={item.func.nome_completo}
+                    dados={item.fechamento ? item.fechamento.dados : item.dados}
+                    mesRef={mesReferencia}
+                    fechamento={item.fechamento}
+                  />
+                </div>
               </div>
               )
             ))

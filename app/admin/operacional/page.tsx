@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../lib/supabase';
+import { painelOperacionalAction } from './actions/actions-dashboard';
 
 // Tipagem do Perfil
 interface PerfilUsuario {
@@ -11,6 +12,13 @@ interface PerfilUsuario {
   email: string;
   permissao: string;
   permissaoNormalizada?: string;
+}
+
+interface PainelOperacional {
+  documentosVencidos: number;
+  documentosVencendo: number;
+  checklistsAbertos: number;
+  folgasPendentes: number;
 }
 
 // ============================================================================
@@ -90,6 +98,8 @@ export default function OperacionalHub() {
   const [perfil, setPerfil] = useState<PerfilUsuario | null>(null);
   const [mapaPermissoes, setMapaPermissoes] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
+  const [painel, setPainel] = useState<PainelOperacional | null>(null);
+  const [painelLoading, setPainelLoading] = useState(true);
 
   useEffect(() => {
     const carregarAcesso = async () => {
@@ -126,6 +136,17 @@ export default function OperacionalHub() {
 
     carregarAcesso();
   }, [router]);
+
+  // Painel de pendências: carrega só depois do perfil liberado, em paralelo
+  // com a renderização dos módulos (não bloqueia o hub).
+  useEffect(() => {
+    if (!perfil) return;
+    setPainelLoading(true);
+    painelOperacionalAction().then(res => {
+      if (res.ok) setPainel(res.info);
+      setPainelLoading(false);
+    });
+  }, [perfil]);
 
   const handleSair = async () => {
     await supabase.auth.signOut();
@@ -177,6 +198,59 @@ export default function OperacionalHub() {
           <h1 className="text-3xl font-black text-[#0C1D4D] uppercase tracking-tight">Setor Operacional</h1>
           <p className="text-[#64748B] font-medium">Controles e cadastros de equipamentos, acessórios, veículos e afins.</p>
         </div>
+
+        {/* PAINEL DE PENDÊNCIAS — cada cartão só aparece se o usuário tem acesso
+            ao módulo correspondente, e leva direto pra lá ao clicar. */}
+        {(() => {
+          const linksAutorizados = new Set(modulosAutorizados.map(m => m.link));
+          const cartoes: { chave: string; titulo: string; icone: string; valor: string; destaque: boolean; link: string; sub?: string }[] = [];
+
+          if (linksAutorizados.has('/admin/operacional/frota')) {
+            const vencidos = painel?.documentosVencidos ?? 0;
+            const vencendo = painel?.documentosVencendo ?? 0;
+            cartoes.push({
+              chave: 'documentos', titulo: 'Documentos da Frota', icone: '📁',
+              valor: painelLoading ? '—' : `${vencidos}`,
+              sub: painelLoading ? 'carregando...' : `${vencidos} vencido(s) · ${vencendo} a vencer (30d)`,
+              destaque: vencidos > 0, link: '/admin/operacional/frota'
+            });
+          }
+          if (linksAutorizados.has('/admin/operacional/checklist')) {
+            cartoes.push({
+              chave: 'checklists', titulo: 'Checklists Abertos', icone: '✅',
+              valor: painelLoading ? '—' : `${painel?.checklistsAbertos ?? 0}`,
+              sub: 'aguardando devolução/finalização',
+              destaque: (painel?.checklistsAbertos ?? 0) > 0, link: '/admin/operacional/checklist'
+            });
+          }
+          if (linksAutorizados.has('/admin/operacional/registro-ponto')) {
+            cartoes.push({
+              chave: 'folgas', titulo: 'Solicitações de Folga', icone: '🏖️',
+              valor: painelLoading ? '—' : `${painel?.folgasPendentes ?? 0}`,
+              sub: 'pendentes via WhatsApp',
+              destaque: (painel?.folgasPendentes ?? 0) > 0, link: '/admin/operacional/registro-ponto'
+            });
+          }
+
+          if (cartoes.length === 0) return null;
+
+          return (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-10">
+              {cartoes.map(c => (
+                <button
+                  key={c.chave}
+                  onClick={() => router.push(c.link)}
+                  className={`text-left bg-white p-4 rounded-2xl border shadow-sm hover:shadow-md transition-all ${c.destaque ? 'border-red-200 hover:border-red-400' : 'border-[#E2E8F0] hover:border-[#336699]'}`}
+                >
+                  <div className="text-lg mb-1">{c.icone}</div>
+                  <p className={`text-2xl font-black leading-tight ${c.destaque ? 'text-red-600' : 'text-[#0C1D4D]'}`}>{c.valor}</p>
+                  <p className="text-[9px] font-black text-gray-500 uppercase tracking-wider leading-tight mt-1">{c.titulo}</p>
+                  {c.sub && <p className="text-[9px] text-gray-400 font-medium mt-1 truncate">{c.sub}</p>}
+                </button>
+              ))}
+            </div>
+          );
+        })()}
 
         {/* Renderiza APENAS a variável modulosAutorizados */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

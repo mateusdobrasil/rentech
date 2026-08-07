@@ -13,7 +13,7 @@ import { supabaseAdmin } from './supabase';
 import { registrarLogAuditoria } from '../actions';
 
 export type TipoBatida = 'ENTRADA_1' | 'SAIDA_1' | 'ENTRADA_2' | 'SAIDA_2';
-type Fluxo = 'MENU_INICIAL' | 'CONFIRMAR_BATIDA' | 'JUSTIFICAR' | 'ABONAR';
+type Fluxo = 'MENU_INICIAL' | 'CONFIRMAR_BATIDA' | 'JUSTIFICAR' | 'ABONAR' | 'FOLGAR';
 
 const ORDEM_BATIDAS: TipoBatida[] = ['ENTRADA_1', 'SAIDA_1', 'ENTRADA_2', 'SAIDA_2'];
 
@@ -35,6 +35,10 @@ const MINUTOS_EXPIRACAO_PENDENCIA = 5;
 // Janela retroativa para JUSTIFICAR/ABONAR pelo WhatsApp — regra de negócio
 // combinada: no máximo os últimos 7 dias corridos (hoje incluso).
 const JANELA_DIAS_RETROATIVOS = 7;
+// FOLGAR é prospectivo (data futura, digitada em texto livre, sem menu
+// numerado) — limite de tamanho do período só pra evitar erro de digitação
+// virar um pedido de meses inteiros sem querer.
+const MAX_DIAS_PERIODO_FOLGA = 30;
 
 export interface ResultadoPonto {
   mensagem: string;
@@ -43,9 +47,10 @@ export interface ResultadoPonto {
 interface Contexto {
   tipo_batida?: TipoBatida;
   data_hora_proposta?: string; // ISO — usado no fluxo CONFIRMAR_BATIDA
-  data_referencia?: string;    // YYYY-MM-DD — usado em JUSTIFICAR/ABONAR
+  data_referencia?: string;    // YYYY-MM-DD — usado em JUSTIFICAR/ABONAR/FOLGAR
+  data_referencia_fim?: string; // YYYY-MM-DD — fim do período, usado em FOLGAR
   horario?: string;            // HH:MM — usado em JUSTIFICAR
-  motivo?: string;             // usado em ABONAR, entre INFORMAR_MOTIVO e ANEXAR_ATESTADO
+  motivo?: string;             // usado em ABONAR/FOLGAR, antes de gravar a solicitação
 }
 
 export interface AnexoWhatsApp {
@@ -96,6 +101,10 @@ function timeToMinutes(timeStr: string | null): number {
 
 function formatarDataBR(dataIso: string): string {
   return dataIso.split('-').reverse().join('/');
+}
+
+function formatarPeriodoBR(inicio: string, fim: string): string {
+  return inicio === fim ? formatarDataBR(inicio) : `${formatarDataBR(inicio)} a ${formatarDataBR(fim)}`;
 }
 
 // Data (YYYY-MM-DD) menos N dias, tratada como valor de calendário puro

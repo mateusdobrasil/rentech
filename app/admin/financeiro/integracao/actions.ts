@@ -82,7 +82,11 @@ export async function consultarPagamentosItauAction(filtros: FiltrosConsultaItau
     if (!ok) {
       return { ok: false, erro: `Consulta rejeitada pela API do Itaú (HTTP ${status}): ${data?.mensagem || JSON.stringify(data || {}).slice(0, 300)}` };
     }
-    return { ok: true, info: { itens: data?.itens || [], total: data?.total ?? null, ambiente: ctx.ambiente } };
+    // A API do Itaú embrulha o corpo de sucesso num nível extra "data" (ex.:
+    // {"data":{"itens":[...],"total":"998.99"},"pagination":{...}}) —
+    // confirmado por curl direto contra o sandbox (2026-08-07), diferente do
+    // que a Especificação Técnica dava a entender.
+    return { ok: true, info: { itens: data?.data?.itens || [], total: data?.data?.total ?? null, ambiente: ctx.ambiente } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
@@ -97,7 +101,8 @@ export async function consultarPagamentoItauAction(idPagamentoSispag: string): P
     if (!ok) {
       return { ok: false, erro: `Consulta rejeitada pela API do Itaú (HTTP ${status}).` };
     }
-    return { ok: true, info: { pagamento: data, ambiente: ctx.ambiente } };
+    // Mesmo embrulho extra "data" do endpoint de listagem, ver nota acima.
+    return { ok: true, info: { pagamento: data?.data ?? data, ambiente: ctx.ambiente } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

@@ -11,6 +11,16 @@
 // actions-ponto-whatsapp.ts) — o funcionário nunca aprova a própria exceção.
 import { supabaseAdmin } from './supabase';
 import { registrarLogAuditoria } from '../actions';
+import { dispararAutomacaoWhatsApp } from './automacoes';
+
+// Chave da automação (tela Agendamentos e Disparos, /admin/parametros/agendamentos)
+// que avisa os gestores operacionais de uma nova solicitação de folga. A
+// automação em si (destinatários, mensagem, canal) é cadastrada lá pelo
+// admin — este código só a dispara pelo `chave`, gerado automaticamente a
+// partir do nome digitado na criação (ver gerarChaveUnica em
+// app/admin/parametros/agendamentos/actions.ts). Cadastre a automação com o
+// nome exato "Solicitação Folga" pra gerar essa mesma chave.
+const CHAVE_AUTOMACAO_SOLICITACAO_FOLGA = 'solicitacao-folga';
 
 export type TipoBatida = 'ENTRADA_1' | 'SAIDA_1' | 'ENTRADA_2' | 'SAIDA_2';
 type Fluxo = 'MENU_INICIAL' | 'CONFIRMAR_BATIDA' | 'JUSTIFICAR' | 'ABONAR' | 'FOLGAR';
@@ -706,6 +716,19 @@ async function avancarFolgar(db: Db, pendencia: PendenciaPonto, texto: string, a
       acao: `SOLICITAÇÃO DE FOLGA: ${pendencia.funcionario_nome} — ${formatarPeriodoBR(dataReferencia, dataReferenciaFim)}`,
       setor: 'RECURSOS HUMANOS / PONTO WHATSAPP',
     });
+
+    // Avisa os gestores operacionais (automação cadastrada em
+    // /admin/parametros/agendamentos) — falha aqui não pode derrubar a
+    // confirmação pro funcionário, por isso o try/catch isolado.
+    try {
+      await dispararAutomacaoWhatsApp(CHAVE_AUTOMACAO_SOLICITACAO_FOLGA, {
+        solicitante: pendencia.funcionario_nome,
+        periodo: formatarPeriodoBR(dataReferencia, dataReferenciaFim),
+        motivo,
+      });
+    } catch (e) {
+      console.error('Falha ao notificar gestores sobre nova solicitação de folga:', e);
+    }
 
     return { mensagem: `✅ Solicitação de folga enviada para aprovação: ${formatarPeriodoBR(dataReferencia, dataReferenciaFim)}. Você será avisado quando for analisada.` };
   }

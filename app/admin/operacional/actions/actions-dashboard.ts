@@ -24,11 +24,15 @@ export async function painelOperacionalAction(): Promise<Resultado> {
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
 
-    const [veiculosRes, checklistsRes, folgasRes] = await Promise.all([
+    const [veiculosRes, checklistsCargaRes, checklistsVeiculosRes, folgasRes] = await Promise.all([
       db.from('frota_veiculos')
         .select('crlv_vencimento, ipva_vencimento, seguro_vigencia_fim, locacao_vigencia_fim, propriedade')
         .eq('exibir_na_frota', true),
       db.from('checklists').select('id', { count: 'exact', head: true }).neq('status', 'FINALIZADO'),
+      // Checklist de Veículos (saída/retorno, preenchido pelo motorista no
+      // Portal) — "aberto" é uma saída sem retorno ainda (status EM_ANDAMENTO),
+      // mesma contagem já usada em app/admin/operacional/frota/page.tsx.
+      db.from('frota_checklists').select('id', { count: 'exact', head: true }).eq('status', 'EM_ANDAMENTO'),
       db.from('folha_ponto_whatsapp_solicitacoes').select('id', { count: 'exact', head: true }).eq('tipo', 'FOLGA_DIA').eq('status', 'PENDENTE'),
     ]);
 
@@ -51,7 +55,8 @@ export async function painelOperacionalAction(): Promise<Resultado> {
       info: {
         documentosVencidos,
         documentosVencendo,
-        checklistsAbertos: checklistsRes.count || 0,
+        checklistsCargaAbertos: checklistsCargaRes.count || 0,
+        checklistsVeiculosAbertos: checklistsVeiculosRes.count || 0,
         folgasPendentes: folgasRes.count || 0,
       }
     };

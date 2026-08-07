@@ -210,7 +210,7 @@ export default function IntegracaoFinanceiraPage() {
               <span className={`text-[9px] font-black px-2.5 py-1 rounded-full uppercase ${credenciaisAmbiente?.clientIdConfigurado && credenciaisAmbiente?.clientSecretConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
                 {!statusItauApi ? '…' : credenciaisAmbiente?.clientIdConfigurado && credenciaisAmbiente?.clientSecretConfigurado ? '✓ Credenciais OK' : '✕ Credenciais incompletas'}
               </span>
-              <button onClick={() => router.push('/admin/integracao')} className="text-[10px] font-black bg-[#F8FAFC] border border-gray-300 text-gray-600 hover:bg-gray-100 px-3 py-1.5 rounded-lg uppercase tracking-wider transition-colors">
+              <button onClick={() => router.push('/admin/parametros/integracao')} className="text-[10px] font-black bg-[#F8FAFC] border border-gray-300 text-gray-600 hover:bg-gray-100 px-3 py-1.5 rounded-lg uppercase tracking-wider transition-colors">
                 ⚙ Configurar
               </button>
             </div>

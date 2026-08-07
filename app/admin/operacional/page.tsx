@@ -17,7 +17,8 @@ interface PerfilUsuario {
 interface PainelOperacional {
   documentosVencidos: number;
   documentosVencendo: number;
-  checklistsAbertos: number;
+  checklistsCargaAbertos: number;
+  checklistsVeiculosAbertos: number;
   folgasPendentes: number;
 }
 
@@ -214,13 +215,19 @@ export default function OperacionalHub() {
               sub: painelLoading ? 'carregando...' : `${vencidos} vencido(s) · ${vencendo} a vencer (30d)`,
               destaque: vencidos > 0, link: '/admin/operacional/frota'
             });
+            cartoes.push({
+              chave: 'checklist_veiculos', titulo: 'Checklist de Veículos', icone: '🚚',
+              valor: painelLoading ? '—' : `${painel?.checklistsVeiculosAbertos ?? 0}`,
+              sub: 'em rota (saída sem retorno)',
+              destaque: false, link: '/admin/operacional/frota'
+            });
           }
           if (linksAutorizados.has('/admin/operacional/checklist')) {
             cartoes.push({
-              chave: 'checklists', titulo: 'Checklists Abertos', icone: '✅',
-              valor: painelLoading ? '—' : `${painel?.checklistsAbertos ?? 0}`,
+              chave: 'checklist_carga', titulo: 'Checklist de Carga', icone: '✅',
+              valor: painelLoading ? '—' : `${painel?.checklistsCargaAbertos ?? 0}`,
               sub: 'aguardando devolução/finalização',
-              destaque: (painel?.checklistsAbertos ?? 0) > 0, link: '/admin/operacional/checklist'
+              destaque: (painel?.checklistsCargaAbertos ?? 0) > 0, link: '/admin/operacional/checklist'
             });
           }
           if (linksAutorizados.has('/admin/operacional/registro-ponto')) {
@@ -235,7 +242,7 @@ export default function OperacionalHub() {
           if (cartoes.length === 0) return null;
 
           return (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-10">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-10">
               {cartoes.map(c => (
                 <button
                   key={c.chave}

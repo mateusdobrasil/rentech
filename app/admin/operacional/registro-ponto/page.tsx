@@ -121,7 +121,7 @@ export default function RegistroDePontoOperacional() {
 
       <div className="p-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full">
         {aba === 'consulta' && <RegistroPontoConsulta mostrarPainelDesabilitados={false} />}
-        {aba === 'folga' && <SolicitacoesFolga usuarioAtual={usuarioAtual} onCountChange={setFolgasPendentes} />}
+        {aba === 'folga' && <SolicitacoesFolga usuarioAtual={usuarioAtual} onCountChange={setFolgasPendentes} mostrarCalendario />}
       </div>
     </div>
   );

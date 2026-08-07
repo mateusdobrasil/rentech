@@ -138,6 +138,45 @@ function extrairHorario(texto: string): string | null {
   return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
 }
 
+// Valida DD/MM/AAAA como data de calendário real (rejeita 31/02 etc, já que
+// Date normaliza overflow em vez de sinalizar erro).
+function parseDataBR(texto: string): string | null {
+  const m = texto.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return null;
+  const dia = Number(m[1]);
+  const mes = Number(m[2]);
+  const ano = Number(m[3]);
+  if (mes < 1 || mes > 12) return null;
+
+  const d = new Date(Date.UTC(ano, mes - 1, dia));
+  if (d.getUTCFullYear() !== ano || d.getUTCMonth() !== mes - 1 || d.getUTCDate() !== dia) return null;
+  return `${ano}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+}
+
+interface PeriodoFolga { inicio: string; fim: string; }
+type ResultadoPeriodoFolga = { ok: true; periodo: PeriodoFolga } | { ok: false; erro: 'FORMATO' | 'PASSADO' | 'ORDEM' | 'PERIODO_LONGO' };
+
+// FOLGAR é prospectivo e digitado em texto livre (diferente do menu numerado
+// retroativo de JUSTIFICAR/ABONAR) — aceita uma data única ou um período
+// separado por "a"/"até"/"-".
+function parsePeriodoFolga(texto: string, agora: Date): ResultadoPeriodoFolga {
+  const partes = texto.trim().split(/\s+(?:a|até|ate|-)\s+/i);
+  if (partes.length > 2) return { ok: false, erro: 'FORMATO' };
+
+  const inicioIso = parseDataBR(partes[0]);
+  if (!inicioIso) return { ok: false, erro: 'FORMATO' };
+  const fimIso = partes.length === 2 ? parseDataBR(partes[1]) : inicioIso;
+  if (!fimIso) return { ok: false, erro: 'FORMATO' };
+
+  if (fimIso < inicioIso) return { ok: false, erro: 'ORDEM' };
+  if (inicioIso < dataReferenciaBR(agora)) return { ok: false, erro: 'PASSADO' };
+
+  const diasNoPeriodo = Math.round((new Date(`${fimIso}T00:00:00Z`).getTime() - new Date(`${inicioIso}T00:00:00Z`).getTime()) / 86400000) + 1;
+  if (diasNoPeriodo > MAX_DIAS_PERIODO_FOLGA) return { ok: false, erro: 'PERIODO_LONGO' };
+
+  return { ok: true, periodo: { inicio: inicioIso, fim: fimIso } };
+}
+
 function normalizarResposta(texto: string): 'SIM' | 'NAO' | 'OUTRO' {
   const t = texto.trim().toUpperCase();
   if (['SIM', 'S', '1', 'YES', 'OK', 'CONFIRMAR'].includes(t)) return 'SIM';
@@ -166,7 +205,7 @@ function montarMenuDias(itens: ItemMenuDia[]): string {
 }
 
 function montarMenuInicial(): string {
-  return 'Olá, tudo bem?O que você deseja fazer? Responda com o número:\n1) Registrar ponto\n2) Justificar batida esquecida\n3) Abonar o dia (falta/atestado)';
+  return 'Olá, tudo bem?O que você deseja fazer? Responda com o número:\n1) Registrar ponto\n2) Justificar batida esquecida\n3) Abonar o dia (falta/atestado)\n4) Solicitar folga';
 }
 
 type Db = ReturnType<typeof supabaseAdmin>;
@@ -200,7 +239,7 @@ async function batidasFaltantesNoDia(db: Db, funcionarioNome: string, dataRefere
   return ORDEM_BATIDAS.filter(t => !jaFeitas.has(t));
 }
 
-async function existeSolicitacaoPendente(db: Db, funcionarioNome: string, dataReferencia: string, tipo: 'JUSTIFICATIVA_BATIDA' | 'ABONO_DIA', tipoBatida: TipoBatida | null): Promise<boolean> {
+async function existeSolicitacaoPendente(db: Db, funcionarioNome: string, dataReferencia: string, tipo: 'JUSTIFICATIVA_BATIDA' | 'ABONO_DIA' | 'FOLGA_DIA', tipoBatida: TipoBatida | null): Promise<boolean> {
   let query = db.from('folha_ponto_whatsapp_solicitacoes')
     .select('id')
     .eq('funcionario_nome', funcionarioNome)

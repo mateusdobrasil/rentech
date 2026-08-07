@@ -44,7 +44,7 @@ export default function PainelFinanceiro() {
   const router = useRouter();
 
   // Sessão + permissão da rota, resolvidas pelo hook compartilhado do módulo.
-  const { authLoading, acessoNegado, perfil } = useAcessoRota('/admin/financeiro/ops');
+  const { authLoading, acessoNegado, perfil, requerMfa } = useAcessoRota('/admin/financeiro/ops');
 
   // Estados de Dados
   const [ops, setOps] = useState<OP[]>([]);
@@ -304,7 +304,7 @@ export default function PainelFinanceiro() {
   );
 
   return (
-    <ExigirMFA>
+    <ExigirMFA ativo={requerMfa}>
     <>
       {/* Interface Admin (Escondida na hora de imprimir) */}
       <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-16 print:hidden">

@@ -43,6 +43,7 @@ interface PaginaPermissao {
   nome_pagina: string;
   endereco_route: string;
   permissoes_permitidas: NivelPermissao[];
+  requer_2fa?: boolean;
 }
 
 interface AcessoPortal {
@@ -66,10 +67,11 @@ export default function GestaoPermissoes() {
   const [usuarioNome, setUsuarioNome] = useState('Usuário');
 
   const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [abaAtiva, setAbaAtiva] = useState<'usuarios' | 'paginas' | 'setores' | 'portal'>('usuarios');
+  const [abaAtiva, setAbaAtiva] = useState<'usuarios' | 'paginas' | 'setores' | 'portal' | 'seguranca'>('usuarios');
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
   const [buscaPagina, setBuscaPagina] = useState('');
+  const [buscaSeguranca, setBuscaSeguranca] = useState('');
 
   // Estados da aba de Usuários
   const [usuarios, setUsuarios] = useState<UsuarioAuth[]>([]);
@@ -341,6 +343,30 @@ export default function GestaoPermissoes() {
   };
 
   // ============================================================================
+  // OPERAÇÕES: PERMISSÃO 2FA
+  // ============================================================================
+  const alternar2FA = async (p: PaginaPermissao) => {
+    const novoValor = !p.requer_2fa;
+    try {
+      const { error } = await supabase.from('folha_paginas_permissoes').update({ requer_2fa: novoValor }).eq('id', p.id);
+      if (error) throw error;
+
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: novoValor ? 'ATIVOU EXIGÊNCIA DE 2FA' : 'DESATIVOU EXIGÊNCIA DE 2FA',
+        setor: 'PERMISSÕES',
+        equipamento_nome: `${p.nome_pagina} (${p.endereco_route})`,
+      });
+
+      setPaginas(paginas.map(x => x.id === p.id ? { ...x, requer_2fa: novoValor } : x));
+      mostrarFeedback(`2FA ${novoValor ? 'ativado' : 'desativado'} para "${p.nome_pagina}".`, 'success');
+    } catch (error) {
+      console.error(error);
+      mostrarFeedback('Erro ao atualizar exigência de 2FA.', 'error');
+    }
+  };
+
+  // ============================================================================
   // OPERAÇÕES: SETORES DE PERMISSÃO
   // ============================================================================
   const carregarSetores = async () => {
@@ -454,6 +480,13 @@ export default function GestaoPermissoes() {
     );
   }, [paginas, buscaPagina]);
 
+  const paginasFiltradasSeguranca = useMemo(() => {
+    return paginas.filter(p =>
+      p.nome_pagina.toLowerCase().includes(buscaSeguranca.toLowerCase()) ||
+      p.endereco_route.toLowerCase().includes(buscaSeguranca.toLowerCase())
+    );
+  }, [paginas, buscaSeguranca]);
+
   const acessosPortalFiltrados = useMemo(() => {
     const termo = buscaPortal.toLowerCase();
     return acessosPortal.filter(a =>
@@ -526,6 +559,9 @@ export default function GestaoPermissoes() {
           </button>
           <button onClick={() => setAbaAtiva('portal')} className={`px-4 md:px-5 py-2.5 text-[11px] md:text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'portal' ? 'bg-emerald-600 text-white shadow-sm' : 'text-[#64748B] hover:text-emerald-600'}`}>
             📱 Portal
+          </button>
+          <button onClick={() => setAbaAtiva('seguranca')} className={`px-4 md:px-5 py-2.5 text-[11px] md:text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'seguranca' ? 'bg-red-600 text-white shadow-sm' : 'text-[#64748B] hover:text-red-600'}`}>
+            🔐 Permissão 2FA
           </button>
         </div>
       </div>
@@ -1000,6 +1036,80 @@ export default function GestaoPermissoes() {
                             {a.ultimo_acesso
                               ? new Date(a.ultimo_acesso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
                               : <span className="text-gray-400">Nunca acessou</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MÓDULO 5: PERMISSÃO 2FA POR PÁGINA/ROTA */}
+      {/* ==================================================================== */}
+      {abaAtiva === 'seguranca' && (
+        <>
+          <div className="px-4 md:px-8 pb-4 flex flex-col md:flex-row justify-between items-center gap-4 flex-shrink-0">
+            <div className="w-full md:w-1/2">
+              <input
+                type="text"
+                placeholder="🔍 Buscar página por nome ou endereço da rota..."
+                className="w-full p-3.5 border border-gray-300 rounded-xl text-sm font-semibold text-[#0C1D4D] bg-white outline-none focus:border-red-500 shadow-sm"
+                value={buscaSeguranca}
+                onChange={(e) => setBuscaSeguranca(e.target.value)}
+              />
+            </div>
+            <span className="text-xs text-gray-500 font-medium max-w-md text-center md:text-right">
+              Páginas com 2FA ativo exigem um código do autenticador a cada nova sessão, além do login normal.
+            </span>
+          </div>
+
+          <div className="px-4 md:px-8 pb-8 flex-grow overflow-hidden flex flex-col">
+            {paginasFiltradasSeguranca.length === 0 ? (
+              <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] text-center py-12 text-gray-400 font-bold uppercase tracking-wider">Nenhuma página mapeada. Cadastre rotas na aba "Páginas".</div>
+            ) : (
+              <>
+                {/* Mobile: cartões empilhados */}
+                <div className="md:hidden space-y-3 overflow-auto">
+                  {paginasFiltradasSeguranca.map(p => (
+                    <div key={p.id} className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] p-4 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <strong className="block text-[#0C1D4D] font-black uppercase tracking-tight leading-tight">{p.nome_pagina}</strong>
+                        <code className="text-xs text-[#336699] font-mono bg-blue-50/70 border border-blue-100 rounded px-1.5 py-0.5 mt-1 inline-block">{p.endereco_route}</code>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer select-none shrink-0">
+                        <input type="checkbox" className="sr-only peer" checked={!!p.requer_2fa} onChange={() => alternar2FA(p)} />
+                        <div className="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-600 shadow-inner"></div>
+                      </label>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Desktop: tabela completa */}
+                <div className="hidden md:block bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-[#F8FAFC] sticky top-0 shadow-sm z-10 border-b border-[#E2E8F0]">
+                      <tr className="text-[#64748B] text-[10px] uppercase tracking-widest font-black">
+                        <th className="p-4">Página Mapeada / Rota de Endereço</th>
+                        <th className="p-4 text-center w-56">Exigir 2FA</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0] text-sm">
+                      {paginasFiltradasSeguranca.map(p => (
+                        <tr key={p.id} className="hover:bg-[#F8FAFC] transition-colors">
+                          <td className="p-4">
+                            <strong className="block text-[#0C1D4D] font-black uppercase tracking-tight">{p.nome_pagina}</strong>
+                            <code className="text-xs text-[#336699] font-mono bg-blue-50/70 border border-blue-100 rounded px-1.5 py-0.5 mt-1 inline-block">{p.endereco_route}</code>
+                          </td>
+                          <td className="p-4 text-center">
+                            <label className="relative inline-flex items-center cursor-pointer select-none">
+                              <input type="checkbox" className="sr-only peer" checked={!!p.requer_2fa} onChange={() => alternar2FA(p)} />
+                              <div className="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-600 shadow-inner"></div>
+                            </label>
                           </td>
                         </tr>
                       ))}

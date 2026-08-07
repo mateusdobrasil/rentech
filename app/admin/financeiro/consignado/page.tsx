@@ -42,6 +42,7 @@ export default function GestaoDeConsignado() {
   const pathname = usePathname();
   const [authLoading, setAuthLoading] = useState(true);
   const [acessoNegado, setAcessoNegado] = useState(false);
+  const [requerMfa, setRequerMfa] = useState(false);
 
   const [lista, setLista] = useState<ConsignadoFuncionario[]>([]);
   const [loading, setLoading] = useState(true);
@@ -91,7 +92,7 @@ export default function GestaoDeConsignado() {
 
       const { data: rotaPermissao, error: rotaError } = await supabase
         .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
+        .select('permissoes_permitidas, requer_2fa')
         .eq('endereco_route', pathname)
         .single();
 
@@ -108,6 +109,7 @@ export default function GestaoDeConsignado() {
         return;
       }
 
+      setRequerMfa(rotaPermissao?.requer_2fa ?? false);
       setAuthLoading(false);
     }
 
@@ -233,7 +235,7 @@ export default function GestaoDeConsignado() {
   }
 
   return (
-    <ExigirMFA>
+    <ExigirMFA ativo={requerMfa}>
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">
       <Analytics />
 

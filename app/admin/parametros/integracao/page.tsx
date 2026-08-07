@@ -11,6 +11,7 @@ import {
   statusGovBrConsignadoAction,
   obterRoteamentoWhatsAppAction, salvarRoteamentoWhatsAppAction,
   enviarTesteWhatsAppAction, enviarTesteTemplateWhatsAppAction,
+  statusP2sAction, testarConexaoP2sAction,
   type ConfigRoteamentoWhatsApp
 } from './actions';
 
@@ -58,8 +59,11 @@ interface StatusItauApi {
 interface StatusGovBrConsignado {
   cnpjConfigurado: boolean; certificadoConfigurado: boolean; senhaConfigurado: boolean; ambiente: string;
 }
+interface StatusP2s {
+  hostConfigurado: boolean; portaConfigurada: boolean; usuarioConfigurado: boolean; senhaConfigurada: boolean;
+}
 
-const ICONE_TIPO: Record<string, string> = { BANCO: '🏦', BENEFICIO: '🎁', ASSINATURA: '✍️', MENSAGERIA: '💬', CONSIGNADO: '🏛️' };
+const ICONE_TIPO: Record<string, string> = { BANCO: '🏦', BENEFICIO: '🎁', ASSINATURA: '✍️', MENSAGERIA: '💬', CONSIGNADO: '🏛️', ERP: '🧩' };
 const ROTULO_PROVEDOR: Record<'ZAPI' | 'META', string> = { ZAPI: 'Z-API', META: 'Meta (Cloud API)' };
 
 export default function IntegracaoPage() {
@@ -81,7 +85,11 @@ export default function IntegracaoPage() {
   const [statusMeta, setStatusMeta] = useState<StatusMeta | null>(null);
   const [statusItauApi, setStatusItauApi] = useState<StatusItauApi | null>(null);
   const [statusGovBr, setStatusGovBr] = useState<StatusGovBrConsignado | null>(null);
+  const [statusP2s, setStatusP2s] = useState<StatusP2s | null>(null);
   const [roteamento, setRoteamento] = useState<ConfigRoteamentoWhatsApp | null>(null);
+
+  const [testeP2sRodando, setTesteP2sRodando] = useState(false);
+  const [testeP2sResultado, setTesteP2sResultado] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const [editParceiro, setEditParceiro] = useState<Integracao | null>(null);
   const [edAtivo, setEdAtivo] = useState(false);
@@ -162,12 +170,13 @@ export default function IntegracaoPage() {
   const carregar = async () => {
     setLoading(true);
     try {
-      const [integ, tokenRes, statsRes, zapiStatusRes, zapiStatsRes, metaStatusRes, roteamentoRes, itauApiStatusRes, govBrStatusRes] = await Promise.all([
+      const [integ, tokenRes, statsRes, zapiStatusRes, zapiStatsRes, metaStatusRes, roteamentoRes, itauApiStatusRes, govBrStatusRes, p2sStatusRes] = await Promise.all([
         listarIntegracoesAction(),
         statusTokenAutentiqueAction(), estatisticasAutentiqueAction(),
         statusZapiAction(), estatisticasZapiAction(),
         statusMetaAction(), obterRoteamentoWhatsAppAction(),
-        statusItauApiAction(), statusGovBrConsignadoAction()
+        statusItauApiAction(), statusGovBrConsignadoAction(),
+        statusP2sAction()
       ]);
       if (integ.ok) setIntegracoes(integ.info.integracoes);
       if (tokenRes.ok) setTokenAutentiqueOk(tokenRes.info.configurado);
@@ -178,6 +187,7 @@ export default function IntegracaoPage() {
       if (roteamentoRes.ok) setRoteamento(roteamentoRes.info);
       if (itauApiStatusRes.ok) setStatusItauApi(itauApiStatusRes.info);
       if (govBrStatusRes.ok) setStatusGovBr(govBrStatusRes.info);
+      if (p2sStatusRes.ok) setStatusP2s(p2sStatusRes.info);
     } finally { setLoading(false); }
   };
 
@@ -187,6 +197,7 @@ export default function IntegracaoPage() {
     setEdCnpj(i.config?.cnpj || ''); setEdRazaoSocial(i.config?.razao_social || '');
     setTesteCelular(''); setTesteResultado(null);
     setTesteTemplateNome('hello_world'); setTesteTemplateIdioma('en_US'); setTesteTemplateParametros(''); setTesteTemplateResultado(null);
+    setTesteP2sResultado(null);
     if (i.parceiro === 'WHATSAPP_ROTEAMENTO' && roteamento) {
       setEdModoRoteamento(roteamento.modo); setEdProvedorGlobal(roteamento.provedor_global);
       setEdProvedorEnvio(roteamento.provedor_envio); setEdProvedorRecebimento(roteamento.provedor_recebimento);
@@ -225,6 +236,14 @@ export default function IntegracaoPage() {
         ? { ok: true, msg: 'Template aceito pela Meta.', detalhe: res.info?.detalhe }
         : { ok: false, msg: res.erro || 'Falha ao enviar.' });
     } finally { setTesteTemplateEnviando(false); }
+  };
+
+  const testarP2s = async () => {
+    setTesteP2sRodando(true); setTesteP2sResultado(null);
+    try {
+      const res = await testarConexaoP2sAction();
+      setTesteP2sResultado(res.ok ? { ok: true, msg: res.info?.detalhe || 'Conexão confirmada.' } : { ok: false, msg: res.erro || 'Falha ao conectar.' });
+    } finally { setTesteP2sRodando(false); }
   };
 
   const salvarRoteamento = async () => {
@@ -413,6 +432,18 @@ export default function IntegracaoPage() {
                     </span>
                   </div>
                   <p className="text-[10px] text-gray-400 font-semibold leading-snug">API "Crédito Trabalhador" da Dataprev (mTLS) — consulta consignados dos funcionários em RH → Consignado.</p>
+                </div>
+              )}
+
+              {i.parceiro === 'P2S' && (
+                <div className="mb-3 pb-3 border-b border-gray-100 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-gray-500 font-bold uppercase">Credenciais no servidor</span>
+                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusP2s && statusP2s.hostConfigurado && statusP2s.portaConfigurada && statusP2s.usuarioConfigurado && statusP2s.senhaConfigurada ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                      {!statusP2s ? '…' : (statusP2s.hostConfigurado && statusP2s.portaConfigurada && statusP2s.usuarioConfigurado && statusP2s.senhaConfigurada) ? '✓ Configuradas' : '✕ Incompletas'}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-gray-400 font-semibold leading-snug">ERP PrimeStart (P2S Tecnologia) — servidor de objetos REST, envio e recebimento de dados.</p>
                 </div>
               )}
 
@@ -775,6 +806,55 @@ export default function IntegracaoPage() {
                   >
                     🏛️ Ir para RH → Consignado
                   </button>
+                </div>
+              )}
+
+              {editParceiro.parceiro === 'P2S' && (
+                <div className="space-y-3">
+                  <div className="p-3 bg-[#F8FAFC] rounded-xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-gray-500 uppercase">Servidor (host)</span>
+                      <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusP2s?.hostConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                        {!statusP2s ? '…' : statusP2s.hostConfigurado ? '✓ Configurado' : '✕ Ausente'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-gray-500 uppercase">Porta</span>
+                      <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusP2s?.portaConfigurada ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                        {!statusP2s ? '…' : statusP2s.portaConfigurada ? '✓ Configurada' : '✕ Ausente'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-gray-500 uppercase">Usuário da API</span>
+                      <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusP2s?.usuarioConfigurado ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                        {!statusP2s ? '…' : statusP2s.usuarioConfigurado ? '✓ Configurado' : '✕ Ausente'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-gray-500 uppercase">Senha da API</span>
+                      <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${statusP2s?.senhaConfigurada ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                        {!statusP2s ? '…' : statusP2s.senhaConfigurada ? '✓ Configurada' : '✕ Ausente'}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-gray-400 font-semibold leading-snug">
+                      As credenciais (P2S_API_HOST, P2S_API_PORTA, P2S_API_USUARIO, P2S_API_SENHA) vivem só no ambiente do servidor — nunca são lidas, gravadas ou exibidas aqui. Autenticação Basic Auth (usuário/senha próprios da API, distintos dos logins de usuário do PrimeStart).
+                    </p>
+                  </div>
+
+                  <div className="p-3 bg-[#F8FAFC] rounded-xl space-y-2">
+                    <label className="block text-[10px] font-black text-gray-500 uppercase">Testar conexão</label>
+                    <p className="text-[10px] text-gray-400 font-semibold leading-snug">Faz uma consulta leve (0 resultados esperados) só para confirmar rede e autenticação, sem depender do tamanho da base do cliente.</p>
+                    <button onClick={testarP2s} disabled={testeP2sRodando} className="w-full bg-[#0C1D4D] hover:bg-[#284B8C] disabled:opacity-50 text-white font-black uppercase tracking-wider text-[11px] py-2.5 rounded-lg transition-colors">
+                      {testeP2sRodando ? 'Testando...' : '🔌 Testar conexão'}
+                    </button>
+                    {testeP2sResultado && (
+                      <p className={`text-[10px] font-bold ${testeP2sResultado.ok ? 'text-emerald-600' : 'text-red-600'}`}>{testeP2sResultado.msg}</p>
+                    )}
+                  </div>
+
+                  <p className="text-[10px] text-gray-400 font-semibold leading-snug">
+                    Ambiente Sandbox aqui representa a instância Demo pública da P2S (demo.cloud.primestart.net) — use Produção para a instância real do cliente.
+                  </p>
                 </div>
               )}
 

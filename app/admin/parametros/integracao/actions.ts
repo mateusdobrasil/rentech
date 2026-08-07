@@ -8,6 +8,7 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { enviarComProvedor, type ProvedorWhatsApp } from '../../../lib/whatsapp';
 import { enviarWhatsAppMetaTemplate } from '../../../lib/metaWhatsapp';
+import { statusCredenciaisP2s, testarConexao as testarConexaoP2s } from '../../../lib/p2s';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -133,6 +134,21 @@ export async function statusGovBrConsignadoAction(): Promise<Resultado> {
       ambiente: (process.env.GOVBR_CONSIGNADO_AMBIENTE || 'homologacao').toLowerCase(),
     }
   };
+}
+
+// Confirma (sem nunca expor os valores) se host/porta/usuário/senha da API
+// REST do PrimeStart (ERP da P2S) estão definidos no ambiente do servidor.
+// Usadas pelo cliente em app/lib/p2s.ts.
+export async function statusP2sAction(): Promise<Resultado> {
+  return { ok: true, info: statusCredenciaisP2s() };
+}
+
+// Testa a conexão de verdade (Basic Auth + rede) fazendo uma consulta leve
+// que sempre retorna 0 resultados, sem depender do tamanho da base do
+// cliente — ver testarConexao em app/lib/p2s.ts.
+export async function testarConexaoP2sAction(): Promise<Resultado> {
+  const res = await testarConexaoP2s();
+  return res.ok ? { ok: true, info: { detalhe: 'Conexão e autenticação confirmadas.' } } : { ok: false, erro: res.erro };
 }
 
 export interface ConfigRoteamentoWhatsApp {

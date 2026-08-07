@@ -58,6 +58,7 @@ export default function IntegracaoFinanceiraPage() {
   const pathname = usePathname();
   const [authLoading, setAuthLoading] = useState(true);
   const [acessoNegado, setAcessoNegado] = useState(false);
+  const [requerMfa, setRequerMfa] = useState(false);
 
   // Abas por instituição bancária — hoje só o Itaú está integrado via API;
   // se outro banco entrar no futuro, basta somar um item aqui e um painel
@@ -93,7 +94,7 @@ export default function IntegracaoFinanceiraPage() {
       if (perfilError || !perfil) { router.push('/login'); return; }
 
       const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes').select('permissoes_permitidas')
+        .from('folha_paginas_permissoes').select('permissoes_permitidas, requer_2fa')
         .eq('endereco_route', pathname).single();
       if (rotaError && rotaError.code !== 'PGRST116') {
         console.error("Erro ao buscar permissão da rota:", rotaError);
@@ -105,6 +106,7 @@ export default function IntegracaoFinanceiraPage() {
         setAcessoNegado(true); setAuthLoading(false); return;
       }
 
+      setRequerMfa(rotaPermissao?.requer_2fa ?? false);
       setAuthLoading(false);
       carregar();
     }
@@ -170,7 +172,7 @@ export default function IntegracaoFinanceiraPage() {
   const credenciaisAmbiente = statusItauApi ? (ambienteAtual === 'PRODUCAO' ? statusItauApi.producao : statusItauApi.sandbox) : null;
 
   return (
-    <ExigirMFA>
+    <ExigirMFA ativo={requerMfa}>
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">
       <Analytics />
 

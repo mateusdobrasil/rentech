@@ -25,6 +25,7 @@ interface AcessoRota {
   authLoading: boolean;
   acessoNegado: boolean;
   perfil: PerfilAcesso | null;
+  requerMfa: boolean;
 }
 
 export function useAcessoRota(rota: string): AcessoRota {
@@ -32,6 +33,7 @@ export function useAcessoRota(rota: string): AcessoRota {
   const [authLoading, setAuthLoading] = useState(true);
   const [acessoNegado, setAcessoNegado] = useState(false);
   const [perfil, setPerfil] = useState<PerfilAcesso | null>(null);
+  const [requerMfa, setRequerMfa] = useState(false);
 
   useEffect(() => {
     let ativo = true;
@@ -46,7 +48,7 @@ export function useAcessoRota(rota: string): AcessoRota {
 
       const [perfilRes, rotaRes] = await Promise.all([
         supabase.from('perfis_usuarios').select('*').eq('id', session.user.id).single(),
-        supabase.from('folha_paginas_permissoes').select('permissoes_permitidas').eq('endereco_route', rota).single(),
+        supabase.from('folha_paginas_permissoes').select('permissoes_permitidas, requer_2fa').eq('endereco_route', rota).single(),
       ]);
 
       if (!ativo) return;
@@ -72,6 +74,7 @@ export function useAcessoRota(rota: string): AcessoRota {
         return;
       }
 
+      setRequerMfa(rotaRes.data?.requer_2fa ?? false);
       setPerfil({
         nome: perfilDb.nome || '',
         email: perfilDb.email || session.user.email || '',
@@ -88,5 +91,5 @@ export function useAcessoRota(rota: string): AcessoRota {
     return () => { ativo = false; };
   }, [rota, router]);
 
-  return { authLoading, acessoNegado, perfil };
+  return { authLoading, acessoNegado, perfil, requerMfa };
 }

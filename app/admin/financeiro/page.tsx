@@ -60,6 +60,7 @@ export default function FinanceiroHub() {
   const router = useRouter();
   const [perfil, setPerfil] = useState<PerfilUsuario | null>(null);
   const [mapaPermissoes, setMapaPermissoes] = useState<Record<string, string[]>>({});
+  const [requerMfa, setRequerMfa] = useState(true);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -71,10 +72,11 @@ export default function FinanceiroHub() {
         return;
       }
 
-      const [perfilRes, permissoesRes] = await Promise.all([
+      const [perfilRes, permissoesRes, rotaAtualRes] = await Promise.all([
         supabase.from('perfis_usuarios').select('nome, email, permissao').eq('id', session.user.id).single(),
         supabase.from('folha_paginas_permissoes').select('endereco_route, permissoes_permitidas')
-          .in('endereco_route', modulosFinanceiro.map(m => m.link))
+          .in('endereco_route', modulosFinanceiro.map(m => m.link)),
+        supabase.from('folha_paginas_permissoes').select('requer_2fa').eq('endereco_route', '/admin/financeiro').single()
       ]);
 
       if (permissoesRes.error) {
@@ -83,6 +85,7 @@ export default function FinanceiroHub() {
       const mapa: Record<string, string[]> = {};
       (permissoesRes.data || []).forEach(r => { mapa[r.endereco_route] = r.permissoes_permitidas || []; });
       setMapaPermissoes(mapa);
+      setRequerMfa(rotaAtualRes.data?.requer_2fa ?? false);
 
       if (perfilRes.data && !perfilRes.error) {
         setPerfil({
@@ -141,7 +144,7 @@ export default function FinanceiroHub() {
   );
 
   return (
-    <ExigirMFA>
+    <ExigirMFA ativo={requerMfa}>
     <div className="min-h-screen bg-[#F0F4F8] font-sans pt-12 px-4">
       <Analytics />
       <div className="max-w-6xl mx-auto">

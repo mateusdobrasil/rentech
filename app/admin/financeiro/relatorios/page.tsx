@@ -178,6 +178,7 @@ export default function RelatoriosFinanceiroPage() {
   const pathname = usePathname();
   const [authLoading, setAuthLoading] = useState(true);
   const [acessoNegado, setAcessoNegado] = useState(false);
+  const [requerMfa, setRequerMfa] = useState(false);
 
   const [mesReferencia, setMesReferencia] = useState(() => {
     const h = new Date();
@@ -198,7 +199,7 @@ export default function RelatoriosFinanceiroPage() {
 
       const { data: rotaPermissao } = await supabase
         .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
+        .select('permissoes_permitidas, requer_2fa')
         .eq('endereco_route', pathname)
         .single();
 
@@ -210,6 +211,7 @@ export default function RelatoriosFinanceiroPage() {
         setAuthLoading(false);
         return;
       }
+      setRequerMfa(rotaPermissao?.requer_2fa ?? false);
       setAuthLoading(false);
     }
     checkAuth();
@@ -259,7 +261,7 @@ export default function RelatoriosFinanceiroPage() {
   };
 
   return (
-    <ExigirMFA>
+    <ExigirMFA ativo={requerMfa}>
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">
       <Analytics />
 

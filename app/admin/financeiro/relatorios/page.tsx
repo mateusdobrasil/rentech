@@ -5,7 +5,6 @@ import { useRouter, usePathname } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../../lib/supabase';
 import { buscarRelatorioFinanceiroAction } from '../actions';
-import ExigirMFA from '../ExigirMFA';
 
 // ============================================================================
 // MOTOR DE NORMALIZAÇÃO DE PERMISSÕES (mesmo padrão das páginas irmãs)
@@ -178,7 +177,6 @@ export default function RelatoriosFinanceiroPage() {
   const pathname = usePathname();
   const [authLoading, setAuthLoading] = useState(true);
   const [acessoNegado, setAcessoNegado] = useState(false);
-  const [requerMfa, setRequerMfa] = useState(false);
 
   const [mesReferencia, setMesReferencia] = useState(() => {
     const h = new Date();
@@ -199,7 +197,7 @@ export default function RelatoriosFinanceiroPage() {
 
       const { data: rotaPermissao } = await supabase
         .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas, requer_2fa')
+        .select('permissoes_permitidas')
         .eq('endereco_route', pathname)
         .single();
 
@@ -211,7 +209,6 @@ export default function RelatoriosFinanceiroPage() {
         setAuthLoading(false);
         return;
       }
-      setRequerMfa(rotaPermissao?.requer_2fa ?? false);
       setAuthLoading(false);
     }
     checkAuth();
@@ -261,7 +258,6 @@ export default function RelatoriosFinanceiroPage() {
   };
 
   return (
-    <ExigirMFA ativo={requerMfa}>
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">
       <Analytics />
 
@@ -448,6 +444,5 @@ export default function RelatoriosFinanceiroPage() {
         )}
       </div>
     </div>
-    </ExigirMFA>
   );
 }

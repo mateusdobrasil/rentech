@@ -1,21 +1,18 @@
 "use client";
 
-// app/admin/financeiro/ExigirMFA.tsx
-// Camada extra de proteção para páginas/hubs marcados com "Exigir 2FA" em
-// /admin/parametros/permissoes (aba "Permissão 2FA", tabela
-// folha_paginas_permissoes.requer_2fa). Exige 2FA (TOTP) do Supabase Auth
-// além do login + permissão de rota que já protegem as demais páginas do
-// admin. Ativação/desativação do fator vive em /admin/conta — aqui só
-// cobramos o desafio (uma vez por sessão, já que o Supabase mantém o nível
-// aal2 na própria sessão até logout/expiração).
-//
-// O prop `ativo` é quem decide se a proteção roda: cada página consulta o
-// próprio flag `requer_2fa` na tabela e repassa aqui. Default `true` (seguro
-// por padrão) para o caso de algum consumidor esquecer de passar o prop.
+// app/admin/ExigirMFA.tsx
+// Camada extra de proteção usada pelo app/admin/layout.tsx para TODAS as
+// páginas do admin — o layout consulta folha_paginas_permissoes.requer_2fa
+// para a rota atual (configurável em /admin/parametros/permissoes, aba
+// "Permissão 2FA") e repassa aqui via prop `ativo`. Exige 2FA (TOTP) do
+// Supabase Auth além do login + permissão de rota que já protegem as demais
+// páginas do admin. Ativação/desativação do fator vive em /admin/conta —
+// aqui só cobramos o desafio (uma vez por sessão, já que o Supabase mantém
+// o nível aal2 na própria sessão até logout/expiração).
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '../../lib/supabase';
-import { registrarLogAuditoria } from '../../actions';
+import { supabase } from '../lib/supabase';
+import { registrarLogAuditoria } from '../actions';
 
 type EstadoMfa = 'verificando' | 'liberado' | 'exige_codigo' | 'nao_cadastrado';
 

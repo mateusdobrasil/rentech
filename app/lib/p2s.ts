@@ -27,7 +27,19 @@
 //   (invisível para outras consultas) até o primeiro Update — só aí ele fica
 //   "persistido" de verdade.
 // - Erros de Update (PUT) voltam como STRING PURA no corpo (não é JSON).
+//
+// Sandbox vs Produção (2026-08-07): a instância "rentech.cloud.primestart.net"
+// configurada em P2S_API_HOST/PORTA/USUARIO/SENHA deu timeout em TODAS as
+// portas testadas (55000/443/80) e nem respondeu ping — host errado ou
+// instância fora do ar, a confirmar com a P2S. Enquanto isso, o ambiente
+// SANDBOX usa por padrão a instância Demo pública e sempre-disponível da P2S
+// (demo.cloud.primestart.net:55000, admin/admin, documentada no manual), sem
+// depender de nenhuma env var — testada e funcionando de ponta a ponta nesse
+// mesmo dia. As env vars sem sufixo (P2S_API_HOST etc.) são tratadas como as
+// credenciais de PRODUCAO (o host real do cliente).
 import { Buffer } from 'node:buffer';
+
+export type AmbienteP2s = 'SANDBOX' | 'PRODUCAO';
 
 export type OperadorP2s = 'eq' | 'ne' | 'lk' | 'gt' | 'ge' | 'lt' | 'le';
 export type TipoValorP2s = 'str' | 'int' | 'dbl' | 'bool';
@@ -75,74 +87,98 @@ export function dataParaP2s(data: Date): number {
   return (data.getTime() - EPOCA_P2S) / 86_400_000;
 }
 
-function protocolo(): string {
-  return process.env.P2S_API_PROTOCOLO || 'http';
+// Instância Demo pública da P2S (ver "Ambiente de Testes" no manual) — uso
+// livre, dados voláteis, mas sempre no ar. Serve de fallback do ambiente
+// SANDBOX quando não há override por env var.
+const SANDBOX_PADRAO = { protocolo: 'http', host: 'demo.cloud.primestart.net', porta: '55000', usuario: 'admin', senha: 'admin' };
+
+interface CredenciaisP2s { protocolo: string; host?: string; porta?: string; usuario?: string; senha?: string; }
+
+// Env vars com sufixo por ambiente (P2S_API_HOST_SANDBOX / _PRODUCAO) têm
+// prioridade. Na ausência delas: SANDBOX cai pro Demo público (sempre
+// funciona, sem configuração nenhuma); PRODUCAO cai pras env vars legadas
+// sem sufixo (P2S_API_HOST etc.), que é o que já está configurado hoje no
+// servidor para o host real do cliente.
+function credenciaisAmbiente(ambiente: AmbienteP2s): CredenciaisP2s {
+  const sufixo = `_${ambiente}`;
+  const host = process.env[`P2S_API_HOST${sufixo}`] || (ambiente === 'PRODUCAO' ? process.env.P2S_API_HOST : undefined) || (ambiente === 'SANDBOX' ? SANDBOX_PADRAO.host : undefined);
+  const porta = process.env[`P2S_API_PORTA${sufixo}`] || (ambiente === 'PRODUCAO' ? process.env.P2S_API_PORTA : undefined) || (ambiente === 'SANDBOX' ? SANDBOX_PADRAO.porta : undefined);
+  const usuario = process.env[`P2S_API_USUARIO${sufixo}`] || (ambiente === 'PRODUCAO' ? process.env.P2S_API_USUARIO : undefined) || (ambiente === 'SANDBOX' ? SANDBOX_PADRAO.usuario : undefined);
+  const senha = process.env[`P2S_API_SENHA${sufixo}`] || (ambiente === 'PRODUCAO' ? process.env.P2S_API_SENHA : undefined) || (ambiente === 'SANDBOX' ? SANDBOX_PADRAO.senha : undefined);
+  const protocolo = process.env[`P2S_API_PROTOCOLO${sufixo}`] || process.env.P2S_API_PROTOCOLO || SANDBOX_PADRAO.protocolo;
+  return { protocolo, host, porta, usuario, senha };
 }
 
-function host(): string | undefined {
-  return process.env.P2S_API_HOST;
+export function credenciaisP2sConfiguradas(ambiente: AmbienteP2s): boolean {
+  const c = credenciaisAmbiente(ambiente);
+  return !!(c.host && c.porta && c.usuario && c.senha);
 }
 
-function porta(): string | undefined {
-  return process.env.P2S_API_PORTA;
-}
-
-function usuario(): string | undefined {
-  return process.env.P2S_API_USUARIO;
-}
-
-function senha(): string | undefined {
-  return process.env.P2S_API_SENHA;
-}
-
-export function credenciaisP2sConfiguradas(): boolean {
-  return !!(host() && porta() && usuario() && senha());
-}
-
-export interface StatusCredenciaisP2s {
+export interface StatusCredenciaisP2sAmbiente {
   hostConfigurado: boolean;
   portaConfigurada: boolean;
   usuarioConfigurado: boolean;
   senhaConfigurada: boolean;
+  host?: string;
 }
 
-export function statusCredenciaisP2s(): StatusCredenciaisP2s {
+export interface StatusCredenciaisP2s {
+  sandbox: StatusCredenciaisP2sAmbiente;
+  producao: StatusCredenciaisP2sAmbiente;
+}
+
+function statusAmbiente(ambiente: AmbienteP2s): StatusCredenciaisP2sAmbiente {
+  const c = credenciaisAmbiente(ambiente);
   return {
-    hostConfigurado: !!host(),
-    portaConfigurada: !!porta(),
-    usuarioConfigurado: !!usuario(),
-    senhaConfigurada: !!senha(),
+    hostConfigurado: !!c.host, portaConfigurada: !!c.porta,
+    usuarioConfigurado: !!c.usuario, senhaConfigurada: !!c.senha,
+    host: c.host,
   };
 }
 
-function baseUrl(): string {
-  if (!host() || !porta()) {
-    throw new Error('Servidor da API do PrimeStart não configurado (P2S_API_HOST / P2S_API_PORTA ausentes no ambiente do servidor).');
-  }
-  return `${protocolo()}://${host()}:${porta()}`;
+export function statusCredenciaisP2s(): StatusCredenciaisP2s {
+  return { sandbox: statusAmbiente('SANDBOX'), producao: statusAmbiente('PRODUCAO') };
 }
 
-function authHeader(): string {
-  const u = usuario(), s = senha();
-  if (!u || !s) {
-    throw new Error('Credenciais da API do PrimeStart não configuradas no servidor (P2S_API_USUARIO / P2S_API_SENHA ausentes).');
+function baseUrl(ambiente: AmbienteP2s): string {
+  const c = credenciaisAmbiente(ambiente);
+  if (!c.host || !c.porta) {
+    throw new Error(`Servidor da API do PrimeStart não configurado para o ambiente ${ambiente} (host/porta ausentes no ambiente do servidor).`);
   }
-  return `Basic ${Buffer.from(`${u}:${s}`).toString('base64')}`;
+  return `${c.protocolo}://${c.host}:${c.porta}`;
+}
+
+function authHeader(ambiente: AmbienteP2s): string {
+  const c = credenciaisAmbiente(ambiente);
+  if (!c.usuario || !c.senha) {
+    throw new Error(`Credenciais da API do PrimeStart não configuradas para o ambiente ${ambiente} (usuário/senha ausentes).`);
+  }
+  return `Basic ${Buffer.from(`${c.usuario}:${c.senha}`).toString('base64')}`;
 }
 
 interface RespostaP2s<T> { status: number; ok: boolean; data: T | null; textoErro?: string; }
 
-async function chamar<T>(path: string, init: { method: string; body?: unknown; query?: Record<string, string | undefined> } ): Promise<RespostaP2s<T>> {
-  const url = new URL(baseUrl() + path);
+async function chamar<T>(ambiente: AmbienteP2s, path: string, init: { method: string; body?: unknown; query?: Record<string, string | undefined> }): Promise<RespostaP2s<T>> {
+  const url = new URL(baseUrl(ambiente) + path);
   if (init.query) {
     for (const [k, v] of Object.entries(init.query)) if (v !== undefined && v !== '') url.searchParams.set(k, v);
   }
-  const res = await fetch(url.toString(), {
-    method: init.method,
-    headers: { 'Content-Type': 'application/json', Authorization: authHeader() },
-    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
-    cache: 'no-store',
-  });
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), {
+      method: init.method,
+      headers: { 'Content-Type': 'application/json', Authorization: authHeader(ambiente) },
+      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+      cache: 'no-store',
+    });
+  } catch (e: any) {
+    // O fetch nativo só diz "fetch failed" — a causa de verdade (DNS,
+    // conexão recusada, timeout) vem em e.cause. Sem isso, "fetch failed"
+    // sozinho não dá pra diferenciar host errado de firewall/allowlist
+    // bloqueando a conexão (ver nota de diagnóstico no topo do arquivo).
+    const causa = e?.cause?.code || e?.cause?.message || e?.cause || e?.message;
+    throw new Error(`Não foi possível conectar ao servidor do PrimeStart (${ambiente}) em ${url.hostname}:${url.port} (${causa}). Se o host/porta estiverem certos, provavelmente é bloqueio de firewall/allowlist de IP no servidor — confirme com a P2S se é preciso liberar o IP de saída deste servidor.`);
+  }
 
   // 204 (no content, sucesso de Update/Delete) não tem corpo JSON.
   if (res.status === 204) return { status: res.status, ok: true, data: null };
@@ -167,8 +203,8 @@ export interface OpcoesConsultaP2s {
 
 // POST /qpo — Query Persistent Objects: busca por critérios (AND entre
 // critérios, OR entre valores dentro do mesmo critério).
-export async function consultarObjetos(classname: string, criterialist: CriterioP2s[] = [], opcoes: OpcoesConsultaP2s = {}): Promise<ConsultaP2sResultado> {
-  const resp = await chamar<ConsultaP2sResultado>('/qpo', {
+export async function consultarObjetos(ambiente: AmbienteP2s, classname: string, criterialist: CriterioP2s[] = [], opcoes: OpcoesConsultaP2s = {}): Promise<ConsultaP2sResultado> {
+  const resp = await chamar<ConsultaP2sResultado>(ambiente, '/qpo', {
     method: 'POST',
     query: {
       classname,
@@ -185,8 +221,8 @@ export async function consultarObjetos(classname: string, criterialist: Criterio
 }
 
 // GET /objects/{oid} — Retrieve: busca um único objeto já conhecido pelo oid.
-export async function buscarObjeto(oid: string): Promise<ObjetoP2s | null> {
-  const resp = await chamar<ObjetoP2s>(`/objects/${encodeURIComponent(oid)}`, { method: 'GET' });
+export async function buscarObjeto(ambiente: AmbienteP2s, oid: string): Promise<ObjetoP2s | null> {
+  const resp = await chamar<ObjetoP2s>(ambiente, `/objects/${encodeURIComponent(oid)}`, { method: 'GET' });
   if (resp.status === 404) return null;
   if (!resp.ok || !resp.data) {
     throw new Error(`Falha ao buscar objeto ${oid} no PrimeStart (HTTP ${resp.status}): ${resp.textoErro || 'resposta inválida'}`);
@@ -196,8 +232,8 @@ export async function buscarObjeto(oid: string): Promise<ObjetoP2s | null> {
 
 // GET /canupdate/{oid} — checa se ninguém mais editou o objeto desde a
 // última carga (referencetimestamp = lastupdatetimestamp obtido antes).
-export async function podeAtualizar(oid: string, referenceTimestamp: number): Promise<boolean> {
-  const resp = await chamar<{ canupdate: string }>(`/canupdate/${encodeURIComponent(oid)}`, {
+export async function podeAtualizar(ambiente: AmbienteP2s, oid: string, referenceTimestamp: number): Promise<boolean> {
+  const resp = await chamar<{ canupdate: string }>(ambiente, `/canupdate/${encodeURIComponent(oid)}`, {
     method: 'GET',
     query: { referencetimestamp: String(referenceTimestamp) },
   });
@@ -211,8 +247,8 @@ export async function podeAtualizar(oid: string, referenceTimestamp: number): Pr
 // propriedades alteradas; classname/oid/name/lastupdatetimestamp são
 // preenchidos automaticamente conforme exigido pela API (name sempre "",
 // lastupdatetimestamp sempre 0 no corpo do PUT).
-export async function atualizarObjeto(classname: string, oid: string, campos: Record<string, unknown>): Promise<void> {
-  const resp = await chamar<never>(`/objects/${encodeURIComponent(oid)}`, {
+export async function atualizarObjeto(ambiente: AmbienteP2s, classname: string, oid: string, campos: Record<string, unknown>): Promise<void> {
+  const resp = await chamar<never>(ambiente, `/objects/${encodeURIComponent(oid)}`, {
     method: 'PUT',
     query: { saveparts: 'false' },
     body: { classname, oid, name: '', lastupdatetimestamp: 0, ...campos },
@@ -225,8 +261,8 @@ export async function atualizarObjeto(classname: string, oid: string, campos: Re
 // POST /classes/{classname} — Create: reserva um oid e devolve o objeto
 // "primitivo" com os valores default do construtor. Fica invisível para
 // outras consultas até o primeiro Update (ver atualizarObjeto).
-export async function criarObjeto(classname: string): Promise<ObjetoP2s> {
-  const resp = await chamar<ObjetoP2s>(`/classes/${encodeURIComponent(classname)}`, { method: 'POST' });
+export async function criarObjeto(ambiente: AmbienteP2s, classname: string): Promise<ObjetoP2s> {
+  const resp = await chamar<ObjetoP2s>(ambiente, `/classes/${encodeURIComponent(classname)}`, { method: 'POST' });
   if (!resp.ok || !resp.data) {
     throw new Error(`Falha ao criar objeto ${classname} no PrimeStart (HTTP ${resp.status}): ${resp.textoErro || 'resposta inválida'}`);
   }
@@ -235,8 +271,8 @@ export async function criarObjeto(classname: string): Promise<ObjetoP2s> {
 
 // DELETE /objects/{oid} — remove um objeto primitivo (desiste da criação) ou
 // persistido (falha com 409 se houver vínculo de integridade referencial).
-export async function excluirObjeto(oid: string): Promise<void> {
-  const resp = await chamar<never>(`/objects/${encodeURIComponent(oid)}`, { method: 'DELETE' });
+export async function excluirObjeto(ambiente: AmbienteP2s, oid: string): Promise<void> {
+  const resp = await chamar<never>(ambiente, `/objects/${encodeURIComponent(oid)}`, { method: 'DELETE' });
   if (!resp.ok) {
     if (resp.status === 409) throw new Error(`Objeto ${oid} não pode ser excluído no PrimeStart: está vinculado a outro objeto (conflito de integridade referencial).`);
     if (resp.status === 404) throw new Error(`Objeto ${oid} não encontrado no PrimeStart.`);
@@ -248,9 +284,9 @@ export async function excluirObjeto(oid: string): Promise<void> {
 // critério que nunca bate (CodigoParceiro = -1), então count vem sempre 0
 // independente do tamanho da base, mas o round-trip completo (rede + Basic
 // Auth + parse do JSON) é exercitado de verdade.
-export async function testarConexao(): Promise<{ ok: true; count: 0 } | { ok: false; erro: string }> {
+export async function testarConexao(ambiente: AmbienteP2s): Promise<{ ok: true; count: 0 } | { ok: false; erro: string }> {
   try {
-    const resultado = await consultarObjetos('TCustomParceiro', [criterio('CodigoParceiro', 'eq', 'int', -1)]);
+    const resultado = await consultarObjetos(ambiente, 'TCustomParceiro', [criterio('CodigoParceiro', 'eq', 'int', -1)]);
     return { ok: true, count: resultado.count as 0 };
   } catch (e: any) {
     return { ok: false, erro: e.message };

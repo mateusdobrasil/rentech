@@ -10,7 +10,6 @@ import {
 } from '../../rh/actions/actions-financeiro';
 import { listarIntegracoesAction } from '../../parametros/integracao/actions';
 import SepararHolerites from '../../rh/ponto/SepararHolerites';
-import ExigirMFA from '../ExigirMFA';
 
 // ============================================================================
 // MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
@@ -74,7 +73,6 @@ export default function FinanceiroPage() {
   const [emailUsuario, setEmailUsuario] = useState('');
   const [authLoading, setAuthLoading] = useState(true);
   const [acessoNegado, setAcessoNegado] = useState(false);
-  const [requerMfa, setRequerMfa] = useState(false);
 
   const [integracoes, setIntegracoes] = useState<Integracao[]>([]);
 
@@ -147,7 +145,7 @@ export default function FinanceiroPage() {
       // Consulta no banco de dados quem pode aceder a esta rota
       const { data: rotaPermissao, error: rotaError } = await supabase
         .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas, requer_2fa')
+        .select('permissoes_permitidas')
         .eq('endereco_route', pathname)
         .single();
 
@@ -166,7 +164,6 @@ export default function FinanceiroPage() {
       }
 
       // Aprovado
-      setRequerMfa(rotaPermissao?.requer_2fa ?? false);
       setUsuarioAtual(perfil.nome || 'Equipe RH');
       setEmailUsuario(perfil.email || session.user.email || '');
       setAuthLoading(false);
@@ -770,7 +767,6 @@ export default function FinanceiroPage() {
   }
 
   return (
-    <ExigirMFA ativo={requerMfa}>
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">
       <Analytics />
 
@@ -1177,6 +1173,5 @@ export default function FinanceiroPage() {
       </div>
       )}
     </div>
-    </ExigirMFA>
   );
 }

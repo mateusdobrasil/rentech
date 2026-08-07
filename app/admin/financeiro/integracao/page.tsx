@@ -7,7 +7,6 @@ import { supabase } from '../../../lib/supabase';
 import { normalizarPermissao } from '../../../lib/permissoes';
 import { consultarPagamentosItauAction, consultarPagamentoItauAction, type FiltrosConsultaItau } from './actions';
 import { listarIntegracoesAction, statusItauApiAction } from '../../parametros/integracao/actions';
-import ExigirMFA from '../ExigirMFA';
 
 const BRL = (v: string | number | null | undefined) => 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtData = (d: string | null | undefined) => {
@@ -58,7 +57,6 @@ export default function IntegracaoFinanceiraPage() {
   const pathname = usePathname();
   const [authLoading, setAuthLoading] = useState(true);
   const [acessoNegado, setAcessoNegado] = useState(false);
-  const [requerMfa, setRequerMfa] = useState(false);
 
   // Abas por instituição bancária — hoje só o Itaú está integrado via API;
   // se outro banco entrar no futuro, basta somar um item aqui e um painel
@@ -94,7 +92,7 @@ export default function IntegracaoFinanceiraPage() {
       if (perfilError || !perfil) { router.push('/login'); return; }
 
       const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes').select('permissoes_permitidas, requer_2fa')
+        .from('folha_paginas_permissoes').select('permissoes_permitidas')
         .eq('endereco_route', pathname).single();
       if (rotaError && rotaError.code !== 'PGRST116') {
         console.error("Erro ao buscar permissão da rota:", rotaError);
@@ -106,7 +104,6 @@ export default function IntegracaoFinanceiraPage() {
         setAcessoNegado(true); setAuthLoading(false); return;
       }
 
-      setRequerMfa(rotaPermissao?.requer_2fa ?? false);
       setAuthLoading(false);
       carregar();
     }
@@ -172,7 +169,6 @@ export default function IntegracaoFinanceiraPage() {
   const credenciaisAmbiente = statusItauApi ? (ambienteAtual === 'PRODUCAO' ? statusItauApi.producao : statusItauApi.sandbox) : null;
 
   return (
-    <ExigirMFA ativo={requerMfa}>
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">
       <Analytics />
 
@@ -358,6 +354,5 @@ export default function IntegracaoFinanceiraPage() {
         </div>
       )}
     </div>
-    </ExigirMFA>
   );
 }

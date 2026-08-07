@@ -22,8 +22,9 @@ export default function MinhaConta() {
   const [salvando, setSalvando] = useState(false);
   const [feedback, setFeedback] = useState<{ show: boolean; msg: string; type: 'success' | 'error' }>({ show: false, msg: '', type: 'success' });
 
-  // Autenticação em duas etapas (2FA/TOTP) — exigida pra entrar na área
-  // Financeira (ver app/admin/financeiro/ExigirMFA.tsx), ativada aqui.
+  // Autenticação em duas etapas (2FA/TOTP) — exigida em páginas marcadas com
+  // "requer 2FA" em /admin/parametros/permissoes (ver app/admin/ExigirMFA.tsx
+  // e app/admin/layout.tsx), ativada aqui.
   const [fatorMfa, setFatorMfa] = useState<{ id: string; status: string } | null>(null);
   const [carregandoMfa, setCarregandoMfa] = useState(true);
   const [ativacaoMfa, setAtivacaoMfa] = useState<{ factorId: string; qrCode: string; segredo: string } | null>(null);

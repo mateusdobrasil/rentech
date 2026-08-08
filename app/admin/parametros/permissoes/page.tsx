@@ -29,6 +29,11 @@ interface Setor {
   nome: string;
 }
 
+interface Empresa {
+  id: number;
+  nome: string;
+}
+
 interface UsuarioAuth {
   id: string;
   nome: string;
@@ -81,6 +86,14 @@ export default function GestaoPermissoes() {
   const [modalNovoUsuario, setModalNovoUsuario] = useState(false);
   const [novoUsuario, setNovoUsuario] = useState({ nome: '', email: '', senha: '', permissao: '' });
   const [criandoUsuario, setCriandoUsuario] = useState(false);
+
+  // Vínculo usuário ↔ empresas (multi-empresa): quais empresas cada colaborador
+  // enxerga nas telas restritas (ver /admin/rh/funcionario). ADMINISTRADOR
+  // enxerga todas independente de vínculo, então não precisa selecionar.
+  const [empresasPerm, setEmpresasPerm] = useState<Empresa[]>([]);
+  const [vinculosPorUsuario, setVinculosPorUsuario] = useState<Record<string, number[]>>({});
+  const [empresasSelecionadasNovo, setEmpresasSelecionadasNovo] = useState<number[]>([]);
+  const [empresasSelecionadasEdicao, setEmpresasSelecionadasEdicao] = useState<number[]>([]);
 
   // Estados da aba de Páginas
   const [paginas, setPaginas] = useState<PaginaPermissao[]>([]);
@@ -151,6 +164,7 @@ export default function GestaoPermissoes() {
       carregarPaginas();
       carregarSetores();
       carregarAcessosPortal();
+      carregarEmpresasEVinculos();
     }
 
     checkAuth();
@@ -173,6 +187,45 @@ export default function GestaoPermissoes() {
     }
   };
 
+  const carregarEmpresasEVinculos = async () => {
+    try {
+      const [empresasRes, vinculosRes] = await Promise.all([
+        supabase.from('empresas').select('id, nome').order('nome'),
+        supabase.from('perfis_usuarios_empresas').select('perfil_id, empresa_id'),
+      ]);
+      if (empresasRes.error) throw empresasRes.error;
+      setEmpresasPerm((empresasRes.data || []) as Empresa[]);
+
+      const mapa: Record<string, number[]> = {};
+      (vinculosRes.data || []).forEach((v: { perfil_id: string; empresa_id: number }) => {
+        mapa[v.perfil_id] = [...(mapa[v.perfil_id] || []), v.empresa_id];
+      });
+      setVinculosPorUsuario(mapa);
+    } catch (error) {
+      console.error(error);
+      mostrarFeedback('Erro ao carregar empresas e vínculos.', 'error');
+    }
+  };
+
+  const alternarEmpresaSelecionada = (lista: number[], id: number): number[] =>
+    lista.includes(id) ? lista.filter(x => x !== id) : [...lista, id];
+
+  const abrirModalEdicao = (user: UsuarioAuth) => {
+    setEmpresasSelecionadasEdicao(vinculosPorUsuario[user.id] || []);
+    setModalEdicao({ open: true, user: { ...user } });
+  };
+
+  const sincronizarVinculoEmpresas = async (perfilId: string, empresaIds: number[]) => {
+    const { error: delError } = await supabase.from('perfis_usuarios_empresas').delete().eq('perfil_id', perfilId);
+    if (delError) throw delError;
+    if (empresaIds.length > 0) {
+      const { error: insError } = await supabase.from('perfis_usuarios_empresas')
+        .insert(empresaIds.map(empresa_id => ({ perfil_id: perfilId, empresa_id })));
+      if (insError) throw insError;
+    }
+    setVinculosPorUsuario(prev => ({ ...prev, [perfilId]: empresaIds }));
+  };
+
   const salvarPermissao = async () => {
     if (!modalEdicao.user) return;
     setLoading(true);
@@ -181,8 +234,10 @@ export default function GestaoPermissoes() {
         .from('perfis_usuarios')
         .update({ permissao: modalEdicao.user.permissao, ativo: modalEdicao.user.ativo })
         .eq('id', modalEdicao.user.id);
-        
+
       if (error) throw error;
+
+      await sincronizarVinculoEmpresas(modalEdicao.user.id, empresasSelecionadasEdicao);
 
       const original = usuarios.find(u => u.id === modalEdicao.user!.id);
       const acoes: string[] = [];
@@ -219,6 +274,7 @@ export default function GestaoPermissoes() {
 
   const abrirModalNovoUsuario = () => {
     setNovoUsuario({ nome: '', email: '', senha: gerarSenhaAleatoria(), permissao: setores[0]?.nome || '' });
+    setEmpresasSelecionadasNovo([]);
     setModalNovoUsuario(true);
   };
 
@@ -238,6 +294,7 @@ export default function GestaoPermissoes() {
         senha: novoUsuario.senha,
         permissao: novoUsuario.permissao,
         usuarioNome: usuarioAtual,
+        empresaIds: empresasSelecionadasNovo,
       });
 
       if (!resultado.success) throw new Error(resultado.message);
@@ -507,6 +564,15 @@ export default function GestaoPermissoes() {
     }
   };
 
+  // ADMINISTRADOR enxerga todas as empresas por padrão (ver /admin/rh/funcionario),
+  // então o vínculo explícito só importa pros demais setores.
+  const descricaoEmpresasDe = (user: UsuarioAuth): string => {
+    if (normalizarPermissao(user.permissao) === 'ADMINISTRADOR') return 'Todas (Administrador)';
+    const ids = vinculosPorUsuario[user.id] || [];
+    if (ids.length === 0) return 'Nenhuma empresa vinculada';
+    return ids.map(id => empresasPerm.find(e => e.id === id)?.nome || '?').join(', ');
+  };
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center pt-16">
@@ -621,10 +687,11 @@ export default function GestaoPermissoes() {
                         <span className={`px-3 py-1 border rounded-full text-[10px] font-black tracking-widest ${getBadgeColor(user.permissao)}`}>
                           {user.permissao}
                         </span>
-                        <button onClick={() => setModalEdicao({ open: true, user: { ...user } })} className="bg-white hover:bg-gray-50 border border-gray-300 font-black text-[10px] uppercase tracking-wider px-3 py-2 rounded-lg transition-colors shadow-sm text-[#0C1D4D] shrink-0">
+                        <button onClick={() => abrirModalEdicao(user)} className="bg-white hover:bg-gray-50 border border-gray-300 font-black text-[10px] uppercase tracking-wider px-3 py-2 rounded-lg transition-colors shadow-sm text-[#0C1D4D] shrink-0">
                           ⚙️ Gerenciar
                         </button>
                       </div>
+                      <p className="text-[10px] text-[#64748B] font-bold uppercase mb-1">🏢 {descricaoEmpresasDe(user)}</p>
                       <p className="text-[10px] text-[#94A3B8] font-bold uppercase">
                         {user.ultimo_acesso
                           ? `Último acesso: ${new Date(user.ultimo_acesso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}`
@@ -660,6 +727,7 @@ export default function GestaoPermissoes() {
                             <span className={`px-3 py-1 border rounded-full text-[10px] font-black tracking-widest ${getBadgeColor(user.permissao)}`}>
                               {user.permissao}
                             </span>
+                            <span className="block text-[10px] text-[#64748B] font-bold uppercase mt-1">🏢 {descricaoEmpresasDe(user)}</span>
                           </td>
                           <td className="p-4 text-xs text-[#64748B] font-bold">
                             {user.ultimo_acesso
@@ -667,7 +735,7 @@ export default function GestaoPermissoes() {
                               : <span className="text-gray-400">Nunca acessou</span>}
                           </td>
                           <td className="p-4 text-center">
-                            <button onClick={() => setModalEdicao({ open: true, user: { ...user } })} className="bg-white hover:bg-gray-50 border border-gray-300 font-black text-[10px] uppercase tracking-wider px-4 py-2 rounded-lg transition-colors shadow-sm text-[#0C1D4D]">
+                            <button onClick={() => abrirModalEdicao(user)} className="bg-white hover:bg-gray-50 border border-gray-300 font-black text-[10px] uppercase tracking-wider px-4 py-2 rounded-lg transition-colors shadow-sm text-[#0C1D4D]">
                               ⚙️ Gerenciar
                             </button>
                           </td>
@@ -1186,6 +1254,29 @@ export default function GestaoPermissoes() {
                 </select>
               </div>
 
+              {normalizarPermissao(novoUsuario.permissao) !== 'ADMINISTRADOR' && (
+                <div>
+                  <label className="block text-[10px] font-black text-[#64748B] uppercase tracking-widest mb-2">Empresas com Acesso Permitido</label>
+                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2 max-h-[160px] overflow-y-auto shadow-inner">
+                    {empresasPerm.length === 0 && (
+                      <p className="text-[10px] text-gray-400 font-bold uppercase">Nenhuma empresa cadastrada. Crie uma em Parâmetros → Cadastro de Empresas.</p>
+                    )}
+                    {empresasPerm.map(e => (
+                      <label key={e.id} className="flex items-center gap-3 font-bold text-xs text-[#0C1D4D] cursor-pointer hover:bg-gray-200/50 p-1 rounded transition-colors select-none">
+                        <input
+                          type="checkbox"
+                          checked={empresasSelecionadasNovo.includes(e.id)}
+                          onChange={() => setEmpresasSelecionadasNovo(alternarEmpresaSelecionada(empresasSelecionadasNovo, e.id))}
+                          className="w-4 h-4 accent-[#336699]"
+                        />
+                        {e.nome}
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-[#94A3B8] font-bold uppercase mt-1 leading-tight">Sem nenhuma marcada, o usuário não verá funcionários de nenhuma empresa nas telas restritas.</p>
+                </div>
+              )}
+
               <div className="pt-4 border-t border-[#E2E8F0] flex gap-3">
                 <button onClick={() => setModalNovoUsuario(false)} className="flex-1 py-3.5 bg-gray-100 text-gray-500 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-gray-200 transition-colors">Cancelar</button>
                 <button onClick={criarNovoUsuario} disabled={criandoUsuario} className="flex-1 py-3.5 bg-[#0C1D4D] text-white font-black text-[10px] uppercase tracking-widest rounded-xl shadow-md hover:bg-[#284B8C] transition-colors disabled:opacity-50">{criandoUsuario ? '...' : 'Registrar Usuário'}</button>
@@ -1224,6 +1315,29 @@ export default function GestaoPermissoes() {
                 </select>
                 <p className="text-[10px] text-[#94A3B8] font-bold uppercase mt-2 leading-tight">Este papel definirá quais painéis, simuladores e botões o usuário poderá visualizar.</p>
               </div>
+
+              {normalizarPermissao(modalEdicao.user.permissao) !== 'ADMINISTRADOR' && (
+                <div>
+                  <label className="block text-[10px] font-black text-[#64748B] uppercase tracking-widest mb-2">Empresas com Acesso Permitido</label>
+                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2 max-h-[160px] overflow-y-auto shadow-inner">
+                    {empresasPerm.length === 0 && (
+                      <p className="text-[10px] text-gray-400 font-bold uppercase">Nenhuma empresa cadastrada. Crie uma em Parâmetros → Cadastro de Empresas.</p>
+                    )}
+                    {empresasPerm.map(e => (
+                      <label key={e.id} className="flex items-center gap-3 font-bold text-xs text-[#0C1D4D] cursor-pointer hover:bg-gray-200/50 p-1 rounded transition-colors select-none">
+                        <input
+                          type="checkbox"
+                          checked={empresasSelecionadasEdicao.includes(e.id)}
+                          onChange={() => setEmpresasSelecionadasEdicao(alternarEmpresaSelecionada(empresasSelecionadasEdicao, e.id))}
+                          className="w-4 h-4 accent-[#336699]"
+                        />
+                        {e.nome}
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-[#94A3B8] font-bold uppercase mt-1 leading-tight">Sem nenhuma marcada, o usuário não verá funcionários de nenhuma empresa nas telas restritas.</p>
+                </div>
+              )}
 
               <div className="flex items-center justify-between bg-gray-50 p-4 border border-gray-200 rounded-xl">
                 <div>

@@ -58,6 +58,12 @@ const modulosParametros = [
     cor: 'border-emerald-500/50 hover:border-emerald-500', bgIcon: 'bg-emerald-50 text-emerald-600'
   },
   {
+    titulo: 'Cadastro de Empresas',
+    descricao: 'Empresas do Grupo Rentech (CNPJs) usadas para vincular funcionários e restringir acesso.',
+    icone: '🏢', link: '/admin/parametros/empresas',
+    cor: 'border-amber-500/50 hover:border-amber-500', bgIcon: 'bg-amber-50 text-amber-600'
+  },
+  {
     titulo: 'Log de Auditoria',
     descricao: 'Histórico completo de ações realizadas no sistema: acessos, edições e alterações.',
     icone: '🔍', link: '/admin/parametros/log',

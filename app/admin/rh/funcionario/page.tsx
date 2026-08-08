@@ -6,7 +6,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
-import { salvarColaboradorAction } from '../actions/actions-folha';
+import { salvarColaboradorAction, atribuirEmpresaEmMassaAction } from '../actions/actions-folha';
 import { uploadFotoFuncionarioAction, urlFotoFuncionarioAction } from '../actions/actions-documentos-func';
 
 // ============================================================================
@@ -49,7 +49,7 @@ interface RegraContrato {
 }
 
 interface FuncionarioFin {
-  nome_completo: string; cargo: string; departamento: string; tipo_contrato: string; ativo: boolean;
+  nome_completo: string; cargo: string; departamento: string; empresa_id: number | null; tipo_contrato: string; ativo: boolean;
   recebe_transporte: boolean; valor_transporte: number;
   recebe_refeicao: boolean; valor_refeicao: number;
   salario_folha: number; salario_contrato: number;
@@ -104,14 +104,21 @@ export default function FuncionarioPage() {
   const [regrasContrato, setRegrasContrato] = useState<Record<string, RegraContrato>>({});
   const [cargosCatalogo, setCargosCatalogo] = useState<string[]>([]);
   const [departamentosCatalogo, setDepartamentosCatalogo] = useState<string[]>([]);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
 
   const [buscaGrid, setBuscaGrid] = useState('');
   const [filtroContrato, setFiltroContrato] = useState('TODOS');
+  const [filtroEmpresa, setFiltroEmpresa] = useState<string>('TODAS');
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null); // null = sem restrição (ex: ADMINISTRADOR)
+  const [modoAtribuicaoMassa, setModoAtribuicaoMassa] = useState(false);
+  const [selecionadosMassa, setSelecionadosMassa] = useState<Set<string>>(new Set());
+  const [empresaMassa, setEmpresaMassa] = useState<string>('');
+  const [aplicandoMassa, setAplicandoMassa] = useState(false);
   const [funcionarioSelecionado, setFuncionarioSelecionado] = useState<string | null>(null);
   const [abaAtiva, setAbaAtiva] = useState<'ESSENCIAL' | 'COMPLETO'>('ESSENCIAL');
 
   const defaultForm: FuncionarioFin = {
-    nome_completo: '', cargo: '', departamento: '', tipo_contrato: 'CLT + Contrato', ativo: true,
+    nome_completo: '', cargo: '', departamento: '', empresa_id: null, tipo_contrato: 'CLT + Contrato', ativo: true,
     recebe_transporte: false, valor_transporte: 0, recebe_refeicao: false, valor_refeicao: 0,
     salario_folha: 0, salario_contrato: 0, valor_diaria: 0, valor_adiantamento: 0,
     data_admissao: null, data_desligamento: null,
@@ -200,6 +207,17 @@ export default function FuncionarioPage() {
         return;
       }
 
+      // Restrição por empresa: ADMINISTRADOR vê todas; os demais setores só
+      // veem funcionários das empresas às quais estão vinculados em
+      // perfis_usuarios_empresas (ver /admin/parametros/permissoes → Colaboradores).
+      if (permissaoNormalizada !== 'ADMINISTRADOR') {
+        const { data: vinculos } = await supabase
+          .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+        setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+      } else {
+        setEmpresasPermitidas(null);
+      }
+
       // Aprovado
       setUsuarioAtual(perfil.nome || 'Equipe RH');
       setEmailUsuario(perfil.email || session.user.email || '');
@@ -244,6 +262,9 @@ export default function FuncionarioPage() {
 
     const { data: departamentosData } = await supabase.from('folha_departamento').select('nome').order('nome');
     if (departamentosData) setDepartamentosCatalogo(departamentosData.map(d => d.nome));
+
+    const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+    if (empresasData) setEmpresasCatalogo(empresasData);
 
     carregarListaFuncionarios();
   };
@@ -331,6 +352,7 @@ export default function FuncionarioPage() {
 
   const salvarColaborador = async (): Promise<boolean> => {
     if (!form.nome_completo) { alert("O Nome Completo é obrigatório."); return false; }
+    if (!form.empresa_id) { alert("Selecione a Empresa do colaborador."); return false; }
     setLoading(true);
 
     try {
@@ -377,15 +399,62 @@ export default function FuncionarioPage() {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [listaFuncionarios]);
 
+  // Restrição por empresa: null = sem restrição (ADMINISTRADOR); array = só
+  // enxerga funcionários dessas empresas (ver checkAuth acima).
+  const funcVisiveis = useMemo(() =>
+    empresasPermitidas === null
+      ? listaFuncionarios
+      : listaFuncionarios.filter(f => f.empresa_id != null && empresasPermitidas.includes(f.empresa_id)),
+    [listaFuncionarios, empresasPermitidas]);
+
+  const empresasCatalogoVisivel = useMemo(() =>
+    empresasPermitidas === null
+      ? empresasCatalogo
+      : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id)),
+    [empresasCatalogo, empresasPermitidas]);
+
+  const semEmpresaDefinida = useMemo(() => funcVisiveis.filter(f => !f.empresa_id), [funcVisiveis]);
+
   const funcFiltrados = useMemo(() =>
-    listaFuncionarios
+    funcVisiveis
       .filter(f => f.nome_completo.toLowerCase().includes(buscaGrid.toLowerCase()))
       .filter(f => filtroContrato === 'TODOS' || f.tipo_contrato === filtroContrato)
+      .filter(f => filtroEmpresa === 'TODAS' || String(f.empresa_id) === filtroEmpresa)
       .sort((a, b) => {
         if (a.ativo !== b.ativo) return a.ativo ? -1 : 1;
         return a.nome_completo.localeCompare(b.nome_completo);
       }),
-    [listaFuncionarios, buscaGrid, filtroContrato]);
+    [funcVisiveis, buscaGrid, filtroContrato, filtroEmpresa]);
+
+  const alternarSelecaoMassa = (nome: string) => {
+    setSelecionadosMassa(prev => {
+      const novo = new Set(prev);
+      if (novo.has(nome)) novo.delete(nome); else novo.add(nome);
+      return novo;
+    });
+  };
+
+  const aplicarEmpresaEmMassa = async () => {
+    if (!empresaMassa || selecionadosMassa.size === 0) return;
+    setAplicandoMassa(true);
+    try {
+      const res = await atribuirEmpresaEmMassaAction({
+        nomesFuncionarios: Array.from(selecionadosMassa),
+        empresaId: Number(empresaMassa),
+        usuarioNome: usuarioAtual,
+      });
+      if (!res.ok) throw new Error(res.erro);
+      alert(`Empresa atribuída a ${selecionadosMassa.size} funcionário(s).`);
+      setSelecionadosMassa(new Set());
+      setEmpresaMassa('');
+      setModoAtribuicaoMassa(false);
+      carregarListaFuncionarios();
+    } catch (e: any) {
+      alert('Erro ao atribuir empresa em massa: ' + e.message);
+    } finally {
+      setAplicandoMassa(false);
+    }
+  };
 
   if (authLoading) {
     return (
@@ -440,22 +509,63 @@ export default function FuncionarioPage() {
               <option value="TODOS">Todos os contratos</option>
               {contratosDisponiveis.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
-            {filtroContrato !== 'TODOS' && (
+            <select
+              value={filtroEmpresa} onChange={e => setFiltroEmpresa(e.target.value)}
+              className="w-full mt-2 p-2.5 rounded-lg text-sm text-white bg-[#1E3A6E] outline-none font-bold cursor-pointer"
+            >
+              <option value="TODAS">Todas as empresas</option>
+              {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+            </select>
+            {(filtroContrato !== 'TODOS' || filtroEmpresa !== 'TODAS') && (
               <p className="text-[10px] text-blue-200 font-bold mt-2 uppercase tracking-wider">
-                {funcFiltrados.length} de {listaFuncionarios.length} — filtrado por contrato
+                {funcFiltrados.length} de {funcVisiveis.length} — filtrado
               </p>
             )}
           </div>
 
+          {semEmpresaDefinida.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
+              <p className="text-[11px] font-black text-amber-700 uppercase tracking-wider">
+                ⚠️ {semEmpresaDefinida.length} funcionário(s) sem empresa definida
+              </p>
+              {!modoAtribuicaoMassa ? (
+                <button onClick={() => setModoAtribuicaoMassa(true)} className="w-full bg-amber-600 text-white font-black text-[10px] uppercase tracking-wider py-2 rounded-lg hover:bg-amber-700 transition-colors">
+                  Atribuir empresa em massa
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-[10px] text-amber-700 font-bold">Marque abaixo quem pertence à mesma empresa e escolha qual.</p>
+                  <select value={empresaMassa} onChange={e => setEmpresaMassa(e.target.value)} className="w-full p-2 rounded-lg text-xs font-bold border border-amber-300">
+                    <option value="">— Escolha a empresa —</option>
+                    {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                  </select>
+                  <div className="flex gap-2">
+                    <button onClick={() => { setModoAtribuicaoMassa(false); setSelecionadosMassa(new Set()); setEmpresaMassa(''); }} className="flex-1 bg-white border border-amber-300 text-amber-700 font-black text-[10px] uppercase py-2 rounded-lg">
+                      Cancelar
+                    </button>
+                    <button onClick={aplicarEmpresaEmMassa} disabled={aplicandoMassa || !empresaMassa || selecionadosMassa.size === 0} className="flex-1 bg-amber-600 text-white font-black text-[10px] uppercase py-2 rounded-lg disabled:opacity-50">
+                      {aplicandoMassa ? '...' : `Aplicar a ${selecionadosMassa.size}`}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden max-h-[65vh] overflow-y-auto">
-            {funcFiltrados.map((f, i) => (
+            {(modoAtribuicaoMassa ? funcFiltrados.filter(f => !f.empresa_id) : funcFiltrados).map((f, i) => (
               <div
-                key={i} onClick={() => trocarFuncionario(f.nome_completo)}
-                className={`p-4 border-b border-[#E2E8F0] cursor-pointer transition-colors flex justify-between items-center ${funcionarioSelecionado === f.nome_completo ? 'bg-blue-50 border-l-4 border-l-[#336699]' : 'hover:bg-gray-50'}`}
+                key={i} onClick={() => modoAtribuicaoMassa ? alternarSelecaoMassa(f.nome_completo) : trocarFuncionario(f.nome_completo)}
+                className={`p-4 border-b border-[#E2E8F0] cursor-pointer transition-colors flex justify-between items-center ${modoAtribuicaoMassa ? (selecionadosMassa.has(f.nome_completo) ? 'bg-amber-50 border-l-4 border-l-amber-500' : 'hover:bg-gray-50') : (funcionarioSelecionado === f.nome_completo ? 'bg-blue-50 border-l-4 border-l-[#336699]' : 'hover:bg-gray-50')}`}
               >
-                <div>
-                  <strong className={`block text-xs uppercase tracking-wider ${f.ativo ? 'text-[#0C1D4D]' : 'text-gray-400 line-through'}`}>{f.nome_completo}</strong>
-                  <span className="text-[10px] text-gray-500 font-medium">{f.cargo || 'Sem função'}</span>
+                <div className="flex items-center gap-2">
+                  {modoAtribuicaoMassa && (
+                    <input type="checkbox" checked={selecionadosMassa.has(f.nome_completo)} onChange={() => alternarSelecaoMassa(f.nome_completo)} className="w-4 h-4 accent-amber-600" onClick={e => e.stopPropagation()} />
+                  )}
+                  <div>
+                    <strong className={`block text-xs uppercase tracking-wider ${f.ativo ? 'text-[#0C1D4D]' : 'text-gray-400 line-through'}`}>{f.nome_completo}</strong>
+                    <span className="text-[10px] text-gray-500 font-medium">{f.cargo || 'Sem função'}</span>
+                  </div>
                 </div>
                 {!f.ativo && <span className="bg-red-100 text-red-700 text-[9px] font-black px-2 py-0.5 rounded">INATIVO</span>}
               </div>
@@ -611,6 +721,14 @@ export default function FuncionarioPage() {
                         <option value="">— Selecione —</option>
                         {form.departamento && !departamentosCatalogo.includes(form.departamento) && <option value={form.departamento}>{form.departamento} (fora do catálogo)</option>}
                         {departamentosCatalogo.map(d => <option key={d} value={d}>{d}</option>)}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Empresa</label>
+                      <select value={form.empresa_id ?? ''} onChange={e => setForm({...form, empresa_id: e.target.value ? Number(e.target.value) : null})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold bg-white uppercase text-[#0C1D4D]">
+                        <option value="">— Selecione —</option>
+                        {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
                       </select>
                     </div>
 

@@ -187,11 +187,13 @@ export async function criarUsuarioAcesso(payload: {
   senha: string;
   permissao: string;
   usuarioNome: string;
+  empresaIds?: number[];
 }) {
   const nome = (payload.nome || '').trim();
   const email = (payload.email || '').trim().toLowerCase();
   const senha = payload.senha || '';
   const permissao = (payload.permissao || '').trim();
+  const empresaIds = payload.empresaIds || [];
 
   if (!nome || !email || !permissao) {
     return { success: false, message: 'Preencha nome, e-mail e setor de permissão.' };
@@ -226,6 +228,16 @@ export async function criarUsuarioAcesso(payload: {
   if (perfilError) {
     await supabaseAdmin.auth.admin.deleteUser(criado.user.id);
     return { success: false, message: perfilError.message || 'Falha ao gravar o perfil do usuário.' };
+  }
+
+  if (empresaIds.length > 0) {
+    const { error: vinculoError } = await supabaseAdmin.from('perfis_usuarios_empresas')
+      .insert(empresaIds.map(empresaId => ({ perfil_id: criado.user.id, empresa_id: empresaId })));
+    if (vinculoError) {
+      await supabaseAdmin.auth.admin.deleteUser(criado.user.id);
+      await supabaseAdmin.from('perfis_usuarios').delete().eq('id', criado.user.id);
+      return { success: false, message: vinculoError.message || 'Falha ao vincular as empresas ao usuário.' };
+    }
   }
 
   await registrarLogAuditoria({

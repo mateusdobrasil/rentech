@@ -21,6 +21,7 @@ export async function salvarColaboradorAction(payload: {
   const { form, dependentes, movimentacoes, usuarioNome } = payload;
 
   if (!form?.nome_completo) return { ok: false, erro: 'O Nome Completo é obrigatório.' };
+  if (!form?.empresa_id) return { ok: false, erro: 'Selecione a Empresa do colaborador.' };
 
   // Nome sempre em MAIÚSCULO no banco (padroniza a chave usada em todas as tabelas)
   form.nome_completo = String(form.nome_completo).trim().toUpperCase();
@@ -64,6 +65,39 @@ export async function salvarColaboradorAction(payload: {
       usuario_nome: usuarioNome,
       acao: `ATUALIZAÇÃO FINANCEIRA INTEGRADA: ${form.nome_completo}`,
       setor: 'RECURSOS HUMANOS / HOLERITES'
+    });
+
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// ATRIBUIR EMPRESA EM MASSA (transição multi-empresa: preenche funcionários
+// já cadastrados que ficaram com empresa_id nulo após a migração)
+// ============================================================================
+export async function atribuirEmpresaEmMassaAction(payload: {
+  nomesFuncionarios: string[];
+  empresaId: number;
+  usuarioNome: string;
+}): Promise<Resultado> {
+  const db = supabaseAdmin();
+  const { nomesFuncionarios, empresaId, usuarioNome } = payload;
+
+  if (!nomesFuncionarios?.length) return { ok: false, erro: 'Selecione ao menos um funcionário.' };
+  if (!empresaId) return { ok: false, erro: 'Selecione a empresa.' };
+
+  try {
+    const { error } = await db.from('folha_funcionarios')
+      .update({ empresa_id: empresaId })
+      .in('nome_completo', nomesFuncionarios);
+    if (error) throw new Error(error.message);
+
+    await registrarLogAuditoria({
+      usuario_nome: usuarioNome,
+      acao: `ATRIBUIÇÃO DE EMPRESA EM MASSA (${nomesFuncionarios.length} funcionário(s))`,
+      setor: 'RECURSOS HUMANOS / FUNCIONÁRIOS'
     });
 
     return { ok: true };

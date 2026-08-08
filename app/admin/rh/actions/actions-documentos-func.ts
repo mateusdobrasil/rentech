@@ -249,11 +249,15 @@ export async function excluirDocumentoAction(payload: { id: number }): Promise<R
 // ============================================================================
 // PAINEL: visão geral por funcionário + pendências + vencimentos
 // ============================================================================
-export async function painelDocumentosAction(): Promise<Resultado> {
+export async function painelDocumentosAction(empresaIds?: number[] | null): Promise<Resultado> {
   const db = supabaseAdmin();
   try {
-    const { data: funcs } = await db.from('folha_funcionarios')
+    let qFuncs = db.from('folha_funcionarios')
       .select('nome_completo, cargo').eq('ativo', true).order('nome_completo');
+    // empresaIds null/undefined = sem restrição (ex: setor ADMINISTRADOR);
+    // array = só funcionários dessas empresas (ver /admin/parametros/permissoes).
+    if (empresaIds) qFuncs = qFuncs.in('empresa_id', empresaIds);
+    const { data: funcs } = await qFuncs;
     const { data: docs } = await db.from('folha_documentos')
       .select('funcionario_nome, categoria_id, data_validade');
     const { data: cats } = await db.from('folha_documento_categorias').select('id, nome');
@@ -286,7 +290,10 @@ export async function painelDocumentosAction(): Promise<Resultado> {
     const totais = {
       funcionarios: linhas.length,
       semDocumentos: linhas.filter(l => l.semDocumentos).length,
-      totalDocs: (docs || []).length,
+      // Soma só dos funcionários visíveis (linhas), não de (docs || []).length
+      // direto — senão vaza contagem de documentos de empresas que o usuário
+      // logado não tem vínculo pra ver (ver empresaIds acima).
+      totalDocs: linhas.reduce((s, l) => s + l.totalDocs, 0),
       vencidos: linhas.reduce((s, l) => s + l.vencidos, 0),
       vencendo: linhas.reduce((s, l) => s + l.vencendo, 0)
     };

@@ -49,6 +49,7 @@ export async function criarCategoriaDocEmpresaAction(payload: { nome: string; ex
 // ============================================================================
 export async function uploadDocumentoEmpresaAction(payload: {
   categoriaId: number;
+  empresaId: number;
   titulo?: string | null;
   arquivoBase64: string;
   nomeArquivo: string;
@@ -58,10 +59,13 @@ export async function uploadDocumentoEmpresaAction(payload: {
   enviadoPor: string;
 }): Promise<Resultado> {
   const db = supabaseAdmin();
-  const { categoriaId, titulo, arquivoBase64, nomeArquivo, tipoMime, dataValidade, observacao, enviadoPor } = payload;
+  const { categoriaId, empresaId, titulo, arquivoBase64, nomeArquivo, tipoMime, dataValidade, observacao, enviadoPor } = payload;
 
   if (!categoriaId || !arquivoBase64) {
     return { ok: false, erro: 'Categoria e arquivo são obrigatórios.' };
+  }
+  if (!empresaId) {
+    return { ok: false, erro: 'Selecione a empresa (CNPJ) deste documento.' };
   }
 
   try {
@@ -78,6 +82,7 @@ export async function uploadDocumentoEmpresaAction(payload: {
 
     const { error: dbErr } = await db.from('empresa_documentos').insert({
       categoria_id: categoriaId,
+      empresa_id: empresaId,
       titulo: titulo || null,
       storage_path: path,
       nome_arquivo: nomeArquivo,
@@ -105,13 +110,17 @@ export async function uploadDocumentoEmpresaAction(payload: {
 // ============================================================================
 export async function listarDocumentosEmpresaAction(payload?: {
   categoriaId?: number | null;
+  empresaIds?: number[] | null;
 }): Promise<Resultado> {
   const db = supabaseAdmin();
   try {
     let q = db.from('empresa_documentos')
-      .select('id, categoria_id, titulo, storage_path, nome_arquivo, tipo_mime, tamanho_bytes, data_validade, observacao, criado_em')
+      .select('id, categoria_id, empresa_id, titulo, storage_path, nome_arquivo, tipo_mime, tamanho_bytes, data_validade, observacao, criado_em')
       .order('criado_em', { ascending: false });
     if (payload?.categoriaId) q = q.eq('categoria_id', payload.categoriaId);
+    // empresaIds null/undefined = sem restrição (ex: setor ADMINISTRADOR);
+    // array = só documentos dessas empresas (ver /admin/parametros/permissoes).
+    if (payload?.empresaIds) q = q.in('empresa_id', payload.empresaIds);
 
     const { data, error } = await q;
     if (error) throw new Error(error.message);

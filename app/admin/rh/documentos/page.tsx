@@ -3,7 +3,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-import { supabase } from '../../../lib/supabase'; 
+import { supabase } from '../../../lib/supabase';
+import { normalizarPermissao } from '../../../lib/permissoes';
 import {
   listarCategoriasDocAction, criarCategoriaDocAction, uploadDocumentoAction,
   listarDocumentosAction, urlDocumentoAction, excluirDocumentoAction, painelDocumentosAction,
@@ -36,11 +37,12 @@ interface LinhaPainel {
 
 interface CategoriaEmpresa { id: number; nome: string; exige_validade: boolean; }
 interface DocumentoEmpresa {
-  id: number; categoria_id: number; categoria: string;
+  id: number; categoria_id: number; categoria: string; empresa_id: number | null;
   titulo: string | null; nome_arquivo: string; tipo_mime: string | null;
   tamanho_bytes: number | null; data_validade: string | null; observacao: string | null;
   criado_em: string; statusValidade: 'SEM' | 'OK' | 'VENCENDO' | 'VENCIDO';
 }
+interface EmpresaCatalogo { id: number; nome: string; }
 
 export default function DocumentosPage() {
   const router = useRouter();
@@ -70,43 +72,69 @@ export default function DocumentosPage() {
 
   // Estados de Autenticação
     const [usuarioAtual, setUsuarioAtual] = useState('');
-    const [emailUsuario, setEmailUsuario] = useState(''); 
+    const [emailUsuario, setEmailUsuario] = useState('');
     const [authLoading, setAuthLoading] = useState(true);
-  
+
+    // Restrição por empresa (multi-empresa, Fase 2): null = sem restrição
+    // (setor ADMINISTRADOR); array = só enxerga essas empresas — mesmo
+    // padrão de /admin/rh/funcionario.
+    const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+    const [empresasCatalogo, setEmpresasCatalogo] = useState<EmpresaCatalogo[]>([]);
+
     // 1. Validar a Sessão e Puxar Dados do Usuário Logado
       useEffect(() => {
         async function checkAuth() {
           const { data: { session } } = await supabase.auth.getSession();
-          
+
           if (!session) {
             router.push('/login');
             return;
           }
-    
+
           const { data: perfil } = await supabase
             .from('perfis_usuarios')
             .select('*')
             .eq('id', session.user.id)
             .single();
-    
+
           if (perfil) {
             setUsuarioAtual(perfil.nome || 'Equipe RH');
-            setEmailUsuario(perfil.email || session.user.email || ''); 
-            
+            setEmailUsuario(perfil.email || session.user.email || '');
+
             const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
             const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO', 'ADMINISTRATIVO'];
-            
+
             if (!cargosAltaGestao.includes(permissaoBanco)) {
               router.push('/admin');
               return;
             }
+
+            let permitidas: number[] | null = null;
+            if (normalizarPermissao(permissaoBanco) !== 'ADMINISTRADOR') {
+              const { data: vinculos } = await supabase
+                .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+              permitidas = (vinculos || []).map(v => v.empresa_id);
+              setEmpresasPermitidas(permitidas);
+            } else {
+              setEmpresasPermitidas(null);
+            }
+
+            const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+            setEmpresasCatalogo(empresasData || []);
+
+            setAuthLoading(false);
+            carregar(permitidas);
+            carregarEmpresa(permitidas);
+            return;
           } else {
             setUsuarioAtual('Equipe RH');
           }
-          
+
           setAuthLoading(false);
+          carregar(null);
+          carregarEmpresa(null);
         }
-        
+
         checkAuth();
       }, [router]);
 
@@ -127,8 +155,10 @@ export default function DocumentosPage() {
   const [carregandoEmpresa, setCarregandoEmpresa] = useState(true);
   const [buscaEmpresa, setBuscaEmpresa] = useState('');
   const [filtroEmpresa, setFiltroEmpresa] = useState<'TODOS' | 'PENDENCIAS'>('TODOS');
+  const [filtroEmpresaId, setFiltroEmpresaId] = useState('TODAS');
 
   const [mostrarUploadEmpresa, setMostrarUploadEmpresa] = useState(false);
+  const [upEmpresaEmpresa, setUpEmpresaEmpresa] = useState('');
   const [upCategoriaEmpresa, setUpCategoriaEmpresa] = useState('');
   const [upTituloEmpresa, setUpTituloEmpresa] = useState('');
   const [upArquivoEmpresa, setUpArquivoEmpresa] = useState<File | null>(null);
@@ -146,14 +176,15 @@ export default function DocumentosPage() {
 
   useEffect(() => {
     try { const raw = localStorage.getItem('rh_usuario'); if (raw) setUsuarioAtual(JSON.parse(raw)?.nome || ''); } catch {}
-    carregar();
-    carregarEmpresa();
+    // carregar()/carregarEmpresa() rodam a partir do checkAuth (ver acima),
+    // só depois que empresasPermitidas está resolvido — chamar aqui também
+    // buscaria dados sem restrição de empresa antes do checkAuth terminar.
   }, []);
 
-  const carregarEmpresa = async () => {
+  const carregarEmpresa = async (empresaIds: number[] | null = empresasPermitidas) => {
     setCarregandoEmpresa(true);
     try {
-      const [docs, cats] = await Promise.all([listarDocumentosEmpresaAction(), listarCategoriasDocEmpresaAction()]);
+      const [docs, cats] = await Promise.all([listarDocumentosEmpresaAction({ empresaIds }), listarCategoriasDocEmpresaAction()]);
       if (docs.ok) setDocsEmpresa(docs.info.documentos);
       if (cats.ok) setCategoriasEmpresa(cats.info.categorias);
     } catch (e: any) { alert('Erro ao carregar documentos da empresa: ' + e.message); }
@@ -163,6 +194,7 @@ export default function DocumentosPage() {
   const catSelecionadaEmpresa = categoriasEmpresa.find(c => String(c.id) === upCategoriaEmpresa);
 
   const enviarUploadEmpresa = async () => {
+    if (!upEmpresaEmpresa) { alert('Escolha a empresa (CNPJ).'); return; }
     if (!upCategoriaEmpresa) { alert('Escolha a categoria.'); return; }
     if (!upArquivoEmpresa) { alert('Selecione o arquivo.'); return; }
     if (catSelecionadaEmpresa?.exige_validade && !upValidadeEmpresa) {
@@ -172,12 +204,12 @@ export default function DocumentosPage() {
     try {
       const base64 = await fileParaBase64(upArquivoEmpresa);
       const res = await uploadDocumentoEmpresaAction({
-        categoriaId: Number(upCategoriaEmpresa), titulo: upTituloEmpresa || null,
+        categoriaId: Number(upCategoriaEmpresa), empresaId: Number(upEmpresaEmpresa), titulo: upTituloEmpresa || null,
         arquivoBase64: base64, nomeArquivo: upArquivoEmpresa.name, tipoMime: upArquivoEmpresa.type,
         dataValidade: upValidadeEmpresa || null, observacao: upObsEmpresa || null, enviadoPor: usuarioAtual
       });
       if (!res.ok) throw new Error(res.erro);
-      setUpCategoriaEmpresa(''); setUpTituloEmpresa(''); setUpArquivoEmpresa(null); setUpValidadeEmpresa(''); setUpObsEmpresa('');
+      setUpEmpresaEmpresa(''); setUpCategoriaEmpresa(''); setUpTituloEmpresa(''); setUpArquivoEmpresa(null); setUpValidadeEmpresa(''); setUpObsEmpresa('');
       if (upRefEmpresa.current) upRefEmpresa.current.value = '';
       setMostrarUploadEmpresa(false);
       carregarEmpresa();
@@ -221,8 +253,9 @@ export default function DocumentosPage() {
 
   const docsEmpresaFiltrados = useMemo(() => docsEmpresa
     .filter(d => `${d.categoria} ${d.titulo || ''} ${d.nome_arquivo}`.toLowerCase().includes(buscaEmpresa.toLowerCase()))
-    .filter(d => filtroEmpresa === 'TODOS' || d.statusValidade === 'VENCENDO' || d.statusValidade === 'VENCIDO'),
-    [docsEmpresa, buscaEmpresa, filtroEmpresa]);
+    .filter(d => filtroEmpresa === 'TODOS' || d.statusValidade === 'VENCENDO' || d.statusValidade === 'VENCIDO')
+    .filter(d => filtroEmpresaId === 'TODAS' || String(d.empresa_id) === filtroEmpresaId),
+    [docsEmpresa, buscaEmpresa, filtroEmpresa, filtroEmpresaId]);
 
   const totaisEmpresa = useMemo(() => ({
     total: docsEmpresa.length,
@@ -230,10 +263,10 @@ export default function DocumentosPage() {
     vencidos: docsEmpresa.filter(d => d.statusValidade === 'VENCIDO').length,
   }), [docsEmpresa]);
 
-  const carregar = async () => {
+  const carregar = async (empresaIds: number[] | null = empresasPermitidas) => {
     setLoading(true);
     try {
-      const [painel, cats] = await Promise.all([painelDocumentosAction(), listarCategoriasDocAction()]);
+      const [painel, cats] = await Promise.all([painelDocumentosAction(empresaIds), listarCategoriasDocAction()]);
       if (painel.ok) { setLinhas(painel.info.linhas); setTotais(painel.info.totais); }
       if (cats.ok) setCategorias(cats.info.categorias);
     } catch (e: any) { alert('Erro ao carregar: ' + e.message); }
@@ -513,6 +546,10 @@ export default function DocumentosPage() {
         <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-3 mb-4">
           <div className="flex items-center gap-3 flex-wrap">
             <input type="text" placeholder="Buscar documento..." value={buscaEmpresa} onChange={e => setBuscaEmpresa(e.target.value)} className="p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+            <select value={filtroEmpresaId} onChange={e => setFiltroEmpresaId(e.target.value)} className="p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]">
+              <option value="TODAS">Todas as empresas</option>
+              {empresasCatalogo.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+            </select>
             <div className="flex bg-gray-100 p-1 rounded-xl">
               {(['TODOS', 'PENDENCIAS'] as const).map(f => (
                 <button key={f} onClick={() => setFiltroEmpresa(f)} className={`px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${filtroEmpresa === f ? 'bg-[#0C1D4D] text-white' : 'text-gray-500'}`}>
@@ -556,6 +593,13 @@ export default function DocumentosPage() {
             <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Enviar documento da empresa</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
+                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Empresa (CNPJ)</label>
+                <select value={upEmpresaEmpresa} onChange={e => setUpEmpresaEmpresa(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold bg-white">
+                  <option value="">— Selecione —</option>
+                  {empresasCatalogo.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                </select>
+              </div>
+              <div>
                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Categoria</label>
                 <select value={upCategoriaEmpresa} onChange={e => setUpCategoriaEmpresa(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold bg-white">
                   <option value="">— Selecione —</option>
@@ -596,6 +640,15 @@ export default function DocumentosPage() {
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-black text-[#0C1D4D] text-[13px] uppercase">{doc.categoria}</span>
                   {badgeValidade(doc.statusValidade)}
+                  {doc.empresa_id ? (
+                    <span className="text-[9px] font-black bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full uppercase">
+                      🏢 {empresasCatalogo.find(e => e.id === doc.empresa_id)?.nome || '?'}
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-black bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full uppercase">
+                      ⚠ Sem empresa
+                    </span>
+                  )}
                 </div>
                 {doc.titulo && <p className="text-[11px] text-gray-600">{doc.titulo}</p>}
                 <p className="text-[10px] text-gray-400">

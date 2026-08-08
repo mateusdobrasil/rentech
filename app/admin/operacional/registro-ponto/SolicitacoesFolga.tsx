@@ -93,14 +93,11 @@ function CalendarioFolgas({ solicitacoes }: { solicitacoes: SolicitacaoHistorico
                   <>
                     <span className={`block text-[10px] font-black mb-1 ${ehHoje ? 'text-cyan-700' : 'text-[#94A3B8]'}`}>{iso.split('-')[2]}</span>
                     <div className="space-y-0.5">
-                      {nomes.slice(0, 2).map((nome, ni) => (
+                      {nomes.map((nome, ni) => (
                         <span key={ni} className="block text-[9px] font-bold text-cyan-800 bg-cyan-50 border border-cyan-200 rounded px-1 py-0.5 truncate" title={nome}>
                           {nome.split(' ')[0]}
                         </span>
                       ))}
-                      {nomes.length > 2 && (
-                        <span className="block text-[9px] font-black text-cyan-700" title={nomes.slice(2).join(', ')}>+{nomes.length - 2}</span>
-                      )}
                     </div>
                   </>
                 )}

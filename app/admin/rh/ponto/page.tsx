@@ -13,7 +13,6 @@ import {
   listarHistoricoSolicitacoesAction, urlAnexoSolicitacaoAction,
   type EstatisticasPontoWhatsapp, type RegistroLedger, type SolicitacaoPendente, type SolicitacaoHistorico
 } from '../actions/actions-ponto-whatsapp';
-import SepararHolerites from './SepararHolerites';
 import RegistroPontoConsulta from '../../operacional/registro-ponto/RegistroPontoConsulta';
 import SolicitacoesFolga from '../../operacional/registro-ponto/SolicitacoesFolga';
 import logoColorido from '../../../../app/imgs/logo.png';
@@ -133,7 +132,7 @@ export default function GestaoDePonto() {
   // inconsistências ao clicar em "Verificar Inconsistência".
   const [faltasEncontradas, setFaltasEncontradas] = useState<{ funcionario_nome: string; data: string }[] | null>(null);
   const [filtroFuncionarioPendencia, setFiltroFuncionarioPendencia] = useState('');
-  const [viewMode, setViewMode] = useState<'resumo' | 'espelho' | 'espelho_todos' | 'separar_holerites' | 'ponto_whatsapp'>('resumo');
+  const [viewMode, setViewMode] = useState<'resumo' | 'espelho' | 'espelho_todos' | 'ponto_whatsapp'>('resumo');
   const [funcionarioSelecionado, setFuncionarioSelecionado] = useState('');
   const [estatisticasWhatsapp, setEstatisticasWhatsapp] = useState<EstatisticasPontoWhatsapp | null>(null);
   const [ledgerWhatsapp, setLedgerWhatsapp] = useState<RegistroLedger[]>([]);
@@ -152,7 +151,6 @@ export default function GestaoDePonto() {
     return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
   });
   const [abonosConsolidado, setAbonosConsolidado] = useState(false);
-  const [elegiveisContabilidade, setElegiveisContabilidade] = useState<{ nome_completo: string; tipo_contrato: string }[]>([]);
 
   // Lançamento manual de ponto pelo RH (sem depender de CSV ou WhatsApp)
   const [listaFuncionariosAtivos, setListaFuncionariosAtivos] = useState<string[]>([]);
@@ -281,24 +279,6 @@ export default function GestaoDePonto() {
       .order('data_registro', { ascending: true });
     
     if (data) setRegistros(data);
-
-    // Funcionários elegíveis à separação de holerite (contrato com a flag ligada),
-    // em ordem alfabética — base da pré-associação por ordem.
-    const { data: regrasData } = await supabase
-      .from('folha_parametros')
-      .select('nome_regra, recebe_holerite_contabilidade');
-    const contratosComHolerite = new Set(
-      (regrasData || []).filter(r => r.recebe_holerite_contabilidade !== false).map(r => r.nome_regra)
-    );
-    const { data: funcData } = await supabase
-      .from('folha_funcionarios')
-      .select('nome_completo, tipo_contrato')
-      .eq('ativo', true)
-      .order('nome_completo');
-    const elegiveis = (funcData || [])
-      .filter(f => contratosComHolerite.has(f.tipo_contrato))
-      .map(f => ({ nome_completo: f.nome_completo, tipo_contrato: f.tipo_contrato }));
-    setElegiveisContabilidade(elegiveis);
 
     setLoading(false);
   };
@@ -1171,16 +1151,7 @@ export default function GestaoDePonto() {
               </div>
 
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
-                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">3. Holerites da Contabilidade</h3>
-                <p className="text-xs text-[#64748B] mb-4">Importar e separar por funcionário os PDFs de adiantamento e pagamento, para anexar à assinatura.</p>
-                <button onClick={() => setViewMode('separar_holerites')} className="w-full bg-[#0C1D4D] hover:bg-[#284B8C] text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
-                  📄 SEPARAR HOLERITES
-                  <span className="bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{elegiveisContabilidade.length}</span>
-                </button>
-              </div>
-
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0]">
-                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">4. Importar Dados</h3>
+                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider mb-2 border-b border-[#E2E8F0] pb-2">3. Importar Dados</h3>
                 <p className="text-xs text-[#64748B] mb-4">Carregue os CSVs para reescrever as batidas e abonos do mês.</p>
                 <div className="flex flex-col space-y-2">
                   <input type="file" accept=".csv" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
@@ -1276,15 +1247,6 @@ export default function GestaoDePonto() {
               <RenderEspelho key={nome} nome={nome} registrosFunc={registros.filter(r => r.funcionario_nome === nome)} />
             ))}
           </div>
-        )}
-
-        {viewMode === 'separar_holerites' && (
-          <SepararHolerites
-            mesReferencia={mesAnoSelecionado}
-            usuarioAtual={usuarioAtual}
-            elegiveis={elegiveisContabilidade}
-            onFechar={voltarResumo}
-          />
         )}
 
         {viewMode === 'ponto_whatsapp' && (

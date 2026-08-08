@@ -24,13 +24,15 @@ type Resultado = {
 // ============================================================================
 // MONTAR LOTE DE PAGAMENTO — 4 fontes selecionáveis por funcionário
 // ============================================================================
-export type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS';
+export type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS';
 
 export async function montarLoteSalariosAction(payload: {
   mesReferencia: string;
-  fontes: FonteLote[];                          // fontes selecionadas
-  valoresAdiantamento?: Record<string, number>; // OCR do ADIANTAMENTO
-  valoresPagamento?: Record<string, number>;    // OCR do HOLERITE_MENSAL
+  fontes: FonteLote[];                              // fontes selecionadas
+  valoresAdiantamento?: Record<string, number>;     // OCR do ADIANTAMENTO
+  valoresPagamento?: Record<string, number>;        // OCR do HOLERITE_MENSAL
+  valoresDecimoTerceiro?: Record<string, number>;   // OCR do DECIMO_TERCEIRO
+  valoresFerias?: Record<string, number>;           // OCR do FERIAS
 }): Promise<Resultado> {
   const db = supabaseAdmin();
   const { mesReferencia, fontes } = payload;
@@ -66,9 +68,13 @@ export async function montarLoteSalariosAction(payload: {
     // o OCR de novo toda vez que o lote é montado.
     const temAdiantamento = new Set<string>();
     const temPagamento = new Set<string>();
+    const temDecimoTerceiro = new Set<string>();
+    const temFerias = new Set<string>();
     const valorOcrAdiantPorNome: Record<string, number> = {};
     const valorOcrPagtoPorNome: Record<string, number> = {};
-    if (fontes.includes('ADIANTAMENTO') || fontes.includes('PAGAMENTO')) {
+    const valorOcrDecimoTerceiroPorNome: Record<string, number> = {};
+    const valorOcrFeriasPorNome: Record<string, number> = {};
+    if (fontes.includes('ADIANTAMENTO') || fontes.includes('PAGAMENTO') || fontes.includes('DECIMO_TERCEIRO') || fontes.includes('FERIAS')) {
       const { data: docs } = await db.from('folha_documentos_contabeis')
         .select('funcionario_nome, tipo, valor_ocr').eq('mes_referencia', mesReferencia);
       (docs || []).forEach(d => {
@@ -78,6 +84,12 @@ export async function montarLoteSalariosAction(payload: {
         } else if (d.tipo === 'HOLERITE_MENSAL') {
           temPagamento.add(d.funcionario_nome);
           if (d.valor_ocr != null) valorOcrPagtoPorNome[d.funcionario_nome] = Number(d.valor_ocr);
+        } else if (d.tipo === 'DECIMO_TERCEIRO') {
+          temDecimoTerceiro.add(d.funcionario_nome);
+          if (d.valor_ocr != null) valorOcrDecimoTerceiroPorNome[d.funcionario_nome] = Number(d.valor_ocr);
+        } else if (d.tipo === 'FERIAS') {
+          temFerias.add(d.funcionario_nome);
+          if (d.valor_ocr != null) valorOcrFeriasPorNome[d.funcionario_nome] = Number(d.valor_ocr);
         }
       });
     }
@@ -95,6 +107,8 @@ export async function montarLoteSalariosAction(payload: {
 
     const valoresAdiant = payload.valoresAdiantamento || {};
     const valoresPagto = payload.valoresPagamento || {};
+    const valoresDecimoTerceiro = payload.valoresDecimoTerceiro || {};
+    const valoresFerias = payload.valoresFerias || {};
 
     // União dos nomes de todas as fontes selecionadas
     const nomes = new Set<string>();
@@ -105,6 +119,8 @@ export async function montarLoteSalariosAction(payload: {
     }
     if (fontes.includes('PAGAMENTO')) temPagamento.forEach(n => nomes.add(n));
     if (fontes.includes('BENEFICIOS')) Object.keys(beneficiosPorNome).forEach(n => nomes.add(n));
+    if (fontes.includes('DECIMO_TERCEIRO')) temDecimoTerceiro.forEach(n => nomes.add(n));
+    if (fontes.includes('FERIAS')) temFerias.forEach(n => nomes.add(n));
 
     // Dados bancários + valor de adiantamento da ficha
     const { data: funcs } = await db.from('folha_funcionarios')
@@ -122,7 +138,8 @@ export async function montarLoteSalariosAction(payload: {
 
     const rotuloFonte: Record<FonteLote, string> = {
       FOLHA: 'Nossa folha', ADIANTAMENTO: 'Adiantamento',
-      PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios'
+      PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios',
+      DECIMO_TERCEIRO: '13º Salário', FERIAS: 'Férias'
     };
 
     const itens: any[] = [];
@@ -162,6 +179,14 @@ export async function montarLoteSalariosAction(payload: {
       if (fontes.includes('BENEFICIOS') && beneficiosPorNome[nome] !== undefined) {
         entradas.push({ fonte: 'BENEFICIOS', valor: beneficiosPorNome[nome] });
       }
+      if (fontes.includes('DECIMO_TERCEIRO') && resolvido.recebeHolerite && temDecimoTerceiro.has(nome)) {
+        const valor = valoresDecimoTerceiro[nome] ?? valorOcrDecimoTerceiroPorNome[nome] ?? 0;
+        entradas.push({ fonte: 'DECIMO_TERCEIRO', valor, temDoc: true });
+      }
+      if (fontes.includes('FERIAS') && resolvido.recebeHolerite && temFerias.has(nome)) {
+        const valor = valoresFerias[nome] ?? valorOcrFeriasPorNome[nome] ?? 0;
+        entradas.push({ fonte: 'FERIAS', valor, temDoc: true });
+      }
 
       entradas.forEach(e => {
         itens.push({
@@ -196,7 +221,9 @@ export async function montarLoteSalariosAction(payload: {
           FOLHA: itens.filter(i => i.fonte === 'FOLHA').reduce((s, i) => s + i.valor, 0),
           ADIANTAMENTO: itens.filter(i => i.fonte === 'ADIANTAMENTO').reduce((s, i) => s + i.valor, 0),
           PAGAMENTO: itens.filter(i => i.fonte === 'PAGAMENTO').reduce((s, i) => s + i.valor, 0),
-          BENEFICIOS: itens.filter(i => i.fonte === 'BENEFICIOS').reduce((s, i) => s + i.valor, 0)
+          BENEFICIOS: itens.filter(i => i.fonte === 'BENEFICIOS').reduce((s, i) => s + i.valor, 0),
+          DECIMO_TERCEIRO: itens.filter(i => i.fonte === 'DECIMO_TERCEIRO').reduce((s, i) => s + i.valor, 0),
+          FERIAS: itens.filter(i => i.fonte === 'FERIAS').reduce((s, i) => s + i.valor, 0)
         }
       }
     };
@@ -268,7 +295,7 @@ export async function processarOcrAwsAction(
 // ============================================================================
 export async function listarPdfsContabilidadeAction(payload: {
   mesReferencia: string;
-  tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL';
+  tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS';
   forcar?: boolean;
 }): Promise<Resultado> {
   const db = supabaseAdmin();

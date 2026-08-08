@@ -138,10 +138,11 @@ export async function salvarDadosSalariaisAction(payload: {
   valor_refeicao: number;
   valor_transporte: number;
   valor_adiantamento: number;
+  valor_premio_diaria_viagem: number;
   usuarioNome: string;
 }): Promise<Resultado> {
   const db = supabaseAdmin();
-  const { funcionarioNome, salario_folha, salario_contrato, valor_refeicao, valor_transporte, valor_adiantamento, usuarioNome } = payload;
+  const { funcionarioNome, salario_folha, salario_contrato, valor_refeicao, valor_transporte, valor_adiantamento, valor_premio_diaria_viagem, usuarioNome } = payload;
 
   if (!funcionarioNome) return { ok: false, erro: 'Funcionário não informado.' };
 
@@ -153,7 +154,8 @@ export async function salvarDadosSalariaisAction(payload: {
         salario_contrato: Number(salario_contrato) || 0,
         valor_refeicao: Number(valor_refeicao) || 0,
         valor_transporte: Number(valor_transporte) || 0,
-        valor_adiantamento: Number(valor_adiantamento) || 0
+        valor_adiantamento: Number(valor_adiantamento) || 0,
+        valor_premio_diaria_viagem: Number(valor_premio_diaria_viagem) || 0
       })
       .eq('nome_completo', funcionarioNome);
     if (error) throw new Error(`Falha ao gravar os dados salariais: ${error.message}`);

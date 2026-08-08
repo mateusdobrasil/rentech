@@ -46,6 +46,9 @@ interface PainelRh {
   solicitacoesPontoPendentes: number;
   pontosImpares: number;
   aniversariantes: { nome: string; dia: number; mes: number; departamento: string | null }[];
+  feriasVencidas: number;
+  feriasVencendo: number;
+  afastamentosAtivos: number;
 }
 
 // Lista de módulos do hub. As permissões de cada um NÃO ficam mais aqui —
@@ -88,6 +91,12 @@ const modulosRh = [
     descricao: 'Importação de registros, cálculo de horas extras e espelhos.',
     icone: '⏱️', link: '/admin/rh/ponto',
     cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
+  },
+  {
+    titulo: 'Férias e Afastamentos',
+    descricao: 'Prazos de férias por período aquisitivo e controle de atestados/licenças.',
+    icone: '🏖️', link: '/admin/rh/ferias-afastamentos',
+    cor: 'bg-emerald-50 border-emerald-200 text-emerald-700', hover: 'hover:border-emerald-500'
   },
   {
     titulo: 'Relatórios e Dashboards',
@@ -270,6 +279,21 @@ export default function RhHub() {
               destaque: (painel?.pontosImpares ?? 0) > 0, link: '/admin/rh/ponto'
             });
           }
+          if (linksAutorizados.has('/admin/rh/ferias-afastamentos')) {
+            const feriasVencidas = painel?.feriasVencidas ?? 0;
+            const feriasVencendo = painel?.feriasVencendo ?? 0;
+            cartoes.push({
+              chave: 'ferias', titulo: 'Férias Vencidas', icone: '🏖️',
+              valor: painelLoading ? '—' : `${feriasVencidas}`,
+              sub: painelLoading ? 'carregando...' : `${feriasVencendo} vencendo em 60d`,
+              destaque: feriasVencidas > 0, link: '/admin/rh/ferias-afastamentos'
+            });
+            cartoes.push({
+              chave: 'afastamentos', titulo: 'Afastamentos Ativos', icone: '🩺',
+              valor: painelLoading ? '—' : `${painel?.afastamentosAtivos ?? 0}`,
+              destaque: (painel?.afastamentosAtivos ?? 0) > 0, link: '/admin/rh/ferias-afastamentos'
+            });
+          }
           if (linksAutorizados.has('/admin/rh/funcionario')) {
             const aniversariantes = painel?.aniversariantes || [];
             cartoes.push({
@@ -284,7 +308,7 @@ export default function RhHub() {
           if (cartoes.length === 0) return null;
 
           return (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-10">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-10">
               {cartoes.map(c => (
                 <button
                   key={c.chave}

@@ -9,7 +9,7 @@ import {
   listarPdfsContabilidadeAction, processarOcrAwsAction, alternarAtivoLoteAction, buscarLoteAction
 } from '../../rh/actions/actions-financeiro';
 import { listarIntegracoesAction } from '../../parametros/integracao/actions';
-import SepararHolerites from '../../rh/ponto/SepararHolerites';
+import SepararHolerites from '../../rh/holerite/SepararHolerites';
 
 // ============================================================================
 // MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
@@ -41,7 +41,7 @@ interface Integracao {
   id: number; parceiro: string; nome_exibicao: string; tipo: string;
   ativo: boolean; ambiente: string; config: any;
 }
-type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS';
+type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS';
 
 interface ItemLote {
   funcionario_nome: string; cpf: string; valor: number; metodo: string;
@@ -88,11 +88,13 @@ export default function FinanceiroPage() {
   const [fontesSel, setFontesSel] = useState<FonteLote[]>(['FOLHA']);
   const [resumoLote, setResumoLote] = useState({
     semDados: 0, semOcr: 0, valorTotal: 0, totalItens: 0,
-    totaisPorFonte: { FOLHA: 0, ADIANTAMENTO: 0, PAGAMENTO: 0, BENEFICIOS: 0 }
+    totaisPorFonte: { FOLHA: 0, ADIANTAMENTO: 0, PAGAMENTO: 0, BENEFICIOS: 0, DECIMO_TERCEIRO: 0, FERIAS: 0 }
   });
 
   const [valoresAdiant, setValoresAdiant] = useState<Record<string, number>>({});
   const [valoresPagto, setValoresPagto] = useState<Record<string, number>>({});
+  const [valoresDecimoTerceiro, setValoresDecimoTerceiro] = useState<Record<string, number>>({});
+  const [valoresFerias, setValoresFerias] = useState<Record<string, number>>({});
   const [ocrRodando, setOcrRodando] = useState(false);
   const [ocrProgresso, setOcrProgresso] = useState({ atual: 0, total: 0, nome: '', tipo: '' as string });
   const [ocrFalhas, setOcrFalhas] = useState<string[]>([]);
@@ -210,7 +212,8 @@ export default function FinanceiroPage() {
       const res = await montarLoteSalariosAction({
         mesReferencia, fontes: fontesSel,
         valoresAdiantamento: valoresAdiant,
-        valoresPagamento: valoresPagto
+        valoresPagamento: valoresPagto,
+        valoresDecimoTerceiro, valoresFerias
       });
       if (!res.ok) throw new Error(res.erro);
       setItens(res.info.itens);
@@ -232,7 +235,16 @@ export default function FinanceiroPage() {
   // lidos antes voltam do banco em `cache` (ver listarPdfsContabilidadeAction)
   // e não são reenviados à AWS — só `forcar: true` (releitura manual) ignora
   // o cache e lê tudo de novo.
-  const rodarOcrTipo = async (tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL', rotulo: string, forcar = false) => {
+  // Cada tipo de documento OCRável mapeia pro seu próprio par de estado
+  // (valores lidos por OCR, cacheados em folha_documentos_contabeis.valor_ocr).
+  const estadoOcrPorTipo = {
+    ADIANTAMENTO: { valores: valoresAdiant, setValores: setValoresAdiant },
+    HOLERITE_MENSAL: { valores: valoresPagto, setValores: setValoresPagto },
+    DECIMO_TERCEIRO: { valores: valoresDecimoTerceiro, setValores: setValoresDecimoTerceiro },
+    FERIAS: { valores: valoresFerias, setValores: setValoresFerias }
+  };
+
+  const rodarOcrTipo = async (tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS', rotulo: string, forcar = false) => {
     setOcrRodando(true);
     setOcrFalhas([]);
     setOcrDebug(null);
@@ -249,7 +261,7 @@ export default function FinanceiroPage() {
         return;
       }
 
-      const anteriores = tipo === 'ADIANTAMENTO' ? valoresAdiant : valoresPagto;
+      const { valores: anteriores, setValores } = estadoOcrPorTipo[tipo];
       const novos: Record<string, number> = { ...anteriores };
       cache.forEach(c => { novos[c.funcionario_nome] = c.valor; });
 
@@ -287,13 +299,15 @@ export default function FinanceiroPage() {
         if (primeiroTexto) setOcrDebug(primeiroTexto);
       }
 
-      if (tipo === 'ADIANTAMENTO') setValoresAdiant(novos); else setValoresPagto(novos);
+      setValores(novos);
 
       // Remonta a tabela com os novos valores
       const res2 = await montarLoteSalariosAction({
         mesReferencia, fontes: fontesSel,
         valoresAdiantamento: tipo === 'ADIANTAMENTO' ? novos : valoresAdiant,
-        valoresPagamento: tipo === 'HOLERITE_MENSAL' ? novos : valoresPagto
+        valoresPagamento: tipo === 'HOLERITE_MENSAL' ? novos : valoresPagto,
+        valoresDecimoTerceiro: tipo === 'DECIMO_TERCEIRO' ? novos : valoresDecimoTerceiro,
+        valoresFerias: tipo === 'FERIAS' ? novos : valoresFerias
       });
       if (res2.ok) {
         setItens(res2.info.itens);
@@ -318,6 +332,8 @@ export default function FinanceiroPage() {
   const ajustarValorLinha = (nome: string, fonte: FonteLote, valor: number) => {
     if (fonte === 'ADIANTAMENTO') setValoresAdiant(v => ({ ...v, [nome]: valor }));
     else if (fonte === 'PAGAMENTO') setValoresPagto(v => ({ ...v, [nome]: valor }));
+    else if (fonte === 'DECIMO_TERCEIRO') setValoresDecimoTerceiro(v => ({ ...v, [nome]: valor }));
+    else if (fonte === 'FERIAS') setValoresFerias(v => ({ ...v, [nome]: valor }));
     setItens(prev => prev.map(i => (i.funcionario_nome === nome && i.fonte === fonte)
       ? { ...i, valor, pronto: i.metodo !== 'SEM_DADOS' && valor > 0 } : i));
   };
@@ -340,7 +356,7 @@ export default function FinanceiroPage() {
 
   const gerarLote = async () => {
     if (prontos.length === 0) { alert('Nenhum pagamento pronto para gerar o lote.'); return; }
-    const sugestao = `${fontesSel.map(f => ({ FOLHA: 'Folha', ADIANTAMENTO: 'Adiantamento', PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios' }[f])).join(' + ')} ${fmtMesBR(mesReferencia)}`;
+    const sugestao = `${fontesSel.map(f => ({ FOLHA: 'Folha', ADIANTAMENTO: 'Adiantamento', PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios', DECIMO_TERCEIRO: '13º', FERIAS: 'Férias' }[f])).join(' + ')} ${fmtMesBR(mesReferencia)}`;
     const nome = prompt(`Nome do lote (para identificar no histórico):`, sugestao);
     if (nome === null) return;
     setSalvandoLote(true);
@@ -805,7 +821,7 @@ export default function FinanceiroPage() {
         <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider mb-1">📄 Holerites da Contabilidade</h3>
-            <p className="text-[11px] text-gray-500">Importar e separar por funcionário os PDFs de adiantamento e pagamento, para anexar à assinatura.</p>
+            <p className="text-[11px] text-gray-500">Importar e separar por funcionário os PDFs de adiantamento, pagamento, 13º e férias, para anexar à assinatura.</p>
           </div>
           <button onClick={() => setViewMode('separar_holerites')} className="text-xs font-black bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-5 py-2.5 rounded-lg uppercase tracking-wider flex items-center justify-center gap-2 shrink-0">
             📄 SEPARAR HOLERITES
@@ -838,7 +854,9 @@ export default function FinanceiroPage() {
                     ['FOLHA', '💼 Nossa folha', 'bg-blue-50 text-blue-700 border-blue-300'],
                     ['ADIANTAMENTO', '📄 Adiantamento', 'bg-purple-50 text-purple-700 border-purple-300'],
                     ['PAGAMENTO', '📄 Pagamento', 'bg-purple-50 text-purple-700 border-purple-300'],
-                    ['BENEFICIOS', '🎁 Benefícios', 'bg-emerald-50 text-emerald-700 border-emerald-300']
+                    ['BENEFICIOS', '🎁 Benefícios', 'bg-emerald-50 text-emerald-700 border-emerald-300'],
+                    ['DECIMO_TERCEIRO', '🎄 13º Salário', 'bg-amber-50 text-amber-700 border-amber-300'],
+                    ['FERIAS', '🏖️ Férias', 'bg-cyan-50 text-cyan-700 border-cyan-300']
                   ] as const).map(([f, lbl, cor]) => (
                     <label key={f} className={`cursor-pointer inline-flex items-center gap-2 px-3 py-2 rounded-lg border-2 text-[11px] font-black uppercase tracking-wider transition-all ${fontesSel.includes(f) ? cor : 'bg-gray-50 text-gray-400 border-gray-200'}`}>
                       <input type="checkbox" checked={fontesSel.includes(f)} onChange={() => alternarFonte(f)} className="w-4 h-4" />
@@ -855,7 +873,7 @@ export default function FinanceiroPage() {
 
           {itens.length > 0 && (
             <div className="pt-3 border-t border-gray-100 space-y-4">
-              {!loteReaberto && (fontesSel.includes('ADIANTAMENTO') || fontesSel.includes('PAGAMENTO')) && (
+              {!loteReaberto && (fontesSel.includes('ADIANTAMENTO') || fontesSel.includes('PAGAMENTO') || fontesSel.includes('DECIMO_TERCEIRO') || fontesSel.includes('FERIAS')) && (
                 <div className="flex flex-wrap items-center gap-2">
                   {fontesSel.includes('ADIANTAMENTO') && (
                     <>
@@ -873,6 +891,26 @@ export default function FinanceiroPage() {
                         🔍 OCR Pagamento
                       </button>
                       <button onClick={() => rodarOcrTipo('HOLERITE_MENSAL', 'Pagamento', true)} disabled={ocrRodando} title="Ignora o valor já salvo e lê os comprovantes de novo" className="text-[10px] font-black bg-white border border-purple-300 text-purple-700 hover:bg-purple-50 px-3 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
+                        🔄 Reler tudo
+                      </button>
+                    </>
+                  )}
+                  {fontesSel.includes('DECIMO_TERCEIRO') && (
+                    <>
+                      <button onClick={() => rodarOcrTipo('DECIMO_TERCEIRO', '13º Salário')} disabled={ocrRodando} className="text-[10px] font-black bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
+                        🔍 OCR 13º Salário
+                      </button>
+                      <button onClick={() => rodarOcrTipo('DECIMO_TERCEIRO', '13º Salário', true)} disabled={ocrRodando} title="Ignora o valor já salvo e lê os comprovantes de novo" className="text-[10px] font-black bg-white border border-amber-300 text-amber-700 hover:bg-amber-50 px-3 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
+                        🔄 Reler tudo
+                      </button>
+                    </>
+                  )}
+                  {fontesSel.includes('FERIAS') && (
+                    <>
+                      <button onClick={() => rodarOcrTipo('FERIAS', 'Férias')} disabled={ocrRodando} className="text-[10px] font-black bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
+                        🔍 OCR Férias
+                      </button>
+                      <button onClick={() => rodarOcrTipo('FERIAS', 'Férias', true)} disabled={ocrRodando} title="Ignora o valor já salvo e lê os comprovantes de novo" className="text-[10px] font-black bg-white border border-cyan-300 text-cyan-700 hover:bg-cyan-50 px-3 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
                         🔄 Reler tudo
                       </button>
                     </>
@@ -966,6 +1004,8 @@ export default function FinanceiroPage() {
                       const semValor = it.valor <= 0;
                       const corFonte = it.fonte === 'FOLHA' ? 'bg-blue-100 text-blue-700'
                         : (it.fonte === 'ADIANTAMENTO' || it.fonte === 'PAGAMENTO') ? 'bg-purple-100 text-purple-700'
+                        : it.fonte === 'DECIMO_TERCEIRO' ? 'bg-amber-100 text-amber-700'
+                        : it.fonte === 'FERIAS' ? 'bg-cyan-100 text-cyan-700'
                         : 'bg-emerald-100 text-emerald-700';
                       const chaveEdit = `${it.funcionario_nome}::${it.fonte}`;
                       return (

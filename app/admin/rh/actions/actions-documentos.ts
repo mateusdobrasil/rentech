@@ -21,7 +21,7 @@ const slug = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 // ============================================================================
 export async function salvarDocumentosContabeisAction(payload: {
   mesReferencia: string;
-  tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL';
+  tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS';
   nomeArquivoOrigem: string;
   importadoPor: string;
   itens: { funcionarioNome: string; pdfBase64: string; paginaOrigem: number; confiancaMatch?: 'ALTA' | 'MEDIA' | 'MANUAL' }[];
@@ -117,7 +117,7 @@ export async function listarDocumentosContabeisAction(payload: {
 // GERAR SIGNED URL para baixar/visualizar um documento
 // ============================================================================
 export async function urlDocumentoContabilAction(payload: {
-  funcionarioNome: string; mesReferencia: string; tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL';
+  funcionarioNome: string; mesReferencia: string; tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS';
 }): Promise<Resultado> {
   const db = supabaseAdmin();
   try {

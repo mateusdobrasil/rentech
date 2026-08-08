@@ -10,6 +10,7 @@ import { Analytics } from "@vercel/analytics/next";
 import { fecharFolhaLoteAction, reabrirFolhaAction, salvarBonusDescontosAction, salvarDadosSalariaisAction } from '../actions/actions-folha';
 import { listarAbonosPendentesDoMesAction } from '../actions/actions-ponto-whatsapp';
 import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction, previaDocumentoAssinaturaAction } from '../actions/actions-assinatura';
+import SepararHolerites from './SepararHolerites';
 import logoColorido from '../../../../app/imgs/logo.png';
 
 // ============================================================================
@@ -170,7 +171,7 @@ interface FuncionarioFin {
   recebe_transporte: boolean; valor_transporte: number;
   recebe_refeicao: boolean; valor_refeicao: number;
   salario_folha: number; salario_contrato: number;
-  valor_diaria: number; valor_adiantamento: number;
+  valor_diaria: number; valor_adiantamento: number; valor_premio_diaria_viagem: number;
   data_admissao: string | null; data_desligamento: string | null;
   data_nascimento: string | null; cpf: string | null; celular: string | null; email: string | null;
   banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null;
@@ -597,7 +598,7 @@ const HoleriteDoc = ({ nome, dados, mesRef, fechamento }: {
 const extrairDadosSalariais = (f: FuncionarioFin | null) => f ? {
   salario_folha: f.salario_folha, salario_contrato: f.salario_contrato,
   valor_refeicao: f.valor_refeicao, valor_transporte: f.valor_transporte,
-  valor_adiantamento: f.valor_adiantamento
+  valor_adiantamento: f.valor_adiantamento, valor_premio_diaria_viagem: f.valor_premio_diaria_viagem
 } : null;
 
 export default function HoleritePage() {
@@ -624,6 +625,7 @@ export default function HoleritePage() {
   const [gerandoPrevia, setGerandoPrevia] = useState<string | null>(null);
   const [sandboxAssinatura, setSandboxAssinatura] = useState(true);
   const [buscaHolerite, setBuscaHolerite] = useState('');
+  const [mostrarSepararHolerites, setMostrarSepararHolerites] = useState(false);
   // Holerites começam todos recolhidos — só nome/status/ações aparecem, o
   // documento em si só some na tela quando expandido (não some do DOM: a
   // classe print:block garante que "Imprimir Todos" continua imprimindo
@@ -642,6 +644,14 @@ export default function HoleritePage() {
     if (!termo) return lote;
     return lote.filter(item => item.func.nome_completo.toLowerCase().includes(termo));
   }, [lote, buscaHolerite]);
+
+  // Funcionários elegíveis à separação de holerite (contrato com a flag
+  // recebe_holerite_contabilidade ligada), em ordem alfabética — base da
+  // pré-associação por ordem em SepararHolerites.
+  const elegiveisContabilidade = useMemo(() => lote
+    .filter(item => regrasContrato[item.func.tipo_contrato]?.recebe_holerite_contabilidade ?? true)
+    .map(item => ({ nome_completo: item.func.nome_completo, tipo_contrato: item.func.tipo_contrato })),
+  [lote, regrasContrato]);
 
   const [fechamentoSelecionado, setFechamentoSelecionado] = useState<Fechamento | null>(null);
   const [apuracaoSelecionado, setApuracaoSelecionado] = useState({ mins60: 0, mins100: 0, diasFds: 0, faltas: 0, qtdVr: 0, qtdVt: 0 });
@@ -848,6 +858,7 @@ export default function HoleritePage() {
         valor_refeicao: formSelecionado.valor_refeicao,
         valor_transporte: formSelecionado.valor_transporte,
         valor_adiantamento: formSelecionado.valor_adiantamento,
+        valor_premio_diaria_viagem: formSelecionado.valor_premio_diaria_viagem,
         usuarioNome: usuarioAtual
       });
       if (!resSalarial.ok) throw new Error(resSalarial.erro);
@@ -1400,7 +1411,8 @@ export default function HoleritePage() {
                         Este contrato ({formSelecionado.tipo_contrato}) não dá direito a VR/VT. Ajuste no Motor de Regras se necessário.
                       </div>
                     )}
-                    <div className="col-span-2"><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Adiantamento (Dia 20)</label><InputMoeda value={formSelecionado.valor_adiantamento} onChange={v => setFormSelecionado({...formSelecionado, valor_adiantamento: v})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-red-600" /></div>
+                    <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Prêmio por Diária de Viagem</label><InputMoeda value={formSelecionado.valor_premio_diaria_viagem} onChange={v => setFormSelecionado({...formSelecionado, valor_premio_diaria_viagem: v})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-[#16A34A]" /></div>
+                    <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Adiantamento (Dia 20)</label><InputMoeda value={formSelecionado.valor_adiantamento} onChange={v => setFormSelecionado({...formSelecionado, valor_adiantamento: v})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-red-600" /></div>
                   </div>
                 </div>
 
@@ -1516,82 +1528,84 @@ export default function HoleritePage() {
       )}
 
       {activeTab === 'HOLERITES' && (
-      <div className="p-4 md:px-8 pt-6 flex-grow flex flex-col max-w-[1500px] mx-auto w-full">
-        <div className="flex flex-col items-center pb-10">
-          <div className="w-full max-w-5xl bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] mb-6 print:hidden">
-            <div className="mb-4">
-              <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Folha do Mês — Todos os Funcionários</h2>
-              <p className="text-sm text-[#64748B]">
-                Competência: {formatarMesAnoBR(mesReferencia)} • {lote.length} funcionário(s) ativo(s) • {totalFechados} fechado(s)
-              </p>
-            </div>
-            <div className="pt-4 border-t border-gray-100">
-              <input
-                type="text"
-                placeholder="🔍 Buscar colaborador pelo nome..."
-                value={buscaHolerite}
-                onChange={(e) => setBuscaHolerite(e.target.value)}
-                className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]"
-              />
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-gray-100">
-              <div>
-                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Competência</label>
-                <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
-              </div>
+      <div className="p-4 md:px-8 pt-6 pb-10 flex-grow flex flex-col lg:flex-row gap-6 max-w-[1500px] mx-auto w-full">
 
-              <div className="flex flex-col gap-2">
-                <button onClick={fecharFolhaTodos} disabled={loadingLote || lote.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">
-                  🔒 Fechar Folha do Mês (Todos)
-                </button>
-                {totalFechados > 0 && (
-                  <button onClick={reabrirFolhaTodos} disabled={loadingLote} className="bg-white border-2 border-red-300 text-red-600 font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl hover:bg-red-50 transition-all disabled:opacity-50">
-                    🔓 Reabrir Todos ({totalFechados})
-                  </button>
-                )}
-              </div>
+        {/* BARRA LATERAL DE AÇÕES */}
+        <aside className="w-full lg:w-80 flex-shrink-0 space-y-4 print:hidden">
+          <div className="bg-[#0C1D4D] p-5 rounded-2xl shadow-md text-white">
+            <h2 className="font-black uppercase tracking-wider mb-1">Folha do Mês</h2>
+            <p className="text-[11px] text-blue-200 font-bold mb-4">
+              {lote.length} funcionário(s) ativo(s) • {totalFechados} fechado(s)
+            </p>
+            <label className="block text-[10px] font-black text-blue-200 uppercase mb-1">Competência</label>
+            <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="w-full p-2.5 rounded-lg text-sm text-white bg-[#1E3A6E] outline-none font-bold" />
+          </div>
 
-              <div className="flex flex-col gap-2">
-                <button onClick={() => window.print()} disabled={lote.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
-                  🖨️ Imprimir Todos ({lote.length} páginas)
-                </button>
-              </div>
-            </div>
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0] space-y-2">
+            <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-xs border-b border-[#E2E8F0] pb-2 mb-1">Ações em Lote</h3>
+            <button onClick={fecharFolhaTodos} disabled={loadingLote || lote.length === 0} className="w-full bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">
+              🔒 Fechar Folha do Mês (Todos)
+            </button>
+            {totalFechados > 0 && (
+              <button onClick={reabrirFolhaTodos} disabled={loadingLote} className="w-full bg-white border-2 border-red-300 text-red-600 font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl hover:bg-red-50 transition-all disabled:opacity-50">
+                🔓 Reabrir Todos ({totalFechados})
+              </button>
+            )}
+            <button onClick={() => window.print()} disabled={lote.length === 0} className="w-full bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
+              🖨️ Imprimir Todos ({lote.length} páginas)
+            </button>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0]">
+            <button onClick={() => setMostrarSepararHolerites(true)} className="group w-full bg-white border-2 border-[#0C1D4D] text-[#0C1D4D] hover:bg-[#0C1D4D] hover:text-white font-black uppercase tracking-widest text-xs px-5 py-2.5 rounded-xl transition-all flex items-center justify-center gap-2">
+              📄 Separar Holerites
+              <span className="bg-black/10 group-hover:bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{elegiveisContabilidade.length}</span>
+            </button>
           </div>
 
           {totalFechados > 0 && (
-            <div className="w-full max-w-5xl bg-indigo-50 border border-indigo-200 p-4 rounded-2xl mb-6 print:hidden">
-              <div className="flex items-center gap-3 mb-4">
+            <div className="bg-indigo-50 border border-indigo-200 p-5 rounded-2xl space-y-2">
+              <div className="flex items-center gap-2 mb-1">
                 <span className="text-lg">✍️</span>
-                <div>
-                  <h3 className="text-sm font-black text-indigo-900 uppercase tracking-wider">Assinatura Digital (Autentique)</h3>
-                  <p className="text-[11px] text-indigo-700 font-bold">Envia os holerites fechados para assinatura com validação por CPF.</p>
-                </div>
+                <h3 className="text-xs font-black text-indigo-900 uppercase tracking-wider">Assinatura Digital</h3>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-indigo-100">
-                <div>
-                  <label className="block text-[10px] font-black text-indigo-400 uppercase mb-1">Ambiente</label>
-                  <label className="w-full flex items-center gap-2 text-[11px] font-black uppercase tracking-wider cursor-pointer bg-white px-3 py-2.5 rounded-lg border border-indigo-200">
-                    <input type="checkbox" checked={sandboxAssinatura} onChange={e => setSandboxAssinatura(e.target.checked)} />
-                    <span className={sandboxAssinatura ? 'text-amber-600' : 'text-red-600'}>{sandboxAssinatura ? '🧪 Modo Teste' : '⚠ Modo Real'}</span>
-                  </label>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <button onClick={enviarAssinaturaTodos} disabled={enviandoAssinatura !== null} className="bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50">
-                    {enviandoAssinatura === 'LOTE' ? '⏳ Enviando...' : '📤 Enviar Todos p/ Assinatura'}
-                  </button>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <button onClick={() => router.push('/admin/rh/assinaturas')} className="bg-white border-2 border-indigo-300 text-indigo-700 font-black uppercase tracking-widest text-xs px-5 py-2.5 rounded-xl hover:bg-indigo-50 transition-all">
-                    📋 Acompanhar
-                  </button>
-                </div>
-              </div>
+              <p className="text-[10px] text-indigo-700 font-bold mb-2">Envia os holerites fechados para assinatura com validação por CPF (Autentique).</p>
+              <label className="w-full flex items-center gap-2 text-[11px] font-black uppercase tracking-wider cursor-pointer bg-white px-3 py-2.5 rounded-lg border border-indigo-200">
+                <input type="checkbox" checked={sandboxAssinatura} onChange={e => setSandboxAssinatura(e.target.checked)} />
+                <span className={sandboxAssinatura ? 'text-amber-600' : 'text-red-600'}>{sandboxAssinatura ? '🧪 Modo Teste' : '⚠ Modo Real'}</span>
+              </label>
+              <button onClick={enviarAssinaturaTodos} disabled={enviandoAssinatura !== null} className="w-full bg-indigo-600 text-white font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50">
+                {enviandoAssinatura === 'LOTE' ? '⏳ Enviando...' : '📤 Enviar Todos p/ Assinatura'}
+              </button>
+              <button onClick={() => router.push('/admin/rh/assinaturas')} className="w-full bg-white border-2 border-indigo-300 text-indigo-700 font-black uppercase tracking-widest text-xs px-5 py-2.5 rounded-xl hover:bg-indigo-50 transition-all">
+                📋 Acompanhar
+              </button>
             </div>
           )}
+        </aside>
 
+        {/* GRID DE HOLERITES */}
+        <main className="flex-grow flex flex-col items-center gap-4">
+          {mostrarSepararHolerites ? (
+            <div className="w-full print:hidden">
+              <SepararHolerites
+                mesReferencia={mesReferencia}
+                usuarioAtual={usuarioAtual}
+                elegiveis={elegiveisContabilidade}
+                onFechar={() => setMostrarSepararHolerites(false)}
+              />
+            </div>
+          ) : (
+          <>
+          <input
+            type="text"
+            placeholder="🔍 Buscar colaborador pelo nome..."
+            value={buscaHolerite}
+            onChange={(e) => setBuscaHolerite(e.target.value)}
+            className="w-full max-w-5xl p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-white shadow-sm print:hidden"
+          />
+
+          <div className="w-full flex flex-col items-center gap-4 overflow-y-auto overscroll-contain max-h-[75vh] pr-1 print:overflow-visible print:max-h-none">
           {loadingLote ? (
             <div className="w-full max-w-5xl bg-white border-2 border-dashed border-gray-300 rounded-2xl p-16 text-center text-gray-400 font-bold uppercase tracking-wider print:hidden">
               Montando os holerites do mês...
@@ -1694,7 +1708,10 @@ export default function HoleritePage() {
               )
             ))
           )}
-        </div>
+          </div>
+          </>
+          )}
+        </main>
       </div>
       )}
     </div>

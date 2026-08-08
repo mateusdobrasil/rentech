@@ -5,6 +5,8 @@
 // os números que hoje só aparecem depois de entrar em cada módulo.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { painelDocumentosAction } from './actions-documentos-func';
+import { painelFeriasAction } from './actions-ferias';
+import { painelAfastamentosAction } from './actions-afastamentos';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -43,7 +45,9 @@ export async function painelRhAction(): Promise<Resultado> {
       holeritesRes,
       assinaturasRes,
       solicitacoesRes,
-      pontoMesRes
+      pontoMesRes,
+      feriasRes,
+      afastamentosRes
     ] = await Promise.all([
       painelDocumentosAction(),
       db.from('folha_funcionarios').select('nome_completo, tipo_contrato, ativo, data_admissao, data_nascimento, departamento').eq('ativo', true),
@@ -52,7 +56,9 @@ export async function painelRhAction(): Promise<Resultado> {
       db.from('folha_holerite_assinaturas').select('id, status').not('status', 'in', '("ASSINADO","REJEITADO")'),
       db.from('folha_ponto_whatsapp_solicitacoes').select('id').eq('status', 'PENDENTE'),
       db.from('folha_ponto_diaria').select('funcionario_nome, data_registro, entrada_1, saida_1, entrada_2, saida_2')
-        .gte('data_registro', dataInicio).lte('data_registro', dataFim)
+        .gte('data_registro', dataInicio).lte('data_registro', dataFim),
+      painelFeriasAction(),
+      painelAfastamentosAction()
     ]);
 
     // Holerites em aberto: funcionário ativo, já admitido até a competência,
@@ -90,7 +96,10 @@ export async function painelRhAction(): Promise<Resultado> {
         assinaturasPendentes: (assinaturasRes.data || []).length,
         solicitacoesPontoPendentes: (solicitacoesRes.data || []).length,
         pontosImpares,
-        aniversariantes
+        aniversariantes,
+        feriasVencidas: feriasRes.ok ? feriasRes.info?.totais?.vencidas || 0 : 0,
+        feriasVencendo: feriasRes.ok ? feriasRes.info?.totais?.vencendo || 0 : 0,
+        afastamentosAtivos: afastamentosRes.ok ? afastamentosRes.info?.totais?.ativos || 0 : 0
       }
     };
   } catch (e: any) {

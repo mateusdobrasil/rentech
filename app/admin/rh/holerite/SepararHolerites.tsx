@@ -30,7 +30,7 @@ interface Props {
 
 export default function SepararHolerites({ mesReferencia, usuarioAtual, elegiveis, onFechar }: Props) {
   const [competencia, setCompetencia] = useState(mesReferencia);
-  const [tipo, setTipo] = useState<'ADIANTAMENTO' | 'HOLERITE_MENSAL'>('ADIANTAMENTO');
+  const [tipo, setTipo] = useState<'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS'>('ADIANTAMENTO');
   const [processando, setProcessando] = useState(false);
   const [progresso, setProgresso] = useState('');
   const [paginas, setPaginas] = useState<PaginaSeparada[]>([]);
@@ -261,6 +261,8 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
             <select value={tipo} onChange={e => setTipo(e.target.value as any)} disabled={paginas.length > 0} className="w-full p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-white disabled:opacity-50">
               <option value="ADIANTAMENTO">Adiantamento (dia 20)</option>
               <option value="HOLERITE_MENSAL">Holerite de pagamento mensal</option>
+              <option value="DECIMO_TERCEIRO">Décimo Terceiro (13º)</option>
+              <option value="FERIAS">Férias</option>
             </select>
           </div>
           <div className="flex-1">

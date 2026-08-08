@@ -552,7 +552,7 @@ export default function FuncionarioPage() {
             </div>
           )}
 
-          <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden max-h-[65vh] overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden max-h-[65vh] overflow-y-auto overscroll-contain">
             {(modoAtribuicaoMassa ? funcFiltrados.filter(f => !f.empresa_id) : funcFiltrados).map((f, i) => (
               <div
                 key={i} onClick={() => modoAtribuicaoMassa ? alternarSelecaoMassa(f.nome_completo) : trocarFuncionario(f.nome_completo)}
@@ -604,7 +604,7 @@ export default function FuncionarioPage() {
               Selecione um colaborador no menu lateral
             </div>
           ) : (
-            <div className="flex flex-col gap-6 print:hidden pb-20">
+            <div className="flex flex-col gap-6 print:hidden pb-20 max-h-[65vh] overflow-y-auto overscroll-contain pr-1">
             {abaAtiva === 'ESSENCIAL' && (
             <>
               <div className="grid grid-cols-1 xl:grid-cols-1 gap-6">

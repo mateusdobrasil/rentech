@@ -1473,7 +1473,10 @@ export default function HoleritePage() {
                             <input type="text" placeholder="Descrição do Desconto" value={d.descricao} disabled={quitado} onChange={e => handleDescontoChange(idx, 'descricao', e.target.value)} className="w-full p-1.5 border border-gray-200 rounded text-xs uppercase disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" />
                             {quitado && <span className="text-[9px] bg-gray-300 text-gray-600 px-2 py-0.5 rounded font-black uppercase whitespace-nowrap">🔒 Quitado</span>}
                           </div>
-                          <div><InputMoeda placeholder="Valor R$" value={d.valor_parcela} disabled={quitado} onChange={v => handleDescontoChange(idx, 'valor_parcela', v)} className="w-full p-1.5 border border-gray-200 rounded text-xs text-red-600 font-bold disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
+                          <div>
+                            <label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">{d.tipo === 'PARCELADO' ? 'Valor da Parcela' : 'Valor Mensal'}</label>
+                            <InputMoeda placeholder="Valor R$" value={d.valor_parcela} disabled={quitado} onChange={v => handleDescontoChange(idx, 'valor_parcela', v)} className="w-full p-1.5 border border-gray-200 rounded text-xs text-red-600 font-bold disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" />
+                          </div>
                           <div>
                             <select value={d.tipo} disabled={quitado} onChange={e => handleDescontoChange(idx, 'tipo', e.target.value as Desconto['tipo'])} className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed">
                               <option value="PARCELADO">Parcelado</option>
@@ -1493,6 +1496,9 @@ export default function HoleritePage() {
                               <p className="text-[9px] font-black text-emerald-700 uppercase leading-tight">
                                 💵 1ª parcela paga em {competenciaParaPagamento(d.mes_inicio)}
                                 {d.mes_fim && ` • última em ${competenciaParaPagamento(d.mes_fim)}`}
+                              </p>
+                              <p className="text-[9px] font-black text-emerald-700 uppercase leading-tight mt-0.5">
+                                🧮 Valor total do débito: {formatCurrency(d.valor_parcela * (d.parcelas || 1))} ({d.parcelas || 1}x de {formatCurrency(d.valor_parcela)})
                               </p>
                               {quitado && <p className="text-[9px] font-bold text-gray-500 uppercase mt-0.5">Encerrada, bloqueada para edição</p>}
                             </div>

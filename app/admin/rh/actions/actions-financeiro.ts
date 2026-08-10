@@ -338,6 +338,7 @@ export async function listarPdfsContabilidadeAction(payload: {
 export async function salvarLoteAction(payload: {
   parceiro: string; mesReferencia: string; tipoLote: string;
   nomeLote?: string;
+  dataPagamento?: string | null;
   itens: any[]; criadoPor: string;
 }): Promise<Resultado> {
   const db = supabaseAdmin();
@@ -351,6 +352,7 @@ export async function salvarLoteAction(payload: {
       mes_referencia: payload.mesReferencia,
       tipo_lote: payload.tipoLote,
       nome_lote: payload.nomeLote || null,
+      data_pagamento: payload.dataPagamento || null,
       qtd_pagamentos: prontos.length,
       valor_total: valorTotal,
       status: 'GERADO',
@@ -368,7 +370,7 @@ export async function listarLotesAction(payload: { mesReferencia?: string }): Pr
   const db = supabaseAdmin();
   try {
     let q = db.from('folha_lotes_pagamento')
-      .select('id, parceiro, mes_referencia, tipo_lote, nome_lote, qtd_pagamentos, valor_total, status, ativo, criado_por, criado_em')
+      .select('id, parceiro, mes_referencia, tipo_lote, nome_lote, data_pagamento, qtd_pagamentos, valor_total, status, ativo, criado_por, criado_em')
       .order('criado_em', { ascending: false });
     if (payload.mesReferencia) q = q.eq('mes_referencia', payload.mesReferencia);
     const { data, error } = await q;

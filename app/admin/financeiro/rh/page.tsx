@@ -35,6 +35,7 @@ const separarContaDac = (contaComDac: string | null | undefined): { conta: strin
 
 const BRL = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtDataHora = (d: string) => new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 const fmtMesBR = (m: string) => { const [a, mm] = m.split('-'); return `${mm}/${a}`; };
 
 interface Integracao {
@@ -63,6 +64,7 @@ interface ItemLote {
 interface Lote {
   id: number; parceiro: string; mes_referencia: string; tipo_lote: string;
   nome_lote: string | null;
+  data_pagamento: string | null;
   qtd_pagamentos: number; valor_total: number; status: string; ativo: boolean; criado_por: string | null; criado_em: string;
 }
 
@@ -363,7 +365,7 @@ export default function FinanceiroPage() {
     try {
       const res = await salvarLoteAction({
         parceiro: 'ITAU', mesReferencia, tipoLote: fontesSel.join('+'),
-        nomeLote: nome || sugestao, itens, criadoPor: usuarioAtual
+        nomeLote: nome || sugestao, dataPagamento, itens, criadoPor: usuarioAtual
       });
       if (!res.ok) throw new Error(res.erro);
       alert(`Lote "${nome || sugestao}" gerado: ${res.info.qtd} pagamentos, ${BRL(res.info.valorTotal)}.`);
@@ -1077,7 +1079,8 @@ export default function FinanceiroPage() {
               <table className="w-full text-sm border-collapse">
                 <thead>
                   <tr className="bg-[#F8FAFC] border-b-2 border-[#E2E8F0]">
-                    <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px]">Data</th>
+                    <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px]">Gerado em</th>
+                    <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px]">Pagamento</th>
                     <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px]">Nome do lote</th>
                     <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px]">Competência</th>
                     <th className="p-3 text-center font-black text-[#0C1D4D] uppercase text-[10px]">Pagtos</th>
@@ -1090,6 +1093,7 @@ export default function FinanceiroPage() {
                   {lotes.map((l, idx) => (
                     <tr key={l.id} className={`${l.ativo === false ? 'opacity-50' : ''} ${idx % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white'} border-b border-[#E2E8F0]`}>
                       <td className="p-3 text-[11px] text-gray-500">{fmtDataHora(l.criado_em)}</td>
+                      <td className="p-3 text-[11px] font-bold text-gray-700">{fmtData(l.data_pagamento)}</td>
                       <td className="p-3">
                         <span className="font-black text-[#0C1D4D] block">{l.nome_lote || l.tipo_lote}</span>
                         <span className="text-[10px] font-bold text-gray-400 uppercase">{l.parceiro}</span>

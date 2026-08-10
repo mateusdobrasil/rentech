@@ -5,6 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import * as XLSX from 'xlsx';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../actions';
+import { sincronizarFichasReservaP2sAction } from './actions';
 import { Analytics } from "@vercel/analytics/next";
 
 // ============================================================================
@@ -373,6 +374,7 @@ export default function ImportadorFichasReserva() {
   const [linhasProcessadas, setLinhasProcessadas] = useState<LinhaProcessada[]>([]);
   const [erroArquivo, setErroArquivo] = useState('');
   const [importando, setImportando] = useState(false);
+  const [sincronizando, setSincronizando] = useState(false);
   const [feedback, setFeedback] = useState<{ show: boolean; msg: string; tipo: 'success' | 'error' }>({ show: false, msg: '', tipo: 'success' });
 
   const [fichasGrid, setFichasGrid] = useState<FichaGrid[]>([]);
@@ -515,6 +517,29 @@ export default function ImportadorFichasReserva() {
     setImportando(false);
   };
 
+  const sincronizarViaApi = async () => {
+    setSincronizando(true);
+    setFeedback({ show: false, msg: '', tipo: 'success' });
+    try {
+      const res = await sincronizarFichasReservaP2sAction();
+      if (!res.ok) {
+        setFeedback({ show: true, tipo: 'error', msg: `Falha ao sincronizar com o PrimeStart: ${res.erro}` });
+        return;
+      }
+      await registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: 'SINCRONIZOU FICHAS DE RESERVA VIA API (P2S)',
+        setor: 'OPERACIONAL',
+        equipamento_nome: `${res.info.processados} registro(s)`,
+      });
+      setFeedback({ show: true, tipo: 'success', msg: `${res.info.processados} ficha(s) sincronizada(s) direto do PrimeStart (últimos 90 dias, ${res.info.totalEncontradas} encontrada(s) no total).` });
+      setPagina(0);
+      setRefreshGrid(v => v + 1);
+    } finally {
+      setSincronizando(false);
+    }
+  };
+
   const abrirModalLimpar = async () => {
     setModalLimpar({ open: true, contando: true, total: null, excluindo: false });
     const { count, error } = await supabase
@@ -587,6 +612,20 @@ export default function ImportadorFichasReserva() {
 
       <div className="flex-1 overflow-y-auto p-4 md:p-8">
         <div className="max-w-7xl mx-auto space-y-6">
+
+          <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
+            <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Sincronizar via API</h2>
+            <p className="text-xs text-[#64748B] mb-4">
+              Puxa direto do PrimeStart (produção) as fichas de reserva emitidas nos últimos 90 dias — sem precisar exportar e subir planilha. Atenção: os campos Data de Entrega e Status ainda não têm equivalente confirmado na API, então ficam em branco / com o código cru (EN, EP, RE, CA, A, E, X, SB) em vez do rótulo em português nas fichas sincronizadas por aqui.
+            </p>
+            <button
+              onClick={sincronizarViaApi}
+              disabled={sincronizando}
+              className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-bold uppercase text-xs tracking-wider transition-colors"
+            >
+              {sincronizando ? 'Sincronizando...' : '🔄 Sincronizar agora'}
+            </button>
+          </div>
 
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
             <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Importar planilha</h2>

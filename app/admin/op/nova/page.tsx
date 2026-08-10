@@ -191,7 +191,11 @@ export default function NovaOrdemPagamento() {
   const abrirModalFreelance = async () => {
     setModalFreelanceAberto(true);
     setLoadingFree(true);
-    const { data, error } = await supabase.from('freelancers').select('id, nome, cpf, telefone, pix_chave, pix_tipo, endereco, valor_diaria').order('created_at', { ascending: false }).limit(100);
+    // Sem limit baixo aqui: era .limit(100), então freelancers cadastrados
+    // há mais tempo (fora dos 100 mais recentes) nunca apareciam na busca,
+    // mesmo digitando o nome/CPF exato — a lista inteira precisa estar
+    // carregada pro filtro abaixo (freelancersFiltrados) ter o que buscar.
+    const { data, error } = await supabase.from('freelancers').select('id, nome, cpf, telefone, pix_chave, pix_tipo, endereco, valor_diaria').order('created_at', { ascending: false }).limit(5000);
     if (!error && data) {
       setListaFreelancers(data);
     }
@@ -231,7 +235,15 @@ export default function NovaOrdemPagamento() {
   const freelancersFiltrados = useMemo(() => {
     if (!termoBuscaFree) return listaFreelancers;
     const termo = termoBuscaFree.toLowerCase();
-    return listaFreelancers.filter(f => f.nome.toLowerCase().includes(termo) || (f.cpf && f.cpf.includes(termo)));
+    // CPF é comparado só pelos dígitos dos dois lados: o cadastro nem sempre
+    // grava o CPF com a mesma pontuação que a pessoa digitou (não há máscara
+    // obrigatória no formulário público de freelancer), então comparar a
+    // string crua fazia buscas por CPF sem pontuação nunca baterem.
+    const termoDigitos = termo.replace(/\D/g, '');
+    return listaFreelancers.filter(f =>
+      f.nome.toLowerCase().includes(termo) ||
+      (termoDigitos && f.cpf && f.cpf.replace(/\D/g, '').includes(termoDigitos))
+    );
   }, [listaFreelancers, termoBuscaFree]);
 
   // ============================================================================

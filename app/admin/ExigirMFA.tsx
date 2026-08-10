@@ -6,15 +6,28 @@
 // para a rota atual (configurável em /admin/parametros/permissoes, aba
 // "Permissão 2FA") e repassa aqui via prop `ativo`. Exige 2FA (TOTP) do
 // Supabase Auth além do login + permissão de rota que já protegem as demais
-// páginas do admin. Ativação/desativação do fator vive em /admin/conta —
-// aqui só cobramos o desafio (uma vez por sessão, já que o Supabase mantém
-// o nível aal2 na própria sessão até logout/expiração).
-import { useState, useEffect } from 'react';
+// páginas do admin. Ativação/desativação do fator vive em /admin/conta.
+//
+// O Supabase mantém o nível aal2 na própria sessão até logout/expiração do
+// refresh token (dias) — sem controle próprio, o usuário só seria desafiado
+// uma vez e nunca mais. Por isso este componente também rastreia a última
+// interação do usuário em qualquer página do admin (localStorage, global —
+// ver useEffect de atividade abaixo) e força um novo desafio se o usuário
+// ficar mais de 1h sem interagir, mesmo com aal2 ainda válido.
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabase';
 import { registrarLogAuditoria } from '../actions';
 
 type EstadoMfa = 'verificando' | 'liberado' | 'exige_codigo' | 'nao_cadastrado';
+
+const CHAVE_ULTIMA_ATIVIDADE = 'rentech_admin_ultima_atividade';
+const LIMITE_INATIVIDADE_MS = 60 * 60 * 1000; // 1 hora
+
+function tempoInativoMs(): number {
+  const ultima = Number(localStorage.getItem(CHAVE_ULTIMA_ATIVIDADE)) || Date.now();
+  return Date.now() - ultima;
+}
 
 export default function ExigirMFA({ children, ativo = true }: { children: React.ReactNode; ativo?: boolean }) {
   const router = useRouter();
@@ -24,27 +37,64 @@ export default function ExigirMFA({ children, ativo = true }: { children: React.
   const [erro, setErro] = useState('');
   const [verificando, setVerificando] = useState(false);
 
-  useEffect(() => { if (ativo) checar(); }, [ativo]);
+  // Rastreador de atividade — roda sempre (independente de `ativo`), já que
+  // ExigirMFA está montado em toda página do admin via app/admin/layout.tsx.
+  // Throttlado pra não gravar no localStorage a cada pixel de mousemove.
+  useEffect(() => {
+    if (localStorage.getItem(CHAVE_ULTIMA_ATIVIDADE) === null) {
+      localStorage.setItem(CHAVE_ULTIMA_ATIVIDADE, String(Date.now()));
+    }
+    let ultimoRegistro = 0;
+    const registrarAtividade = () => {
+      const agora = Date.now();
+      if (agora - ultimoRegistro < 30_000) return;
+      ultimoRegistro = agora;
+      localStorage.setItem(CHAVE_ULTIMA_ATIVIDADE, String(agora));
+    };
+    const eventos = ['click', 'keydown', 'mousemove', 'scroll', 'touchstart'] as const;
+    eventos.forEach(ev => window.addEventListener(ev, registrarAtividade, { passive: true }));
+    return () => eventos.forEach(ev => window.removeEventListener(ev, registrarAtividade));
+  }, []);
 
-  const checar = async () => {
+  const irParaDesafio = useCallback(async () => {
+    // Tem fator verificado cadastrado, só falta o desafio.
+    const { data: fatores } = await supabase.auth.mfa.listFactors();
+    const fator = fatores?.totp?.[0];
+    if (!fator) { setEstado('nao_cadastrado'); return; }
+    setFactorId(fator.id);
+    setEstado('exige_codigo');
+  }, []);
+
+  const checar = useCallback(async () => {
     const { data: aal, error: aalErro } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
     if (aalErro || !aal) { setErro(aalErro?.message || 'Não foi possível verificar a autenticação.'); setEstado('nao_cadastrado'); return; }
 
-    if (aal.currentLevel === 'aal2') { setEstado('liberado'); return; }
-
-    if (aal.nextLevel === 'aal2') {
-      // Tem fator verificado cadastrado, só falta o desafio desta sessão.
-      const { data: fatores } = await supabase.auth.mfa.listFactors();
-      const fator = fatores?.totp?.[0];
-      if (!fator) { setEstado('nao_cadastrado'); return; }
-      setFactorId(fator.id);
-      setEstado('exige_codigo');
+    if (aal.currentLevel === 'aal2') {
+      if (tempoInativoMs() < LIMITE_INATIVIDADE_MS) { setEstado('liberado'); return; }
+      // aal2 ainda válido pro Supabase, mas o usuário ficou +1h sem usar o
+      // sistema — cobra o código de novo mesmo assim.
+      await irParaDesafio();
       return;
     }
 
+    if (aal.nextLevel === 'aal2') { await irParaDesafio(); return; }
+
     // nextLevel === 'aal1' — nenhum fator verificado cadastrado ainda.
     setEstado('nao_cadastrado');
-  };
+  }, [irParaDesafio]);
+
+  useEffect(() => { if (ativo) checar(); }, [ativo, checar]);
+
+  // Enquanto a página fica aberta e liberada, confere periodicamente se a
+  // inatividade passou de 1h (sem isso, só re-checaríamos na próxima
+  // navegação/remontagem do componente).
+  useEffect(() => {
+    if (!ativo || estado !== 'liberado') return;
+    const id = setInterval(() => {
+      if (tempoInativoMs() >= LIMITE_INATIVIDADE_MS) checar();
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [ativo, estado, checar]);
 
   const confirmar = async () => {
     if (!factorId || codigo.length !== 6) return;

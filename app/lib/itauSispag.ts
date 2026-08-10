@@ -128,10 +128,14 @@ export function credenciaisItauConfiguradas(ambiente: AmbienteItau): boolean {
 interface TokenCache { token: string; expiraEm: number; }
 const tokenCachePorAmbiente: Partial<Record<AmbienteItau, TokenCache>> = {};
 
-// Token OAuth2 — não usa mTLS (o cliente ainda não tem certificado na
-// primeira vez que precisa de um token, para poder solicitar esse mesmo
-// certificado). URL de token é a mesma pros dois ambientes — só as
-// credenciais mudam (ver credenciaisAmbiente).
+// Token OAuth2 — em SANDBOX não precisa de mTLS (testado empiricamente).
+// Em PRODUÇÃO, mTLS é OBRIGATÓRIO até nesta chamada de token, não só nas
+// chamadas de negócio — confirmado empiricamente 2026-08-10: sem o
+// certificado anexado, o endpoint de token devolve 403 "Ausência do
+// certificado na chamada" (código C100), mesmo com client_id/client_secret
+// corretos. Por isso usa httpsRequestJson (que suporta cert+key) em vez do
+// fetch global aqui, igual chamarApi. URL de token é a mesma pros dois
+// ambientes — só as credenciais (e a exigência de certificado) mudam.
 async function obterToken(ambiente: AmbienteItau): Promise<string> {
   const cache = tokenCachePorAmbiente[ambiente];
   if (cache && cache.expiraEm > Date.now() + 30_000) return cache.token;
@@ -141,16 +145,18 @@ async function obterToken(ambiente: AmbienteItau): Promise<string> {
   if (!clientId || !clientSecret) {
     throw new Error(`Credenciais da API do Itaú não configuradas no servidor para o ambiente ${ambiente} (ITAU_API_CLIENT_ID_${ambiente} / ITAU_API_CLIENT_SECRET_${ambiente}).`);
   }
+  if (AMBIENTES_QUE_EXIGEM_CERTIFICADO.includes(ambiente) && !carregarCertificadoCliente(ambiente)) {
+    throw new Error(`Certificado cliente (mTLS) não configurado no servidor para o ambiente ${ambiente} — obrigatório até para gerar token nesse ambiente.`);
+  }
 
-  const res = await fetch(tokenUrl, {
+  const { status, data } = await httpsRequestJson(tokenUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret }).toString(),
-    cache: 'no-store',
+    cliente: carregarCertificadoCliente(ambiente),
   });
-  const data = await res.json().catch(() => null);
-  if (!res.ok || !data?.access_token) {
-    throw new Error(`Falha ao autenticar na API do Itaú (HTTP ${res.status}): ${data?.error_description || data?.error || 'resposta inválida'}`);
+  if (status < 200 || status >= 300 || !data?.access_token) {
+    throw new Error(`Falha ao autenticar na API do Itaú (HTTP ${status}): ${data?.error_description || data?.error || data?.mensagem || 'resposta inválida'}`);
   }
 
   const novoCache = { token: data.access_token, expiraEm: Date.now() + (Number(data.expires_in || 300) * 1000) };

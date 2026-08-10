@@ -52,6 +52,12 @@ const modulosFinanceiro = [
     descricao: 'Consulta direta às APIs dos bancos integrados (Itaú SISPAG) para conciliação.',
     icone: '🔌', link: '/admin/financeiro/integracao',
     cor: 'bg-amber-50 border-amber-200 text-amber-700', hover: 'hover:border-amber-500'
+  },
+  {
+    titulo: 'Contas a Pagar',
+    descricao: 'Contas a pagar da locadora sincronizadas direto do PrimeStart (P2S) — em aberto, vencidas e quitadas.',
+    icone: '💳', link: '/admin/financeiro/contas-pagar',
+    cor: 'bg-rose-50 border-rose-200 text-rose-700', hover: 'hover:border-rose-500'
   }
 ];
 

@@ -69,18 +69,6 @@ const modulosOperacional = [
     cor: 'bg-indigo-50 border-indigo-200 text-indigo-700', hover: 'hover:border-indigo-500'
   },
   {
-    titulo: 'Fichas de Reserva',
-    descricao: 'Importação e consulta das fichas de reserva vinculadas aos eventos e feiras.',
-    icone: '📋', link: '/admin/operacional/fichas',
-    cor: 'bg-emerald-50 border-emerald-200 text-emerald-700', hover: 'hover:border-emerald-500'
-  },
-  {
-    titulo: 'Eventos/Feiras',
-    descricao: 'Cadastro de eventos e feiras com local padrão, usado para localizar o calendário operacional.',
-    icone: '📍', link: '/admin/operacional/eventos-feiras',
-    cor: 'bg-cyan-50 border-cyan-200 text-cyan-700', hover: 'hover:border-cyan-500'
-  },
-  {
     titulo: 'Checklist de Carga',
     descricao: 'Checklist de saída e devolução de equipamentos por evento, vinculado às fichas de reserva.',
     icone: '✅', link: '/admin/operacional/checklist',
@@ -91,6 +79,12 @@ const modulosOperacional = [
     descricao: 'Consulta (somente leitura) se cada colaborador já registrou o ponto do dia.',
     icone: '🕒', link: '/admin/operacional/registro-ponto',
     cor: 'bg-sky-50 border-sky-200 text-sky-700', hover: 'hover:border-sky-500'
+  },
+  {
+    titulo: 'Produtos',
+    descricao: 'Catálogo de produtos sincronizado direto do PrimeStart (P2S) — todos os atributos, preços por tabela e estoque por local.',
+    icone: '📦', link: '/admin/operacional/produtos',
+    cor: 'bg-rose-50 border-rose-200 text-rose-700', hover: 'hover:border-rose-500'
   }
 ];
 

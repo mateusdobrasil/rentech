@@ -1,6 +1,6 @@
 'use server';
 
-// app/admin/operacional/fichas/actions.ts
+// app/admin/comercial/fichas/actions.ts
 // Sincronização de Fichas de Reserva de Locação direto da API do PrimeStart
 // (TCustomFichaReservaLocacao), como alternativa ao upload manual de
 // planilha que já existe em page.tsx. Grava na mesma tabela fichas_reserva

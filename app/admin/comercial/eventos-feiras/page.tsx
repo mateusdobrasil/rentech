@@ -5,7 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import * as XLSX from 'xlsx';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../actions';
-import { sincronizarFichasReservaP2sAction } from './actions';
+import { sincronizarEventosFeirasP2sAction } from './actions';
 import { Analytics } from "@vercel/analytics/next";
 
 // ============================================================================
@@ -26,107 +26,48 @@ const normalizarPermissao = (permissaoBruta: string): string => {
 // ============================================================================
 // TIPOS
 // ============================================================================
-interface FichaReserva {
-  numero: string;
-  data_emissao: string | null;
-  status: string;
-  cliente: string;
-  evento_feira: string | null;
+interface EventoFeira {
   data_inicial: string | null;
   data_final: string | null;
-  valor_final: number | null;
-  vendedor: string | null;
-  endereco_estande: string | null;
-  valor_itens: number | null;
-  observacao_contrato: string | null;
-  data_entrega: string | null;
-  data_entrega_agenda: string | null;
-  campo_adicional_4: string | null;
-  campo_adicional_5: string | null;
-  campo_adicional_6: string | null;
-  campo_adicional_7: string | null;
-  campo_adicional_8: string | null;
-  campo_adicional_9: string | null;
-  campo_adicional_10: string | null;
-  acompanha_preco_tabela: boolean;
-  bonificacao: boolean;
-  status_faturamento: string | null;
-  faturamento_suspenso: boolean;
+  nome: string;
+  tipo_evento: string | null;
+  local: string | null;
+  status: string | null;
+  colaborador_responsavel: string | null;
+  promotor: string | null;
+  montadora: string | null;
   observacoes: string | null;
-  justificativa_suspensao: string | null;
-  faturamento_antecipado: boolean;
-  centro: string | null;
-  itens: string | null;
-  endereco_entrega: string | null;
 }
 
-type CampoFicha = keyof FichaReserva;
-type TipoCampo = 'texto' | 'data' | 'bool' | 'numero';
+type CampoEvento = keyof EventoFeira;
+type TipoCampo = 'texto' | 'data';
 
 interface LinhaProcessada {
   linha: number;
-  dados: FichaReserva;
+  dados: EventoFeira;
   erros: string[];
 }
 
-// Mapeia o cabeçalho (já normalizado, sem acento e em minúsculas) da planilha
-// "Fichas de Reserva" exportada do sistema para os campos da tabela fichas_reserva.
-// data_entrega_agenda NÃO entra aqui: é calculado a partir de data_entrega, não vem direto de coluna.
-const MAPA_COLUNAS: Record<string, CampoFicha> = {
-  'numero': 'numero',
-  'data de emissao': 'data_emissao',
-  'status': 'status',
-  'cliente': 'cliente',
-  'evento/feira associada (se houver)': 'evento_feira',
+// Mapeia o cabeçalho (normalizado, sem acento e em minúsculas) da planilha "Eventos/Feiras"
+// para os campos da tabela eventos_feiras. O cabeçalho de "Local" traz um resÃ­duo de macro do
+// Excel ("(F2=Ins., F3=Abre)") que faz parte do texto real da coluna — mapeado como está.
+const MAPA_COLUNAS: Record<string, CampoEvento> = {
   'data inicial': 'data_inicial',
   'data final': 'data_final',
-  'valor final da ficha': 'valor_final',
-  'vendedor / representante': 'vendedor',
-  'campo adicional 3': 'endereco_estande',
-  'valor total dos itens (diarias)': 'valor_itens',
-  'observacao em contrato': 'observacao_contrato',
-  'data de entrega': 'data_entrega',
-  'campo adicional 4': 'campo_adicional_4',
-  'campo adicional 5': 'campo_adicional_5',
-  'campo adicional 6': 'campo_adicional_6',
-  'campo adicional 7': 'campo_adicional_7',
-  'campo adicional 8': 'campo_adicional_8',
-  'campo adicional 9': 'campo_adicional_9',
-  'campo adicional 10': 'campo_adicional_10',
-  'acompanhando preco de tabela?': 'acompanha_preco_tabela',
-  'bonificacao': 'bonificacao',
-  'status do ultimo faturamento': 'status_faturamento',
-  'faturamento suspenso': 'faturamento_suspenso',
+  'nome': 'nome',
+  'tipo de evento': 'tipo_evento',
+  'local padrao do evento (se houver): (f2=ins., f3=abre)': 'local',
+  'status': 'status',
+  'colaborador responsavel': 'colaborador_responsavel',
+  'promotor': 'promotor',
+  'montadora': 'montadora',
   'observacoes': 'observacoes',
-  'justificativa da suspensao': 'justificativa_suspensao',
-  'tem faturamento antecipado': 'faturamento_antecipado',
-  'centro': 'centro',
-  'itens': 'itens',
-  'end. entrega': 'endereco_entrega',
 };
 
-const TIPO_CAMPO: Record<CampoFicha, TipoCampo> = {
-  numero: 'texto', data_emissao: 'data', status: 'texto', cliente: 'texto', evento_feira: 'texto',
-  data_inicial: 'data', data_final: 'data', valor_final: 'numero', vendedor: 'texto',
-  endereco_estande: 'texto', valor_itens: 'numero', observacao_contrato: 'texto',
-  data_entrega: 'texto', data_entrega_agenda: 'data',
-  campo_adicional_4: 'texto', campo_adicional_5: 'texto', campo_adicional_6: 'texto',
-  campo_adicional_7: 'texto', campo_adicional_8: 'texto', campo_adicional_9: 'texto', campo_adicional_10: 'texto',
-  acompanha_preco_tabela: 'bool', bonificacao: 'bool', status_faturamento: 'texto',
-  faturamento_suspenso: 'bool', observacoes: 'texto', justificativa_suspensao: 'texto',
-  faturamento_antecipado: 'bool', centro: 'texto', itens: 'texto', endereco_entrega: 'texto',
-};
-
-const ROTULO_CAMPO: Record<CampoFicha, string> = {
-  numero: 'Número', data_emissao: 'Data de Emissão', status: 'Status', cliente: 'Cliente', evento_feira: 'Evento/Feira',
-  data_inicial: 'Data Inicial', data_final: 'Data Final', valor_final: 'Valor Final da Ficha', vendedor: 'Vendedor',
-  endereco_estande: 'Endereço do Estande', valor_itens: 'Valor Total dos Itens', observacao_contrato: 'Observação em Contrato',
-  data_entrega: 'Data de Entrega', data_entrega_agenda: 'Data de Entrega (Agenda)',
-  campo_adicional_4: 'Campo Adicional 4', campo_adicional_5: 'Campo Adicional 5', campo_adicional_6: 'Campo Adicional 6',
-  campo_adicional_7: 'Campo Adicional 7', campo_adicional_8: 'Campo Adicional 8', campo_adicional_9: 'Campo Adicional 9', campo_adicional_10: 'Campo Adicional 10',
-  acompanha_preco_tabela: 'Acompanha Preço de Tabela', bonificacao: 'Bonificação', status_faturamento: 'Status do Último Faturamento',
-  faturamento_suspenso: 'Faturamento Suspenso', observacoes: 'Observações', justificativa_suspensao: 'Justificativa da Suspensão',
-  faturamento_antecipado: 'Tem Faturamento Antecipado', centro: 'Centro', itens: 'Itens', endereco_entrega: 'Endereço de Entrega',
+const TIPO_CAMPO: Record<CampoEvento, TipoCampo> = {
+  data_inicial: 'data', data_final: 'data', nome: 'texto', tipo_evento: 'texto',
+  local: 'texto', status: 'texto', colaborador_responsavel: 'texto', promotor: 'texto',
+  montadora: 'texto', observacoes: 'texto',
 };
 
 // ============================================================================
@@ -164,10 +105,9 @@ function parseCSV(texto: string): string[][] {
 }
 
 // Converte o valor bruto de uma célula (número, data ou texto) para o mesmo formato de texto
-// que o CSV exportado traria: datas como "DD/MM/AAAA" e valores decimais no padrão BR
-// (vírgula decimal) — é o que paraDataISO/paraNumero abaixo já sabem interpretar. Não dá pra
-// confiar no texto formatado pela própria célula (SheetJS despreza o dateNF em alguns casos e
-// pode devolver datas em formato americano), então convertemos a partir do valor cru.
+// que o CSV exportado traria: datas como "DD/MM/AAAA". Não dá pra confiar no texto formatado
+// pela própria célula (o SheetJS às vezes devolve datas em formato americano), então convertemos
+// a partir do valor cru.
 function celulaParaTexto(celula: unknown): string {
   if (celula instanceof Date) {
     // O SheetJS entrega datas de célula (cellDates: true) como um Date "ancorado em UTC" —
@@ -199,69 +139,24 @@ const limpo = (v?: string): string | null => {
   return t === '' ? null : t;
 };
 
-// O sistema de origem prefixa alguns campos de texto com um apóstrofo (força célula
-// como texto no Excel) — ex: número "'026995" ou data de entrega "'31/07 MANHÃ".
-const limparApostrofoInicial = (v?: string): string => (v ?? '').trim().replace(/^'/, '');
-
-const paraBool = (v?: string): boolean => (v ?? '').trim().toLowerCase() === 'sim';
-
-const paraDataISO = (v?: string): { iso: string | null; erro?: string } => {
+// Planilha de eventos tem datas corrompidas por um bug de exportação do Excel
+// (viram uma sequência de "#############"). Em vez de barrar a linha, gravamos null
+// e mantemos nome/local, que continuam úteis para o cadastro do evento.
+const paraDataISOTolerante = (v?: string): string | null => {
   const t = (v ?? '').trim();
-  if (t === '') return { iso: null };
   const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!m) return { iso: null, erro: `data inválida "${t}" (use DD/MM/AAAA)` };
+  if (!m) return null;
   const [, dd, mm, yyyy] = m;
-  return { iso: `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}` };
-};
-
-// "Valor Final da Ficha" / "Valor Total dos Itens" vêm no formato BR: "." separa milhar, "," separa decimal.
-const paraNumero = (v?: string): { valor: number | null; erro?: string } => {
-  const t = (v ?? '').trim();
-  if (t === '') return { valor: null };
-  const semMilhar = t.replace(/\./g, '').replace(',', '.');
-  const n = Number(semMilhar);
-  if (Number.isNaN(n)) return { valor: null, erro: `valor inválido "${t}"` };
-  return { valor: n };
-};
-
-const MESES_PT: Record<string, number> = {
-  jan: 1, fev: 2, mar: 3, abr: 4, mai: 5, jun: 6, jul: 7, ago: 8, set: 9, out: 10, nov: 11, dez: 12,
-};
-
-// "Data de Entrega" é texto livre no sistema de origem (ex: "'31/07 MANHÃ", "25 DE AGO",
-// endereços com telefone). Aqui tentamos capturar uma data aproximada só para alimentar
-// a futura agenda/calendário operacional — quando não dá para reconhecer o padrão, fica
-// null e o texto original continua disponível em data_entrega para leitura manual.
-const extrairDataEntregaAgenda = (bruto: string, anoRef: string | null): string | null => {
-  const semAspa = limparApostrofoInicial(bruto);
-  if (!semAspa) return null;
-  const semAcento = semAspa.normalize('NFD').replace(/[̀-ͯ]/g, '');
-
-  const m1 = semAcento.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/);
-  if (m1) {
-    const [, dd, mm, aaaa] = m1;
-    const ano = aaaa ? (aaaa.length === 2 ? `20${aaaa}` : aaaa) : anoRef;
-    if (!ano) return null;
-    return `${ano}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
-  }
-
-  const m2 = semAcento.match(/^(\d{1,2})\s+de\s+([a-z]{3,})/i);
-  if (m2 && anoRef) {
-    const [, dd, mesTexto] = m2;
-    const mes = MESES_PT[mesTexto.slice(0, 3).toLowerCase()];
-    if (mes) return `${anoRef}-${String(mes).padStart(2, '0')}-${dd.padStart(2, '0')}`;
-  }
-
-  return null;
+  return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
 };
 
 // Localiza a linha de cabeçalho (pula o título e linhas em branco do arquivo exportado)
 // e devolve o índice de cada coluna reconhecida mapeada para o campo da tabela.
-function localizarCabecalho(linhas: string[][]): { indiceLinha: number; colunas: Map<number, CampoFicha> } | null {
+function localizarCabecalho(linhas: string[][]): { indiceLinha: number; colunas: Map<number, CampoEvento> } | null {
   for (let i = 0; i < Math.min(linhas.length, 20); i++) {
     const normalizadas = linhas[i].map(normalizarCabecalho);
-    if (normalizadas.includes('numero') && normalizadas.includes('cliente')) {
-      const colunas = new Map<number, CampoFicha>();
+    if (normalizadas.includes('nome') && normalizadas.includes('data inicial')) {
+      const colunas = new Map<number, CampoEvento>();
       normalizadas.forEach((cabecalho, idx) => {
         const campo = MAPA_COLUNAS[cabecalho];
         if (campo) colunas.set(idx, campo);
@@ -275,7 +170,7 @@ function localizarCabecalho(linhas: string[][]): { indiceLinha: number; colunas:
 function processarLinhas(linhas: string[][]): { processadas: LinhaProcessada[]; erroGeral?: string } {
   const cabecalho = localizarCabecalho(linhas);
   if (!cabecalho) {
-    return { processadas: [], erroGeral: 'Não foi possível localizar o cabeçalho (colunas "Número" e "Cliente") no arquivo.' };
+    return { processadas: [], erroGeral: 'Não foi possível localizar o cabeçalho (colunas "Nome" e "Data Inicial") no arquivo.' };
   }
 
   const processadas: LinhaProcessada[] = [];
@@ -285,70 +180,37 @@ function processarLinhas(linhas: string[][]): { processadas: LinhaProcessada[]; 
     if (vazia) continue;
 
     const erros: string[] = [];
-    const dados: Partial<FichaReserva> = {};
+    const dados: Partial<EventoFeira> = {};
 
-    const dadosGravaveis = dados as Record<CampoFicha, string | number | boolean | null>;
+    const dadosGravaveis = dados as Record<CampoEvento, string | null>;
     cabecalho.colunas.forEach((campo, idx) => {
       const bruto = linha[idx] ?? '';
       const tipo = TIPO_CAMPO[campo];
-      if (tipo === 'texto') {
-        dadosGravaveis[campo] = (campo === 'numero' || campo === 'data_entrega')
-          ? limpo(limparApostrofoInicial(bruto))
-          : limpo(bruto);
-      } else if (tipo === 'bool') {
-        dadosGravaveis[campo] = paraBool(bruto);
-      } else if (tipo === 'numero') {
-        const { valor, erro } = paraNumero(bruto);
-        if (erro) erros.push(`${ROTULO_CAMPO[campo]}: ${erro}`);
-        dadosGravaveis[campo] = valor;
-      } else {
-        const { iso, erro } = paraDataISO(bruto);
-        if (erro) erros.push(`${ROTULO_CAMPO[campo]}: ${erro}`);
-        dadosGravaveis[campo] = iso;
-      }
+      dadosGravaveis[campo] = tipo === 'texto' ? limpo(bruto) : paraDataISOTolerante(bruto);
     });
 
-    const anoRef = (dados.data_inicial || dados.data_final || '')?.slice(0, 4) || null;
-    dados.data_entrega_agenda = extrairDataEntregaAgenda(dados.data_entrega || '', anoRef);
+    if (!dados.nome) erros.push('Nome é obrigatório');
 
-    if (!dados.numero) erros.push('Número é obrigatório');
-    if (!dados.cliente) erros.push('Cliente é obrigatório');
-    if (!dados.status) erros.push('Status é obrigatório');
-
-    processadas.push({ linha: i + 1, dados: dados as FichaReserva, erros });
+    processadas.push({ linha: i + 1, dados: dados as EventoFeira, erros });
   }
 
   return { processadas };
 }
 
-// Colunas exibidas no grid de consulta (subconjunto leve — sem itens/observações longas)
-interface FichaGrid {
+// Colunas exibidas no grid de consulta
+interface EventoGrid {
   id: string;
-  numero: string;
-  cliente: string;
-  evento_feira: string | null;
-  status: string;
   data_inicial: string | null;
   data_final: string | null;
-  data_entrega_agenda: string | null;
-  valor_final: number | null;
-  vendedor: string | null;
+  nome: string;
+  local: string | null;
+  status: string | null;
+  colaborador_responsavel: string | null;
 }
 
-const STATUS_DISPONIVEIS = [
-  'Enviado - Aguardando Retorno',
-  'Em Preparação',
-  'Aprovado - Aguardando Saída',
-  'Em Locação',
-  'Finalizado / Devolvido',
-  'Reprovado',
-  'Cancelado',
-];
+const STATUS_DISPONIVEIS = ['Futuro', 'Em Execução', 'Finalizado'];
 
 const TAMANHO_PAGINA = 50;
-
-// Status considerados "encerrados" — fichas que não precisam mais ficar na base operacional
-const STATUS_PARA_LIMPAR = ['Reprovado', 'Finalizado / Devolvido', 'Cancelado'];
 
 const formatarDataBR = (iso: string | null): string => {
   if (!iso) return '—';
@@ -356,13 +218,10 @@ const formatarDataBR = (iso: string | null): string => {
   return `${dia}/${mes}/${ano}`;
 };
 
-const formatarMoeda = (valor: number | null): string =>
-  valor != null ? valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—';
-
 // ============================================================================
 // COMPONENTE
 // ============================================================================
-export default function ImportadorFichasReserva() {
+export default function ImportadorEventosFeiras() {
   const router = useRouter();
   const pathname = usePathname();
 
@@ -377,7 +236,7 @@ export default function ImportadorFichasReserva() {
   const [sincronizando, setSincronizando] = useState(false);
   const [feedback, setFeedback] = useState<{ show: boolean; msg: string; tipo: 'success' | 'error' }>({ show: false, msg: '', tipo: 'success' });
 
-  const [fichasGrid, setFichasGrid] = useState<FichaGrid[]>([]);
+  const [eventosGrid, setEventosGrid] = useState<EventoGrid[]>([]);
   const [gridLoading, setGridLoading] = useState(false);
   const [gridErro, setGridErro] = useState('');
   const [filtroTexto, setFiltroTexto] = useState('');
@@ -385,10 +244,6 @@ export default function ImportadorFichasReserva() {
   const [pagina, setPagina] = useState(0);
   const [totalRegistros, setTotalRegistros] = useState(0);
   const [refreshGrid, setRefreshGrid] = useState(0);
-
-  const [modalLimpar, setModalLimpar] = useState<{ open: boolean; contando: boolean; total: number | null; excluindo: boolean }>({
-    open: false, contando: false, total: null, excluindo: false,
-  });
 
   useEffect(() => {
     (async () => {
@@ -423,23 +278,23 @@ export default function ImportadorFichasReserva() {
       setGridErro('');
 
       let query = supabase
-        .from('fichas_reserva')
-        .select('id, numero, cliente, evento_feira, status, data_inicial, data_final, data_entrega_agenda, valor_final, vendedor', { count: 'exact' })
-        .order('numero', { ascending: false })
+        .from('eventos_feiras')
+        .select('id, data_inicial, data_final, nome, local, status, colaborador_responsavel', { count: 'exact' })
+        .order('data_inicial', { ascending: false, nullsFirst: false })
         .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
 
       if (filtroStatus) query = query.eq('status', filtroStatus);
       if (filtroTexto.trim()) {
         const termo = `%${filtroTexto.trim()}%`;
-        query = query.or(`numero.ilike.${termo},cliente.ilike.${termo},evento_feira.ilike.${termo}`);
+        query = query.or(`nome.ilike.${termo},local.ilike.${termo}`);
       }
 
       const { data, error, count } = await query;
       if (error) {
         setGridErro(error.message);
-        setFichasGrid([]);
+        setEventosGrid([]);
       } else {
-        setFichasGrid(data || []);
+        setEventosGrid(data || []);
         setTotalRegistros(count || 0);
       }
       setGridLoading(false);
@@ -485,16 +340,24 @@ export default function ImportadorFichasReserva() {
     setImportando(true);
     setFeedback({ show: false, msg: '', tipo: 'success' });
 
-    // upsert por "numero": ficha nova é inserida, ficha já existente é atualizada
-    // (permite reimportar a mesma planilha exportada periodicamente sem duplicar nem travar).
-    const registros = validas.map(l => ({ ...l.dados, updated_at: new Date().toISOString() }));
+    // upsert por (nome, data_inicial) — permite reimportar a mesma planilha sem duplicar.
+    // A planilha traz linhas com nome+data_inicial repetidos (digitação duplicada, "CANCELADO" etc);
+    // o Postgres rejeita um upsert que tente atualizar a mesma linha duas vezes no mesmo lote, então
+    // deduplicamos aqui antes de enviar (mantendo a última ocorrência de cada par).
+    const registrosBrutos = validas.map(l => ({ ...l.dados, updated_at: new Date().toISOString() }));
+    const dedupPorChave = new Map<string, (typeof registrosBrutos)[number]>();
+    registrosBrutos.forEach((r, idx) => {
+      const chave = r.data_inicial ? `${r.nome}||${r.data_inicial}` : `__sem_data__${idx}`;
+      dedupPorChave.set(chave, r);
+    });
+    const registros = Array.from(dedupPorChave.values());
     const TAMANHO_LOTE = 500;
     let processados = 0;
     let erroLote = '';
 
     for (let i = 0; i < registros.length; i += TAMANHO_LOTE) {
       const lote = registros.slice(i, i + TAMANHO_LOTE);
-      const { error } = await supabase.from('fichas_reserva').upsert(lote, { onConflict: 'numero' });
+      const { error } = await supabase.from('eventos_feiras').upsert(lote, { onConflict: 'nome,data_inicial' });
       if (error) { erroLote = error.message; break; }
       processados += lote.length;
     }
@@ -504,11 +367,13 @@ export default function ImportadorFichasReserva() {
     } else {
       await registrarLogAuditoria({
         usuario_nome: usuarioAtual,
-        acao: 'IMPORTOU/ATUALIZOU FICHAS DE RESERVA VIA CSV',
-        setor: 'OPERACIONAL',
+        acao: 'IMPORTOU/ATUALIZOU EVENTOS/FEIRAS VIA CSV',
+        setor: 'COMERCIAL',
         equipamento_nome: `${processados} registro(s) — ${nomeArquivo}`,
       });
-      setFeedback({ show: true, tipo: 'success', msg: `${processados} ficha(s) processada(s) (inserida(s) ou atualizada(s)) com sucesso.` });
+      const duplicatasRemovidas = registrosBrutos.length - registros.length;
+      const sufixoDuplicatas = duplicatasRemovidas > 0 ? ` (${duplicatasRemovidas} duplicata(s) de nome+data ignorada(s))` : '';
+      setFeedback({ show: true, tipo: 'success', msg: `${processados} evento(s) processado(s) (inserido(s) ou atualizado(s)) com sucesso.${sufixoDuplicatas}` });
       setLinhasProcessadas([]);
       setNomeArquivo('');
       setPagina(0);
@@ -521,57 +386,23 @@ export default function ImportadorFichasReserva() {
     setSincronizando(true);
     setFeedback({ show: false, msg: '', tipo: 'success' });
     try {
-      const res = await sincronizarFichasReservaP2sAction();
+      const res = await sincronizarEventosFeirasP2sAction();
       if (!res.ok) {
         setFeedback({ show: true, tipo: 'error', msg: `Falha ao sincronizar com o PrimeStart: ${res.erro}` });
         return;
       }
       await registrarLogAuditoria({
         usuario_nome: usuarioAtual,
-        acao: 'SINCRONIZOU FICHAS DE RESERVA VIA API (P2S)',
-        setor: 'OPERACIONAL',
+        acao: 'SINCRONIZOU EVENTOS/FEIRAS VIA API (P2S)',
+        setor: 'COMERCIAL',
         equipamento_nome: `${res.info.processados} registro(s)`,
       });
-      setFeedback({ show: true, tipo: 'success', msg: `${res.info.processados} ficha(s) sincronizada(s) direto do PrimeStart (últimos 90 dias, ${res.info.totalEncontradas} encontrada(s) no total).` });
+      setFeedback({ show: true, tipo: 'success', msg: `${res.info.processados} evento(s) sincronizado(s) direto do PrimeStart (${res.info.totalEncontradas} encontrado(s) no total).` });
       setPagina(0);
       setRefreshGrid(v => v + 1);
     } finally {
       setSincronizando(false);
     }
-  };
-
-  const abrirModalLimpar = async () => {
-    setModalLimpar({ open: true, contando: true, total: null, excluindo: false });
-    const { count, error } = await supabase
-      .from('fichas_reserva')
-      .select('id', { count: 'exact', head: true })
-      .in('status', STATUS_PARA_LIMPAR);
-    setModalLimpar({ open: true, contando: false, total: error ? 0 : (count || 0), excluindo: false });
-  };
-
-  const confirmarLimpeza = async () => {
-    setModalLimpar(prev => ({ ...prev, excluindo: true }));
-
-    const { error, count } = await supabase
-      .from('fichas_reserva')
-      .delete({ count: 'exact' })
-      .in('status', STATUS_PARA_LIMPAR);
-
-    if (error) {
-      setFeedback({ show: true, tipo: 'error', msg: `Falha ao limpar fichas: ${error.message}` });
-    } else {
-      await registrarLogAuditoria({
-        usuario_nome: usuarioAtual,
-        acao: 'LIMPOU FICHAS DE RESERVA (REPROVADO / FINALIZADO / CANCELADO)',
-        setor: 'OPERACIONAL',
-        equipamento_nome: `${count ?? 0} registro(s) excluído(s)`,
-      });
-      setFeedback({ show: true, tipo: 'success', msg: `${count ?? 0} ficha(s) removida(s) com sucesso.` });
-      setPagina(0);
-      setRefreshGrid(v => v + 1);
-    }
-
-    setModalLimpar({ open: false, contando: false, total: null, excluindo: false });
   };
 
   if (authLoading) {
@@ -588,8 +419,8 @@ export default function ImportadorFichasReserva() {
         <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200">
           <div className="text-5xl mb-4">⛔</div>
           <h2 className="text-xl font-black text-red-600 uppercase tracking-wider mb-2">Acesso Restrito</h2>
-          <p className="text-sm text-gray-500 mb-6">Você não possui permissão para acessar as Fichas de Reserva.</p>
-          <button onClick={() => router.push('/admin/operacional')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
+          <p className="text-sm text-gray-500 mb-6">Você não possui permissão para acessar Eventos/Feiras.</p>
+          <button onClick={() => router.push('/admin/comercial')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
             Voltar ao Menu Principal
           </button>
         </div>
@@ -603,20 +434,20 @@ export default function ImportadorFichasReserva() {
 
       <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex-shrink-0 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 shadow-sm">
         <p className="text-[#0369A1] font-medium text-sm">
-          📥 <strong>Olá, {usuarioAtual}</strong>. Importe as fichas de reserva a partir de uma planilha CSV.
+          📥 <strong>Olá, {usuarioAtual}</strong>. Importe o cadastro de eventos/feiras (com local) a partir de uma planilha CSV.
         </p>
-        <button onClick={() => router.push('/admin/operacional')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
+        <button onClick={() => router.push('/admin/comercial')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
           ⬅ VOLTAR AO HUB
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 md:p-8">
-        <div className="max-w-7xl mx-auto space-y-6">
+        <div className="max-w-6xl mx-auto space-y-6">
 
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
             <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Sincronizar via API</h2>
             <p className="text-xs text-[#64748B] mb-4">
-              Puxa direto do PrimeStart (produção) as fichas de reserva emitidas nos últimos 90 dias — sem precisar exportar e subir planilha. Atenção: os campos Data de Entrega e Status ainda não têm equivalente confirmado na API, então ficam em branco / com o código cru (EN, EP, RE, CA, A, E, X, SB) em vez do rótulo em português nas fichas sincronizadas por aqui.
+              Puxa direto do PrimeStart (produção) os eventos/feiras com data inicial a partir de 60 dias atrás (mais todos os futuros) — sem precisar exportar e subir planilha. O status (Futuro/Em Execução/Finalizado) é calculado a partir das datas, já que o PrimeStart não expõe essa classificação pronta.
             </p>
             <button
               onClick={sincronizarViaApi}
@@ -630,7 +461,7 @@ export default function ImportadorFichasReserva() {
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
             <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Importar planilha</h2>
             <p className="text-xs text-[#64748B] mb-4">
-              Arquivo CSV (separado por ponto e vírgula) ou Excel (.xls/.xlsx), com as colunas Número, Status, Cliente, Evento/Feira Associada, Data Inicial/Final e demais campos da ficha de reserva.
+              Arquivo CSV (separado por ponto e vírgula) ou Excel (.xls/.xlsx), com as colunas Data Inicial, Data Final, Nome, Tipo de Evento, Local Padrão, Status e demais campos do evento.
             </p>
             <input
               type="file"
@@ -668,13 +499,11 @@ export default function ImportadorFichasReserva() {
                   <thead className="bg-[#F0F4F8] sticky top-0">
                     <tr className="text-left text-[#64748B] uppercase tracking-wider font-black">
                       <th className="p-2">Linha</th>
-                      <th className="p-2">Número</th>
-                      <th className="p-2">Cliente</th>
-                      <th className="p-2">Evento/Feira</th>
-                      <th className="p-2">Status</th>
+                      <th className="p-2">Nome</th>
                       <th className="p-2">Data Inicial</th>
                       <th className="p-2">Data Final</th>
-                      <th className="p-2">Valor Final</th>
+                      <th className="p-2">Local</th>
+                      <th className="p-2">Status</th>
                       <th className="p-2">Situação</th>
                     </tr>
                   </thead>
@@ -682,13 +511,11 @@ export default function ImportadorFichasReserva() {
                     {linhasProcessadas.map((l, idx) => (
                       <tr key={idx} className={`border-t border-[#E2E8F0] ${l.erros.length > 0 ? 'bg-red-50' : ''}`}>
                         <td className="p-2 text-[#94A3B8]">{l.linha}</td>
-                        <td className="p-2 font-bold">{l.dados.numero || '—'}</td>
-                        <td className="p-2">{l.dados.cliente || '—'}</td>
-                        <td className="p-2">{l.dados.evento_feira || '—'}</td>
-                        <td className="p-2">{l.dados.status || '—'}</td>
+                        <td className="p-2 font-bold">{l.dados.nome || '—'}</td>
                         <td className="p-2">{l.dados.data_inicial || '—'}</td>
                         <td className="p-2">{l.dados.data_final || '—'}</td>
-                        <td className="p-2">{l.dados.valor_final != null ? l.dados.valor_final.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—'}</td>
+                        <td className="p-2">{l.dados.local || '—'}</td>
+                        <td className="p-2">{l.dados.status || '—'}</td>
                         <td className="p-2">
                           {l.erros.length === 0
                             ? <span className="text-green-600 font-bold">OK</span>
@@ -712,18 +539,10 @@ export default function ImportadorFichasReserva() {
 
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
-              <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Fichas Cadastradas</h2>
-              <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-                <span className="text-xs font-black uppercase tracking-wider text-[#64748B]">
-                  {totalRegistros} registro(s)
-                </span>
-                <button
-                  onClick={abrirModalLimpar}
-                  className="text-xs font-black uppercase tracking-wider bg-red-50 text-red-600 border border-red-200 px-4 py-2 rounded-lg hover:bg-red-100 transition-colors"
-                >
-                  🗑️ Limpar Fichas
-                </button>
-              </div>
+              <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Eventos Cadastrados</h2>
+              <span className="text-xs font-black uppercase tracking-wider text-[#64748B]">
+                {totalRegistros} registro(s)
+              </span>
             </div>
 
             <div className="flex flex-col md:flex-row gap-3 mb-4">
@@ -731,7 +550,7 @@ export default function ImportadorFichasReserva() {
                 type="text"
                 value={filtroTexto}
                 onChange={(e) => { setFiltroTexto(e.target.value); setPagina(0); }}
-                placeholder="Buscar por número, cliente ou evento/feira..."
+                placeholder="Buscar por nome do evento ou local..."
                 className="flex-1 border border-[#E2E8F0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#336699]"
               />
               <select
@@ -748,7 +567,7 @@ export default function ImportadorFichasReserva() {
               <p className="mb-3 text-sm font-bold text-red-600">⚠ {gridErro}</p>
             )}
 
-            <div className="overflow-x-auto border border-[#E2E8F0] rounded-xl relative min-h-[120px]">
+            <div className="overflow-x-auto max-h-96 border border-[#E2E8F0] rounded-xl relative min-h-[120px]">
               {gridLoading && (
                 <div className="absolute inset-0 bg-white/70 flex items-center justify-center z-10">
                   <div className="w-8 h-8 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin"></div>
@@ -757,36 +576,30 @@ export default function ImportadorFichasReserva() {
               <table className="w-full text-xs">
                 <thead className="bg-[#F0F4F8] sticky top-0">
                   <tr className="text-left text-[#64748B] uppercase tracking-wider font-black">
-                    <th className="p-2">Número</th>
-                    <th className="p-2">Cliente</th>
-                    <th className="p-2">Evento/Feira</th>
-                    <th className="p-2">Status</th>
+                    <th className="p-2">Nome</th>
                     <th className="p-2">Data Inicial</th>
                     <th className="p-2">Data Final</th>
-                    <th className="p-2">Entrega</th>
-                    <th className="p-2">Vendedor</th>
-                    <th className="p-2">Valor Final</th>
+                    <th className="p-2">Local</th>
+                    <th className="p-2">Status</th>
+                    <th className="p-2">Responsável</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {fichasGrid.length === 0 && !gridLoading ? (
+                  {eventosGrid.length === 0 && !gridLoading ? (
                     <tr>
-                      <td colSpan={9} className="p-6 text-center text-[#94A3B8] font-bold uppercase text-xs">
-                        Nenhuma ficha encontrada.
+                      <td colSpan={6} className="p-6 text-center text-[#94A3B8] font-bold uppercase text-xs">
+                        Nenhum evento encontrado.
                       </td>
                     </tr>
                   ) : (
-                    fichasGrid.map((f) => (
-                      <tr key={f.id} className="border-t border-[#E2E8F0] hover:bg-[#F8FAFC]">
-                        <td className="p-2 font-bold">{f.numero}</td>
-                        <td className="p-2">{f.cliente}</td>
-                        <td className="p-2">{f.evento_feira || '—'}</td>
-                        <td className="p-2">{f.status}</td>
-                        <td className="p-2">{formatarDataBR(f.data_inicial)}</td>
-                        <td className="p-2">{formatarDataBR(f.data_final)}</td>
-                        <td className="p-2">{formatarDataBR(f.data_entrega_agenda)}</td>
-                        <td className="p-2">{f.vendedor || '—'}</td>
-                        <td className="p-2">{formatarMoeda(f.valor_final)}</td>
+                    eventosGrid.map((ev) => (
+                      <tr key={ev.id} className="border-t border-[#E2E8F0] hover:bg-[#F8FAFC]">
+                        <td className="p-2 font-bold">{ev.nome}</td>
+                        <td className="p-2">{formatarDataBR(ev.data_inicial)}</td>
+                        <td className="p-2">{formatarDataBR(ev.data_final)}</td>
+                        <td className="p-2">{ev.local || '—'}</td>
+                        <td className="p-2">{ev.status || '—'}</td>
+                        <td className="p-2">{ev.colaborador_responsavel || '—'}</td>
                       </tr>
                     ))
                   )}
@@ -816,61 +629,6 @@ export default function ImportadorFichasReserva() {
           </div>
         </div>
       </div>
-
-      {modalLimpar.open && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
-            <div className="bg-red-600 p-5 flex justify-between items-center text-white">
-              <h3 className="font-black uppercase tracking-wider text-sm">🗑️ Limpar Fichas</h3>
-              <button
-                onClick={() => setModalLimpar({ open: false, contando: false, total: null, excluindo: false })}
-                disabled={modalLimpar.excluindo}
-                className="text-white hover:text-red-200 text-2xl leading-none disabled:opacity-50"
-              >
-                &times;
-              </button>
-            </div>
-
-            <div className="p-6">
-              {modalLimpar.contando ? (
-                <div className="flex items-center gap-3 text-sm text-[#64748B]">
-                  <div className="w-5 h-5 border-4 border-[#E2E8F0] border-t-red-500 rounded-full animate-spin"></div>
-                  Contando registros...
-                </div>
-              ) : (
-                <>
-                  <p className="text-sm text-[#334155] mb-2">
-                    Esta ação vai <strong>excluir permanentemente</strong> do banco de dados todas as fichas com status:
-                  </p>
-                  <ul className="text-xs font-bold text-[#64748B] uppercase mb-4 space-y-1">
-                    {STATUS_PARA_LIMPAR.map(s => <li key={s}>• {s}</li>)}
-                  </ul>
-                  <p className="text-sm font-black text-red-600">
-                    {modalLimpar.total} ficha(s) serão excluída(s).
-                  </p>
-                </>
-              )}
-            </div>
-
-            <div className="p-5 border-t border-[#E2E8F0] flex flex-wrap justify-end gap-3">
-              <button
-                onClick={() => setModalLimpar({ open: false, contando: false, total: null, excluindo: false })}
-                disabled={modalLimpar.excluindo}
-                className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider bg-[#F0F4F8] text-[#0C1D4D] hover:bg-[#E2E8F0] transition-colors disabled:opacity-50"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={confirmarLimpeza}
-                disabled={modalLimpar.contando || modalLimpar.excluindo || !modalLimpar.total}
-                className="px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {modalLimpar.excluindo ? 'Excluindo...' : 'Confirmar Exclusão'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

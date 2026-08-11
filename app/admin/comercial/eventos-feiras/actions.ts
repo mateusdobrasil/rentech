@@ -1,6 +1,6 @@
 'use server';
 
-// app/admin/operacional/eventos-feiras/actions.ts
+// app/admin/comercial/eventos-feiras/actions.ts
 // Sincronização de Eventos/Feiras direto da API do PrimeStart (TCustomEvento),
 // como alternativa ao upload manual de planilha que já existe em page.tsx.
 // Grava na mesma tabela eventos_feiras (upsert por nome+data_inicial), então

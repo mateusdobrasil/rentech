@@ -90,6 +90,7 @@ interface RescisaoRow {
   dados_calculo: DadosCalculo | null; valor_total_liquido: number | null;
   storage_path: string | null; nome_arquivo: string | null;
   homologado_em: string | null; homologado_por: string | null;
+  pago_em: string | null; pago_lote_id: number | null;
 }
 
 export default function DetalheRescisaoPage() {
@@ -412,6 +413,9 @@ export default function DetalheRescisaoPage() {
           </div>
           {rescisao.status === 'HOMOLOGADA' && (
             <p className="text-[10px] text-emerald-700 font-bold mt-3">✓ Homologada em {rescisao.homologado_em ? new Date(rescisao.homologado_em).toLocaleString('pt-BR') : '—'} por {rescisao.homologado_por || '—'}.</p>
+          )}
+          {rescisao.pago_em && (
+            <p className="text-[10px] text-emerald-700 font-bold mt-1">💰 Pago via PIX em {new Date(rescisao.pago_em).toLocaleString('pt-BR')} (Financeiro RH).</p>
           )}
         </div>
 

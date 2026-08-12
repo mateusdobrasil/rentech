@@ -24,7 +24,7 @@ type Resultado = {
 // ============================================================================
 // MONTAR LOTE DE PAGAMENTO — 4 fontes selecionáveis por funcionário
 // ============================================================================
-export type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS';
+export type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO';
 
 export async function montarLoteSalariosAction(payload: {
   mesReferencia: string;
@@ -105,6 +105,26 @@ export async function montarLoteSalariosAction(payload: {
       });
     }
 
+    // RESCISÃO — só as homologadas com cálculo próprio e AINDA NÃO pagas
+    // (pago_em is null). Diferente das outras fontes, não é escopada pelo
+    // mês de competência selecionado — uma rescisão homologada em qualquer
+    // data aparece até ser paga. Se por algum motivo (ex.: readmissão)
+    // houver mais de uma rescisão homologada em aberto pro mesmo nome, fica
+    // só a mais recente (ordenado por homologado_em desc).
+    const rescisaoPorNome: Record<string, number> = {};
+    const rescisaoIdPorNome: Record<string, number> = {};
+    if (fontes.includes('RESCISAO')) {
+      const { data: rescisoes } = await db.from('folha_rescisoes')
+        .select('id, funcionario_nome, valor_total_liquido')
+        .eq('status', 'HOMOLOGADA').eq('tipo_folha', 'PROPRIO').is('pago_em', null)
+        .order('homologado_em', { ascending: false });
+      (rescisoes || []).forEach(r => {
+        if (rescisaoPorNome[r.funcionario_nome] !== undefined) return; // já pegou a mais recente
+        rescisaoPorNome[r.funcionario_nome] = Number(r.valor_total_liquido || 0);
+        rescisaoIdPorNome[r.funcionario_nome] = r.id;
+      });
+    }
+
     const valoresAdiant = payload.valoresAdiantamento || {};
     const valoresPagto = payload.valoresPagamento || {};
     const valoresDecimoTerceiro = payload.valoresDecimoTerceiro || {};
@@ -121,6 +141,7 @@ export async function montarLoteSalariosAction(payload: {
     if (fontes.includes('BENEFICIOS')) Object.keys(beneficiosPorNome).forEach(n => nomes.add(n));
     if (fontes.includes('DECIMO_TERCEIRO')) temDecimoTerceiro.forEach(n => nomes.add(n));
     if (fontes.includes('FERIAS')) temFerias.forEach(n => nomes.add(n));
+    if (fontes.includes('RESCISAO')) Object.keys(rescisaoPorNome).forEach(n => nomes.add(n));
 
     // Dados bancários + valor de adiantamento da ficha
     const { data: funcs } = await db.from('folha_funcionarios')
@@ -139,7 +160,7 @@ export async function montarLoteSalariosAction(payload: {
     const rotuloFonte: Record<FonteLote, string> = {
       FOLHA: 'Nossa folha', ADIANTAMENTO: 'Adiantamento',
       PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios',
-      DECIMO_TERCEIRO: '13º Salário', FERIAS: 'Férias'
+      DECIMO_TERCEIRO: '13º Salário', FERIAS: 'Férias', RESCISAO: 'Rescisão'
     };
 
     const itens: any[] = [];
@@ -156,7 +177,7 @@ export async function montarLoteSalariosAction(payload: {
       };
 
       const resolvido = fontesResolvidas[nome] || { recebeFechamento: true, recebeHolerite: true };
-      const entradas: { fonte: FonteLote; valor: number; temDoc?: boolean; origem?: string }[] = [];
+      const entradas: { fonte: FonteLote; valor: number; temDoc?: boolean; origem?: string; rescisaoId?: number }[] = [];
 
       if (fontes.includes('FOLHA') && resolvido.recebeFechamento && folhaPorNome[nome] !== undefined) {
         entradas.push({ fonte: 'FOLHA', valor: folhaPorNome[nome] });
@@ -187,6 +208,12 @@ export async function montarLoteSalariosAction(payload: {
         const valor = valoresFerias[nome] ?? valorOcrFeriasPorNome[nome] ?? 0;
         entradas.push({ fonte: 'FERIAS', valor, temDoc: true });
       }
+      // RESCISÃO não passa pela hierarquia recebeFechamento/recebeHolerite —
+      // a elegibilidade já foi fixada em tipo_folha='PROPRIO' no momento em
+      // que a rescisão foi criada (ver actions-rescisao.ts).
+      if (fontes.includes('RESCISAO') && rescisaoPorNome[nome] !== undefined) {
+        entradas.push({ fonte: 'RESCISAO', valor: rescisaoPorNome[nome], rescisaoId: rescisaoIdPorNome[nome] });
+      }
 
       entradas.forEach(e => {
         itens.push({
@@ -195,6 +222,7 @@ export async function montarLoteSalariosAction(payload: {
           fonte_rotulo: rotuloFonte[e.fonte],
           temDoc: e.temDoc || false,
           origem: e.origem || null,
+          rescisaoId: e.rescisaoId || null,
           valor: e.valor,
           ...bancoInfo,
           pronto: (temPix || temConta) && e.valor > 0
@@ -223,7 +251,8 @@ export async function montarLoteSalariosAction(payload: {
           PAGAMENTO: itens.filter(i => i.fonte === 'PAGAMENTO').reduce((s, i) => s + i.valor, 0),
           BENEFICIOS: itens.filter(i => i.fonte === 'BENEFICIOS').reduce((s, i) => s + i.valor, 0),
           DECIMO_TERCEIRO: itens.filter(i => i.fonte === 'DECIMO_TERCEIRO').reduce((s, i) => s + i.valor, 0),
-          FERIAS: itens.filter(i => i.fonte === 'FERIAS').reduce((s, i) => s + i.valor, 0)
+          FERIAS: itens.filter(i => i.fonte === 'FERIAS').reduce((s, i) => s + i.valor, 0),
+          RESCISAO: itens.filter(i => i.fonte === 'RESCISAO').reduce((s, i) => s + i.valor, 0)
         }
       }
     };
@@ -523,8 +552,19 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
         item.api_cod_pagamento = resultado.codPagamento || null;
         item.api_numero_lote = resultado.numeroLote || null;
         item.api_motivo_recusa = resultado.motivoRecusa || null;
-        if (STATUS_PIX_SUCESSO.includes(resultado.statusPagamento || '')) sucesso++;
-        else rejeitado++;
+        if (STATUS_PIX_SUCESSO.includes(resultado.statusPagamento || '')) {
+          sucesso++;
+          // Rescisão não é escopada por mês — sem marcar como paga aqui, a
+          // mesma rescisão voltaria a aparecer no próximo lote e pagaria em
+          // dobro. Demais fontes seguem só com a proteção implícita do mês.
+          if (item.fonte === 'RESCISAO' && item.rescisaoId) {
+            await db.from('folha_rescisoes')
+              .update({ pago_em: new Date().toISOString(), pago_lote_id: payload.loteId })
+              .eq('id', item.rescisaoId);
+          }
+        } else {
+          rejeitado++;
+        }
       }
     }
 

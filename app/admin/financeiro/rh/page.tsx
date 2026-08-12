@@ -42,13 +42,14 @@ interface Integracao {
   id: number; parceiro: string; nome_exibicao: string; tipo: string;
   ativo: boolean; ambiente: string; config: any;
 }
-type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS';
+type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO';
 
 interface ItemLote {
   funcionario_nome: string; cpf: string; valor: number; metodo: string;
   fonte: FonteLote; fonte_rotulo: string;
   temDoc: boolean;
   origem: string | null;
+  rescisaoId: number | null;
   pix_tipo: string | null; pix_chave: string | null;
   banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null;
   pronto: boolean;
@@ -90,7 +91,7 @@ export default function FinanceiroPage() {
   const [fontesSel, setFontesSel] = useState<FonteLote[]>(['FOLHA']);
   const [resumoLote, setResumoLote] = useState({
     semDados: 0, semOcr: 0, valorTotal: 0, totalItens: 0,
-    totaisPorFonte: { FOLHA: 0, ADIANTAMENTO: 0, PAGAMENTO: 0, BENEFICIOS: 0, DECIMO_TERCEIRO: 0, FERIAS: 0 }
+    totaisPorFonte: { FOLHA: 0, ADIANTAMENTO: 0, PAGAMENTO: 0, BENEFICIOS: 0, DECIMO_TERCEIRO: 0, FERIAS: 0, RESCISAO: 0 }
   });
 
   const [valoresAdiant, setValoresAdiant] = useState<Record<string, number>>({});
@@ -358,7 +359,7 @@ export default function FinanceiroPage() {
 
   const gerarLote = async () => {
     if (prontos.length === 0) { alert('Nenhum pagamento pronto para gerar o lote.'); return; }
-    const sugestao = `${fontesSel.map(f => ({ FOLHA: 'Folha', ADIANTAMENTO: 'Adiantamento', PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios', DECIMO_TERCEIRO: '13º', FERIAS: 'Férias' }[f])).join(' + ')} ${fmtMesBR(mesReferencia)}`;
+    const sugestao = `${fontesSel.map(f => ({ FOLHA: 'Folha', ADIANTAMENTO: 'Adiantamento', PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios', DECIMO_TERCEIRO: '13º', FERIAS: 'Férias', RESCISAO: 'Rescisão' }[f])).join(' + ')} ${fmtMesBR(mesReferencia)}`;
     const nome = prompt(`Nome do lote (para identificar no histórico):`, sugestao);
     if (nome === null) return;
     setSalvandoLote(true);
@@ -858,7 +859,8 @@ export default function FinanceiroPage() {
                     ['PAGAMENTO', '📄 Pagamento', 'bg-purple-50 text-purple-700 border-purple-300'],
                     ['BENEFICIOS', '🎁 Benefícios', 'bg-emerald-50 text-emerald-700 border-emerald-300'],
                     ['DECIMO_TERCEIRO', '🎄 13º Salário', 'bg-amber-50 text-amber-700 border-amber-300'],
-                    ['FERIAS', '🏖️ Férias', 'bg-cyan-50 text-cyan-700 border-cyan-300']
+                    ['FERIAS', '🏖️ Férias', 'bg-cyan-50 text-cyan-700 border-cyan-300'],
+                    ['RESCISAO', '📤 Rescisão', 'bg-red-50 text-red-700 border-red-300']
                   ] as const).map(([f, lbl, cor]) => (
                     <label key={f} className={`cursor-pointer inline-flex items-center gap-2 px-3 py-2 rounded-lg border-2 text-[11px] font-black uppercase tracking-wider transition-all ${fontesSel.includes(f) ? cor : 'bg-gray-50 text-gray-400 border-gray-200'}`}>
                       <input type="checkbox" checked={fontesSel.includes(f)} onChange={() => alternarFonte(f)} className="w-4 h-4" />
@@ -1008,6 +1010,7 @@ export default function FinanceiroPage() {
                         : (it.fonte === 'ADIANTAMENTO' || it.fonte === 'PAGAMENTO') ? 'bg-purple-100 text-purple-700'
                         : it.fonte === 'DECIMO_TERCEIRO' ? 'bg-amber-100 text-amber-700'
                         : it.fonte === 'FERIAS' ? 'bg-cyan-100 text-cyan-700'
+                        : it.fonte === 'RESCISAO' ? 'bg-red-100 text-red-700'
                         : 'bg-emerald-100 text-emerald-700';
                       const chaveEdit = `${it.funcionario_nome}::${it.fonte}`;
                       return (
@@ -1026,6 +1029,11 @@ export default function FinanceiroPage() {
                           <td className="p-3">
                             <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase ${corFonte}`}>{it.fonte_rotulo}</span>
                             {it.origem && <span className="ml-1 text-[9px] font-bold text-gray-400 uppercase">{it.origem === 'FICHA' ? '📋 ficha' : '🔍 ocr'}</span>}
+                            {it.fonte === 'RESCISAO' && it.rescisaoId && (
+                              <button type="button" onClick={() => router.push(`/admin/rh/rescisao/${it.rescisaoId}`)} className="ml-1 text-[9px] font-black text-gray-400 hover:text-red-600 uppercase underline">
+                                ↗ ver
+                              </button>
+                            )}
                           </td>
                           <td className="p-3">
                             {it.metodo === 'SEM_DADOS'

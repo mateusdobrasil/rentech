@@ -173,6 +173,7 @@ export default function GestaoDePonto() {
   const [abonoFuncionario, setAbonoFuncionario] = useState('');
   const [abonoData, setAbonoData] = useState('');
   const [abonoMotivo, setAbonoMotivo] = useState('');
+  const [copiadoImpares, setCopiadoImpares] = useState(false);
   const [abonando, setAbonando] = useState(false);
   const [abonoExistente, setAbonoExistente] = useState<{ origem: string; motivo: string | null } | null | undefined>(undefined);
   const [verificandoAbonoExistente, setVerificandoAbonoExistente] = useState(false);
@@ -814,6 +815,30 @@ export default function GestaoDePonto() {
     () => (faltasEncontradas || []).filter(f => !filtroFuncionarioPendencia || f.funcionario_nome === filtroFuncionarioPendencia),
     [faltasEncontradas, filtroFuncionarioPendencia]
   );
+
+  // Texto pronto pra colar no grupo dos funcionários — agrupa por
+  // colaborador (pode ter mais de um dia pendente) e respeita o filtro de
+  // funcionário já aplicado no grid acima.
+  const textoInconsistencias = useMemo(() => {
+    const porFuncionario = new Map<string, string[]>();
+    inconsistenciasFiltradas.forEach(r => {
+      const data = r.data_registro.split('-').reverse().join('/');
+      if (!porFuncionario.has(r.funcionario_nome)) porFuncionario.set(r.funcionario_nome, []);
+      porFuncionario.get(r.funcionario_nome)!.push(data);
+    });
+    const linhas = Array.from(porFuncionario.entries()).map(([nome, datas]) => `• ${nome} — ${datas.join(', ')}`);
+    return `⚠️ *Pontos Ímpares* — Competência ${mesAnoSelecionado.split('-').reverse().join('/')}\nPor favor, regularizem o registro de ponto nos dias abaixo:\n\n${linhas.join('\n')}`;
+  }, [inconsistenciasFiltradas, mesAnoSelecionado]);
+
+  const copiarInconsistencias = async () => {
+    try {
+      await navigator.clipboard.writeText(textoInconsistencias);
+      setCopiadoImpares(true);
+      setTimeout(() => setCopiadoImpares(false), 2000);
+    } catch {
+      alert('Não foi possível copiar automaticamente. Selecione o texto manualmente.');
+    }
+  };
 
   const abrirEspelhoUnico = (nome: string) => { setFuncionarioSelecionado(nome); setViewMode('espelho'); };
   const abrirTodosEspelhos = () => setViewMode('espelho_todos');
@@ -1654,9 +1679,18 @@ export default function GestaoDePonto() {
 
               {inconsistencias !== null && (
                 <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col">
-                  <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC]">
-                    <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Pontos Ímpar (Batidas Incompletas)</h2>
-                    <p className="text-sm text-[#64748B]">Competência: {mesAnoSelecionado.split('-').reverse().join('/')} • {inconsistenciasFiltradas.length} de {inconsistencias.length} dia(s) com inconsistência • clique numa linha pra preencher os quadros ao lado</p>
+                  <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Pontos Ímpar (Batidas Incompletas)</h2>
+                      <p className="text-sm text-[#64748B]">Competência: {mesAnoSelecionado.split('-').reverse().join('/')} • {inconsistenciasFiltradas.length} de {inconsistencias.length} dia(s) com inconsistência • clique numa linha pra preencher os quadros ao lado</p>
+                    </div>
+                    <button
+                      onClick={copiarInconsistencias}
+                      disabled={inconsistenciasFiltradas.length === 0}
+                      className={`shrink-0 font-black uppercase tracking-widest text-xs px-4 py-2.5 rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${copiadoImpares ? 'bg-emerald-600 text-white' : 'bg-[#336699] hover:bg-[#284B8C] text-white'}`}
+                    >
+                      {copiadoImpares ? '✓ Copiado!' : '📋 Copiar p/ Grupo'}
+                    </button>
                   </div>
 
                   {inconsistenciasFiltradas.length === 0 ? (

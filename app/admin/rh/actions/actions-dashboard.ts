@@ -7,6 +7,7 @@ import { supabaseAdmin } from '../../../lib/supabase';
 import { painelDocumentosAction } from './actions-documentos-func';
 import { painelFeriasAction } from './actions-ferias';
 import { painelAfastamentosAction } from './actions-afastamentos';
+import { painelRescisoesAction } from './actions-rescisao';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -47,7 +48,8 @@ export async function painelRhAction(): Promise<Resultado> {
       solicitacoesRes,
       pontoMesRes,
       feriasRes,
-      afastamentosRes
+      afastamentosRes,
+      rescisoesRes
     ] = await Promise.all([
       painelDocumentosAction(),
       db.from('folha_funcionarios').select('nome_completo, tipo_contrato, ativo, data_admissao, data_nascimento, departamento').eq('ativo', true),
@@ -58,7 +60,8 @@ export async function painelRhAction(): Promise<Resultado> {
       db.from('folha_ponto_diaria').select('funcionario_nome, data_registro, entrada_1, saida_1, entrada_2, saida_2')
         .gte('data_registro', dataInicio).lte('data_registro', dataFim),
       painelFeriasAction(),
-      painelAfastamentosAction()
+      painelAfastamentosAction(),
+      painelRescisoesAction()
     ]);
 
     // Holerites em aberto: funcionário ativo, já admitido até a competência,
@@ -99,7 +102,8 @@ export async function painelRhAction(): Promise<Resultado> {
         aniversariantes,
         feriasVencidas: feriasRes.ok ? feriasRes.info?.totais?.vencidas || 0 : 0,
         feriasVencendo: feriasRes.ok ? feriasRes.info?.totais?.vencendo || 0 : 0,
-        afastamentosAtivos: afastamentosRes.ok ? afastamentosRes.info?.totais?.ativos || 0 : 0
+        afastamentosAtivos: afastamentosRes.ok ? afastamentosRes.info?.totais?.ativos || 0 : 0,
+        rescisoesEmAndamento: rescisoesRes.ok ? rescisoesRes.info?.totais?.emAndamento || 0 : 0
       }
     };
   } catch (e: any) {

@@ -49,6 +49,7 @@ interface PainelRh {
   feriasVencidas: number;
   feriasVencendo: number;
   afastamentosAtivos: number;
+  rescisoesEmAndamento: number;
 }
 
 // Lista de módulos do hub. As permissões de cada um NÃO ficam mais aqui —
@@ -97,6 +98,12 @@ const modulosRh = [
     descricao: 'Prazos de férias por período aquisitivo e controle de atestados/licenças.',
     icone: '🏖️', link: '/admin/rh/ferias-afastamentos',
     cor: 'bg-emerald-50 border-emerald-200 text-emerald-700', hover: 'hover:border-emerald-500'
+  },
+  {
+    titulo: 'Rescisão de Funcionário',
+    descricao: 'Registro e cálculo de rescisões CLT, com upload do TRCT para casos de folha na contabilidade.',
+    icone: '📤', link: '/admin/rh/rescisao',
+    cor: 'bg-red-50 border-red-200 text-red-700', hover: 'hover:border-red-500'
   },
   {
     titulo: 'Relatórios e Dashboards',
@@ -294,6 +301,13 @@ export default function RhHub() {
               destaque: (painel?.afastamentosAtivos ?? 0) > 0, link: '/admin/rh/ferias-afastamentos'
             });
           }
+          if (linksAutorizados.has('/admin/rh/rescisao')) {
+            cartoes.push({
+              chave: 'rescisoes', titulo: 'Rescisões em Andamento', icone: '📤',
+              valor: painelLoading ? '—' : `${painel?.rescisoesEmAndamento ?? 0}`,
+              destaque: (painel?.rescisoesEmAndamento ?? 0) > 0, link: '/admin/rh/rescisao'
+            });
+          }
           if (linksAutorizados.has('/admin/rh/funcionario')) {
             const aniversariantes = painel?.aniversariantes || [];
             cartoes.push({
@@ -308,7 +322,7 @@ export default function RhHub() {
           if (cartoes.length === 0) return null;
 
           return (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-10">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-10">
               {cartoes.map(c => (
                 <button
                   key={c.chave}

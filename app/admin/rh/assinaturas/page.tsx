@@ -5,11 +5,12 @@ import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../../lib/supabase'; 
-import 
-  { 
-    listarAssinaturasAction, consultarAssinaturaAction, enviarDocumentoAvulsoAction, 
-    listarFuncionariosAtivosAction, baixarAssinadoAction, atualizarTodasAssinaturasAction 
+import
+  {
+    listarAssinaturasAction, consultarAssinaturaAction, enviarDocumentoAvulsoAction,
+    listarFuncionariosAtivosAction, baixarAssinadoAction, atualizarTodasAssinaturasAction
   } from '../actions/actions-assinatura';
+import { listarAssinaturasRescisaoAction } from '../actions/actions-rescisao';
 import logoColorido from '../../../../app/imgs/logo.png';
 
 interface Assinatura {
@@ -42,12 +43,77 @@ const STATUS_INFO: Record<string, { label: string; cor: string; bg: string; icon
 
 export default function AssinaturasPage() {
   const router = useRouter();
+  const [aba, setAba] = useState<'HOLERITES' | 'RESCISAO'>('HOLERITES');
+
   const [loading, setLoading] = useState(true);
   const [assinaturas, setAssinaturas] = useState<Assinatura[]>([]);
   const [atualizando, setAtualizando] = useState<string | null>(null);
   const [baixandoAssinado, setBaixandoAssinado] = useState<string | null>(null);
   const [atualizandoTodas, setAtualizandoTodas] = useState(false);
   const [filtro, setFiltro] = useState<'TODOS' | 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO'>('TODOS');
+
+  // ==========================================================================
+  // ABA RESCISÃO — mesmo mecanismo de assinatura (folha_holerite_assinaturas),
+  // só que sem recorte de mês: cada rescisão tem seu próprio marcador
+  // (RESCISAO-{id}), então lista tudo de uma vez e linka de volta pra tela
+  // de detalhe da rescisão.
+  // ==========================================================================
+  const [assinaturasRescisao, setAssinaturasRescisao] = useState<(Assinatura & { rescisaoId: number | null })[]>([]);
+  const [loadingRescisao, setLoadingRescisao] = useState(true);
+  const [atualizandoRescisao, setAtualizandoRescisao] = useState<string | null>(null);
+  const [baixandoRescisao, setBaixandoRescisao] = useState<string | null>(null);
+  const [filtroRescisao, setFiltroRescisao] = useState<'TODOS' | 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO'>('TODOS');
+
+  const carregarRescisoes = async () => {
+    setLoadingRescisao(true);
+    try {
+      const res = await listarAssinaturasRescisaoAction();
+      if (!res.ok) throw new Error(res.erro);
+      setAssinaturasRescisao(res.info.assinaturas);
+    } catch (e: any) {
+      alert('Erro ao carregar assinaturas de rescisão: ' + e.message);
+    } finally {
+      setLoadingRescisao(false);
+    }
+  };
+
+  useEffect(() => { carregarRescisoes(); }, []);
+
+  const atualizarStatusRescisao = async (a: Assinatura) => {
+    setAtualizandoRescisao(a.funcionario_nome);
+    try {
+      const res = await consultarAssinaturaAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia });
+      if (!res.ok) throw new Error(res.erro);
+      carregarRescisoes();
+    } catch (e: any) {
+      alert('Erro ao atualizar status: ' + e.message);
+    } finally {
+      setAtualizandoRescisao(null);
+    }
+  };
+
+  const abrirAssinadoRescisao = async (a: Assinatura) => {
+    setBaixandoRescisao(a.funcionario_nome);
+    try {
+      const res = await baixarAssinadoAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia });
+      if (!res.ok) throw new Error(res.erro);
+      window.open(res.info.url, '_blank', 'noopener,noreferrer');
+    } catch (e: any) {
+      alert('Erro ao abrir o documento assinado: ' + e.message);
+    } finally {
+      setBaixandoRescisao(null);
+    }
+  };
+
+  const filtradasRescisao = useMemo(() =>
+    filtroRescisao === 'TODOS' ? assinaturasRescisao : assinaturasRescisao.filter(a => a.status === filtroRescisao),
+    [assinaturasRescisao, filtroRescisao]);
+
+  const contagemRescisao = useMemo(() => {
+    const c = { total: assinaturasRescisao.length, ENVIADO: 0, VISUALIZADO: 0, ASSINADO: 0, REJEITADO: 0 };
+    assinaturasRescisao.forEach(a => { if (a.status in c) (c as any)[a.status]++; });
+    return c;
+  }, [assinaturasRescisao]);
 
   // Upload avulso
   const [mostrarUpload, setMostrarUpload] = useState(false);
@@ -242,6 +308,18 @@ export default function AssinaturasPage() {
 
       <div className="p-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full space-y-6">
 
+        {/* ABAS */}
+        <div className="flex bg-white p-1 rounded-xl border border-[#E2E8F0] w-fit shadow-sm gap-1">
+          <button onClick={() => setAba('HOLERITES')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${aba === 'HOLERITES' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:bg-gray-50'}`}>
+            💰 Holerites
+          </button>
+          <button onClick={() => setAba('RESCISAO')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${aba === 'RESCISAO' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:bg-gray-50'}`}>
+            📤 Rescisão {contagemRescisao.total > 0 && <span className="ml-1 bg-red-500 text-white rounded-full px-1.5 py-0.5 text-[9px]">{contagemRescisao.total}</span>}
+          </button>
+        </div>
+
+        {aba === 'HOLERITES' && (<>
+
         {/* Painel Superior de Ações */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
           <div>
@@ -418,6 +496,123 @@ export default function AssinaturasPage() {
         <p className="text-[10px] text-gray-400 font-bold tracking-wide mt-2 text-center uppercase">
           A atualização sincroniza nativamente através dos webhooks da infraestrutura da Autentique. Use "↻ Consultar" se precisar forçar uma varredura manual.
         </p>
+        </>)}
+
+        {/* ============================================================================ */}
+        {/* ABA: RESCISÃO — mesmo mecanismo, sem recorte de mês */}
+        {/* ============================================================================ */}
+        {aba === 'RESCISAO' && (<>
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+            <div>
+              <h1 className="text-xl font-black text-[#0C1D4D] uppercase tracking-wider">Assinaturas de Rescisão</h1>
+              <p className="text-sm text-[#64748B] font-medium mt-1">{contagemRescisao.total} TRCT(s) enviado(s) para assinatura</p>
+            </div>
+            <button onClick={() => router.push('/admin/rh/rescisao')} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-5 py-3.5 rounded-xl shadow-sm hover:bg-[#284B8C] transition-all text-center">
+              Ir para Rescisões
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+            {[
+              { k: 'total', lbl: 'Total Enviados', val: contagemRescisao.total, cor: '#0C1D4D', bg: 'border-t-[#0C1D4D]' },
+              { k: 'ENVIADO', lbl: 'Aguardando', val: contagemRescisao.ENVIADO, cor: '#4F46E5', bg: 'border-t-[#4F46E5]' },
+              { k: 'VISUALIZADO', lbl: 'Visualizados', val: contagemRescisao.VISUALIZADO, cor: '#2563EB', bg: 'border-t-[#2563EB]' },
+              { k: 'ASSINADO', lbl: 'Assinados', val: contagemRescisao.ASSINADO, cor: '#16A34A', bg: 'border-t-[#16A34A]' },
+              { k: 'REJEITADO', lbl: 'Rejeitados', val: contagemRescisao.REJEITADO, cor: '#DC2626', bg: 'border-t-[#DC2626]' },
+            ].map(c => (
+              <div key={c.k} className={`bg-white rounded-2xl shadow-sm border border-[#E2E8F0] border-t-4 ${c.bg} p-4 text-center`}>
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">{c.lbl}</p>
+                <p className="text-3xl font-black" style={{ color: c.cor }}>{c.val}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex bg-white p-1 rounded-xl border border-[#E2E8F0] w-fit shadow-sm gap-1 flex-wrap">
+            {(['TODOS', 'ENVIADO', 'VISUALIZADO', 'ASSINADO', 'REJEITADO'] as const).map(f => (
+              <button key={f} onClick={() => setFiltroRescisao(f)} className={`px-4 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${filtroRescisao === f ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D] hover:bg-gray-50'}`}>
+                {f === 'TODOS' ? 'Todos' : STATUS_INFO[f].label}
+              </button>
+            ))}
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden">
+            {loadingRescisao ? (
+              <div className="p-16 text-center text-gray-400 font-bold uppercase tracking-wider flex flex-col items-center justify-center gap-3">
+                <div className="w-8 h-8 border-4 border-[#0C1D4D] border-t-transparent rounded-full animate-spin"></div>
+                Buscando registros técnicos...
+              </div>
+            ) : filtradasRescisao.length === 0 ? (
+              <div className="p-16 text-center text-gray-400 font-bold uppercase tracking-wider">
+                {assinaturasRescisao.length === 0
+                  ? 'Nenhum TRCT enviado para assinatura ainda. Envie pela tela de Rescisão (depois de homologada).'
+                  : 'Nenhuma assinatura com este status.'}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left border-collapse">
+                  <thead className="bg-[#F8FAFC] border-b-2 border-[#E2E8F0]">
+                    <tr className="text-[10px] uppercase font-black tracking-widest text-[#64748B]">
+                      <th className="p-4">Colaborador</th>
+                      <th className="p-4 text-center w-36">Status</th>
+                      <th className="p-4">Enviado em</th>
+                      <th className="p-4">Visualizado em</th>
+                      <th className="p-4">Assinado em</th>
+                      <th className="p-4 text-center w-56">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E2E8F0] font-medium">
+                    {filtradasRescisao.map(a => {
+                      const info = STATUS_INFO[a.status] || STATUS_INFO.PENDENTE;
+                      return (
+                        <tr key={a.id} className="hover:bg-[#F8FAFC] transition-colors">
+                          <td className="p-4">
+                            <span className="font-black text-[#0C1D4D] text-sm block">{a.funcionario_nome}</span>
+                            <span className="text-[10px] text-gray-400 font-bold block uppercase mt-0.5">TRCT — Rescisão</span>
+                            <span className="text-[10px] text-gray-500 font-medium block mt-0.5">
+                              CPF {a.cpf || '—'}{a.sandbox && <span className="ml-1.5 text-amber-600 font-black bg-amber-50 px-1.5 py-0.5 rounded text-[8px]">AMB. TESTE</span>}
+                            </span>
+                          </td>
+                          <td className="p-4 text-center">
+                            <span className="text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-wider inline-flex items-center gap-1" style={{ color: info.cor, background: info.bg }}>
+                              {info.icone} {info.label}
+                            </span>
+                          </td>
+                          <td className="p-4 text-[11px] text-gray-600">{dataHora(a.enviado_em)}</td>
+                          <td className="p-4 text-[11px] text-gray-600">{dataHora(a.visualizado_em)}</td>
+                          <td className="p-4 text-[11px] text-gray-600">{dataHora(a.assinado_em)}</td>
+                          <td className="p-4 text-center">
+                            <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                              {a.rescisaoId && (
+                                <button onClick={() => router.push(`/admin/rh/rescisao/${a.rescisaoId}`)} className="text-[10px] font-black text-gray-600 uppercase tracking-wider hover:bg-gray-100 px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white transition-colors">
+                                  ↗ Rescisão
+                                </button>
+                              )}
+                              {a.status !== 'ASSINADO' && a.status !== 'REJEITADO' && (
+                                <button onClick={() => atualizarStatusRescisao(a)} disabled={atualizandoRescisao !== null} className="text-[10px] font-black text-[#336699] uppercase tracking-wider hover:bg-blue-50 px-2.5 py-1.5 rounded-lg disabled:opacity-50 border border-blue-200 bg-white transition-colors">
+                                  {atualizandoRescisao === a.funcionario_nome ? '...' : '↻ Consultar'}
+                                </button>
+                              )}
+                              {a.link_assinatura && a.status !== 'ASSINADO' && (
+                                <a href={a.link_assinatura} target="_blank" rel="noopener noreferrer" className="text-[10px] font-black text-indigo-600 uppercase tracking-wider hover:bg-indigo-50 px-2.5 py-1.5 rounded-lg border border-indigo-200 bg-white transition-colors inline-block">
+                                  🔗 Link
+                                </a>
+                              )}
+                              {a.status === 'ASSINADO' && (
+                                <button onClick={() => abrirAssinadoRescisao(a)} disabled={baixandoRescisao !== null} className="text-[10px] font-black text-green-700 uppercase tracking-wider hover:bg-green-50 px-2.5 py-1.5 rounded-lg border border-green-200 disabled:opacity-50 bg-white transition-colors">
+                                  {baixandoRescisao === a.funcionario_nome ? '...' : '⬇ Obter PDF'}
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>)}
       </div>
     </div>
   );

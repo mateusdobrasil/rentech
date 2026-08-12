@@ -28,6 +28,17 @@ interface FreelancerBusca {
   valor_diaria: number | null;
 }
 
+// Interface simplificada do Funcionário para o Modal do Banco de Funcionários (REEMBOLSO)
+interface FuncionarioBusca {
+  id: string;
+  nome_completo: string;
+  cpf: string | null;
+  celular: string | null;
+  pix_chave: string | null;
+  pix_tipo: string | null;
+  endereco: string | null;
+}
+
 export default function NovaOrdemPagamento() {
   const router = useRouter();
 
@@ -78,6 +89,12 @@ export default function NovaOrdemPagamento() {
   const [listaFreelancers, setListaFreelancers] = useState<FreelancerBusca[]>([]);
   const [termoBuscaFree, setTermoBuscaFree] = useState('');
   const [loadingFree, setLoadingFree] = useState(false);
+
+  // Modais e Estados da Busca de Funcionários (Banco de Funcionários, para REEMBOLSO)
+  const [modalFuncionarioAberto, setModalFuncionarioAberto] = useState(false);
+  const [listaFuncionarios, setListaFuncionarios] = useState<FuncionarioBusca[]>([]);
+  const [termoBuscaFunc, setTermoBuscaFunc] = useState('');
+  const [loadingFunc, setLoadingFunc] = useState(false);
 
   // Gestão Dinâmica de Itens
   const [itens, setItens] = useState<ItemOP[]>(
@@ -245,6 +262,56 @@ export default function NovaOrdemPagamento() {
       (termoDigitos && f.cpf && f.cpf.replace(/\D/g, '').includes(termoDigitos))
     );
   }, [listaFreelancers, termoBuscaFree]);
+
+  // ============================================================================
+  // FUNÇÕES DE BUSCA DE FUNCIONÁRIO (MODAL — REEMBOLSO)
+  // ============================================================================
+  const abrirModalFuncionario = async () => {
+    setModalFuncionarioAberto(true);
+    setLoadingFunc(true);
+    const { data, error } = await supabase
+      .from('folha_funcionarios')
+      .select('id, nome_completo, cpf, celular, pix_chave, pix_tipo, endereco')
+      .eq('ativo', true)
+      .order('nome_completo', { ascending: true });
+    if (!error && data) {
+      setListaFuncionarios(data);
+    }
+    setLoadingFunc(false);
+  };
+
+  const selecionarFuncionario = (func: FuncionarioBusca) => {
+    setEmpresaRecebedora(func.nome_completo);
+    setCnpjCpf(func.cpf || '');
+    aplicarMascaraCpfCnpj(func.cpf || '');
+    setEndereco(func.endereco || '');
+    // Funcionário é sempre pessoa física — o CPF acima já serve como
+    // signatário; não precisa preencher o campo separado.
+    aplicarMascaraCelularSignatario(func.celular || '');
+    setTipoPagamento('PIX');
+
+    let tipoMapeado = 'CELULAR';
+    const tipoFunc = (func.pix_tipo || '').toUpperCase();
+    if (tipoFunc.includes('CPF') || tipoFunc.includes('CNPJ')) tipoMapeado = 'CPF/CNPJ';
+    if (tipoFunc.includes('EMAIL') || tipoFunc.includes('E-MAIL')) tipoMapeado = 'EMAIL';
+    if (tipoFunc.includes('ALEAT')) tipoMapeado = 'ALEATÓRIO';
+
+    setChavePix(tipoMapeado);
+    setDadosPagamento(func.pix_chave || '');
+    setModalFuncionarioAberto(false);
+  };
+
+  const funcionariosFiltrados = useMemo(() => {
+    if (!termoBuscaFunc) return listaFuncionarios;
+    const termo = termoBuscaFunc.toLowerCase();
+    // Mesmo tratamento do Banco de Talentos: compara CPF só pelos dígitos,
+    // já que o cadastro de RH nem sempre grava com a mesma pontuação digitada.
+    const termoDigitos = termo.replace(/\D/g, '');
+    return listaFuncionarios.filter(f =>
+      f.nome_completo.toLowerCase().includes(termo) ||
+      (termoDigitos && f.cpf && f.cpf.replace(/\D/g, '').includes(termoDigitos))
+    );
+  }, [listaFuncionarios, termoBuscaFunc]);
 
   // ============================================================================
   // ENVIO DO FORMULÁRIO 
@@ -426,6 +493,53 @@ export default function NovaOrdemPagamento() {
         </div>
       )}
 
+      {/* Modal do Banco de Funcionários (REEMBOLSO) */}
+      {modalFuncionarioAberto && (
+        <div className="fixed inset-0 z-[8000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white">
+              <h3 className="font-black uppercase tracking-wider text-sm">👷 Buscar no Banco de Funcionários</h3>
+              <button onClick={() => setModalFuncionarioAberto(false)} className="text-white hover:text-red-400 text-2xl leading-none">&times;</button>
+            </div>
+
+            <div className="p-4 border-b border-[#E2E8F0] bg-[#F8FAFC]">
+              <input
+                type="text"
+                placeholder="Pesquisar por nome ou CPF..."
+                className="w-full p-3 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] outline-none focus:border-[#336699]"
+                value={termoBuscaFunc}
+                onChange={(e) => setTermoBuscaFunc(e.target.value)}
+              />
+            </div>
+
+            <div className="overflow-y-auto flex-grow p-4 bg-white">
+              {loadingFunc ? (
+                <div className="text-center py-10 text-[#64748B] font-bold text-sm">Carregando funcionários...</div>
+              ) : funcionariosFiltrados.length === 0 ? (
+                <div className="text-center py-10 text-[#64748B] font-bold text-sm">Nenhum funcionário encontrado.</div>
+              ) : (
+                <div className="space-y-3">
+                  {funcionariosFiltrados.map((func) => (
+                    <div key={func.id} className="border border-[#E2E8F0] rounded-xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-[#336699] transition-colors">
+                      <div>
+                        <strong className="block text-sm font-black text-[#0C1D4D]">{func.nome_completo}</strong>
+                        <p className="text-xs text-[#64748B] mt-1">CPF: {func.cpf || 'Não info.'} | Cel: {func.celular || 'Não info.'}</p>
+                      </div>
+                      <button
+                        onClick={() => selecionarFuncionario(func)}
+                        className="w-full sm:w-auto bg-[#E0F2FE] text-[#0369A1] hover:bg-[#BAE6FD] font-bold text-[10px] uppercase tracking-wider px-4 py-2 rounded-lg transition-colors flex-shrink-0"
+                      >
+                        Selecionar Dados
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-lg border border-[#E2E8F0] overflow-hidden print:border-none print:shadow-none">
         
         {/* Cabeçalho */}
@@ -499,11 +613,19 @@ export default function NovaOrdemPagamento() {
               <h3 className="text-sm font-black text-[#0A2A4A] uppercase tracking-widest">Dados do Favorecido (Recebedor)</h3>
               
               {natureza === 'FREELANCE' && (
-                <button 
-                  onClick={abrirModalFreelance} 
+                <button
+                  onClick={abrirModalFreelance}
                   className="bg-[#0C1D4D] text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-[#284B8C] transition-colors flex items-center gap-2 shadow-sm"
                 >
                   👷 Autocompletar do Banco de Talentos
+                </button>
+              )}
+              {natureza === 'REEMBOLSO' && (
+                <button
+                  onClick={abrirModalFuncionario}
+                  className="bg-[#0C1D4D] text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-[#284B8C] transition-colors flex items-center gap-2 shadow-sm"
+                >
+                  👷 Autocompletar do Banco de Funcionários
                 </button>
               )}
             </div>

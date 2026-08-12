@@ -1,46 +1,29 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-import { supabase } from '../../../lib/supabase';
 import {
   listarAutomacoesAction, alternarStatusAutomacaoAction,
   criarAutomacaoAction, atualizarAutomacaoAction, excluirAutomacaoAction,
   listarFuncionariosParaAutomacaoAction, contarEnviosMesAction, verificarStatusZapiAction,
   type RotinaAutomacaoDB, type FormAutomacao, type FuncionarioParaAutomacao
 } from './actions';
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 // Tipos de Automação (RotinaAutomacaoDB vem de ./actions, refletindo a tabela folha_automacoes)
 
 export default function GestaoAgendamentos() {
   const router = useRouter();
-  const pathname = usePathname();
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
-  const [usuarioAtual, setUsuarioAtual] = useState('');
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Gestor' });
 
   const [rotinas, setRotinas] = useState<RotinaAutomacaoDB[]>([]);
   const [rotinasLoading, setRotinasLoading] = useState(true);
 
   // Carrega as automações reais da tabela folha_automacoes
   const carregarRotinas = async () => {
-    const res = await listarAutomacoesAction();
+    const res = await listarAutomacoesAction(accessToken);
     if (!res.ok) {
       alert('Erro ao carregar as automações: ' + res.erro);
     } else {
@@ -60,8 +43,8 @@ export default function GestaoAgendamentos() {
   const [statusZapiLoading, setStatusZapiLoading] = useState(true);
 
   useEffect(() => {
-    contarEnviosMesAction().then(res => { if (res.ok) setEnviosMes(res.data || { whatsapp: 0, email: 0 }); });
-    verificarStatusZapiAction().then(res => {
+    contarEnviosMesAction(accessToken).then(res => { if (res.ok) setEnviosMes(res.data || { whatsapp: 0, email: 0 }); });
+    verificarStatusZapiAction(accessToken).then(res => {
       if (res.ok) setStatusZapi(res.data || { conectado: false });
       setStatusZapiLoading(false);
     });
@@ -71,7 +54,7 @@ export default function GestaoAgendamentos() {
   // já que não existe uma coluna de "departamento" na tabela de funcionários)
   const [funcionarios, setFuncionarios] = useState<FuncionarioParaAutomacao[]>([]);
   useEffect(() => {
-    listarFuncionariosParaAutomacaoAction().then(res => {
+    listarFuncionariosParaAutomacaoAction(accessToken).then(res => {
       if (res.ok) setFuncionarios(res.data || []);
     });
   }, []);
@@ -162,8 +145,8 @@ export default function GestaoAgendamentos() {
       destinatarios: modoAniversariantes || modalAutomacao.modoTodos ? [] : modalAutomacao.form.destinatarios,
     };
     const res = modalAutomacao.isNew
-      ? await criarAutomacaoAction(payload)
-      : await atualizarAutomacaoAction(modalAutomacao.id!, payload);
+      ? await criarAutomacaoAction(payload, accessToken)
+      : await atualizarAutomacaoAction(modalAutomacao.id!, payload, accessToken);
     setSalvandoAutomacao(false);
 
     if (!res.ok) {
@@ -179,7 +162,7 @@ export default function GestaoAgendamentos() {
     if (!confirm(`Excluir a automação "${modalAutomacao.form.nome}"? Isso não pode ser desfeito.`)) return;
 
     setSalvandoAutomacao(true);
-    const res = await excluirAutomacaoAction(modalAutomacao.id);
+    const res = await excluirAutomacaoAction(modalAutomacao.id, accessToken);
     setSalvandoAutomacao(false);
 
     if (!res.ok) {
@@ -190,57 +173,6 @@ export default function GestaoAgendamentos() {
     carregarRotinas();
   };
 
-  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-
-      if (!session) {
-        router.push('/login');
-        return;
-      }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      // Consulta no banco de dados quem pode aceder a esta rota
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      // Normaliza o perfil logado e verifica contra o banco
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      // Aprovado
-      setUsuarioAtual(perfil.nome || 'Gestor');
-      setAuthLoading(false);
-    }
-    
-    checkAuth();
-  }, [router, pathname]);
-
   // Função para alternar o status da rotina (Ligar/Desligar).
   // Atualiza otimisticamente e grava em folha_automacoes: é essa coluna `ativo`
   // que o Cron consulta antes de disparar, então isto realmente liga/desliga o envio.
@@ -248,7 +180,7 @@ export default function GestaoAgendamentos() {
     const novoStatus = !ativoAtual;
     setRotinas(prev => prev.map(r => r.id === id ? { ...r, ativo: novoStatus } : r));
 
-    const res = await alternarStatusAutomacaoAction(id, novoStatus);
+    const res = await alternarStatusAutomacaoAction(id, novoStatus, accessToken);
     if (!res.ok) {
       alert('Erro ao atualizar o status: ' + res.erro);
       setRotinas(prev => prev.map(r => r.id === id ? { ...r, ativo: ativoAtual } : r));
@@ -262,6 +194,8 @@ export default function GestaoAgendamentos() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

@@ -27,24 +27,33 @@ export async function carregarPortalHomeAction(accessToken: string): Promise<Res
 
   // Cada seção falha isolada — mesmo comportamento de antes, quando cada
   // Server Action tinha seu próprio try/catch: um erro no crachá, por
-  // exemplo, não pode derrubar documentos/holerites/checklist.
+  // exemplo, não pode derrubar documentos/holerites/checklist. Mas a falha
+  // em si precisa chegar até a tela (erroCracha/erroPodeDirigir) — antes
+  // virava silenciosamente "sem crachá"/"sem permissão de dirigir",
+  // indistinguível de um funcionário que genuinamente não tem crachá.
   const [cracha, docs, holerites, podeDirigir] = await Promise.all([
-    buscarCrachaDados(db, func.funcionarioNome).catch(() => null),
+    buscarCrachaDados(db, func.funcionarioNome)
+      .then(cracha => ({ cracha, erro: null as string | null }))
+      .catch((e: any) => ({ cracha: null, erro: e.message || 'Erro ao carregar o crachá.' })),
     carregarDocumentosPorNome(db, func.funcionarioNome)
       .then(documentos => ({ documentos, erro: null as string | null }))
       .catch((e: any) => ({ documentos: [] as any[], erro: e.message || 'Erro ao carregar documentos.' })),
     carregarHoleritesPorNome(db, func.funcionarioNome).catch(() => []),
-    exigirPermissaoDirigir(db, func.funcionarioNome).catch(() => false),
+    exigirPermissaoDirigir(db, func.funcionarioNome)
+      .then(podeDirigir => ({ podeDirigir, erro: null as string | null }))
+      .catch((e: any) => ({ podeDirigir: false, erro: e.message || 'Erro ao verificar permissão de dirigir.' })),
   ]);
 
   return {
     ok: true,
     info: {
-      cracha,
+      cracha: cracha.cracha,
+      erroCracha: cracha.erro,
       documentos: docs.documentos,
       erroDocumentos: docs.erro,
       holerites,
-      podeDirigir,
+      podeDirigir: podeDirigir.podeDirigir,
+      erroPodeDirigir: podeDirigir.erro,
     }
   };
 }

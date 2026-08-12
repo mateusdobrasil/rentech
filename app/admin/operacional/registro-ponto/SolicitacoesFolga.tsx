@@ -110,7 +110,7 @@ function CalendarioFolgas({ solicitacoes }: { solicitacoes: SolicitacaoHistorico
   );
 }
 
-export default function SolicitacoesFolga({ usuarioAtual, onCountChange, mostrarCalendario }: { usuarioAtual: string; onCountChange?: (pendentes: number) => void; mostrarCalendario?: boolean }) {
+export default function SolicitacoesFolga({ usuarioAtual, accessToken, onCountChange, mostrarCalendario }: { usuarioAtual: string; accessToken: string; onCountChange?: (pendentes: number) => void; mostrarCalendario?: boolean }) {
   const [solicitacoes, setSolicitacoes] = useState<SolicitacaoHistorico[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [processandoId, setProcessandoId] = useState<number | null>(null);
@@ -124,19 +124,19 @@ export default function SolicitacoesFolga({ usuarioAtual, onCountChange, mostrar
 
   const carregar = useCallback(async () => {
     setCarregando(true);
-    const res = await listarSolicitacoesFolgaAction();
+    const res = await listarSolicitacoesFolgaAction(accessToken);
     const lista = res.ok ? (res.info || []) : [];
     setSolicitacoes(lista);
     onCountChangeRef.current?.(lista.filter(s => s.status === 'PENDENTE').length);
     setCarregando(false);
-  }, []);
+  }, [accessToken]);
 
   useEffect(() => { carregar(); }, [carregar]);
 
   const aprovar = async (id: number) => {
     if (!confirm('Aprovar esta folga? Isso abona os dias úteis do período em folha_ponto_abono e avisa o funcionário pelo WhatsApp.')) return;
     setProcessandoId(id);
-    const res = await aprovarSolicitacaoAction({ id, aprovadorNome: usuarioAtual });
+    const res = await aprovarSolicitacaoAction({ id, aprovadorNome: usuarioAtual }, accessToken);
     setProcessandoId(null);
     if (!res.ok) { alert(res.erro); return; }
     await carregar();
@@ -146,7 +146,7 @@ export default function SolicitacoesFolga({ usuarioAtual, onCountChange, mostrar
     const motivo = prompt('Motivo da rejeição (o funcionário verá esta mensagem):');
     if (!motivo?.trim()) return;
     setProcessandoId(id);
-    const res = await rejeitarSolicitacaoAction({ id, aprovadorNome: usuarioAtual, motivoRejeicao: motivo.trim() });
+    const res = await rejeitarSolicitacaoAction({ id, aprovadorNome: usuarioAtual, motivoRejeicao: motivo.trim() }, accessToken);
     setProcessandoId(null);
     if (!res.ok) { alert(res.erro); return; }
     await carregar();

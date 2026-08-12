@@ -7,8 +7,11 @@
 // Pagamento (folha_lotes_pagamento) e Crédito Consignado (folha_consignados).
 // Todo o cálculo acontece aqui (server-side) para a página só desenhar.
 import { supabaseAdmin } from '../../lib/supabase';
+import { validarAcesso } from '../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
+
+const ROTA = '/admin/financeiro/relatorios';
 
 // Textos livres (natureza_pagamento, responsável, instituição) chegam com
 // grafias inconsistentes no banco (ex.: "FREELANCE" e "freelance" como
@@ -43,7 +46,10 @@ function topN(entradas: [string, ValorQtd][], n: number): { label: string; valor
   return cabeca;
 }
 
-export async function buscarRelatorioFinanceiroAction(payload: { mesReferencia: string }): Promise<Resultado> {
+export async function buscarRelatorioFinanceiroAction(payload: { mesReferencia: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { mesReferencia } = payload;
 

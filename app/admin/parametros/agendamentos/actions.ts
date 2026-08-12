@@ -6,6 +6,7 @@
 // o envio sem precisar mexer em código ou na Vercel.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { verificarConexaoZapi } from '../../../lib/zapi';
+import { validarAcesso } from '../../../lib/serverAuth';
 
 export interface RotinaAutomacaoDB {
   id: number;
@@ -57,6 +58,8 @@ export interface FuncionarioParaAutomacao {
 
 type Resultado<T = undefined> = { ok: boolean; erro?: string; data?: T };
 
+const ROTA = '/admin/parametros/agendamentos';
+
 const slugify = (texto: string) =>
   texto
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove acentos
@@ -64,7 +67,10 @@ const slugify = (texto: string) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '');
 
-export async function listarAutomacoesAction(): Promise<Resultado<RotinaAutomacaoDB[]>> {
+export async function listarAutomacoesAction(accessToken: string): Promise<Resultado<RotinaAutomacaoDB[]>> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db
@@ -80,7 +86,10 @@ export async function listarAutomacoesAction(): Promise<Resultado<RotinaAutomaca
 
 // Lista os funcionários ativos disponíveis para seleção como destinatários,
 // agrupáveis por cargo (não há uma coluna de "departamento" na tabela).
-export async function listarFuncionariosParaAutomacaoAction(): Promise<Resultado<FuncionarioParaAutomacao[]>> {
+export async function listarFuncionariosParaAutomacaoAction(accessToken: string): Promise<Resultado<FuncionarioParaAutomacao[]>> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db
@@ -96,7 +105,10 @@ export async function listarFuncionariosParaAutomacaoAction(): Promise<Resultado
   }
 }
 
-export async function alternarStatusAutomacaoAction(id: number, ativo: boolean): Promise<Resultado> {
+export async function alternarStatusAutomacaoAction(id: number, ativo: boolean, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { error } = await db.from('folha_automacoes').update({ ativo }).eq('id', id);
@@ -138,7 +150,10 @@ async function gerarChaveUnica(db: ReturnType<typeof supabaseAdmin>, nome: strin
 const parseVariaveisTemplate = (texto: string): string[] =>
   (texto || '').split(',').map(s => s.trim()).filter(Boolean);
 
-export async function criarAutomacaoAction(payload: FormAutomacao): Promise<Resultado<{ chave: string }>> {
+export async function criarAutomacaoAction(payload: FormAutomacao, accessToken: string): Promise<Resultado<{ chave: string }>> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const nome = payload.nome.trim();
   if (!nome) return { ok: false, erro: 'Informe o nome da automação.' };
@@ -178,7 +193,10 @@ export async function criarAutomacaoAction(payload: FormAutomacao): Promise<Resu
 
 // Atualiza os dados descritivos da automação. A `chave` nunca é alterada aqui:
 // ela é o vínculo estável usado pela rota de Cron correspondente.
-export async function atualizarAutomacaoAction(id: number, payload: FormAutomacao): Promise<Resultado> {
+export async function atualizarAutomacaoAction(id: number, payload: FormAutomacao, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const nome = payload.nome.trim();
   if (!nome) return { ok: false, erro: 'Informe o nome da automação.' };
@@ -215,7 +233,10 @@ export async function atualizarAutomacaoAction(id: number, payload: FormAutomaca
 
 // Soma real de disparos deste mês, por canal, a partir de folha_automacoes_envios
 // (substitui os números fixos "1.240" / "450" que existiam antes).
-export async function contarEnviosMesAction(): Promise<Resultado<{ whatsapp: number; email: number }>> {
+export async function contarEnviosMesAction(accessToken: string): Promise<Resultado<{ whatsapp: number; email: number }>> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const agora = new Date();
@@ -235,12 +256,18 @@ export async function contarEnviosMesAction(): Promise<Resultado<{ whatsapp: num
 }
 
 // Checagem ao vivo da conexão da Z-API (substitui o badge fixo "Conectado").
-export async function verificarStatusZapiAction(): Promise<Resultado<{ conectado: boolean; detalhe?: string }>> {
+export async function verificarStatusZapiAction(accessToken: string): Promise<Resultado<{ conectado: boolean; detalhe?: string }>> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const resultado = await verificarConexaoZapi();
   return { ok: true, data: resultado };
 }
 
-export async function excluirAutomacaoAction(id: number): Promise<Resultado> {
+export async function excluirAutomacaoAction(id: number, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { error } = await db.from('folha_automacoes').delete().eq('id', id);

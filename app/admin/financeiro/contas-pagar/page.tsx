@@ -1,26 +1,13 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../actions';
 import { sincronizarContasPagarP2sAction } from './actions';
 import { Analytics } from "@vercel/analytics/next";
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 interface ContaPagarGrid {
   id: number;
@@ -48,11 +35,7 @@ const hojeISO = (): string => new Date().toISOString().slice(0, 10);
 
 export default function ContasPagarPage() {
   const router = useRouter();
-  const pathname = usePathname();
-
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
-  const [usuarioAtual, setUsuarioAtual] = useState('');
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess();
 
   const [sincronizando, setSincronizando] = useState(false);
   const [feedback, setFeedback] = useState<{ show: boolean; msg: string; tipo: 'success' | 'error' }>({ show: false, msg: '', tipo: 'success' });
@@ -65,31 +48,6 @@ export default function ContasPagarPage() {
   const [pagina, setPagina] = useState(0);
   const [totalRegistros, setTotalRegistros] = useState(0);
   const [refreshGrid, setRefreshGrid] = useState(0);
-
-  useEffect(() => {
-    (async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.push('/login'); return; }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios').select('*').eq('id', session.user.id).single();
-
-      if (perfilError || !perfil) { router.push('/login'); return; }
-
-      const { data: rotaPermissao } = await supabase
-        .from('folha_paginas_permissoes').select('permissoes_permitidas').eq('endereco_route', pathname).single();
-
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true); setAuthLoading(false); return;
-      }
-
-      setUsuarioAtual(perfil.nome || 'Usuário');
-      setAuthLoading(false);
-    })();
-  }, [router, pathname]);
 
   useEffect(() => {
     if (authLoading || acessoNegado) return;
@@ -131,7 +89,7 @@ export default function ContasPagarPage() {
     setSincronizando(true);
     setFeedback({ show: false, msg: '', tipo: 'success' });
     try {
-      const res = await sincronizarContasPagarP2sAction();
+      const res = await sincronizarContasPagarP2sAction({}, accessToken);
       if (!res.ok) {
         setFeedback({ show: true, tipo: 'error', msg: `Falha ao sincronizar com o PrimeStart: ${res.erro}` });
         return;
@@ -157,6 +115,8 @@ export default function ContasPagarPage() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

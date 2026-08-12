@@ -3,12 +3,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-import { supabase } from '../../../lib/supabase'; 
 import {
   listarCatalogosBeneficioAction, criarTipoBeneficioAction, criarMeioBeneficioAction,
   salvarBeneficioAction, alternarBeneficioAction, historicoBeneficioAction, painelBeneficiosAction,
   gridBeneficiosAction, gerarFlashAction
 } from '../actions/actions-beneficios';
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 const BRL = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -42,47 +43,7 @@ export default function BeneficiosPage() {
   const [formObs, setFormObs] = useState('');
   const [salvando, setSalvando] = useState(false);
 
-  // Estados de Autenticação
-    const [usuarioAtual, setUsuarioAtual] = useState('');
-    const [emailUsuario, setEmailUsuario] = useState(''); 
-    const [authLoading, setAuthLoading] = useState(true);
-  
-    // 1. Validar a Sessão e Puxar Dados do Usuário Logado
-      useEffect(() => {
-        async function checkAuth() {
-          const { data: { session } } = await supabase.auth.getSession();
-          
-          if (!session) {
-            router.push('/login');
-            return;
-          }
-    
-          const { data: perfil } = await supabase
-            .from('perfis_usuarios')
-            .select('*')
-            .eq('id', session.user.id)
-            .single();
-    
-          if (perfil) {
-            setUsuarioAtual(perfil.nome || 'Equipe RH');
-            setEmailUsuario(perfil.email || session.user.email || ''); 
-            
-            const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
-            const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
-            
-            if (!cargosAltaGestao.includes(permissaoBanco)) {
-              router.push('/admin');
-              return;
-            }
-          } else {
-            setUsuarioAtual('Equipe RH');
-          }
-          
-          setAuthLoading(false);
-        }
-        
-        checkAuth();
-      }, [router]);
+  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
 
   // Grid consolidado (mês)
   const [mostrarGrid, setMostrarGrid] = useState(false);
@@ -98,7 +59,7 @@ export default function BeneficiosPage() {
   const gerarFlash = async () => {
     setGerandoFlash(true);
     try {
-      const res = await gerarFlashAction({ mesReferencia: gridMes });
+      const res = await gerarFlashAction({ mesReferencia: gridMes }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       const linhas = res.info.linhas as any[];
       if (linhas.length === 0) {
@@ -138,17 +99,13 @@ export default function BeneficiosPage() {
   const [mostrarCatalogos, setMostrarCatalogos] = useState(false);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem('rh_usuario');
-      if (raw) setUsuarioAtual(JSON.parse(raw)?.nome || '');
-    } catch {}
-    carregar();
-  }, []);
+    if (accessToken) carregar();
+  }, [accessToken]);
 
   const carregar = async () => {
     setLoading(true);
     try {
-      const [painel, cats] = await Promise.all([painelBeneficiosAction(), listarCatalogosBeneficioAction()]);
+      const [painel, cats] = await Promise.all([painelBeneficiosAction(accessToken), listarCatalogosBeneficioAction(accessToken)]);
       if (painel.ok) setLinhas(painel.info.linhas);
       if (cats.ok) { setTipos(cats.info.tipos); setMeios(cats.info.meios); }
     } catch (e: any) {
@@ -206,7 +163,7 @@ export default function BeneficiosPage() {
         valorMensal: Number(formValor) || 0, modalidade: formModalidade,
         qtdDias: formModalidade === 'DIAS_FIXOS' ? Number(formQtdDias) : null,
         observacao: formObs || null, usuarioNome: usuarioAtual
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setModalFunc(null); setEditId(null);
       carregar();
@@ -222,7 +179,7 @@ export default function BeneficiosPage() {
   const gerarGrid = async () => {
     setMostrarGrid(true); setCarregandoGrid(true);
     try {
-      const res = await gridBeneficiosAction({ mesReferencia: gridMes, meioId: gridFiltroMeio === 'TODOS' ? null : Number(gridFiltroMeio) });
+      const res = await gridBeneficiosAction({ mesReferencia: gridMes, meioId: gridFiltroMeio === 'TODOS' ? null : Number(gridFiltroMeio) }, accessToken);
       if (res.ok) setGrid(res.info);
     } catch (e: any) {
       alert('Erro ao gerar grid: ' + e.message);
@@ -260,7 +217,7 @@ export default function BeneficiosPage() {
   const removerBeneficio = async (id: number, tipo: string, nome: string) => {
     if (!confirm(`Remover o benefício "${tipo}" de ${nome}?\n\nO histórico é preservado.`)) return;
     try {
-      const res = await alternarBeneficioAction({ id, ativo: false, usuarioNome: usuarioAtual });
+      const res = await alternarBeneficioAction({ id, ativo: false, usuarioNome: usuarioAtual }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       carregar();
     } catch (e: any) {
@@ -270,27 +227,52 @@ export default function BeneficiosPage() {
 
   const verHistorico = async (id: number) => {
     setHistAberto(id); setHistorico([]);
-    const res = await historicoBeneficioAction({ beneficioId: id });
+    const res = await historicoBeneficioAction({ beneficioId: id }, accessToken);
     if (res.ok) setHistorico(res.info.historico);
   };
 
   const adicionarTipo = async () => {
     if (!novoTipo.trim()) return;
-    const res = await criarTipoBeneficioAction({ nome: novoTipo });
+    const res = await criarTipoBeneficioAction({ nome: novoTipo }, accessToken);
     if (!res.ok) { alert(res.erro); return; }
     setNovoTipo('');
-    const cats = await listarCatalogosBeneficioAction();
+    const cats = await listarCatalogosBeneficioAction(accessToken);
     if (cats.ok) setTipos(cats.info.tipos);
   };
 
   const adicionarMeio = async () => {
     if (!novoMeio.trim()) return;
-    const res = await criarMeioBeneficioAction({ nome: novoMeio });
+    const res = await criarMeioBeneficioAction({ nome: novoMeio }, accessToken);
     if (!res.ok) { alert(res.erro); return; }
     setNovoMeio('');
-    const cats = await listarCatalogosBeneficioAction();
+    const cats = await listarCatalogosBeneficioAction(accessToken);
     if (cats.ok) setMeios(cats.info.meios);
   };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center pt-16">
+        <div className="w-10 h-10 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin shadow-sm"></div>
+      </div>
+    );
+  }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
+
+  if (acessoNegado) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200">
+          <div className="text-5xl mb-4">⛔</div>
+          <h2 className="text-xl font-black text-red-600 uppercase tracking-wider mb-2">Acesso Restrito</h2>
+          <p className="text-sm text-gray-500 mb-6">Você não possui permissão para acessar esta página.</p>
+          <button onClick={() => router.push('/admin')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
+            Voltar ao Menu Principal
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">

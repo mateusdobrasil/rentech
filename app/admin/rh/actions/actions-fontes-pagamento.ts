@@ -5,6 +5,7 @@
 // hierarquia: Contrato (base) → Cargo (sobrescreve) → Ficha (sobrescreve tudo).
 // Cada nível usa 3 estados: true (recebe), false (não), null (herda de cima).
 import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -88,7 +89,10 @@ export async function resolverFontesPagamento(
 }
 
 // Versão action (para chamar da tela e conferir a resolução de todos os ativos)
-export async function listarResolucaoFontesAction(): Promise<Resultado> {
+export async function listarResolucaoFontesAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, '/admin/rh/parametros');
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: funcs } = await db.from('folha_funcionarios')

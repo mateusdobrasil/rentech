@@ -11,6 +11,8 @@ import {
   listarTiposAfastamentoAction, criarTipoAfastamentoAction, painelAfastamentosAction,
   salvarAfastamentoAction, encerrarAfastamentoAction, excluirAfastamentoAction, urlAnexoAfastamentoAction
 } from '../actions/actions-afastamentos';
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 
@@ -36,28 +38,7 @@ export default function FeriasAfastamentosPage() {
   const router = useRouter();
   const [aba, setAba] = useState<'ferias' | 'afastamentos'>('ferias');
 
-  // Estados de Autenticação
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [authLoading, setAuthLoading] = useState(true);
-
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.push('/login'); return; }
-
-      const { data: perfil } = await supabase.from('perfis_usuarios').select('*').eq('id', session.user.id).single();
-      if (perfil) {
-        setUsuarioAtual(perfil.nome || 'Equipe RH');
-        const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
-        const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO', 'ADMINISTRATIVO'];
-        if (!cargosAltaGestao.includes(permissaoBanco)) { router.push('/admin'); return; }
-      } else {
-        setUsuarioAtual('Equipe RH');
-      }
-      setAuthLoading(false);
-    }
-    checkAuth();
-  }, [router]);
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
 
   // ==========================================================================
   // ABA FÉRIAS
@@ -78,14 +59,14 @@ export default function FeriasAfastamentosPage() {
   const carregarFerias = async () => {
     setLoadingFerias(true);
     try {
-      const res = await painelFeriasAction();
+      const res = await painelFeriasAction(accessToken);
       if (res.ok) { setLinhasFerias(res.info.linhas); setTotaisFerias(res.info.totais); }
       else alert('Erro ao carregar férias: ' + res.erro);
     } catch (e: any) { alert('Erro ao carregar férias: ' + e.message); }
     finally { setLoadingFerias(false); }
   };
 
-  useEffect(() => { carregarFerias(); }, []);
+  useEffect(() => { if (accessToken) carregarFerias(); }, [accessToken]);
 
   const abrirAgendamento = (nome: string, periodo: PeriodoFerias) => {
     setModalPeriodo({ periodo, nome });
@@ -103,7 +84,7 @@ export default function FeriasAfastamentosPage() {
       const res = await agendarFeriasAction({
         id: modalPeriodo.periodo.id, dataInicioGozo: fDataInicio, diasGozo: Number(fDias),
         diasAbono: Number(fAbono), observacao: fObs || null, usuarioNome: usuarioAtual
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setModalPeriodo(null);
       carregarFerias();
@@ -114,7 +95,7 @@ export default function FeriasAfastamentosPage() {
   const cancelarAgendamento = async (periodo: PeriodoFerias) => {
     if (!confirm('Cancelar este agendamento de férias? O período volta a ficar disponível.')) return;
     try {
-      const res = await cancelarAgendamentoFeriasAction({ id: periodo.id });
+      const res = await cancelarAgendamentoFeriasAction({ id: periodo.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       carregarFerias();
     } catch (e: any) { alert('Erro ao cancelar: ' + e.message); }
@@ -176,7 +157,7 @@ export default function FeriasAfastamentosPage() {
   const carregarAfastamentos = async () => {
     setLoadingAfast(true);
     try {
-      const [painel, tipos] = await Promise.all([painelAfastamentosAction(), listarTiposAfastamentoAction()]);
+      const [painel, tipos] = await Promise.all([painelAfastamentosAction(accessToken), listarTiposAfastamentoAction(accessToken)]);
       if (painel.ok) { setAfastamentos(painel.info.linhas); setTotaisAfast(painel.info.totais); }
       if (tipos.ok) setTiposAfast(tipos.info.tipos);
     } catch (e: any) { alert('Erro ao carregar afastamentos: ' + e.message); }
@@ -188,7 +169,7 @@ export default function FeriasAfastamentosPage() {
     setFuncionariosAtivos(data || []);
   };
 
-  useEffect(() => { carregarAfastamentos(); carregarFuncionarios(); }, []);
+  useEffect(() => { if (accessToken) { carregarAfastamentos(); carregarFuncionarios(); } }, [accessToken]);
 
   const abrirNovoAfastamento = () => {
     setModalAfast(true); setEditAfastId(null);
@@ -220,7 +201,7 @@ export default function FeriasAfastamentosPage() {
         dataInicio: aInicio, dataFim: aFim || null, cid: aCid || null, observacao: aObs || null,
         arquivoBase64, nomeArquivo: aArquivo?.name || null, tipoMime: aArquivo?.type || null,
         usuarioNome: usuarioAtual
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setModalAfast(false);
       carregarAfastamentos();
@@ -233,7 +214,7 @@ export default function FeriasAfastamentosPage() {
     const dataFim = prompt(`Data de fim do afastamento de ${a.funcionario_nome}:`, hoje);
     if (!dataFim) return;
     try {
-      const res = await encerrarAfastamentoAction({ id: a.id, dataFim });
+      const res = await encerrarAfastamentoAction({ id: a.id, dataFim }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       carregarAfastamentos();
     } catch (e: any) { alert('Erro ao encerrar: ' + e.message); }
@@ -242,7 +223,7 @@ export default function FeriasAfastamentosPage() {
   const excluirAgora = async (a: Afastamento) => {
     if (!confirm(`Excluir o afastamento de ${a.funcionario_nome} (${a.tipo})?\n\nEsta ação é permanente.`)) return;
     try {
-      const res = await excluirAfastamentoAction({ id: a.id });
+      const res = await excluirAfastamentoAction({ id: a.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       carregarAfastamentos();
     } catch (e: any) { alert('Erro ao excluir: ' + e.message); }
@@ -250,7 +231,7 @@ export default function FeriasAfastamentosPage() {
 
   const abrirAnexo = async (a: Afastamento) => {
     try {
-      const res = await urlAnexoAfastamentoAction({ id: a.id });
+      const res = await urlAnexoAfastamentoAction({ id: a.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
     } catch (e: any) { alert('Erro ao abrir anexo: ' + e.message); }
@@ -258,10 +239,10 @@ export default function FeriasAfastamentosPage() {
 
   const adicionarTipoAfast = async () => {
     if (!novoTipoNome.trim()) return;
-    const res = await criarTipoAfastamentoAction({ nome: novoTipoNome });
+    const res = await criarTipoAfastamentoAction({ nome: novoTipoNome }, accessToken);
     if (!res.ok) { alert(res.erro); return; }
     setNovoTipoNome(''); setMostrarNovoTipo(false);
-    const tipos = await listarTiposAfastamentoAction();
+    const tipos = await listarTiposAfastamentoAction(accessToken);
     if (tipos.ok) setTiposAfast(tipos.info.tipos);
   };
 
@@ -276,6 +257,23 @@ export default function FeriasAfastamentosPage() {
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-[#0C1D4D] border-t-[#336699] rounded-full animate-spin mx-auto mb-4"></div>
           <h2 className="text-[#0C1D4D] font-black uppercase tracking-widest text-sm">Verificando acesso...</h2>
+        </div>
+      </div>
+    );
+  }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
+
+  if (acessoNegado) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200">
+          <div className="text-5xl mb-4">⛔</div>
+          <h2 className="text-xl font-black text-red-600 uppercase tracking-wider mb-2">Acesso Restrito</h2>
+          <p className="text-sm text-gray-500 mb-6">Você não possui permissão para acessar esta página.</p>
+          <button onClick={() => router.push('/admin')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
+            Voltar ao Menu Principal
+          </button>
         </div>
       </div>
     );

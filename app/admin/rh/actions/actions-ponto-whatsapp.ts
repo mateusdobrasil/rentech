@@ -9,11 +9,24 @@
 // de verdade quando aprovadas aqui pelo RH — o funcionário nunca aprova a
 // própria exceção.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso } from '../../../lib/serverAuth';
 import { consolidarDia, timestampBR, formatarPeriodoBR } from '../../../lib/pontoWhatsapp';
 import { notificarPontoWhatsApp } from '../../../lib/whatsapp';
 import { registrarLogAuditoria } from '../../../actions';
 
 type Resultado<T> = { ok: boolean; erro?: string; info?: T };
+
+// Usado por /admin/rh/ponto, /admin/operacional/registro-ponto e (leitura de
+// estatísticas) /admin/rh/holerite.
+const ROTAS_PERMITIDAS = ['/admin/rh/ponto', '/admin/operacional/registro-ponto', '/admin/rh/holerite'];
+
+async function validarAcessoPontoWhatsapp(accessToken: string) {
+  for (const rota of ROTAS_PERMITIDAS) {
+    const acesso = await validarAcesso(accessToken, rota);
+    if (acesso.ok) return acesso;
+  }
+  return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
+}
 
 export interface EstatisticasPontoWhatsapp {
   funcionariosHabilitados: number;
@@ -23,7 +36,10 @@ export interface EstatisticasPontoWhatsapp {
   folgasPendentes: number;
 }
 
-export async function estatisticasPontoWhatsappAction(mesAno: string): Promise<Resultado<EstatisticasPontoWhatsapp>> {
+export async function estatisticasPontoWhatsappAction(mesAno: string, accessToken: string): Promise<Resultado<EstatisticasPontoWhatsapp>> {
+  const acesso = await validarAcessoPontoWhatsapp(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const [ano, mes] = mesAno.split('-');
@@ -67,7 +83,10 @@ export interface RegistroLedger {
 
 // Lista o ledger do mês para auditoria/transparência na tela de Ponto —
 // somente leitura, não expõe nenhuma ação de editar/apagar.
-export async function listarLedgerPontoWhatsappAction(mesAno: string): Promise<Resultado<RegistroLedger[]>> {
+export async function listarLedgerPontoWhatsappAction(mesAno: string, accessToken: string): Promise<Resultado<RegistroLedger[]>> {
+  const acesso = await validarAcessoPontoWhatsapp(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const [ano, mes] = mesAno.split('-');
@@ -105,7 +124,10 @@ export interface SolicitacaoPendente {
 // Fila de solicitações de JUSTIFICAR/ABONAR feitas pelo funcionário via
 // WhatsApp, ainda não analisadas pelo RH. FOLGA_DIA fica de fora — tem
 // listagem e aba próprias (ver listarSolicitacoesFolgaAction).
-export async function listarSolicitacoesPendentesAction(): Promise<Resultado<SolicitacaoPendente[]>> {
+export async function listarSolicitacoesPendentesAction(accessToken: string): Promise<Resultado<SolicitacaoPendente[]>> {
+  const acesso = await validarAcessoPontoWhatsapp(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db
@@ -124,7 +146,10 @@ export async function listarSolicitacoesPendentesAction(): Promise<Resultado<Sol
 // Todas as solicitações de FOLGA_DIA (qualquer status), mais recentes
 // primeiro — fonte única da aba "Solicitação Folga", usada tanto em
 // /admin/rh/ponto quanto em /admin/operacional/registro-ponto.
-export async function listarSolicitacoesFolgaAction(): Promise<Resultado<SolicitacaoHistorico[]>> {
+export async function listarSolicitacoesFolgaAction(accessToken: string): Promise<Resultado<SolicitacaoHistorico[]>> {
+  const acesso = await validarAcessoPontoWhatsapp(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db
@@ -153,7 +178,10 @@ export interface AbonoPendenteResumo {
 // compara só data_referencia (início) contra o mês, não o intervalo inteiro
 // de uma folga em período — revisitar se aparecer caso de período cruzando
 // virada de mês.
-export async function listarAbonosPendentesDoMesAction(payload: { mesAno: string; nomes: string[] }): Promise<Resultado<AbonoPendenteResumo[]>> {
+export async function listarAbonosPendentesDoMesAction(payload: { mesAno: string; nomes: string[] }, accessToken: string): Promise<Resultado<AbonoPendenteResumo[]>> {
+  const acesso = await validarAcessoPontoWhatsapp(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     if (!payload.nomes.length) return { ok: true, info: [] };
@@ -188,7 +216,10 @@ export interface SolicitacaoHistorico extends SolicitacaoPendente {
 // status) para auditoria — nada aqui é apagado quando aprovado/rejeitado, só
 // muda de status. FOLGA_DIA fica de fora, tem histórico próprio dentro da
 // aba "Solicitação Folga" (ver listarSolicitacoesFolgaAction).
-export async function listarHistoricoSolicitacoesAction(mesAno?: string): Promise<Resultado<SolicitacaoHistorico[]>> {
+export async function listarHistoricoSolicitacoesAction(mesAno: string | undefined, accessToken: string): Promise<Resultado<SolicitacaoHistorico[]>> {
+  const acesso = await validarAcessoPontoWhatsapp(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     let query = db
@@ -216,7 +247,10 @@ export async function listarHistoricoSolicitacoesAction(mesAno?: string): Promis
 // URL temporária (10 min) para o RH visualizar/baixar o anexo (atestado)
 // de uma solicitação — o arquivo mora no bucket privado
 // "documentos-funcionarios" e nunca fica público.
-export async function urlAnexoSolicitacaoAction(payload: { id: number }): Promise<Resultado<{ url: string }>> {
+export async function urlAnexoSolicitacaoAction(payload: { id: number }, accessToken: string): Promise<Resultado<{ url: string }>> {
+  const acesso = await validarAcessoPontoWhatsapp(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: solicitacao } = await db
@@ -287,7 +321,10 @@ async function gravarAbonoDoDia(db: ReturnType<typeof supabaseAdmin>, funcionari
 // exibição — mesma regra do Abono de dia único, ver isDiaNaoUtil em
 // app/admin/rh/ponto/page.tsx). Nunca edita o ledger em si. Avisa o
 // funcionário pelo próprio WhatsApp.
-export async function aprovarSolicitacaoAction(payload: { id: number; aprovadorNome: string }): Promise<Resultado<null>> {
+export async function aprovarSolicitacaoAction(payload: { id: number; aprovadorNome: string }, accessToken: string): Promise<Resultado<null>> {
+  const acesso = await validarAcessoPontoWhatsapp(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { id, aprovadorNome } = payload;
   try {
@@ -354,7 +391,10 @@ export async function aprovarSolicitacaoAction(payload: { id: number; aprovadorN
   }
 }
 
-export async function rejeitarSolicitacaoAction(payload: { id: number; aprovadorNome: string; motivoRejeicao: string }): Promise<Resultado<null>> {
+export async function rejeitarSolicitacaoAction(payload: { id: number; aprovadorNome: string; motivoRejeicao: string }, accessToken: string): Promise<Resultado<null>> {
+  const acesso = await validarAcessoPontoWhatsapp(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { id, aprovadorNome, motivoRejeicao } = payload;
   try {

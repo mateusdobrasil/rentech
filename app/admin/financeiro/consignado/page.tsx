@@ -1,28 +1,14 @@
 "use client";
 
 import { useState, useEffect, useRef, Fragment } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-import { supabase } from '../../../lib/supabase';
 import {
   listarConsignadosAction, importarConsignacoesArquivoAction, listarConsignadosPersistidosAction,
   type ConsignadoFuncionario
 } from '../../rh/actions/actions-consignado';
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 const formatarCpf = (cpf: string | null) => {
   if (!cpf) return '—';
@@ -38,9 +24,7 @@ const formatarMoeda = (valor: number | null) => {
 
 export default function GestaoDeConsignado() {
   const router = useRouter();
-  const pathname = usePathname();
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
+  const { authLoading, acessoNegado, erro: erroAcesso, tentarNovamente, accessToken } = usePageAccess();
 
   const [lista, setLista] = useState<ConsignadoFuncionario[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,60 +50,13 @@ export default function GestaoDeConsignado() {
     return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-
-      if (!session) {
-        router.push('/login');
-        return;
-      }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      setAuthLoading(false);
-    }
-
-    checkAuth();
-  }, [router, pathname]);
-
   // Carga padrão ao abrir a tela: o último retrato gravado em
   // folha_consignados (sem chamar API nem exigir arquivo nenhum).
   const carregarPersistido = async () => {
     setLoading(true);
     setErro(null);
     setFonte('BANCO');
-    const res = await listarConsignadosPersistidosAction();
+    const res = await listarConsignadosPersistidosAction(accessToken);
     if (!res.ok) {
       setErro(res.erro || 'Falha ao carregar os dados persistidos de consignado.');
       setLista([]);
@@ -141,7 +78,7 @@ export default function GestaoDeConsignado() {
     setAvisoNovos(null);
     setFonte('API');
     const competencia = (mesAnoAlvo || mesAnoSelecionado).replace('-', '');
-    const res = await listarConsignadosAction(competencia);
+    const res = await listarConsignadosAction(competencia, accessToken);
     if (!res.ok) {
       setErro(res.erro || 'Falha ao carregar os dados de consignado.');
       setLista([]);
@@ -177,7 +114,7 @@ export default function GestaoDeConsignado() {
           throw new Error('Arquivo inválido: não é um JSON válido.');
         }
 
-        const res = await importarConsignacoesArquivoAction({ registros });
+        const res = await importarConsignacoesArquivoAction({ registros }, accessToken);
         if (!res.ok) throw new Error(res.erro);
 
         setLista(res.info.lista);
@@ -215,6 +152,8 @@ export default function GestaoDeConsignado() {
       </div>
     );
   }
+
+  if (erroAcesso) return <HubErro mensagem={erroAcesso} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

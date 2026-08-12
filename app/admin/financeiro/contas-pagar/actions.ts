@@ -21,8 +21,11 @@
 //   por isso a tabela não tem NOT NULL nesses campos.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { consultarObjetos, buscarObjeto, criterio, p2sParaData, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
+import { validarAcesso } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
+
+const ROTA = '/admin/financeiro/contas-pagar';
 
 function nomeExibicao(obj: ObjetoP2s | null): string | null {
   if (!obj) return null;
@@ -75,7 +78,10 @@ export interface SincronizarContasPagarOpcoes {
 // dias atrás (inclui todas as futuras, sem limite superior) — janela que,
 // de quebra, já filtra fora os registros com DataVencimento corrompida
 // (ver nota no topo do arquivo).
-export async function sincronizarContasPagarP2sAction(opcoes: SincronizarContasPagarOpcoes = {}): Promise<Resultado> {
+export async function sincronizarContasPagarP2sAction(opcoes: SincronizarContasPagarOpcoes, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const ambiente = opcoes.ambiente || 'PRODUCAO';
   const diasRetroativos = opcoes.diasRetroativos ?? 180;
 

@@ -2,23 +2,14 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-import { useRouter, usePathname } from 'next/navigation'; // <-- CORRIGIDO: Import adicionado
+import { useRouter } from 'next/navigation'; // <-- CORRIGIDO: Import adicionado
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria, criarUsuarioAcesso, listarAcessosPortalAction } from '../../../actions';
 import { formatarCpf } from '../../../portal/lib/cpf';
 import { Analytics } from "@vercel/analytics/next"; // <-- CORRIGIDO: Barra adicionada
-
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO'; 
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
+import { normalizarPermissao } from '../../../lib/permissoes';
 
 // Setores de permissão: antes era uma lista fixa aqui no código, agora vem
 // do banco (tabela setores_permissao) e pode ser gerida na aba "Setores".
@@ -64,14 +55,9 @@ interface AcessoPortal {
 
 export default function GestaoPermissoes() {
   const router = useRouter();
-  const pathname = usePathname();
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Usuário' });
+  const usuarioNome = usuarioAtual;
 
-  // Estados de Segurança e Autenticação
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
-  const [usuarioNome, setUsuarioNome] = useState('Usuário');
-
-  const [usuarioAtual, setUsuarioAtual] = useState('');
   const [abaAtiva, setAbaAtiva] = useState<'usuarios' | 'paginas' | 'setores' | 'portal' | 'seguranca'>('usuarios');
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
@@ -113,62 +99,15 @@ export default function GestaoPermissoes() {
 
   const [feedback, setFeedback] = useState<{ show: boolean; msg: string; type: 'success' | 'error' }>({ show: false, msg: '', type: 'success' });
 
-  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
   useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) { 
-        router.push('/login'); 
-        return; 
-      }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-      
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      // Consulta no banco de dados quem pode aceder a esta rota
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      // Normaliza o perfil logado e verifica contra o banco
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      // Aprovado
-      setUsuarioNome(perfil.nome || 'Usuário');
-      setUsuarioAtual(perfil.nome || perfil.email || 'Usuário');
-      setAuthLoading(false);
+    if (!authLoading && !acessoNegado) {
       carregarUsuarios();
       carregarPaginas();
       carregarSetores();
       carregarAcessosPortal();
       carregarEmpresasEVinculos();
     }
-
-    checkAuth();
-  }, [router, pathname]);
+  }, [authLoading, acessoNegado]);
 
   // ============================================================================
   // OPERAÇÕES: COLABORADORES
@@ -295,7 +234,7 @@ export default function GestaoPermissoes() {
         permissao: novoUsuario.permissao,
         usuarioNome: usuarioAtual,
         empresaIds: empresasSelecionadasNovo,
-      });
+      }, accessToken);
 
       if (!resultado.success) throw new Error(resultado.message);
 
@@ -501,7 +440,7 @@ export default function GestaoPermissoes() {
   const carregarAcessosPortal = async () => {
     setLoadingPortal(true);
     try {
-      const resultado = await listarAcessosPortalAction();
+      const resultado = await listarAcessosPortalAction(accessToken);
       if (!resultado.success) throw new Error(resultado.message);
       setAcessosPortal(resultado.data as AcessoPortal[]);
     } catch (error: any) {
@@ -580,6 +519,8 @@ export default function GestaoPermissoes() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

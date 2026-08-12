@@ -83,16 +83,21 @@ export default function ChecklistVeiculo({ accessToken }: { accessToken: string 
   const removerAvaria = (idx: number) => setAvarias(prev => prev.filter((_, i) => i !== idx));
 
   // Depois que o checklist (header) já existe, grava cada avaria pendente —
-  // com foto (lida como base64) quando houver.
-  const registrarAvariasPendentes = async (checklistId: string, etapa: 'SAIDA' | 'RETORNO') => {
+  // com foto (lida como base64) quando houver. Retorna as descrições que
+  // falharam ao gravar, pra quem chama avisar o usuário em vez de declarar
+  // sucesso com uma avaria perdida.
+  const registrarAvariasPendentes = async (checklistId: string, etapa: 'SAIDA' | 'RETORNO'): Promise<string[]> => {
+    const falhas: string[] = [];
     for (const avaria of avarias) {
       if (!avaria.descricao.trim()) continue;
       const base64 = avaria.arquivo ? await lerComoBase64(avaria.arquivo) : undefined;
-      await registrarAvariaChecklistAction(accessToken, {
+      const res = await registrarAvariaChecklistAction(accessToken, {
         checklistId, etapa, descricao: avaria.descricao.trim(),
         arquivoBase64: base64, nomeArquivo: avaria.arquivo?.name, tipoMime: avaria.arquivo?.type,
       });
+      if (!res.ok) falhas.push(avaria.descricao.trim());
     }
+    return falhas;
   };
 
   const itensParaEnviar = () => itensModelo.map(i => ({ descricao: i.descricao, ordem: i.ordem, marcado: !!itensMarcados[i.id] }));
@@ -113,9 +118,11 @@ export default function ChecklistVeiculo({ accessToken }: { accessToken: string 
       return;
     }
 
-    await registrarAvariasPendentes(res.info.id, 'SAIDA');
+    const falhasAvaria = await registrarAvariasPendentes(res.info.id, 'SAIDA');
     setEnviando(false);
-    setMensagem({ tipo: 'sucesso', texto: `Checklist de saída registrado! Boa viagem.` });
+    setMensagem(falhasAvaria.length > 0
+      ? { tipo: 'erro', texto: `Checklist de saída registrado, mas falhou ao salvar ${falhasAvaria.length === 1 ? 'a avaria' : 'as avarias'}: ${falhasAvaria.join(', ')}. Registre de novo ao voltar.` }
+      : { tipo: 'sucesso', texto: `Checklist de saída registrado! Boa viagem.` });
     setVeiculoId(''); setKmInicial(''); setCombustivelSaida(''); setDestino('');
     await carregar();
   };
@@ -136,9 +143,11 @@ export default function ChecklistVeiculo({ accessToken }: { accessToken: string 
       return;
     }
 
-    await registrarAvariasPendentes(checklistAberto.id, 'RETORNO');
+    const falhasAvaria = await registrarAvariasPendentes(checklistAberto.id, 'RETORNO');
     setEnviando(false);
-    setMensagem({ tipo: 'sucesso', texto: 'Checklist de retorno finalizado. Obrigado!' });
+    setMensagem(falhasAvaria.length > 0
+      ? { tipo: 'erro', texto: `Checklist de retorno finalizado, mas falhou ao salvar ${falhasAvaria.length === 1 ? 'a avaria' : 'as avarias'}: ${falhasAvaria.join(', ')}. Registre de novo.` }
+      : { tipo: 'sucesso', texto: 'Checklist de retorno finalizado. Obrigado!' });
     setKmFinal(''); setCombustivelRetorno('');
     await carregar();
   };

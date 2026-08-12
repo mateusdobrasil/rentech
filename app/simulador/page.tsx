@@ -77,6 +77,20 @@ export default function Simuladores() {
             <div className="h-1 w-10 bg-[#336699] rounded-sm group-hover:w-full transition-all duration-500"></div>
           </Link>
 
+          {/* Card 5 */}
+          <Link href="/simulador/boxtruss" className="group flex flex-col bg-[#0C1D4D]/20 border border-[#284B8C]/30 rounded-2xl p-8 backdrop-blur-md hover:-translate-y-2 hover:border-[#336699] hover:shadow-[0_15px_35px_rgba(0,0,0,0.5),_0_0_15px_rgba(51,102,153,0.2)] transition-all duration-300 relative overflow-hidden">
+            <div className="text-[10px] md:text-xs font-black uppercase text-[#336699] mb-3 tracking-widest">
+              Comercial • Estrutural
+            </div>
+            <h2 className="text-xl md:text-2xl font-black text-white mb-3 tracking-tight">
+              Simulador de Boxtruss
+            </h2>
+            <p className="text-sm text-[#999999] mb-6 leading-relaxed flex-grow font-medium">
+              Catálogo técnico de peças (cubos, retas, sleeves, talhas, pau de carga) e montador de torres, vãos e portais com lista de material.
+            </p>
+            <div className="h-1 w-10 bg-[#336699] rounded-sm group-hover:w-full transition-all duration-500"></div>
+          </Link>
+
         </main>
       </div>
 

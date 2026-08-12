@@ -1,25 +1,12 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria, sincronizarEstoqueEmLocacao } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 // ============================================================================
 // TIPOS
@@ -237,11 +224,7 @@ const cabecalhoVazio: ChecklistHeader = {
 // ============================================================================
 export default function ChecklistCargaRetorno() {
   const router = useRouter();
-  const pathname = usePathname();
-
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
-  const [usuarioAtual, setUsuarioAtual] = useState('');
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Usuário' });
 
   const [dialog, setDialog] = useState<{ open: boolean; type: 'loading' | 'success' | 'error'; title: string; msg: string }>({ open: false, type: 'loading', title: '', msg: '' });
 
@@ -328,30 +311,10 @@ export default function ChecklistCargaRetorno() {
   const [itensImportadosOS, setItensImportadosOS] = useState<ItemImportadoOS[]>([]);
   const [modoConsolidadoOS, setModoConsolidadoOS] = useState(false);
 
-  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
+  // 1. Carregar Catálogo (equipamentos/categorias/eventos/gatilhos) após o acesso ser liberado
   useEffect(() => {
+    if (authLoading || acessoNegado) return;
     (async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.push('/login'); return; }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios').select('*').eq('id', session.user.id).single();
-
-      if (perfilError || !perfil) { router.push('/login'); return; }
-
-      const { data: rotaPermissao } = await supabase
-        .from('folha_paginas_permissoes').select('permissoes_permitidas').eq('endereco_route', pathname).single();
-
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true); setAuthLoading(false); return;
-      }
-
-      setUsuarioAtual(perfil.nome || 'Usuário');
-      setAuthLoading(false);
-
       const [resCat, resEq, resEventos, resGatilhos] = await Promise.all([
         supabase.from('categorias').select('*').order('nome', { ascending: true }),
         supabase.from('equipamentos').select('id, categoria_id, nome, ativo').order('nome', { ascending: true }),
@@ -370,7 +333,7 @@ export default function ChecklistCargaRetorno() {
         setMapaLocaisEventos(mapa);
       }
     })();
-  }, [router, pathname]);
+  }, [authLoading, acessoNegado]);
 
   // 2. Carregar Lista de Checklists
   useEffect(() => {
@@ -1242,7 +1205,8 @@ export default function ChecklistCargaRetorno() {
       // INSERT para o cliente autenticado via RLS, e aqui pode ser necessário criar
       // a linha na primeira vez que o equipamento sai (ver app/actions.ts).
       const resultado = await sincronizarEstoqueEmLocacao(
-        idsEquipamentosAfetados.map(id => ({ equipamento_id: id, delta: deltasPorEquipamento[id] }))
+        idsEquipamentosAfetados.map(id => ({ equipamento_id: id, delta: deltasPorEquipamento[id] })),
+        accessToken
       );
 
       if (!resultado.success) {
@@ -1466,6 +1430,8 @@ export default function ChecklistCargaRetorno() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

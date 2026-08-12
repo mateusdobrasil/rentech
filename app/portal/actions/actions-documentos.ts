@@ -8,7 +8,7 @@
 // documentos de outra pessoa.
 import { supabaseAdmin } from '../../lib/supabase';
 import { resolverFuncionarioPortal } from './actions-acesso';
-import { baixarAssinadoAction } from '../../admin/rh/actions/actions-assinatura';
+import { baixarAssinado } from '../../admin/rh/actions/assinaturaDownloadCore';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -132,7 +132,7 @@ export async function urlMeuHoleriteAction(accessToken: string, payload: { id: n
       return { ok: false, erro: 'Holerite não encontrado.' };
     }
 
-    return baixarAssinadoAction({ funcionarioNome: holerite.funcionario_nome, mesReferencia: holerite.mes_referencia });
+    return baixarAssinado({ funcionarioNome: holerite.funcionario_nome, mesReferencia: holerite.mes_referencia });
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

@@ -12,7 +12,7 @@
 // Configure a URL deste endpoint no painel da Autentique.
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
-import { finalizarAssinaturaOP } from '../../../admin/op/actions-assinatura';
+import { finalizarAssinaturaOP } from '../../../admin/op/assinaturaOpCore';
 
 type Extraido = {
   docId: string | null;

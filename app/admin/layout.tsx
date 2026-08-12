@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { supabase } from '../lib/supabase';
 import ExigirMFA from './ExigirMFA';
+import { NotificationProvider } from '../components/ui/NotificationProvider';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -112,5 +113,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     );
   }
 
-  return <ExigirMFA ativo={requerMfa}>{children}</ExigirMFA>;
+  return (
+    <NotificationProvider>
+      <ExigirMFA ativo={requerMfa}>{children}</ExigirMFA>
+    </NotificationProvider>
+  );
 }

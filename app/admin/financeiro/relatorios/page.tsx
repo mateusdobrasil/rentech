@@ -1,25 +1,11 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-import { supabase } from '../../../lib/supabase';
 import { buscarRelatorioFinanceiroAction } from '../actions';
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES (mesmo padrão das páginas irmãs)
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 // ============================================================================
 // FORMATADORES
@@ -174,9 +160,7 @@ function GraficoMensal({
 
 export default function RelatoriosFinanceiroPage() {
   const router = useRouter();
-  const pathname = usePathname();
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
+  const { authLoading, acessoNegado, erro: erroAcesso, tentarNovamente, accessToken } = usePageAccess();
 
   const [mesReferencia, setMesReferencia] = useState(() => {
     const h = new Date();
@@ -186,38 +170,10 @@ export default function RelatoriosFinanceiroPage() {
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.push('/login'); return; }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios').select('*').eq('id', session.user.id).single();
-      if (perfilError || !perfil) { router.push('/login'); return; }
-
-      const { data: rotaPermissao } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-      setAuthLoading(false);
-    }
-    checkAuth();
-  }, [router, pathname]);
-
   const carregar = async () => {
     setLoading(true);
     setErro(null);
-    const res = await buscarRelatorioFinanceiroAction({ mesReferencia });
+    const res = await buscarRelatorioFinanceiroAction({ mesReferencia }, accessToken);
     if (res.ok) setDados(res.info);
     else setErro(res.erro || 'Não foi possível carregar o relatório.');
     setLoading(false);
@@ -234,6 +190,8 @@ export default function RelatoriosFinanceiroPage() {
       </div>
     );
   }
+
+  if (erroAcesso) return <HubErro mensagem={erroAcesso} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

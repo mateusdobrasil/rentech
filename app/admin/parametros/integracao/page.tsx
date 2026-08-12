@@ -1,9 +1,8 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-import { supabase } from '../../../lib/supabase';
 import {
   listarIntegracoesAction, salvarIntegracaoAction,
   statusTokenAutentiqueAction, estatisticasAutentiqueAction,
@@ -14,21 +13,8 @@ import {
   statusP2sAction, testarConexaoP2sAction,
   type ConfigRoteamentoWhatsApp
 } from './actions';
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 const fmtDataHora = (d: string) => new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
@@ -71,11 +57,7 @@ const ROTULO_PROVEDOR: Record<'ZAPI' | 'META', string> = { ZAPI: 'Z-API', META: 
 
 export default function IntegracaoPage() {
   const router = useRouter();
-  const pathname = usePathname();
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [emailUsuario, setEmailUsuario] = useState('');
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
 
   const [integracoes, setIntegracoes] = useState<Integracao[]>([]);
   const [loading, setLoading] = useState(true);
@@ -118,68 +100,20 @@ export default function IntegracaoPage() {
   const [testeTemplateEnviando, setTesteTemplateEnviando] = useState(false);
   const [testeTemplateResultado, setTesteTemplateResultado] = useState<{ ok: boolean; msg: string; detalhe?: string } | null>(null);
 
-  // Valida a sessão e a permissão (dinâmica, via banco) antes de liberar a página
   useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-
-      if (!session) {
-        router.push('/login');
-        return;
-      }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      // Consulta no banco de dados quem pode aceder a esta rota
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      // Normaliza o perfil logado e verifica contra o banco
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      // Aprovado
-      setUsuarioAtual(perfil.nome || 'Equipe RH');
-      setEmailUsuario(perfil.email || session.user.email || '');
-      setAuthLoading(false);
-      carregar();
-    }
-    checkAuth();
-  }, [router, pathname]);
+    if (!authLoading && !acessoNegado) carregar();
+  }, [authLoading, acessoNegado]);
 
   const carregar = async () => {
     setLoading(true);
     try {
       const [integ, tokenRes, statsRes, zapiStatusRes, zapiStatsRes, metaStatusRes, roteamentoRes, itauApiStatusRes, govBrStatusRes, p2sStatusRes] = await Promise.all([
-        listarIntegracoesAction(),
-        statusTokenAutentiqueAction(), estatisticasAutentiqueAction(),
-        statusZapiAction(), estatisticasZapiAction(),
-        statusMetaAction(), obterRoteamentoWhatsAppAction(),
-        statusItauApiAction(), statusGovBrConsignadoAction(),
-        statusP2sAction()
+        listarIntegracoesAction(accessToken),
+        statusTokenAutentiqueAction(accessToken), estatisticasAutentiqueAction(accessToken),
+        statusZapiAction(accessToken), estatisticasZapiAction(accessToken),
+        statusMetaAction(accessToken), obterRoteamentoWhatsAppAction(accessToken),
+        statusItauApiAction(accessToken), statusGovBrConsignadoAction(accessToken),
+        statusP2sAction(accessToken)
       ]);
       if (integ.ok) setIntegracoes(integ.info.integracoes);
       if (tokenRes.ok) setTokenAutentiqueOk(tokenRes.info.configurado);
@@ -215,7 +149,7 @@ export default function IntegracaoPage() {
         ...editParceiro.config, agencia_debito: edAgencia, conta_debito: edConta,
         cnpj: edCnpj, razao_social: edRazaoSocial
       }
-    });
+    }, accessToken);
     if (!res.ok) { alert(res.erro); return; }
     setEditParceiro(null);
     carregar();
@@ -224,7 +158,7 @@ export default function IntegracaoPage() {
   const enviarTeste = async (provedor: 'ZAPI' | 'META') => {
     setTesteEnviando(true); setTesteResultado(null);
     try {
-      const res = await enviarTesteWhatsAppAction(provedor, testeCelular);
+      const res = await enviarTesteWhatsAppAction(provedor, testeCelular, accessToken);
       setTesteResultado(res.ok
         ? { ok: true, msg: 'Aceito pelo provedor — isso ainda não confirma a entrega no aparelho.', detalhe: res.info?.detalhe }
         : { ok: false, msg: res.erro || 'Falha ao enviar.' });
@@ -234,7 +168,7 @@ export default function IntegracaoPage() {
   const enviarTesteTemplate = async () => {
     setTesteTemplateEnviando(true); setTesteTemplateResultado(null);
     try {
-      const res = await enviarTesteTemplateWhatsAppAction(testeTemplateNome, testeTemplateIdioma, testeTemplateParametros, testeCelular, testeTemplateBotao);
+      const res = await enviarTesteTemplateWhatsAppAction(testeTemplateNome, testeTemplateIdioma, testeTemplateParametros, testeCelular, testeTemplateBotao, accessToken);
       setTesteTemplateResultado(res.ok
         ? { ok: true, msg: 'Template aceito pela Meta.', detalhe: res.info?.detalhe }
         : { ok: false, msg: res.erro || 'Falha ao enviar.' });
@@ -245,7 +179,7 @@ export default function IntegracaoPage() {
     if (!editParceiro) return;
     setTesteP2sRodando(true); setTesteP2sResultado(null);
     try {
-      const res = await testarConexaoP2sAction(edAmbiente);
+      const res = await testarConexaoP2sAction(edAmbiente, accessToken);
       setTesteP2sResultado(res.ok ? { ok: true, msg: res.info?.detalhe || 'Conexão confirmada.' } : { ok: false, msg: res.erro || 'Falha ao conectar.' });
     } finally { setTesteP2sRodando(false); }
   };
@@ -256,7 +190,7 @@ export default function IntegracaoPage() {
       const res = await salvarRoteamentoWhatsAppAction({
         modo: edModoRoteamento, provedor_global: edProvedorGlobal,
         provedor_envio: edProvedorEnvio, provedor_recebimento: edProvedorRecebimento
-      });
+      }, accessToken);
       if (!res.ok) { alert(res.erro); return; }
       setEditParceiro(null);
       carregar();
@@ -272,6 +206,8 @@ export default function IntegracaoPage() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

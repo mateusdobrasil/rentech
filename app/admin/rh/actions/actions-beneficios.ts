@@ -5,8 +5,19 @@
 // O VR/VT NÃO é gravado aqui — é lido do holerite (contrato + ficha) e apenas
 // exibido junto no painel, para não duplicar a fonte da verdade.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
+
+const ROTAS_PERMITIDAS = ['/admin/rh/beneficios', '/admin/rh/relatorios'];
+
+async function validarAcessoQualquerRota(accessToken: string) {
+  for (const rota of ROTAS_PERMITIDAS) {
+    const acesso = await validarAcesso(accessToken, rota);
+    if (acesso.ok) return acesso;
+  }
+  return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
+}
 
 // ============================================================================
 // DIAS ÚTEIS DO MÊS (seg-sex menos feriados cadastrados) — mesma régua do holerite
@@ -41,7 +52,10 @@ async function contarDiasUteis(db: ReturnType<typeof supabaseAdmin>, mesAno: str
 // BENEFÍCIOS CALCULADOS DE UM MÊS (para o relatório financeiro)
 // Valor único = valor direto; por diária = valor × dias úteis do mês.
 // ============================================================================
-export async function beneficiosDoMesAction(payload: { mesReferencia: string }): Promise<Resultado> {
+export async function beneficiosDoMesAction(payload: { mesReferencia: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { diasUteisMes, itens } = await calcularBeneficiosMes(db, payload.mesReferencia);
@@ -149,7 +163,10 @@ const BRLnum = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimum
 //   TRANSPORTE/MOBILIDADE → Mobilidade | ALIMENTA/REFEI → Refeição e Alimentação
 //   demais → Premiação no cartão. Valores do mês (diária × dias úteis).
 // ============================================================================
-export async function gerarFlashAction(payload: { mesReferencia: string }): Promise<Resultado> {
+export async function gerarFlashAction(payload: { mesReferencia: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const CNPJ_RENTECH = '22.618.891/0001-87';
 
@@ -206,7 +223,10 @@ export async function gerarFlashAction(payload: { mesReferencia: string }): Prom
 // GRID CONSOLIDADO DE BENEFÍCIOS (para a aba e o financeiro)
 // Retorna: por funcionário (itens + total) E por meio de pagamento + total geral.
 // ============================================================================
-export async function gridBeneficiosAction(payload: { mesReferencia: string; meioId?: number | null }): Promise<Resultado> {
+export async function gridBeneficiosAction(payload: { mesReferencia: string; meioId?: number | null }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { diasUteisMes, itens } = await calcularBeneficiosMes(db, payload.mesReferencia);
@@ -252,7 +272,10 @@ export async function gridBeneficiosAction(payload: { mesReferencia: string; mei
 // ============================================================================
 // CATÁLOGOS (tipos e meios)
 // ============================================================================
-export async function listarCatalogosBeneficioAction(): Promise<Resultado> {
+export async function listarCatalogosBeneficioAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const [{ data: tipos }, { data: meios }] = await Promise.all([
@@ -265,7 +288,10 @@ export async function listarCatalogosBeneficioAction(): Promise<Resultado> {
   }
 }
 
-export async function criarTipoBeneficioAction(payload: { nome: string }): Promise<Resultado> {
+export async function criarTipoBeneficioAction(payload: { nome: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const nome = payload.nome.toUpperCase().trim();
   if (!nome) return { ok: false, erro: 'Digite um nome para o tipo de benefício.' };
@@ -281,7 +307,10 @@ export async function criarTipoBeneficioAction(payload: { nome: string }): Promi
   }
 }
 
-export async function criarMeioBeneficioAction(payload: { nome: string }): Promise<Resultado> {
+export async function criarMeioBeneficioAction(payload: { nome: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const nome = payload.nome.toUpperCase().trim();
   if (!nome) return { ok: false, erro: 'Digite um nome para o meio de pagamento.' };
@@ -310,7 +339,10 @@ export async function salvarBeneficioAction(payload: {
   qtdDias?: number | null;
   observacao?: string | null;
   usuarioNome: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { id, funcionarioNome, tipoId, meioId, valorMensal, modalidade, qtdDias, observacao, usuarioNome } = payload;
 
@@ -379,7 +411,10 @@ export async function salvarBeneficioAction(payload: {
 // Ativa/desativa um benefício (mantém histórico)
 export async function alternarBeneficioAction(payload: {
   id: number; ativo: boolean; usuarioNome: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { error } = await db.from('folha_beneficios').update({
@@ -396,7 +431,10 @@ export async function alternarBeneficioAction(payload: {
   }
 }
 
-export async function historicoBeneficioAction(payload: { beneficioId: number }): Promise<Resultado> {
+export async function historicoBeneficioAction(payload: { beneficioId: number }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db.from('folha_beneficios_historico')
@@ -411,7 +449,10 @@ export async function historicoBeneficioAction(payload: { beneficioId: number })
 // ============================================================================
 // PAINEL CONSOLIDADO: junta benefícios fixos + VR/VT do sistema, por funcionário
 // ============================================================================
-export async function painelBeneficiosAction(): Promise<Resultado> {
+export async function painelBeneficiosAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     // Funcionários ativos

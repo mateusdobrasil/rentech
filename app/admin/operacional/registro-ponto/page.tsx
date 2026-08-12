@@ -1,72 +1,25 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
-import { supabase } from '../../../lib/supabase';
+import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import RegistroPontoConsulta from './RegistroPontoConsulta';
 import SolicitacoesFolga from './SolicitacoesFolga';
 import { listarSolicitacoesFolgaAction } from '../../rh/actions/actions-ponto-whatsapp';
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 export default function RegistroDePontoOperacional() {
   const router = useRouter();
-  const pathname = usePathname();
-
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
-  const [usuarioAtual, setUsuarioAtual] = useState('');
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Gestor' });
   const [aba, setAba] = useState<'consulta' | 'folga'>('consulta');
   const [folgasPendentes, setFolgasPendentes] = useState(0);
-
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.push('/login'); return; }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios').select('*').eq('id', session.user.id).single();
-      if (perfilError || !perfil) { router.push('/login'); return; }
-
-      const { data: rotaPermissao } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-      setUsuarioAtual(perfil.nome || 'Gestor');
-      setAuthLoading(false);
-    }
-    checkAuth();
-  }, [router, pathname]);
 
   // Só pra alimentar o badge de pendentes no botão da aba antes de abri-la —
   // a própria aba (SolicitacoesFolga) faz sua própria leitura ao montar.
   useEffect(() => {
     if (authLoading || acessoNegado) return;
-    listarSolicitacoesFolgaAction().then(res => {
+    listarSolicitacoesFolgaAction(accessToken).then(res => {
       if (res.ok) setFolgasPendentes((res.info || []).filter(s => s.status === 'PENDENTE').length);
     });
   }, [authLoading, acessoNegado]);
@@ -78,6 +31,8 @@ export default function RegistroDePontoOperacional() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (
@@ -121,7 +76,7 @@ export default function RegistroDePontoOperacional() {
 
       <div className="p-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full">
         {aba === 'consulta' && <RegistroPontoConsulta mostrarPainelDesabilitados={false} />}
-        {aba === 'folga' && <SolicitacoesFolga usuarioAtual={usuarioAtual} onCountChange={setFolgasPendentes} mostrarCalendario />}
+        {aba === 'folga' && <SolicitacoesFolga usuarioAtual={usuarioAtual} accessToken={accessToken} onCountChange={setFolgasPendentes} mostrarCalendario />}
       </div>
     </div>
   );

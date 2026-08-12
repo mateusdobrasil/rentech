@@ -4,9 +4,20 @@
 // Server actions para as GRAVAÇÕES sensíveis do módulo de folha.
 // Rodam no servidor com service role — a lógica de escrita sai do browser.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
+
+const ROTAS_PERMITIDAS = ['/admin/rh/funcionario', '/admin/rh/holerite'];
+
+async function validarAcessoQualquerRota(accessToken: string) {
+  for (const rota of ROTAS_PERMITIDAS) {
+    const acesso = await validarAcesso(accessToken, rota);
+    if (acesso.ok) return acesso;
+  }
+  return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
+}
 
 // ============================================================================
 // SALVAR FICHA DO COLABORADOR (funcionário + dependentes + movimentações)
@@ -16,7 +27,10 @@ export async function salvarColaboradorAction(payload: {
   dependentes: any[];
   movimentacoes: any[];
   usuarioNome: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { form, dependentes, movimentacoes, usuarioNome } = payload;
 
@@ -81,7 +95,10 @@ export async function atribuirEmpresaEmMassaAction(payload: {
   nomesFuncionarios: string[];
   empresaId: number;
   usuarioNome: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { nomesFuncionarios, empresaId, usuarioNome } = payload;
 
@@ -114,7 +131,10 @@ export async function salvarBonusDescontosAction(payload: {
   descontos: any[];
   bonus: any[];
   usuarioNome: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { funcionarioNome, descontos, bonus, usuarioNome } = payload;
 
@@ -174,7 +194,10 @@ export async function salvarDadosSalariaisAction(payload: {
   valor_adiantamento: number;
   valor_premio_diaria_viagem: number;
   usuarioNome: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { funcionarioNome, salario_folha, salario_contrato, valor_refeicao, valor_transporte, valor_adiantamento, valor_premio_diaria_viagem, usuarioNome } = payload;
 
@@ -213,7 +236,10 @@ export async function fecharFolhaLoteAction(payload: {
   mesReferencia: string;
   linhas: { funcionario_nome: string; dados: any }[];
   usuarioNome: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { mesReferencia, linhas, usuarioNome } = payload;
 
@@ -257,7 +283,10 @@ export async function reabrirFolhaAction(payload: {
   mesReferencia: string;
   usuarioNome: string;
   descricao: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { ids, mesReferencia, usuarioNome, descricao } = payload;
 

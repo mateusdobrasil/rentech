@@ -102,9 +102,10 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
 
   const baixarPdf = async () => {
     setBaixando(true);
+    setErro('');
     try {
       const res = await baixarMeuEspelhoPontoPdfAction(accessToken, mesReferencia);
-      if (!res.ok) { alert(res.erro || 'Erro ao gerar o PDF.'); return; }
+      if (!res.ok) { setErro(res.erro || 'Erro ao gerar o PDF.'); return; }
       const bin = atob(res.info.pdfBase64);
       const bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -112,7 +113,7 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
       window.open(url, '_blank', 'noopener,noreferrer');
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (e: any) {
-      alert('Erro ao gerar o PDF: ' + e.message);
+      setErro('Erro ao gerar o PDF: ' + e.message);
     } finally {
       setBaixando(false);
     }

@@ -2,22 +2,12 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
-
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 const somenteDigitos = (v: string): string => (v || '').replace(/\D/g, '');
 
@@ -52,11 +42,7 @@ const empresaFormPadrao = { nome: '', razao_social: '', cnpj: '', ativo: true };
 
 export default function EmpresasPage() {
   const router = useRouter();
-  const pathname = usePathname();
-
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
-  const [usuarioAtual, setUsuarioAtual] = useState('');
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess({ nomeFallback: 'Usuário' });
 
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [funcionariosPorEmpresa, setFuncionariosPorEmpresa] = useState<Record<number, number>>({});
@@ -70,32 +56,8 @@ export default function EmpresasPage() {
   const [feedback, setFeedback] = useState<{ show: boolean; msg: string; type: 'success' | 'error' }>({ show: false, msg: '', type: 'success' });
 
   useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.push('/login'); return; }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios').select('nome, permissao').eq('id', session.user.id).single();
-      if (perfilError || !perfil) { router.push('/login'); return; }
-
-      const { data: rotaPermissao } = await supabase
-        .from('folha_paginas_permissoes').select('permissoes_permitidas').eq('endereco_route', pathname).single();
-
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      setUsuarioAtual(perfil.nome || 'Usuário');
-      setAuthLoading(false);
-      carregarEmpresas();
-    }
-    checkAuth();
-  }, [router, pathname]);
+    if (!authLoading && !acessoNegado) carregarEmpresas();
+  }, [authLoading, acessoNegado]);
 
   const carregarEmpresas = async () => {
     setLoading(true);
@@ -218,6 +180,8 @@ export default function EmpresasPage() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

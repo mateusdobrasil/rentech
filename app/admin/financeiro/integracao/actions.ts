@@ -7,12 +7,14 @@
 // SISPAG (via API ou via arquivo CNAB manual), não só os enviados por aqui —
 // serve para conciliação/auditoria. Cliente HTTP real em app/lib/itauSispag.ts.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso } from '../../../lib/serverAuth';
 import {
   consultarPagamentosSispag, consultarPagamentoSispag, credenciaisItauConfiguradas,
   type AmbienteItau,
 } from '../../../lib/itauSispag';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
+const ROTA = '/admin/financeiro/integracao';
 
 // Lê ambiente + conta configurados em Integrações (não expostos no formulário
 // — a consulta é sempre sobre a própria conta da empresa, não uma escolhida
@@ -61,7 +63,10 @@ export interface FiltrosConsultaItau {
   pageSize?: number;
 }
 
-export async function consultarPagamentosItauAction(filtros: FiltrosConsultaItau): Promise<Resultado> {
+export async function consultarPagamentosItauAction(filtros: FiltrosConsultaItau, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   try {
     const ctx = await resolverContextoItau();
     if (!ctx.ok) return { ok: false, erro: ctx.erro };
@@ -92,7 +97,10 @@ export async function consultarPagamentosItauAction(filtros: FiltrosConsultaItau
   }
 }
 
-export async function consultarPagamentoItauAction(idPagamentoSispag: string): Promise<Resultado> {
+export async function consultarPagamentoItauAction(idPagamentoSispag: string, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   try {
     const ctx = await resolverContextoItau();
     if (!ctx.ok) return { ok: false, erro: ctx.erro };

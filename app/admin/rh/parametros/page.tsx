@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import {
@@ -9,21 +9,8 @@ import {
   adicionarCatalogoAction, removerCatalogoAction, atualizarFontesCargoAction,
   salvarRegraAction, excluirRegraAction
 } from '../actions/actions-parametros';
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 interface RegraRH {
   id?: string;
@@ -50,63 +37,7 @@ interface Feriado { id: number; data_feriado: string; descricao: string | null; 
 
 export default function ParametrosRH() {
   const router = useRouter();
-  const pathname = usePathname();
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [emailUsuario, setEmailUsuario] = useState('');
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
-
-  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-
-      if (!session) {
-        router.push('/login');
-        return;
-      }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      // Consulta no banco de dados quem pode aceder a esta rota
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      // Normaliza o perfil logado e verifica contra o banco
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      // Aprovado
-      setUsuarioAtual(perfil.nome || 'Equipe RH');
-      setEmailUsuario(perfil.email || session.user.email || '');
-      setAuthLoading(false);
-    }
-
-    checkAuth();
-  }, [router, pathname]);
+  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
 
   const [regras, setRegras] = useState<RegraRH[]>([]);
   const [loading, setLoading] = useState(true);
@@ -186,7 +117,7 @@ export default function ParametrosRH() {
       const res = await salvarFeriadoAction({
         data_feriado: novoFeriado.data_feriado,
         descricao: novoFeriado.descricao
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setNovoFeriado({ data_feriado: '', descricao: '' });
       carregarFeriados();
@@ -207,7 +138,7 @@ export default function ParametrosRH() {
         id: feriadoEditando.id,
         data_feriado: feriadoEditando.data_feriado,
         descricao: feriadoEditando.descricao || ''
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setFeriadoEditando(null);
       carregarFeriados();
@@ -226,7 +157,7 @@ export default function ParametrosRH() {
 
     setSalvandoFeriado(true);
     try {
-      const res = await excluirFeriadoAction(f.id);
+      const res = await excluirFeriadoAction(f.id, accessToken);
       if (!res.ok) throw new Error(res.erro);
       carregarFeriados();
     } catch (e: any) {
@@ -267,7 +198,7 @@ export default function ParametrosRH() {
       cargoId: cargo.id,
       recebeFechamento: atualizado.recebe_fechamento ?? null,
       recebeHolerite: atualizado.recebe_holerite ?? null
-    });
+    }, accessToken);
     if (!res.ok) { alert('Erro ao salvar: ' + res.erro); carregarCatalogos(); }
   };
 
@@ -277,7 +208,7 @@ export default function ParametrosRH() {
 
     setSalvandoCatalogo(true);
     try {
-      const res = await adicionarCatalogoAction({ tabela, nome: nomeNormalizado });
+      const res = await adicionarCatalogoAction({ tabela, nome: nomeNormalizado }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       if (tabela === 'folha_cargo') setNovoCargo('');
       else if (tabela === 'folha_tipocontrato') setNovoTipoContrato('');
@@ -299,7 +230,7 @@ export default function ParametrosRH() {
 
     setSalvandoCatalogo(true);
     try {
-      const res = await removerCatalogoAction({ tabela, id: item.id, nome: item.nome });
+      const res = await removerCatalogoAction({ tabela, id: item.id, nome: item.nome }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       carregarCatalogos();
     } catch (e: any) {
@@ -377,7 +308,7 @@ export default function ParametrosRH() {
 
     setLoading(true);
     try {
-      const res = await salvarRegraAction({ regra: payload, nomeOriginal });
+      const res = await salvarRegraAction({ regra: payload, nomeOriginal }, accessToken);
       if (!res.ok) throw new Error(res.erro);
 
       if (res.info?.renomeada) {
@@ -404,7 +335,7 @@ export default function ParametrosRH() {
 
     setDeletando(nome);
     try {
-      const res = await excluirRegraAction(nome);
+      const res = await excluirRegraAction(nome, accessToken);
       if (!res.ok) throw new Error(res.erro);
 
       if (nomeOriginal === nome) {
@@ -426,6 +357,8 @@ export default function ParametrosRH() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

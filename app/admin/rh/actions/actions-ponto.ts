@@ -3,9 +3,12 @@
 // app/reunioes/.../actions-ponto.ts  (ajuste o caminho de import conforme a localização real)
 // Server actions para a importação de PONTO (batidas e abonos), com service role.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
+
+const ROTA = '/admin/rh/ponto';
 
 // Verifica se há folha fechada no mês (trava de reimportação)
 async function nomesComFolhaFechada(db: ReturnType<typeof supabaseAdmin>, mesAno: string): Promise<string[]> {
@@ -29,7 +32,10 @@ export async function importarPontoAction(payload: {
   mesRef: string;
   usuarioNome: string;
   nomeArquivo: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { registros, nomes, anoRef, mesRef, usuarioNome, nomeArquivo } = payload;
 
@@ -99,7 +105,10 @@ export async function importarAbonosAction(payload: {
   mesRef: string;
   usuarioNome: string;
   nomeArquivo: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { abonos, nomes, anoRef, mesRef, usuarioNome, nomeArquivo } = payload;
 
@@ -179,7 +188,10 @@ export async function lancarPontoManualAction(payload: {
   saida2: string | null;
   usuarioNome: string;
   confirmarSobreposicaoWhatsapp?: boolean;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { funcionarioNome, dataRegistro, entrada1, saida1, entrada2, saida2, usuarioNome, confirmarSobreposicaoWhatsapp } = payload;
 
@@ -265,7 +277,10 @@ export async function abonarDiaManualAction(payload: {
   motivo: string;
   usuarioNome: string;
   confirmarSobreposicaoWhatsapp?: boolean;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { funcionarioNome, dataAbono, motivo, usuarioNome, confirmarSobreposicaoWhatsapp } = payload;
 

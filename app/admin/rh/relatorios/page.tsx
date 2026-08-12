@@ -1,27 +1,14 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { gridBeneficiosAction } from '../actions/actions-beneficios';
 import { painelDocumentosAction } from '../actions/actions-documentos-func';
 import { listarAssinaturasAction } from '../actions/actions-assinatura';
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 // ============================================================================
 // UTILITÁRIOS (mesmas fórmulas do holerite, para os números baterem)
@@ -283,63 +270,7 @@ const BarrasDuplas = ({ dados, corA, corB, formato }: {
 
 export default function RelatoriosRH() {
   const router = useRouter();
-  const pathname = usePathname();
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [emailUsuario, setEmailUsuario] = useState('');
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
-
-  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-
-      if (!session) {
-        router.push('/login');
-        return;
-      }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      // Consulta no banco de dados quem pode aceder a esta rota
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      // Normaliza o perfil logado e verifica contra o banco
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      // Aprovado
-      setUsuarioAtual(perfil.nome || 'Equipe RH');
-      setEmailUsuario(perfil.email || session.user.email || '');
-      setAuthLoading(false);
-    }
-
-    checkAuth();
-  }, [router, pathname]);
+  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
 
   const [loading, setLoading] = useState(true);
   const [linhas, setLinhas] = useState<LinhaRelatorio[]>([]);
@@ -370,11 +301,11 @@ export default function RelatoriosRH() {
   useEffect(() => {
     if (authLoading || acessoNegado) return;
     let vivo = true;
-    gridBeneficiosAction({ mesReferencia }).then(res => {
+    gridBeneficiosAction({ mesReferencia }, accessToken).then(res => {
       if (vivo && res.ok) setBeneficiosMes(res.info);
     });
     return () => { vivo = false; };
-  }, [mesReferencia, authLoading, acessoNegado]);
+  }, [mesReferencia, authLoading, acessoNegado, accessToken]);
 
   // Carrega o Quadro de Pessoal (movimentações + funcionários) e o Painel de Documentos.
   // Não depende do mês de competência — é uma fotografia viva do quadro atual.
@@ -387,7 +318,7 @@ export default function RelatoriosRH() {
       const [{ data: funcsData }, { data: movsData }, docsRes] = await Promise.all([
         supabase.from('folha_funcionarios').select('nome_completo, cargo, ativo, data_admissao, data_desligamento'),
         supabase.from('folha_movimentacoes').select('funcionario_nome, motivo, cargo, data_movimentacao').order('data_movimentacao', { ascending: false }),
-        painelDocumentosAction(),
+        painelDocumentosAction(null, accessToken),
       ]);
       if (!vivo) return;
       setTodosFuncionarios(funcsData || []);
@@ -398,17 +329,17 @@ export default function RelatoriosRH() {
     carregarQuadro();
 
     return () => { vivo = false; };
-  }, [authLoading, acessoNegado]);
+  }, [authLoading, acessoNegado, accessToken]);
 
   // Carrega as assinaturas (holerites + avulsos) do mês selecionado
   useEffect(() => {
     if (authLoading || acessoNegado) return;
     let vivo = true;
-    listarAssinaturasAction({ mesReferencia }).then(res => {
+    listarAssinaturasAction({ mesReferencia }, accessToken).then(res => {
       if (vivo && res.ok) setAssinaturasMes(res.info.assinaturas || []);
     });
     return () => { vivo = false; };
-  }, [mesReferencia, authLoading, acessoNegado]);
+  }, [mesReferencia, authLoading, acessoNegado, accessToken]);
 
   const carregarRelatorio = async (mesAno: string) => {
     setLoading(true);
@@ -620,6 +551,8 @@ export default function RelatoriosRH() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

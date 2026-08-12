@@ -1,28 +1,14 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-import { supabase } from '../../../lib/supabase';
 import {
   painelRescisoesAction, listarFuncionariosElegiveisRescisaoAction, criarRescisaoAction
 } from '../actions/actions-rescisao';
 import type { MotivoRescisao, TipoAvisoPrevio } from '../../../lib/calculoRescisao';
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES (mesmo padrão duplicado em cada página do hub)
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 const fmtMoeda = (v: number | null) => (v == null ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
@@ -63,33 +49,7 @@ interface FuncionarioElegivel { nome: string; cargo: string | null; dataDesligam
 
 export default function RescisaoPage() {
   const router = useRouter();
-  const pathname = usePathname();
-
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
-
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.push('/login'); return; }
-
-      const { data: perfil, error: perfilError } = await supabase.from('perfis_usuarios').select('*').eq('id', session.user.id).single();
-      if (perfilError || !perfil) { router.push('/login'); return; }
-
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes').select('permissoes_permitidas').eq('endereco_route', pathname).single();
-      if (rotaError && rotaError.code !== 'PGRST116') console.error('Erro ao buscar permissão da rota:', rotaError);
-
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) { setAcessoNegado(true); setAuthLoading(false); return; }
-
-      setUsuarioAtual(perfil.nome || 'Equipe RH');
-      setAuthLoading(false);
-    }
-    checkAuth();
-  }, [router, pathname]);
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
 
   const [loading, setLoading] = useState(true);
   const [linhas, setLinhas] = useState<Rescisao[]>([]);
@@ -100,7 +60,7 @@ export default function RescisaoPage() {
   const carregar = async () => {
     setLoading(true);
     try {
-      const res = await painelRescisoesAction();
+      const res = await painelRescisoesAction(accessToken);
       if (res.ok) { setLinhas(res.info.linhas); setTotais(res.info.totais); }
       else alert('Erro ao carregar rescisões: ' + res.erro);
     } catch (e: any) { alert('Erro ao carregar rescisões: ' + e.message); }
@@ -138,7 +98,7 @@ export default function RescisaoPage() {
     setNFunc(''); setNData(''); setNMotivo('SEM_JUSTA_CAUSA'); setNAviso('INDENIZADO');
     setCarregandoFuncionarios(true);
     try {
-      const res = await listarFuncionariosElegiveisRescisaoAction();
+      const res = await listarFuncionariosElegiveisRescisaoAction(accessToken);
       if (res.ok) setFuncionarios(res.info.linhas);
       else alert('Erro ao carregar funcionários: ' + res.erro);
     } catch (e: any) { alert('Erro ao carregar funcionários: ' + e.message); }
@@ -167,7 +127,7 @@ export default function RescisaoPage() {
     try {
       const res = await criarRescisaoAction({
         funcionarioNome: nFunc, dataDesligamento: nData, motivo: nMotivo, tipoAvisoPrevio: nAviso, usuarioNome: usuarioAtual
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       router.push(`/admin/rh/rescisao/${res.info.id}`);
     } catch (e: any) { alert('Erro ao criar rescisão: ' + e.message); }
@@ -184,6 +144,8 @@ export default function RescisaoPage() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

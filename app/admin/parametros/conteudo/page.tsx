@@ -1,25 +1,12 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO'; 
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 // Interface para os dados do site incluindo as URLs das imagens
 interface SiteConfig {
@@ -52,11 +39,8 @@ interface SiteConfig {
 
 export default function GestaoConteudo() {
   const router = useRouter();
-  const pathname = usePathname(); // <- Usado para capturar a rota atual
-  
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false); // <- Estado de Segurança
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess({ nomeFallback: 'Gestor' });
+
   const [loading, setLoading] = useState(false);
   const [uploadingField, setUploadingField] = useState<string | null>(null);
 
@@ -91,60 +75,10 @@ export default function GestaoConteudo() {
 
   const [dialog, setDialog] = useState({ open: false, msg: '', title: '', isError: false });
 
-  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
   useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) { 
-        console.warn("Sem sessão ativa. Redirecionando para login.");
-        router.push('/login'); 
-        return; 
-      }
+    if (!authLoading && !acessoNegado) carregarConfiguracoes();
+  }, [authLoading, acessoNegado]);
 
-      // CORREÇÃO AQUI: Voltamos ao select('*') para evitar quebra caso uma coluna não exista
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-      
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      // Consulta no banco de dados quem pode aceder a esta rota
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      // Normaliza o perfil logado e verifica contra o banco
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      // Aprovado
-      setUsuarioAtual(perfil.nome || 'Gestor');
-      setAuthLoading(false);
-      carregarConfiguracoes();
-    }
-    
-    checkAuth();
-  }, [router, pathname]);
-  
   // 2. Carregar dados do banco
   const carregarConfiguracoes = async () => {
     const { data, error } = await supabase.from('site_config').select('*').eq('id', 1).single();
@@ -223,6 +157,8 @@ export default function GestaoConteudo() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

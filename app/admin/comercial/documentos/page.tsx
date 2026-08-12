@@ -1,25 +1,11 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-import { supabase } from '../../../lib/supabase';
 import { listarDocumentosEmpresaAction, urlDocumentoEmpresaAction } from '../../rh/actions/actions-documentos-empresa';
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 const fmtTamanho = (b: number | null) => {
   if (!b) return '—';
@@ -38,10 +24,7 @@ interface DocumentoEmpresa {
 
 export default function ComercialDocumentosPage() {
   const router = useRouter();
-  const pathname = usePathname();
-
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
+  const { authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess();
 
   const [loading, setLoading] = useState(true);
   const [docs, setDocs] = useState<DocumentoEmpresa[]>([]);
@@ -52,50 +35,14 @@ export default function ComercialDocumentosPage() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewDoc, setPreviewDoc] = useState<DocumentoEmpresa | null>(null);
 
-  // Valida a sessão e a permissão (dinâmica, via banco) antes de liberar a página
   useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.push('/login'); return; }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios').select('*').eq('id', session.user.id).single();
-
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      setAuthLoading(false);
-      carregar();
-    }
-    checkAuth();
-  }, [router, pathname]);
+    if (!authLoading && !acessoNegado) carregar();
+  }, [authLoading, acessoNegado, accessToken]);
 
   const carregar = async () => {
     setLoading(true);
     try {
-      const res = await listarDocumentosEmpresaAction();
+      const res = await listarDocumentosEmpresaAction(undefined, accessToken);
       if (res.ok) setDocs(res.info.documentos);
     } catch (e: any) { alert('Erro ao carregar documentos: ' + e.message); }
     finally { setLoading(false); }
@@ -103,7 +50,7 @@ export default function ComercialDocumentosPage() {
 
   const abrirPreview = async (doc: DocumentoEmpresa) => {
     try {
-      const res = await urlDocumentoEmpresaAction({ id: doc.id });
+      const res = await urlDocumentoEmpresaAction({ id: doc.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setPreviewUrl(res.info.url); setPreviewDoc(doc);
     } catch (e: any) { alert('Erro ao abrir: ' + e.message); }
@@ -111,7 +58,7 @@ export default function ComercialDocumentosPage() {
 
   const baixar = async (doc: DocumentoEmpresa) => {
     try {
-      const res = await urlDocumentoEmpresaAction({ id: doc.id, download: true });
+      const res = await urlDocumentoEmpresaAction({ id: doc.id, download: true }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
     } catch (e: any) { alert('Erro ao baixar: ' + e.message); }
@@ -148,6 +95,8 @@ export default function ComercialDocumentosPage() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

@@ -5,6 +5,7 @@
 // social, etc. Mesmo desenho de actions-documentos-func.ts (funcionários),
 // mas sem a dimensão "por colaborador" — é um único acervo.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -13,10 +14,23 @@ const BUCKET = 'documentos-empresa';
 const slug = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '')
   .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
 
+const ROTAS_PERMITIDAS = ['/admin/comercial/documentos', '/admin/rh/documentos'];
+
+async function validarAcessoQualquerRota(accessToken: string) {
+  for (const rota of ROTAS_PERMITIDAS) {
+    const acesso = await validarAcesso(accessToken, rota);
+    if (acesso.ok) return acesso;
+  }
+  return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
+}
+
 // ============================================================================
 // CATÁLOGO DE CATEGORIAS
 // ============================================================================
-export async function listarCategoriasDocEmpresaAction(): Promise<Resultado> {
+export async function listarCategoriasDocEmpresaAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db.from('empresa_documento_categorias')
@@ -28,7 +42,10 @@ export async function listarCategoriasDocEmpresaAction(): Promise<Resultado> {
   }
 }
 
-export async function criarCategoriaDocEmpresaAction(payload: { nome: string; exigeValidade: boolean }): Promise<Resultado> {
+export async function criarCategoriaDocEmpresaAction(payload: { nome: string; exigeValidade: boolean }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const nome = payload.nome.toUpperCase().trim();
   if (!nome) return { ok: false, erro: 'Digite um nome para a categoria.' };
@@ -57,7 +74,10 @@ export async function uploadDocumentoEmpresaAction(payload: {
   dataValidade?: string | null;
   observacao?: string | null;
   enviadoPor: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { categoriaId, empresaId, titulo, arquivoBase64, nomeArquivo, tipoMime, dataValidade, observacao, enviadoPor } = payload;
 
@@ -108,10 +128,13 @@ export async function uploadDocumentoEmpresaAction(payload: {
 // LISTAR documentos (com filtro opcional por categoria)
 // Anexa o status de validade calculado (OK / VENCENDO / VENCIDO).
 // ============================================================================
-export async function listarDocumentosEmpresaAction(payload?: {
+export async function listarDocumentosEmpresaAction(payload: {
   categoriaId?: number | null;
   empresaIds?: number[] | null;
-}): Promise<Resultado> {
+} | undefined, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     let q = db.from('empresa_documentos')
@@ -149,7 +172,10 @@ export async function listarDocumentosEmpresaAction(payload?: {
 // ============================================================================
 // URL de preview/download (signed URL de 10 min)
 // ============================================================================
-export async function urlDocumentoEmpresaAction(payload: { id: number; download?: boolean }): Promise<Resultado> {
+export async function urlDocumentoEmpresaAction(payload: { id: number; download?: boolean }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: doc } = await db.from('empresa_documentos')
@@ -168,7 +194,10 @@ export async function urlDocumentoEmpresaAction(payload: { id: number; download?
 // ============================================================================
 // EXCLUIR documento (remove do Storage e do banco)
 // ============================================================================
-export async function excluirDocumentoEmpresaAction(payload: { id: number }): Promise<Resultado> {
+export async function excluirDocumentoEmpresaAction(payload: { id: number }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: doc } = await db.from('empresa_documentos')

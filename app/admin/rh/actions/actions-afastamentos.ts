@@ -5,10 +5,12 @@
 // Reaproveita o bucket de Storage do módulo de Documentos (documentos-funcionarios)
 // para o anexo opcional do atestado/laudo.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
 const BUCKET = 'documentos-funcionarios';
+const ROTA = '/admin/rh/ferias-afastamentos';
 
 const slug = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '')
   .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
@@ -72,7 +74,10 @@ async function sincronizarAbonosAfastamento(db: ReturnType<typeof supabaseAdmin>
 // ============================================================================
 // CATÁLOGO DE TIPOS
 // ============================================================================
-export async function listarTiposAfastamentoAction(): Promise<Resultado> {
+export async function listarTiposAfastamentoAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db.from('folha_afastamento_tipos').select('*').eq('ativo', true).order('nome');
@@ -83,7 +88,10 @@ export async function listarTiposAfastamentoAction(): Promise<Resultado> {
   }
 }
 
-export async function criarTipoAfastamentoAction(payload: { nome: string }): Promise<Resultado> {
+export async function criarTipoAfastamentoAction(payload: { nome: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const nome = payload.nome.toUpperCase().trim();
   if (!nome) return { ok: false, erro: 'Digite um nome para o tipo de afastamento.' };
@@ -102,7 +110,14 @@ export async function criarTipoAfastamentoAction(payload: { nome: string }): Pro
 // ============================================================================
 // PAINEL: lista todos os afastamentos com tipo/cargo já resolvidos + KPIs.
 // ============================================================================
-export async function painelAfastamentosAction(): Promise<Resultado> {
+export async function painelAfastamentosAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) {
+    // Também usada pelo painel de pendências do hub /admin/rh.
+    const acessoHub = await validarAcesso(accessToken, '/admin/rh');
+    if (!acessoHub.ok) return { ok: false, erro: acesso.message };
+  }
+
   const db = supabaseAdmin();
   try {
     const { data: afastamentos, error } = await db.from('folha_afastamentos')
@@ -151,7 +166,10 @@ export async function salvarAfastamentoAction(payload: {
   nomeArquivo?: string | null;
   tipoMime?: string | null;
   usuarioNome: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { id, funcionarioNome, tipoId, dataInicio, dataFim, cid, observacao, arquivoBase64, nomeArquivo, tipoMime, usuarioNome } = payload;
 
@@ -215,7 +233,10 @@ export async function salvarAfastamentoAction(payload: {
 // ============================================================================
 // ENCERRAR rapidamente (define data_fim e muda o status, sem abrir o modal cheio)
 // ============================================================================
-export async function encerrarAfastamentoAction(payload: { id: number; dataFim: string }): Promise<Resultado> {
+export async function encerrarAfastamentoAction(payload: { id: number; dataFim: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: atual } = await db.from('folha_afastamentos').select('funcionario_nome, data_inicio, tipo_id').eq('id', payload.id).maybeSingle();
@@ -239,7 +260,10 @@ export async function encerrarAfastamentoAction(payload: { id: number; dataFim: 
   }
 }
 
-export async function excluirAfastamentoAction(payload: { id: number }): Promise<Resultado> {
+export async function excluirAfastamentoAction(payload: { id: number }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: af } = await db.from('folha_afastamentos').select('storage_path').eq('id', payload.id).maybeSingle();
@@ -255,7 +279,10 @@ export async function excluirAfastamentoAction(payload: { id: number }): Promise
 // ============================================================================
 // URL assinada do anexo (10 min), mesmo padrão do módulo de Documentos.
 // ============================================================================
-export async function urlAnexoAfastamentoAction(payload: { id: number; download?: boolean }): Promise<Resultado> {
+export async function urlAnexoAfastamentoAction(payload: { id: number; download?: boolean }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: af } = await db.from('folha_afastamentos').select('storage_path, nome_arquivo').eq('id', payload.id).maybeSingle();

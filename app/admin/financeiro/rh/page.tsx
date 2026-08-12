@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../../lib/supabase';
 import {
@@ -10,21 +10,8 @@ import {
 } from '../../rh/actions/actions-financeiro';
 import { listarIntegracoesAction } from '../../parametros/integracao/actions';
 import SepararHolerites from '../../rh/holerite/SepararHolerites';
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 // Contas bancárias no sistema são salvas como "12345-6" (número-DAC). O CNAB
 // exige o dígito verificador em campo separado do número da conta.
@@ -71,11 +58,7 @@ interface Lote {
 
 export default function FinanceiroPage() {
   const router = useRouter();
-  const pathname = usePathname();
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [emailUsuario, setEmailUsuario] = useState('');
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
 
   const [integracoes, setIntegracoes] = useState<Integracao[]>([]);
 
@@ -125,62 +108,14 @@ export default function FinanceiroPage() {
   const [itensRetorno, setItensRetorno] = useState<ItemLote[]>([]);
   const [carregandoRetorno, setCarregandoRetorno] = useState(false);
 
-  // Valida a sessão e a permissão (dinâmica, via banco) antes de liberar a página
   useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-
-      if (!session) {
-        router.push('/login');
-        return;
-      }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      // Consulta no banco de dados quem pode aceder a esta rota
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      // Normaliza o perfil logado e verifica contra o banco
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      // Aprovado
-      setUsuarioAtual(perfil.nome || 'Equipe RH');
-      setEmailUsuario(perfil.email || session.user.email || '');
-      setAuthLoading(false);
-      carregar();
-    }
-    checkAuth();
-  }, [router, pathname]);
+    if (!authLoading && !acessoNegado) carregar();
+  }, [authLoading, acessoNegado]);
 
   const carregar = async () => {
     const [lotesRes, integRes] = await Promise.all([
-      listarLotesAction({}),
-      listarIntegracoesAction()
+      listarLotesAction({}, accessToken),
+      listarIntegracoesAction(accessToken)
     ]);
     if (lotesRes.ok) setLotes(lotesRes.info.lotes);
     if (integRes.ok) setIntegracoes(integRes.info.integracoes);
@@ -217,7 +152,7 @@ export default function FinanceiroPage() {
         valoresAdiantamento: valoresAdiant,
         valoresPagamento: valoresPagto,
         valoresDecimoTerceiro, valoresFerias
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setItens(res.info.itens);
       setResumoLote({
@@ -253,7 +188,7 @@ export default function FinanceiroPage() {
     setOcrDebug(null);
 
     try {
-      const res = await listarPdfsContabilidadeAction({ mesReferencia, tipo, forcar });
+      const res = await listarPdfsContabilidadeAction({ mesReferencia, tipo, forcar }, accessToken);
       if (!res.ok) throw new Error(res.erro);
 
       const pdfs: { funcionario_nome: string; pdfBase64: string }[] = res.info.pdfs;
@@ -282,7 +217,7 @@ export default function FinanceiroPage() {
             // Chamada para a Server Action conectada à AWS Textract — salva o
             // resultado em banco (mesReferencia + funcionario_nome) para não
             // precisar reler este PDF nas próximas vezes.
-            const respostaAws = await processarOcrAwsAction(pdfBase64, tipo, mesReferencia, funcionario_nome);
+            const respostaAws = await processarOcrAwsAction(pdfBase64, tipo, mesReferencia, funcionario_nome, accessToken);
 
             if (i === 0 && respostaAws._textoLido) {
               primeiroTexto = `[VALOR CAPTURADO: ${respostaAws.valor ?? 'nenhum'}]\n\n${respostaAws._textoLido}`;
@@ -311,7 +246,7 @@ export default function FinanceiroPage() {
         valoresPagamento: tipo === 'HOLERITE_MENSAL' ? novos : valoresPagto,
         valoresDecimoTerceiro: tipo === 'DECIMO_TERCEIRO' ? novos : valoresDecimoTerceiro,
         valoresFerias: tipo === 'FERIAS' ? novos : valoresFerias
-      });
+      }, accessToken);
       if (res2.ok) {
         setItens(res2.info.itens);
         setResumoLote({
@@ -367,7 +302,7 @@ export default function FinanceiroPage() {
       const res = await salvarLoteAction({
         parceiro: 'ITAU', mesReferencia, tipoLote: fontesSel.join('+'),
         nomeLote: nome || sugestao, dataPagamento, itens, criadoPor: usuarioAtual
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       alert(`Lote "${nome || sugestao}" gerado: ${res.info.qtd} pagamentos, ${BRL(res.info.valorTotal)}.`);
       setItens([]); carregar();
@@ -658,7 +593,7 @@ export default function FinanceiroPage() {
     if (!confirm(`Enviar os pagamentos PIX deste lote via API do Itaú, com data de pagamento ${dataPagamento.split('-').reverse().join('/')}?\n\nIsso move dinheiro de verdade (ou do sandbox, conforme o Ambiente configurado em Integrações). TED e outras formas não são enviadas por aqui — continue exportando o CNAB para elas.`)) return;
     setEnviandoLoteId(loteId);
     try {
-      const res = await enviarLoteAoBancoAction({ loteId, dataPagamento, usuarioNome: usuarioAtual });
+      const res = await enviarLoteAoBancoAction({ loteId, dataPagamento, usuarioNome: usuarioAtual }, accessToken);
       if (res.info) {
         const { sucesso, rejeitado, comErro, total } = res.info;
         alert(`Envio concluído: ${sucesso}/${total} pagos, ${rejeitado} rejeitados pelo banco, ${comErro} com erro.` + (res.erro ? `\n\n${res.erro}` : ''));
@@ -679,7 +614,7 @@ export default function FinanceiroPage() {
       : `Inativar o lote "${lote.nome_lote || lote.tipo_lote}"?\n\nO histórico continua salvo, só fica sinalizado como inativo (ex.: lote duplicado ou gerado por engano).`;
     if (!confirm(confirmMsg)) return;
 
-    const res = await alternarAtivoLoteAction({ loteId: lote.id, ativo: novoAtivo, usuarioNome: usuarioAtual });
+    const res = await alternarAtivoLoteAction({ loteId: lote.id, ativo: novoAtivo, usuarioNome: usuarioAtual }, accessToken);
     if (!res.ok) { alert(res.erro || 'Não foi possível atualizar o lote.'); return; }
     setLotes(prev => prev.map(l => l.id === lote.id ? { ...l, ativo: novoAtivo } : l));
   };
@@ -689,7 +624,7 @@ export default function FinanceiroPage() {
   const abrirLoteParaExportar = async (lote: Lote) => {
     setAbrindoLote(lote.id);
     try {
-      const res = await buscarLoteAction({ loteId: lote.id });
+      const res = await buscarLoteAction({ loteId: lote.id }, accessToken);
       if (!res.ok) { alert(res.erro || 'Não foi possível abrir o lote.'); return; }
       const itensSalvos: ItemLote[] = res.info.lote.itens || [];
       if (itensSalvos.length === 0) { alert('Este lote não tem itens salvos para exportar.'); return; }
@@ -714,7 +649,7 @@ export default function FinanceiroPage() {
   const carregarRetornoLote = async (loteId: number) => {
     setCarregandoRetorno(true);
     try {
-      const res = await buscarLoteAction({ loteId });
+      const res = await buscarLoteAction({ loteId }, accessToken);
       if (!res.ok) { alert(res.erro || 'Não foi possível abrir o lote.'); setItensRetorno([]); return; }
       const itensSalvos: ItemLote[] = res.info.lote.itens || [];
       setItensRetorno(itensSalvos.filter(i => i.metodo === 'PIX' && i.pronto));
@@ -770,6 +705,8 @@ export default function FinanceiroPage() {
     );
   }
 
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
+
   if (acessoNegado) {
     return (
       <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
@@ -803,6 +740,7 @@ export default function FinanceiroPage() {
           <SepararHolerites
             mesReferencia={mesReferencia}
             usuarioAtual={usuarioAtual}
+            accessToken={accessToken}
             elegiveis={elegiveisContabilidade}
             onFechar={() => setViewMode('resumo')}
           />

@@ -25,8 +25,11 @@
 //   de uma vez, sem paginação/janela de datas como as outras integrações.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { consultarObjetos, buscarObjeto, criterio, p2sParaData, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
+import { validarAcesso } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
+
+const ROTA = '/admin/operacional/produtos';
 
 // TCustomEstoque não segue o padrão NomeExibicao/NomeCompleto/Nome — seu
 // campo de nome é NomeEstoque (confirmado testando P,538 → "LOCACAO -
@@ -80,7 +83,10 @@ export interface SincronizarProdutosOpcoes {
   ambiente?: AmbienteP2s;
 }
 
-export async function sincronizarProdutosP2sAction(opcoes: SincronizarProdutosOpcoes = {}): Promise<Resultado> {
+export async function sincronizarProdutosP2sAction(opcoes: SincronizarProdutosOpcoes, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const ambiente = opcoes.ambiente || 'PRODUCAO';
 
   try {

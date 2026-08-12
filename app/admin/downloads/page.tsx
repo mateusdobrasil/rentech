@@ -1,25 +1,15 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../actions';
+import PaginationFooter from '../../components/ui/PaginationFooter';
+import { usePageAccess } from '../../components/hooks/usePageAccess';
+import { HubErro } from '../../components/ui/HubStates';
 
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO'; 
-};
+const TAMANHO_PAGINA = 30;
 
 interface Arquivo {
   id: string;
@@ -34,17 +24,14 @@ interface Arquivo {
 
 export default function GestorDownloads() {
   const router = useRouter();
-  const pathname = usePathname();
-
-  // Estados de Segurança e Autenticação
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
-  const [usuarioNome, setUsuarioNome] = useState('Usuário');
+  const { usuarioAtual: usuarioNome, authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess({ nomeFallback: 'Usuário' });
 
   // Estados de Dados
   const [arquivos, setArquivos] = useState<Arquivo[]>([]);
   const [loading, setLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
+  const [pagina, setPagina] = useState(0);
+  const [totalRegistros, setTotalRegistros] = useState(0);
 
   // Estados do Formulário
   const [nome, setNome] = useState('');
@@ -57,63 +44,22 @@ export default function GestorDownloads() {
   const [linkExterno, setLinkExterno] = useState('');
   const [tamanhoManual, setTamanhoManual] = useState('');
 
-  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
+  // 2. Carregar dados da tabela, paginado (Agora só é chamado se a autenticação passar)
   useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) { 
-        router.push('/login'); 
-        return; 
-      }
+    if (authLoading || acessoNegado) return;
+    carregarDados();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, acessoNegado, pagina]);
 
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-      
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      // Consulta no banco de dados quem pode aceder a esta rota
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      // Normaliza o perfil logado e verifica contra o banco
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      // Aprovado
-      setUsuarioNome(perfil.nome || 'Usuário');
-      setAuthLoading(false);
-      carregarDados();
-    }
-    
-    checkAuth();
-  }, [router, pathname]);
-
-  // 2. Carregar dados da tabela (Agora só é chamado se a autenticação passar)
   const carregarDados = async () => {
     setLoading(true);
-    const { data } = await supabase.from('arquivos_download').select('*').order('created_at', { ascending: false });
+    const { data, count } = await supabase
+      .from('arquivos_download')
+      .select('*', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
     if (data) setArquivos(data);
+    setTotalRegistros(count || 0);
     setLoading(false);
   };
 
@@ -189,7 +135,8 @@ export default function GestorDownloads() {
       
       const fileInput = document.getElementById('fileInput') as HTMLInputElement;
       if (fileInput) fileInput.value = '';
-      
+
+      setPagina(0);
       carregarDados();
 
     } catch (error: any) {
@@ -216,6 +163,7 @@ export default function GestorDownloads() {
         setor: 'GESTAO DE DOWNLOADS'
       });
 
+      setPagina(0);
       carregarDados();
     } catch (error: any) {
       alert(`Erro ao deletar: ${error.message}`);
@@ -232,6 +180,8 @@ export default function GestorDownloads() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (
@@ -378,6 +328,19 @@ export default function GestorDownloads() {
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {!loading && totalRegistros > 0 && (
+              <div className="p-4 border-t border-[#E2E8F0]">
+                <PaginationFooter
+                  pagina={pagina}
+                  totalRegistros={totalRegistros}
+                  tamanhoPagina={TAMANHO_PAGINA}
+                  loading={loading}
+                  onAnterior={() => setPagina(p => Math.max(0, p - 1))}
+                  onProxima={() => setPagina(p => p + 1)}
+                />
               </div>
             )}
           </div>

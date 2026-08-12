@@ -4,7 +4,6 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../../lib/supabase';
-import { normalizarPermissao } from '../../../lib/permissoes';
 import {
   listarCategoriasDocAction, criarCategoriaDocAction, uploadDocumentoAction,
   listarDocumentosAction, urlDocumentoAction, excluirDocumentoAction, painelDocumentosAction,
@@ -14,6 +13,8 @@ import {
   listarCategoriasDocEmpresaAction, criarCategoriaDocEmpresaAction, uploadDocumentoEmpresaAction,
   listarDocumentosEmpresaAction, urlDocumentoEmpresaAction, excluirDocumentoEmpresaAction
 } from '../actions/actions-documentos-empresa';
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 const fmtTamanho = (b: number | null) => {
   if (!b) return '—';
@@ -70,73 +71,37 @@ export default function DocumentosPage() {
   const [enviando, setEnviando] = useState(false);
   const upRef = useRef<HTMLInputElement>(null);
 
-  // Estados de Autenticação
-    const [usuarioAtual, setUsuarioAtual] = useState('');
-    const [emailUsuario, setEmailUsuario] = useState('');
-    const [authLoading, setAuthLoading] = useState(true);
+  const { usuarioAtual, emailUsuario, permissaoNormalizada, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
 
-    // Restrição por empresa (multi-empresa, Fase 2): null = sem restrição
-    // (setor ADMINISTRADOR); array = só enxerga essas empresas — mesmo
-    // padrão de /admin/rh/funcionario.
-    const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
-    const [empresasCatalogo, setEmpresasCatalogo] = useState<EmpresaCatalogo[]>([]);
+  // Restrição por empresa (multi-empresa, Fase 2): null = sem restrição
+  // (setor ADMINISTRADOR); array = só enxerga essas empresas — mesmo
+  // padrão de /admin/rh/funcionario.
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<EmpresaCatalogo[]>([]);
 
-    // 1. Validar a Sessão e Puxar Dados do Usuário Logado
-      useEffect(() => {
-        async function checkAuth() {
-          const { data: { session } } = await supabase.auth.getSession();
+  // carregar()/carregarEmpresa() só disparam depois que empresasPermitidas
+  // está resolvido — chamar antes buscaria dados sem restrição de empresa.
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function inicializar() {
+      let permitidas: number[] | null = null;
+      if (permissaoNormalizada !== 'ADMINISTRADOR') {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+        const { data: vinculos } = await supabase
+          .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+        permitidas = (vinculos || []).map(v => v.empresa_id);
+      }
+      setEmpresasPermitidas(permitidas);
 
-          if (!session) {
-            router.push('/login');
-            return;
-          }
+      const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(empresasData || []);
 
-          const { data: perfil } = await supabase
-            .from('perfis_usuarios')
-            .select('*')
-            .eq('id', session.user.id)
-            .single();
-
-          if (perfil) {
-            setUsuarioAtual(perfil.nome || 'Equipe RH');
-            setEmailUsuario(perfil.email || session.user.email || '');
-
-            const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
-            const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO', 'ADMINISTRATIVO'];
-
-            if (!cargosAltaGestao.includes(permissaoBanco)) {
-              router.push('/admin');
-              return;
-            }
-
-            let permitidas: number[] | null = null;
-            if (normalizarPermissao(permissaoBanco) !== 'ADMINISTRADOR') {
-              const { data: vinculos } = await supabase
-                .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
-              permitidas = (vinculos || []).map(v => v.empresa_id);
-              setEmpresasPermitidas(permitidas);
-            } else {
-              setEmpresasPermitidas(null);
-            }
-
-            const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
-            setEmpresasCatalogo(empresasData || []);
-
-            setAuthLoading(false);
-            carregar(permitidas);
-            carregarEmpresa(permitidas);
-            return;
-          } else {
-            setUsuarioAtual('Equipe RH');
-          }
-
-          setAuthLoading(false);
-          carregar(null);
-          carregarEmpresa(null);
-        }
-
-        checkAuth();
-      }, [router]);
+      carregar(permitidas, accessToken);
+      carregarEmpresa(permitidas, accessToken);
+    }
+    inicializar();
+  }, [authLoading, acessoNegado, permissaoNormalizada, accessToken]);
 
   // Preview
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -174,17 +139,10 @@ export default function DocumentosPage() {
   const [previewUrlEmpresa, setPreviewUrlEmpresa] = useState<string | null>(null);
   const [previewDocEmpresa, setPreviewDocEmpresa] = useState<DocumentoEmpresa | null>(null);
 
-  useEffect(() => {
-    try { const raw = localStorage.getItem('rh_usuario'); if (raw) setUsuarioAtual(JSON.parse(raw)?.nome || ''); } catch {}
-    // carregar()/carregarEmpresa() rodam a partir do checkAuth (ver acima),
-    // só depois que empresasPermitidas está resolvido — chamar aqui também
-    // buscaria dados sem restrição de empresa antes do checkAuth terminar.
-  }, []);
-
-  const carregarEmpresa = async (empresaIds: number[] | null = empresasPermitidas) => {
+  const carregarEmpresa = async (empresaIds: number[] | null = empresasPermitidas, token: string = accessToken) => {
     setCarregandoEmpresa(true);
     try {
-      const [docs, cats] = await Promise.all([listarDocumentosEmpresaAction({ empresaIds }), listarCategoriasDocEmpresaAction()]);
+      const [docs, cats] = await Promise.all([listarDocumentosEmpresaAction({ empresaIds }, token), listarCategoriasDocEmpresaAction(token)]);
       if (docs.ok) setDocsEmpresa(docs.info.documentos);
       if (cats.ok) setCategoriasEmpresa(cats.info.categorias);
     } catch (e: any) { alert('Erro ao carregar documentos da empresa: ' + e.message); }
@@ -207,7 +165,7 @@ export default function DocumentosPage() {
         categoriaId: Number(upCategoriaEmpresa), empresaId: Number(upEmpresaEmpresa), titulo: upTituloEmpresa || null,
         arquivoBase64: base64, nomeArquivo: upArquivoEmpresa.name, tipoMime: upArquivoEmpresa.type,
         dataValidade: upValidadeEmpresa || null, observacao: upObsEmpresa || null, enviadoPor: usuarioAtual
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setUpEmpresaEmpresa(''); setUpCategoriaEmpresa(''); setUpTituloEmpresa(''); setUpArquivoEmpresa(null); setUpValidadeEmpresa(''); setUpObsEmpresa('');
       if (upRefEmpresa.current) upRefEmpresa.current.value = '';
@@ -219,7 +177,7 @@ export default function DocumentosPage() {
 
   const abrirPreviewEmpresa = async (doc: DocumentoEmpresa) => {
     try {
-      const res = await urlDocumentoEmpresaAction({ id: doc.id });
+      const res = await urlDocumentoEmpresaAction({ id: doc.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setPreviewUrlEmpresa(res.info.url); setPreviewDocEmpresa(doc);
     } catch (e: any) { alert('Erro ao abrir: ' + e.message); }
@@ -227,7 +185,7 @@ export default function DocumentosPage() {
 
   const baixarEmpresa = async (doc: DocumentoEmpresa) => {
     try {
-      const res = await urlDocumentoEmpresaAction({ id: doc.id, download: true });
+      const res = await urlDocumentoEmpresaAction({ id: doc.id, download: true }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
     } catch (e: any) { alert('Erro ao baixar: ' + e.message); }
@@ -236,7 +194,7 @@ export default function DocumentosPage() {
   const excluirEmpresa = async (doc: DocumentoEmpresa) => {
     if (!confirm(`Excluir "${doc.categoria}${doc.titulo ? ' — ' + doc.titulo : ''}"?\n\nEsta ação é permanente.`)) return;
     try {
-      const res = await excluirDocumentoEmpresaAction({ id: doc.id });
+      const res = await excluirDocumentoEmpresaAction({ id: doc.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       carregarEmpresa();
     } catch (e: any) { alert('Erro ao excluir: ' + e.message); }
@@ -244,10 +202,10 @@ export default function DocumentosPage() {
 
   const adicionarCategoriaEmpresa = async () => {
     if (!novaCatEmpresa.trim()) return;
-    const res = await criarCategoriaDocEmpresaAction({ nome: novaCatEmpresa, exigeValidade: novaCatValidadeEmpresa });
+    const res = await criarCategoriaDocEmpresaAction({ nome: novaCatEmpresa, exigeValidade: novaCatValidadeEmpresa }, accessToken);
     if (!res.ok) { alert(res.erro); return; }
     setNovaCatEmpresa(''); setNovaCatValidadeEmpresa(false);
-    const cats = await listarCategoriasDocEmpresaAction();
+    const cats = await listarCategoriasDocEmpresaAction(accessToken);
     if (cats.ok) setCategoriasEmpresa(cats.info.categorias);
   };
 
@@ -263,10 +221,10 @@ export default function DocumentosPage() {
     vencidos: docsEmpresa.filter(d => d.statusValidade === 'VENCIDO').length,
   }), [docsEmpresa]);
 
-  const carregar = async (empresaIds: number[] | null = empresasPermitidas) => {
+  const carregar = async (empresaIds: number[] | null = empresasPermitidas, token: string = accessToken) => {
     setLoading(true);
     try {
-      const [painel, cats] = await Promise.all([painelDocumentosAction(empresaIds), listarCategoriasDocAction()]);
+      const [painel, cats] = await Promise.all([painelDocumentosAction(empresaIds, token), listarCategoriasDocAction(token)]);
       if (painel.ok) { setLinhas(painel.info.linhas); setTotais(painel.info.totais); }
       if (cats.ok) setCategorias(cats.info.categorias);
     } catch (e: any) { alert('Erro ao carregar: ' + e.message); }
@@ -276,7 +234,7 @@ export default function DocumentosPage() {
   const abrirFuncionario = async (nome: string) => {
     setFuncSel(nome); setDocsFunc([]); setCarregandoDocs(true); setMostrarUpload(false);
     try {
-      const res = await listarDocumentosAction({ funcionarioNome: nome });
+      const res = await listarDocumentosAction({ funcionarioNome: nome }, accessToken);
       if (res.ok) setDocsFunc(res.info.documentos);
     } finally { setCarregandoDocs(false); }
   };
@@ -309,7 +267,7 @@ export default function DocumentosPage() {
         arquivoBase64: base64, nomeArquivo: upArquivo.name, tipoMime: upArquivo.type,
         dataValidade: upValidade || null, observacao: upObs || null, enviadoPor: usuarioAtual,
         visivelPortal: upVisivelPortal
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setUpCategoria(''); setUpTitulo(''); setUpArquivo(null); setUpValidade(''); setUpObs(''); setUpVisivelPortal(false);
       if (upRef.current) upRef.current.value = '';
@@ -321,7 +279,7 @@ export default function DocumentosPage() {
 
   const abrirPreview = async (doc: Documento) => {
     try {
-      const res = await urlDocumentoAction({ id: doc.id });
+      const res = await urlDocumentoAction({ id: doc.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setPreviewUrl(res.info.url); setPreviewDoc(doc);
     } catch (e: any) { alert('Erro ao abrir: ' + e.message); }
@@ -329,7 +287,7 @@ export default function DocumentosPage() {
 
   const baixar = async (doc: Documento) => {
     try {
-      const res = await urlDocumentoAction({ id: doc.id, download: true });
+      const res = await urlDocumentoAction({ id: doc.id, download: true }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
     } catch (e: any) { alert('Erro ao baixar: ' + e.message); }
@@ -338,7 +296,7 @@ export default function DocumentosPage() {
   const alternarVisivelPortal = async (doc: Documento) => {
     const novoValor = !doc.visivel_portal;
     setDocsFunc(prev => prev.map(d => d.id === doc.id ? { ...d, visivel_portal: novoValor } : d));
-    const res = await alternarVisivelPortalAction({ id: doc.id, visivel: novoValor });
+    const res = await alternarVisivelPortalAction({ id: doc.id, visivel: novoValor }, accessToken);
     if (!res.ok) {
       setDocsFunc(prev => prev.map(d => d.id === doc.id ? { ...d, visivel_portal: !novoValor } : d));
       alert('Erro ao atualizar: ' + res.erro);
@@ -348,7 +306,7 @@ export default function DocumentosPage() {
   const excluir = async (doc: Documento) => {
     if (!confirm(`Excluir "${doc.categoria}${doc.titulo ? ' — ' + doc.titulo : ''}" de ${doc.funcionario_nome}?\n\nEsta ação é permanente.`)) return;
     try {
-      const res = await excluirDocumentoAction({ id: doc.id });
+      const res = await excluirDocumentoAction({ id: doc.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       abrirFuncionario(funcSel!); carregar();
     } catch (e: any) { alert('Erro ao excluir: ' + e.message); }
@@ -356,10 +314,10 @@ export default function DocumentosPage() {
 
   const adicionarCategoria = async () => {
     if (!novaCat.trim()) return;
-    const res = await criarCategoriaDocAction({ nome: novaCat, exigeValidade: novaCatValidade });
+    const res = await criarCategoriaDocAction({ nome: novaCat, exigeValidade: novaCatValidade }, accessToken);
     if (!res.ok) { alert(res.erro); return; }
     setNovaCat(''); setNovaCatValidade(false);
-    const cats = await listarCategoriasDocAction();
+    const cats = await listarCategoriasDocAction(accessToken);
     if (cats.ok) setCategorias(cats.info.categorias);
   };
 
@@ -377,6 +335,31 @@ export default function DocumentosPage() {
     if (s === 'OK') return <span className="text-[9px] font-black bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full uppercase">✓ Válido</span>;
     return null;
   };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center pt-16">
+        <div className="w-10 h-10 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin shadow-sm"></div>
+      </div>
+    );
+  }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
+
+  if (acessoNegado) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200">
+          <div className="text-5xl mb-4">⛔</div>
+          <h2 className="text-xl font-black text-red-600 uppercase tracking-wider mb-2">Acesso Restrito</h2>
+          <p className="text-sm text-gray-500 mb-6">Você não possui permissão para acessar esta página.</p>
+          <button onClick={() => router.push('/admin')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
+            Voltar ao Menu Principal
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">

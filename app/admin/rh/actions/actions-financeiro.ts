@@ -7,11 +7,14 @@
 // Itaú/PIX via API SISPAG hoje — ver app/lib/itauSispag.ts. Cadastro de
 // parceiros/bancos vive em app/admin/integracao/actions.ts (tela Integrações).
 import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso } from '../../../lib/serverAuth';
 import { calcularBeneficiosMes } from './actions-beneficios';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
 import { extrairTextoPdf } from '../../../lib/textract';
 import { registrarLogAuditoria } from '../../../actions';
 import { enviarPixPorChave, credenciaisItauConfiguradas, type PagadorSispag } from '../../../lib/itauSispag';
+
+const ROTA = '/admin/financeiro/rh';
 
 type Resultado = {
   ok: boolean;
@@ -33,7 +36,10 @@ export async function montarLoteSalariosAction(payload: {
   valoresPagamento?: Record<string, number>;        // OCR do HOLERITE_MENSAL
   valoresDecimoTerceiro?: Record<string, number>;   // OCR do DECIMO_TERCEIRO
   valoresFerias?: Record<string, number>;           // OCR do FERIAS
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { mesReferencia, fontes } = payload;
   if (!fontes || fontes.length === 0) {
@@ -268,8 +274,11 @@ export async function montarLoteSalariosAction(payload: {
 // o reconhecimento de funcionário em actions-documentos.ts).
 // ============================================================================
 export async function processarOcrAwsAction(
-  pdfBase64: string, tipo: string, mesReferencia?: string, funcionarioNome?: string
+  pdfBase64: string, tipo: string, mesReferencia: string | undefined, funcionarioNome: string | undefined, accessToken: string
 ): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   try {
     const linhas = await extrairTextoPdf(pdfBase64);
 
@@ -326,7 +335,10 @@ export async function listarPdfsContabilidadeAction(payload: {
   mesReferencia: string;
   tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS';
   forcar?: boolean;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: docs } = await db
@@ -369,7 +381,10 @@ export async function salvarLoteAction(payload: {
   nomeLote?: string;
   dataPagamento?: string | null;
   itens: any[]; criadoPor: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const prontos = payload.itens.filter(i => i.pronto);
@@ -395,7 +410,10 @@ export async function salvarLoteAction(payload: {
   }
 }
 
-export async function listarLotesAction(payload: { mesReferencia?: string }): Promise<Resultado> {
+export async function listarLotesAction(payload: { mesReferencia?: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     let q = db.from('folha_lotes_pagamento')
@@ -414,7 +432,10 @@ export async function listarLotesAction(payload: { mesReferencia?: string }): Pr
 // BUSCAR LOTE (com os itens salvos) — usado pra reabrir um lote já gerado no
 // histórico e exportar de novo (CSV/CNAB), sem precisar remontar do zero.
 // ============================================================================
-export async function buscarLoteAction(payload: { loteId: number }): Promise<Resultado> {
+export async function buscarLoteAction(payload: { loteId: number }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db.from('folha_lotes_pagamento')
@@ -435,7 +456,10 @@ export async function buscarLoteAction(payload: { loteId: number }): Promise<Res
 // ============================================================================
 export async function alternarAtivoLoteAction(payload: {
   loteId: number; ativo: boolean; usuarioNome: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: lote, error: buscaErr } = await db.from('folha_lotes_pagamento')
@@ -468,7 +492,10 @@ export async function alternarAtivoLoteAction(payload: {
 // ============================================================================
 const STATUS_PIX_SUCESSO = ['Sucesso', 'Sucesso (pre-autorizado)'];
 
-export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPagamento: string; usuarioNome: string }): Promise<Resultado> {
+export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPagamento: string; usuarioNome: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: lote, error: loteErr } = await db.from('folha_lotes_pagamento')

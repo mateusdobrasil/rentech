@@ -21,8 +21,11 @@
 //   atributos (int ref) na classe real — confirmados por teste direto.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { consultarObjetos, buscarObjeto, criterio, p2sParaData, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
+import { validarAcesso } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
+
+const ROTA = '/admin/comercial/eventos-feiras';
 
 function nomeExibicao(obj: ObjetoP2s | null): string | null {
   if (!obj) return null;
@@ -76,7 +79,10 @@ export interface SincronizarEventosOpcoes {
 // todos os futuros, sem limite superior) direto do PrimeStart e grava
 // (upsert por nome+data_inicial) na mesma tabela eventos_feiras usada pelo
 // upload manual.
-export async function sincronizarEventosFeirasP2sAction(opcoes: SincronizarEventosOpcoes = {}): Promise<Resultado> {
+export async function sincronizarEventosFeirasP2sAction(opcoes: SincronizarEventosOpcoes, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const ambiente = opcoes.ambiente || 'PRODUCAO';
   const diasRetroativos = opcoes.diasRetroativos ?? 60;
 

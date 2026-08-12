@@ -1,25 +1,12 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 const ROTA_CONTROLE = '/admin/operacional/frota/controle';
 
@@ -195,12 +182,7 @@ const manutencaoVazia: Partial<Manutencao> = {
 
 export default function VisualizacaoFrota() {
   const router = useRouter();
-  const pathname = usePathname();
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-
-  // Estados de Segurança e Autenticação
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
+  const { usuarioAtual, permissaoNormalizada, authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess({ nomeFallback: 'Usuário' });
   const [podeGerenciar, setPodeGerenciar] = useState(false);
 
   // Aba ativa
@@ -246,52 +228,23 @@ export default function VisualizacaoFrota() {
   const [modalTipos, setModalTipos] = useState(false);
   const [novoTipoNome, setNovoTipoNome] = useState('');
 
-  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
+  // Além da permissão da própria rota (já verificada pelo usePageAccess),
+  // essa página checa se o usuário também tem acesso à rota de controle da
+  // frota, pra decidir se mostra o botão de gerenciar.
   useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-
-      if (!session) {
-        router.push('/login');
-        return;
-      }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      const [rotaAtualRes, rotaControleRes] = await Promise.all([
-        supabase.from('folha_paginas_permissoes').select('permissoes_permitidas').eq('endereco_route', pathname).single(),
-        supabase.from('folha_paginas_permissoes').select('permissoes_permitidas').eq('endereco_route', ROTA_CONTROLE).single()
-      ]);
-
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaAtualRes.data?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      const permissoesControle = rotaControleRes.data?.permissoes_permitidas || [];
+    if (authLoading || acessoNegado) return;
+    async function verificarPodeGerenciar() {
+      const { data: rotaControle } = await supabase
+        .from('folha_paginas_permissoes').select('permissoes_permitidas').eq('endereco_route', ROTA_CONTROLE).single();
+      const permissoesControle = rotaControle?.permissoes_permitidas || [];
       setPodeGerenciar(permissoesControle.includes(permissaoNormalizada));
-
-      setUsuarioAtual(perfil.nome || 'Usuário');
-      setAuthLoading(false);
-      carregarDados();
     }
+    verificarPodeGerenciar();
+  }, [authLoading, acessoNegado, permissaoNormalizada]);
 
-    checkAuth();
-  }, [router, pathname]);
+  useEffect(() => {
+    if (!authLoading && !acessoNegado) carregarDados();
+  }, [authLoading, acessoNegado]);
 
   // 2. Carregar apenas os veículos liberados para exibição na Frota, e as manutenções deles
   const carregarDados = async () => {
@@ -524,6 +477,8 @@ export default function VisualizacaoFrota() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

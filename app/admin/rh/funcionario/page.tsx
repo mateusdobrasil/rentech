@@ -3,26 +3,13 @@
 "use client";
  
 import { useState, useEffect, useMemo } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { salvarColaboradorAction, atribuirEmpresaEmMassaAction } from '../actions/actions-folha';
 import { uploadFotoFuncionarioAction, urlFotoFuncionarioAction } from '../actions/actions-documentos-func';
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 // Utilitários
 const formatarMesAnoBR = (mesAnoIso: string) => {
@@ -93,11 +80,7 @@ interface Movimentacao { id?: string; funcionario_nome?: string; motivo: 'ADMISS
 
 export default function FuncionarioPage() {
   const router = useRouter();
-  const pathname = usePathname();
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [emailUsuario, setEmailUsuario] = useState('');
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
+  const { usuarioAtual, emailUsuario, permissaoNormalizada, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
 
   const [loading, setLoading] = useState(false);
   const [listaFuncionarios, setListaFuncionarios] = useState<FuncionarioFin[]>([]);
@@ -164,68 +147,25 @@ export default function FuncionarioPage() {
   );
   const temAlteracoesNaoSalvas = snapshotFicha !== '' && fichaAtualSerializada !== snapshotFicha;
 
-  // Valida a sessão e a permissão (dinâmica, via banco) antes de liberar a página
+  // Restrição por empresa: ADMINISTRADOR vê todas; os demais setores só veem
+  // funcionários das empresas às quais estão vinculados em
+  // perfis_usuarios_empresas (ver /admin/parametros/permissoes → Colaboradores).
   useEffect(() => {
-    async function checkAuth() {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresasPermitidas() {
+      if (permissaoNormalizada === 'ADMINISTRADOR') { setEmpresasPermitidas(null); return; }
       const { data: { session } } = await supabase.auth.getSession();
-
-      if (!session) {
-        router.push('/login');
-        return;
-      }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      // Consulta no banco de dados quem pode aceder a esta rota
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      // Normaliza o perfil logado e verifica contra o banco
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      // Restrição por empresa: ADMINISTRADOR vê todas; os demais setores só
-      // veem funcionários das empresas às quais estão vinculados em
-      // perfis_usuarios_empresas (ver /admin/parametros/permissoes → Colaboradores).
-      if (permissaoNormalizada !== 'ADMINISTRADOR') {
-        const { data: vinculos } = await supabase
-          .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
-        setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
-      } else {
-        setEmpresasPermitidas(null);
-      }
-
-      // Aprovado
-      setUsuarioAtual(perfil.nome || 'Equipe RH');
-      setEmailUsuario(perfil.email || session.user.email || '');
-      setAuthLoading(false);
-      inicializarDados();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
     }
-    checkAuth();
-  }, [router, pathname]);
+    carregarEmpresasPermitidas();
+  }, [authLoading, acessoNegado, permissaoNormalizada]);
+
+  useEffect(() => {
+    if (!authLoading && !acessoNegado) inicializarDados();
+  }, [authLoading, acessoNegado]);
 
   useEffect(() => {
     if (funcionarioSelecionado && funcionarioSelecionado !== 'NOVO') {
@@ -291,7 +231,7 @@ export default function FuncionarioPage() {
 
     setFotoPreviewUrl('');
     if (funcData.foto_path) {
-      const fotoRes = await urlFotoFuncionarioAction({ fotoPath: funcData.foto_path });
+      const fotoRes = await urlFotoFuncionarioAction({ fotoPath: funcData.foto_path }, accessToken);
       if (fotoRes.ok) setFotoPreviewUrl(fotoRes.info.url);
     }
 
@@ -337,11 +277,11 @@ export default function FuncionarioPage() {
         arquivoBase64: base64,
         nomeArquivo: arquivo.name,
         tipoMime: arquivo.type,
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
 
       setForm(f => ({ ...f, foto_path: res.info.path }));
-      const fotoRes = await urlFotoFuncionarioAction({ fotoPath: res.info.path });
+      const fotoRes = await urlFotoFuncionarioAction({ fotoPath: res.info.path }, accessToken);
       if (fotoRes.ok) setFotoPreviewUrl(fotoRes.info.url);
     } catch (e: any) {
       alert('Erro ao enviar foto: ' + e.message);
@@ -356,7 +296,7 @@ export default function FuncionarioPage() {
     setLoading(true);
 
     try {
-      const res = await salvarColaboradorAction({ form, dependentes, movimentacoes, usuarioNome: usuarioAtual });
+      const res = await salvarColaboradorAction({ form, dependentes, movimentacoes, usuarioNome: usuarioAtual }, accessToken);
       if (!res.ok) throw new Error(res.erro);
 
       alert("Ficha guardada com sucesso!");
@@ -442,7 +382,7 @@ export default function FuncionarioPage() {
         nomesFuncionarios: Array.from(selecionadosMassa),
         empresaId: Number(empresaMassa),
         usuarioNome: usuarioAtual,
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       alert(`Empresa atribuída a ${selecionadosMassa.size} funcionário(s).`);
       setSelecionadosMassa(new Set());
@@ -463,6 +403,8 @@ export default function FuncionarioPage() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

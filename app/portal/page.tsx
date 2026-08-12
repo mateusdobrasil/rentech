@@ -56,10 +56,11 @@ export default function PortalDashboardPage() {
     const res = await carregarPortalHomeAction(token);
     if (res.ok) {
       setDocumentos(res.info.documentos);
-      if (res.info.erroDocumentos) setErro(res.info.erroDocumentos);
       setHolerites(res.info.holerites);
       setCracha(res.info.cracha);
       setPodeDirigir(res.info.podeDirigir);
+      const erros = [res.info.erroDocumentos, res.info.erroCracha, res.info.erroPodeDirigir].filter(Boolean);
+      if (erros.length > 0) setErro(erros.join(' '));
     } else {
       setErro(res.erro || 'Erro ao carregar seus dados.');
     }
@@ -94,13 +95,13 @@ export default function PortalDashboardPage() {
 
   const abrirDocumento = async (doc: DocumentoPortal) => {
     const res = await urlMeuDocumentoAction(accessToken, { id: doc.id, download: true });
-    if (!res.ok) { alert(res.erro || 'Erro ao abrir documento.'); return; }
+    if (!res.ok) { setErro(res.erro || 'Erro ao abrir documento.'); return; }
     window.open(res.info.url, '_blank', 'noopener,noreferrer');
   };
 
   const abrirHolerite = async (h: HoleritePortal) => {
     const res = await urlMeuHoleriteAction(accessToken, { id: h.id });
-    if (!res.ok) { alert(res.erro || 'Erro ao abrir holerite.'); return; }
+    if (!res.ok) { setErro(res.erro || 'Erro ao abrir holerite.'); return; }
     window.open(res.info.url, '_blank', 'noopener,noreferrer');
   };
 

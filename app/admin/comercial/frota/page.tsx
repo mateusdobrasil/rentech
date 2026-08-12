@@ -1,24 +1,11 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../../lib/supabase';
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 // Listas fixas de apoio
 const ICONE_TIPO: Record<string, string> = {
@@ -110,11 +97,7 @@ function getUrgenciaVeiculo(v: Veiculo): 'vencido' | 'proximo' | null {
 
 export default function ComercialFrotaPage() {
   const router = useRouter();
-  const pathname = usePathname();
-
-  // Estados de Segurança e Autenticação
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
+  const { authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess();
 
   // Estados de Dados
   const [veiculos, setVeiculos] = useState<Veiculo[]>([]);
@@ -129,47 +112,11 @@ export default function ComercialFrotaPage() {
   // Veículo selecionado (ficha lateral)
   const [veiculoSelecionadoId, setVeiculoSelecionadoId] = useState('');
 
-  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.push('/login'); return; }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios').select('*').eq('id', session.user.id).single();
-
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      setAuthLoading(false);
-      carregarDados();
-    }
-    checkAuth();
-  }, [router, pathname]);
-
   // 2. Carregar apenas os veículos liberados para exibição na Frota
+  useEffect(() => {
+    if (!authLoading && !acessoNegado) carregarDados();
+  }, [authLoading, acessoNegado]);
+
   const carregarDados = async () => {
     setLoading(true);
     const { data: veiculosData } = await supabase
@@ -228,6 +175,8 @@ export default function ComercialFrotaPage() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

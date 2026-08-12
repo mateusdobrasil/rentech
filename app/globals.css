@@ -10,6 +10,12 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* Paleta de marca Rentech — antes repetida como hex arbitrário em cada página */
+  --color-brand-navy: #0C1D4D;
+  --color-brand-blue: #336699;
+  --color-brand-green: #16A34A;
+  --color-brand-green-dark: #15803D;
 }
 
 @media (prefers-color-scheme: dark) {

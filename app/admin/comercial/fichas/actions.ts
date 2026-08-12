@@ -20,8 +20,11 @@
 //   com linhas vindas da API até esse mapeamento ser confirmado com a P2S.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { consultarObjetos, buscarObjeto, criterio, p2sParaData, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
+import { validarAcesso } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
+
+const ROTA = '/admin/comercial/fichas';
 
 function nomeExibicao(obj: ObjetoP2s | null): string | null {
   if (!obj) return null;
@@ -86,7 +89,10 @@ export interface SincronizarFichasReservaOpcoes {
 // Puxa as Fichas de Reserva de Locação emitidas nos últimos N dias direto do
 // PrimeStart e grava (upsert por "numero") na mesma tabela fichas_reserva
 // usada pelo upload manual — sem exigir a exportação/upload de planilha.
-export async function sincronizarFichasReservaP2sAction(opcoes: SincronizarFichasReservaOpcoes = {}): Promise<Resultado> {
+export async function sincronizarFichasReservaP2sAction(opcoes: SincronizarFichasReservaOpcoes, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const ambiente = opcoes.ambiente || 'PRODUCAO';
   const diasRetroativos = opcoes.diasRetroativos ?? 90;
 

@@ -6,8 +6,11 @@
 // em até 3 períodos — regra CLT que fica para uma próxima versão) e sem
 // integração com o cálculo de holerite (só agendamento e prazos por enquanto).
 import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
+
+const ROTA = '/admin/rh/ferias-afastamentos';
 
 const addAnos = (iso: string, anos: number): string => {
   const [a, m, d] = iso.split('-').map(Number);
@@ -68,7 +71,14 @@ async function ensurePeriodos(db: ReturnType<typeof supabaseAdmin>) {
 // (agendada/em gozo/concluída derivado das datas — só CANCELADA/DISPONIVEL/
 // AGENDADA ficam gravadas) e alerta de vencimento do período concessivo.
 // ============================================================================
-export async function painelFeriasAction(): Promise<Resultado> {
+export async function painelFeriasAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) {
+    // Também usada pelo painel de pendências do hub /admin/rh.
+    const acessoHub = await validarAcesso(accessToken, '/admin/rh');
+    if (!acessoHub.ok) return { ok: false, erro: acesso.message };
+  }
+
   const db = supabaseAdmin();
   try {
     await ensurePeriodos(db);
@@ -130,7 +140,10 @@ export async function agendarFeriasAction(payload: {
   diasAbono?: number;
   observacao?: string | null;
   usuarioNome: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { id, dataInicioGozo, diasGozo, diasAbono = 0, observacao, usuarioNome } = payload;
 
@@ -153,7 +166,10 @@ export async function agendarFeriasAction(payload: {
   }
 }
 
-export async function cancelarAgendamentoFeriasAction(payload: { id: number }): Promise<Resultado> {
+export async function cancelarAgendamentoFeriasAction(payload: { id: number }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { error } = await db.from('folha_ferias').update({

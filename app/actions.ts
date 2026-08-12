@@ -4,6 +4,7 @@
 import nodemailer from 'nodemailer';
 import { createClient } from '@supabase/supabase-js';
 import { revalidatePath } from 'next/cache';
+import { validarAcesso } from './lib/serverAuth';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -79,6 +80,10 @@ interface LogPayload {
 
 export async function uploadArquivoDownload(formData: FormData) {
   try {
+    const accessToken = (formData.get('accessToken') as string | null) || '';
+    const acesso = await validarAcesso(accessToken, '/admin/downloads');
+    if (!acesso.ok) return { success: false, message: acesso.message };
+
     const nome = (formData.get('nome') as string | null)?.trim();
     const descricao = (formData.get('descricao') as string | null)?.trim() ?? '';
     const categoria = (formData.get('categoria') as string | null)?.trim() || 'COMERCIAL';
@@ -142,6 +147,10 @@ export async function uploadArquivoDownload(formData: FormData) {
 
 export async function removerArquivoDownload(formData: FormData) {
   try {
+    const accessToken = (formData.get('accessToken') as string | null) || '';
+    const acesso = await validarAcesso(accessToken, '/admin/downloads');
+    if (!acesso.ok) return { success: false, message: acesso.message };
+
     const id = (formData.get('id') as string | null)?.trim();
     const filePath = (formData.get('filePath') as string | null)?.trim();
     const usuarioNome = (formData.get('usuarioNome') as string | null)?.trim() || 'Usuário';
@@ -188,7 +197,10 @@ export async function criarUsuarioAcesso(payload: {
   permissao: string;
   usuarioNome: string;
   empresaIds?: number[];
-}) {
+}, accessToken: string) {
+  const acesso = await validarAcesso(accessToken, '/admin/parametros/permissoes');
+  if (!acesso.ok) return { success: false, message: acesso.message };
+
   const nome = (payload.nome || '').trim();
   const email = (payload.email || '').trim().toLowerCase();
   const senha = payload.senha || '';
@@ -260,7 +272,10 @@ export async function criarUsuarioAcesso(payload: {
 // ver app/portal/actions/actions-acesso.ts) e não libera SELECT para o
 // cliente autenticado do admin. Enriquecemos com cargo/celular de
 // folha_funcionarios só para exibição — o vínculo é sempre feito pelo nome.
-export async function listarAcessosPortalAction() {
+export async function listarAcessosPortalAction(accessToken: string) {
+  const acesso = await validarAcesso(accessToken, '/admin/parametros/permissoes');
+  if (!acesso.ok) return { success: false, message: acesso.message, data: [] };
+
   try {
     if (!supabaseAdmin) {
       throw new Error('Credenciais do Supabase ausentes.');
@@ -360,7 +375,10 @@ interface DeltaEstoqueLocacao {
   delta: number;
 }
 
-export async function sincronizarEstoqueEmLocacao(deltas: DeltaEstoqueLocacao[]) {
+export async function sincronizarEstoqueEmLocacao(deltas: DeltaEstoqueLocacao[], accessToken: string) {
+  const acesso = await validarAcesso(accessToken, '/admin/operacional/checklist');
+  if (!acesso.ok) return { success: false, message: acesso.message };
+
   try {
     if (!supabaseAdmin) {
       throw new Error('Credenciais do Supabase ausentes.');
@@ -401,7 +419,10 @@ export async function sincronizarEstoqueEmLocacao(deltas: DeltaEstoqueLocacao[])
 // gravações acima: sem uma policy de SELECT liberada para `estoque`, o cliente
 // autenticado do navegador recebe lista vazia em silêncio (sem erro) e a tela some
 // com os valores, mesmo estando tudo salvo no banco.
-export async function buscarEstoque() {
+export async function buscarEstoque(accessToken: string) {
+  const acesso = await validarAcesso(accessToken, '/admin/operacional/estoque');
+  if (!acesso.ok) return { success: false, message: acesso.message, data: [] };
+
   try {
     if (!supabaseAdmin) {
       throw new Error('Credenciais do Supabase ausentes.');
@@ -429,7 +450,10 @@ interface RegistroEstoquePayload {
   avarias: string | null;
 }
 
-export async function salvarRegistroEstoque(payload: RegistroEstoquePayload) {
+export async function salvarRegistroEstoque(payload: RegistroEstoquePayload, accessToken: string) {
+  const acesso = await validarAcesso(accessToken, '/admin/operacional/estoque');
+  if (!acesso.ok) return { success: false, message: acesso.message };
+
   try {
     if (!supabaseAdmin) {
       throw new Error('Credenciais do Supabase ausentes.');
@@ -460,7 +484,10 @@ interface VinculoAcessorioPayload {
   acessorio_categoria_id?: string | null;
 }
 
-export async function criarVinculoAcessorio(payload: VinculoAcessorioPayload) {
+export async function criarVinculoAcessorio(payload: VinculoAcessorioPayload, accessToken: string) {
+  const acesso = await validarAcesso(accessToken, '/admin/operacional/estoque');
+  if (!acesso.ok) return { success: false, message: acesso.message };
+
   try {
     if (!supabaseAdmin) {
       throw new Error('Credenciais do Supabase ausentes.');
@@ -476,7 +503,10 @@ export async function criarVinculoAcessorio(payload: VinculoAcessorioPayload) {
   }
 }
 
-export async function removerVinculoAcessorio(gatilhoId: string) {
+export async function removerVinculoAcessorio(gatilhoId: string, accessToken: string) {
+  const acesso = await validarAcesso(accessToken, '/admin/operacional/estoque');
+  if (!acesso.ok) return { success: false, message: acesso.message };
+
   try {
     if (!supabaseAdmin) {
       throw new Error('Credenciais do Supabase ausentes.');

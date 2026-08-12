@@ -6,11 +6,23 @@
 // A separação por página é feita no CLIENTE (pdf-lib); aqui recebemos cada
 // pedaço já em base64 e persistimos.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso } from '../../../lib/serverAuth';
 import { extrairTextoPdf, identificarFuncionarioNoTexto } from '../../../lib/textract';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
 const BUCKET = 'documentos-folha';
+// Usado pela tela de separar holerites da contabilidade em /admin/rh/holerite
+// e pelo mesmo fluxo replicado em /admin/financeiro/rh.
+const ROTAS_PERMITIDAS = ['/admin/rh/holerite', '/admin/financeiro/rh'];
+
+async function validarAcessoDocumentos(accessToken: string) {
+  for (const rota of ROTAS_PERMITIDAS) {
+    const acesso = await validarAcesso(accessToken, rota);
+    if (acesso.ok) return acesso;
+  }
+  return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
+}
 
 const slug = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
@@ -25,7 +37,10 @@ export async function salvarDocumentosContabeisAction(payload: {
   nomeArquivoOrigem: string;
   importadoPor: string;
   itens: { funcionarioNome: string; pdfBase64: string; paginaOrigem: number; confiancaMatch?: 'ALTA' | 'MEDIA' | 'MANUAL' }[];
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoDocumentos(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { mesReferencia, tipo, nomeArquivoOrigem, importadoPor, itens } = payload;
 
@@ -78,7 +93,10 @@ export async function salvarDocumentosContabeisAction(payload: {
 export async function identificarFuncionarioOcrAction(payload: {
   pdfBase64: string;
   nomesElegiveis: string[];
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoDocumentos(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   try {
     const texto = await extrairTextoPdf(payload.pdfBase64);
     if (!texto) return { ok: false, erro: 'Nenhum texto detectado pela AWS.' };
@@ -98,7 +116,10 @@ export async function identificarFuncionarioOcrAction(payload: {
 // ============================================================================
 export async function listarDocumentosContabeisAction(payload: {
   mesReferencia: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoDocumentos(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db
@@ -118,7 +139,10 @@ export async function listarDocumentosContabeisAction(payload: {
 // ============================================================================
 export async function urlDocumentoContabilAction(payload: {
   funcionarioNome: string; mesReferencia: string; tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS';
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoDocumentos(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const path = `${payload.mesReferencia}/${payload.tipo.toLowerCase()}/${slug(payload.funcionarioNome)}.pdf`;

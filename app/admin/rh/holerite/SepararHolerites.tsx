@@ -22,13 +22,14 @@ interface PaginaSeparada {
 interface Props {
   mesReferencia: string;
   usuarioAtual: string;
+  accessToken: string;
   // Funcionários ativos cujo contrato tem recebe_holerite_contabilidade = true,
   // já em ordem alfabética. Vem da página de Ponto.
   elegiveis: FuncionarioElegivel[];
   onFechar: () => void;
 }
 
-export default function SepararHolerites({ mesReferencia, usuarioAtual, elegiveis, onFechar }: Props) {
+export default function SepararHolerites({ mesReferencia, usuarioAtual, accessToken, elegiveis, onFechar }: Props) {
   const [competencia, setCompetencia] = useState(mesReferencia);
   const [tipo, setTipo] = useState<'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS'>('ADIANTAMENTO');
   const [processando, setProcessando] = useState(false);
@@ -145,7 +146,7 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
         try {
           const ocr = await identificarFuncionarioOcrAction({
             pdfBase64, nomesElegiveis: elegiveis.map(f => f.nome_completo)
-          });
+          }, accessToken);
           if (ocr.ok && ocr.info?.nome) {
             funcionarioNome = ocr.info.nome;
             confianca = ocr.info.confianca;
@@ -205,7 +206,7 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, elegivei
         setProgresso(`Salvando ${i + 1} de ${itens.length}...`);
         const res = await salvarDocumentosContabeisAction({
           mesReferencia: competencia, tipo, nomeArquivoOrigem: nomeArquivo, importadoPor: usuarioAtual, itens: [itens[i]]
-        });
+        }, accessToken);
         if (res.ok) {
           salvos += res.info?.salvos || 0;
           if (res.info?.falhas?.length) falhas.push(...res.info.falhas);

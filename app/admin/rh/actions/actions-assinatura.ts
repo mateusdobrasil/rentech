@@ -7,22 +7,40 @@
 // - grava o controle em folha_holerite_assinaturas (service role)
 // - chama o cliente da Autentique (lib/autentique)
 import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso } from '../../../lib/serverAuth';
 import { autentiqueCriarDocumento, autentiqueConsultarDocumento } from '../../../lib/autentique';
 import { gerarHoleritePdf } from '../../../lib/gerarHoleritePdf';
 import { gerarEspelhoPontoPdf, RegistroPontoDia } from '../../../lib/gerarEspelhoPontoPdf';
 import { gerarReciboPdf } from '../../../lib/gerarReciboPdf';
 import { mergePdfs } from '../../../lib/mergePdf';
 import { calcularBeneficiosMes } from './actions-beneficios';
+import { baixarAssinado } from './assinaturaDownloadCore';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
 const BUCKET_DOCS = 'documentos-folha';
 
+// Rotas que usam este arquivo: /admin/rh/assinaturas (fluxo principal),
+// /admin/rh/holerite (envio avulso a partir da tela de holerite) e
+// /admin/rh/relatorios (reenvio/consulta pontual).
+const ROTAS_PERMITIDAS = ['/admin/rh/assinaturas', '/admin/rh/holerite', '/admin/rh/relatorios'];
+
+async function validarAcessoQualquerRota(accessToken: string) {
+  for (const rota of ROTAS_PERMITIDAS) {
+    const acesso = await validarAcesso(accessToken, rota);
+    if (acesso.ok) return acesso;
+  }
+  return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
+}
+
 const slug = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
 
 // Lista funcionários ativos (para o seletor do envio avulso)
-export async function listarFuncionariosAtivosAction(): Promise<Resultado> {
+export async function listarFuncionariosAtivosAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db
@@ -273,7 +291,10 @@ export async function enviarDocumentoAvulsoAction(payload: {
   mesReferencia: string;        // mês selecionado na página de assinaturas
   enviadoPor: string;
   sandbox: boolean;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { funcionarioNome, tituloDocumento, pdfBase64, mesReferencia, enviadoPor, sandbox } = payload;
 
@@ -344,7 +365,10 @@ export async function enviarHoleriteAssinaturaAction(payload: {
   sandbox: boolean;
   soDocumental?: boolean;
   valorManual?: number; // ajuste opcional: sobrepõe o valor lido do OCR quando soDocumental
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { funcionarioNome, mesReferencia, enviadoPor, sandbox, soDocumental, valorManual } = payload;
 
@@ -498,7 +522,10 @@ export async function enviarHoleritesLoteAction(payload: {
   mesReferencia: string;
   enviadoPor: string;
   sandbox: boolean;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { mesReferencia, enviadoPor, sandbox } = payload;
 
@@ -569,7 +596,7 @@ export async function enviarHoleritesLoteAction(payload: {
       const r = await enviarHoleriteAssinaturaAction({
         funcionarioNome: nome, mesReferencia, enviadoPor, sandbox,
         soDocumental: nomeDocumentais.has(nome)
-      });
+      }, accessToken);
       resultados.push({ nome, ok: r.ok, erro: r.erro });
     }
 
@@ -588,7 +615,10 @@ export async function enviarHoleritesLoteAction(payload: {
 // ============================================================================
 // LISTAR ASSINATURAS DE UM MÊS (para a página de acompanhamento)
 // ============================================================================
-export async function listarAssinaturasAction(payload: { mesReferencia: string }): Promise<Resultado> {
+export async function listarAssinaturasAction(payload: { mesReferencia: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     // Traz as assinaturas do mês + os avulsos DAQUELE mês (AVULSO-{mes}-...)
@@ -616,7 +646,10 @@ export async function previaDocumentoAssinaturaAction(payload: {
   soDocumental?: boolean;
   dadosAoVivo?: any; // se a folha não está fechada, a tela pode mandar o cálculo ao vivo
   valorManual?: number; // ajuste opcional: sobrepõe o valor lido do OCR quando soDocumental
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { funcionarioNome, mesReferencia, soDocumental, dadosAoVivo, valorManual } = payload;
 
@@ -710,7 +743,10 @@ export async function previaDocumentoAssinaturaAction(payload: {
 // ============================================================================
 export async function atualizarTodasAssinaturasAction(payload: {
   mesReferencia: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: pendentes } = await db
@@ -728,7 +764,7 @@ export async function atualizarTodasAssinaturasAction(payload: {
 
     for (const p of pendentes) {
       const antes = p.status;
-      const r = await consultarAssinaturaAction({ funcionarioNome: p.funcionario_nome, mesReferencia: p.mes_referencia });
+      const r = await consultarAssinaturaAction({ funcionarioNome: p.funcionario_nome, mesReferencia: p.mes_referencia }, accessToken);
       if (r.ok) {
         atualizados++;
         if (r.info?.status && r.info.status !== antes) {
@@ -750,56 +786,18 @@ export async function atualizarTodasAssinaturasAction(payload: {
 // token no servidor, arquivamos no nosso Storage (cópia permanente) e
 // devolvemos uma signed URL para o usuário abrir.
 // ============================================================================
+// A lógica em si vive em assinaturaDownloadCore.ts (baixarAssinado, sem "use
+// server") porque também é chamada pelo Portal do funcionário
+// (urlMeuHoleriteAction), que já resolve/confere a posse do holerite pela
+// sessão do próprio funcionário — não tem (nem deveria ter) um accessToken
+// de admin pra passar aqui.
 export async function baixarAssinadoAction(payload: {
   funcionarioNome: string; mesReferencia: string;
-}): Promise<Resultado> {
-  const db = supabaseAdmin();
-  try {
-    const { data: ctrl } = await db
-      .from('folha_holerite_assinaturas')
-      .select('autentique_doc_id, arquivo_assinado, status')
-      .eq('funcionario_nome', payload.funcionarioNome)
-      .eq('mes_referencia', payload.mesReferencia)
-      .maybeSingle();
-    if (!ctrl?.autentique_doc_id) return { ok: false, erro: 'Nenhum envio encontrado para este documento.' };
-    if (ctrl.status !== 'ASSINADO') return { ok: false, erro: 'O documento ainda não foi assinado.' };
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
 
-    const pathArquivado = `${payload.mesReferencia}/assinados/${slug(payload.funcionarioNome)}.pdf`;
-
-    // 1) Se já arquivamos antes, só gera a URL
-    const { data: existente } = await db.storage.from(BUCKET_DOCS).createSignedUrl(pathArquivado, 60 * 10);
-    if (existente?.signedUrl) {
-      return { ok: true, info: { url: existente.signedUrl } };
-    }
-
-    // Busca a URL do assinado na Autentique. Prioriza 'signed' (assinado.pdf),
-    // que é o que fica disponível; 'pades' pode retornar 404 se não gerado.
-    const doc = await autentiqueConsultarDocumento(ctrl.autentique_doc_id);
-    const urlAssinado = doc?.files?.signed || doc?.files?.pades;
-    if (!urlAssinado) return { ok: false, erro: 'A Autentique ainda não disponibilizou o arquivo assinado.' };
-
-    const token = process.env.AUTENTIQUE_API_TOKEN;
-    if (!token) return { ok: false, erro: 'AUTENTIQUE_API_TOKEN não configurado no servidor.' };
-
-    const resp = await fetch(urlAssinado, { headers: { Authorization: `Bearer ${token}` } });
-    if (!resp.ok) {
-      return { ok: false, erro: `Falha ao baixar o assinado da Autentique (HTTP ${resp.status}).` };
-    }
-    const bytes = new Uint8Array(await resp.arrayBuffer());
-
-    // 3) Arquiva no nosso Storage (cópia permanente) e devolve a URL
-    const { error: upErr } = await db.storage.from(BUCKET_DOCS).upload(pathArquivado, bytes, {
-      contentType: 'application/pdf', upsert: true
-    });
-    if (upErr) return { ok: false, erro: `Falha ao arquivar: ${upErr.message}` };
-
-    const { data: urlData, error: urlErr } = await db.storage.from(BUCKET_DOCS).createSignedUrl(pathArquivado, 60 * 10);
-    if (urlErr || !urlData?.signedUrl) return { ok: false, erro: 'Falha ao gerar o link do arquivo.' };
-
-    return { ok: true, info: { url: urlData.signedUrl } };
-  } catch (e: any) {
-    return { ok: false, erro: e.message };
-  }
+  return baixarAssinado(payload);
 }
 
 // ============================================================================
@@ -807,7 +805,10 @@ export async function baixarAssinadoAction(payload: {
 // ============================================================================
 export async function consultarAssinaturaAction(payload: {
   funcionarioNome: string; mesReferencia: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: ctrl } = await db

@@ -7,6 +7,7 @@
 // (app/lib/calculoRescisao.ts); os demais só recebem o anexo do TRCT
 // fornecido pela contabilidade — nenhum valor é calculado nesse caso.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
 import { consultarAssinaturaAction, baixarAssinadoAction } from './actions-assinatura';
@@ -20,6 +21,21 @@ import {
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
 const BUCKET = 'documentos-funcionarios';
+
+// Rota única do módulo — todas as actions deste arquivo são usadas a partir
+// de /admin/rh/rescisao (lista e detalhe) ou da aba "Rescisão" de
+// /admin/rh/assinaturas (que reaproveita listarAssinaturasRescisaoAction /
+// atualizarAssinaturaRescisaoAction / baixarAssinadoRescisaoAction).
+const ROTA = '/admin/rh/rescisao';
+const ROTAS_PERMITIDAS = [ROTA, '/admin/rh/assinaturas'];
+
+async function validarAcessoRescisao(accessToken: string) {
+  for (const rota of ROTAS_PERMITIDAS) {
+    const acesso = await validarAcesso(accessToken, rota);
+    if (acesso.ok) return acesso;
+  }
+  return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
+}
 
 const MOTIVO_LABEL: Record<string, string> = {
   SEM_JUSTA_CAUSA: 'Sem justa causa (dispensa)', PEDIDO_DEMISSAO: 'Pedido de demissão', JUSTA_CAUSA: 'Justa causa',
@@ -164,7 +180,10 @@ async function sincronizarFichaRescisao(db: ReturnType<typeof supabaseAdmin>, pa
 // LISTAGEM para o seletor de "Nova Rescisão" — só funcionários ativos sem
 // rescisão em andamento, com o tipo de folha já resolvido.
 // ============================================================================
-export async function listarFuncionariosElegiveisRescisaoAction(): Promise<Resultado> {
+export async function listarFuncionariosElegiveisRescisaoAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: funcs, error } = await db.from('folha_funcionarios')
@@ -200,7 +219,10 @@ export async function listarFuncionariosElegiveisRescisaoAction(): Promise<Resul
 export async function criarRescisaoAction(payload: {
   funcionarioNome: string; dataDesligamento: string; motivo: MotivoRescisao;
   tipoAvisoPrevio: TipoAvisoPrevio; usuarioNome: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { funcionarioNome, dataDesligamento, motivo, tipoAvisoPrevio, usuarioNome } = payload;
 
@@ -285,7 +307,10 @@ export async function criarRescisaoAction(payload: {
   }
 }
 
-export async function obterRescisaoAction(payload: { id: number }): Promise<Resultado> {
+export async function obterRescisaoAction(payload: { id: number }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db.from('folha_rescisoes').select('*').eq('id', payload.id).maybeSingle();
@@ -301,7 +326,10 @@ export async function obterRescisaoAction(payload: { id: number }): Promise<Resu
 // RECALCULAR — reroda o motor com os dados atuais do funcionário, sobrescrevendo
 // dados_calculo (a UI deve avisar que isso descarta edições manuais).
 // ============================================================================
-export async function recalcularRescisaoAction(payload: { id: number }): Promise<Resultado> {
+export async function recalcularRescisaoAction(payload: { id: number }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: r, error } = await db.from('folha_rescisoes').select('*').eq('id', payload.id).maybeSingle();
@@ -344,7 +372,10 @@ export async function recalcularRescisaoAction(payload: { id: number }): Promise
 // Edição manual linha a linha — nunca confia em totais vindos do cliente,
 // recalcula no servidor a partir dos itens enviados.
 // ============================================================================
-export async function atualizarItemCalculoAction(payload: { id: number; itens: ItemRescisao[] }): Promise<Resultado> {
+export async function atualizarItemCalculoAction(payload: { id: number; itens: ItemRescisao[] }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: r, error } = await db.from('folha_rescisoes').select('status, tipo_folha, dados_calculo').eq('id', payload.id).maybeSingle();
@@ -373,7 +404,10 @@ export async function atualizarItemCalculoAction(payload: { id: number; itens: I
 
 export async function atualizarFgtsAction(payload: {
   id: number; saldoFgtsInformado: number; percentualOverride?: number;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: r, error } = await db.from('folha_rescisoes').select('status, motivo').eq('id', payload.id).maybeSingle();
@@ -403,7 +437,10 @@ export async function atualizarFgtsAction(payload: {
 // ============================================================================
 export async function uploadTrctRescisaoAction(payload: {
   id: number; arquivoBase64: string; nomeArquivo: string; tipoMime?: string | null;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: r, error } = await db.from('folha_rescisoes')
@@ -431,7 +468,10 @@ export async function uploadTrctRescisaoAction(payload: {
   }
 }
 
-export async function urlTrctRescisaoAction(payload: { id: number; download?: boolean }): Promise<Resultado> {
+export async function urlTrctRescisaoAction(payload: { id: number; download?: boolean }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: r } = await db.from('folha_rescisoes').select('storage_path, nome_arquivo').eq('id', payload.id).maybeSingle();
@@ -449,7 +489,10 @@ export async function urlTrctRescisaoAction(payload: { id: number; download?: bo
 export async function atualizarStatusRescisaoAction(payload: {
   id: number;
   status: 'RASCUNHO' | 'EM_CALCULO' | 'AGUARDANDO_DOCUMENTO' | 'AGUARDANDO_HOMOLOGACAO' | 'CANCELADA';
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: r, error } = await db.from('folha_rescisoes').select('status, tipo_folha, dados_calculo, storage_path').eq('id', payload.id).maybeSingle();
@@ -476,7 +519,10 @@ export async function atualizarStatusRescisaoAction(payload: {
 // ============================================================================
 // HOMOLOGAR — passo final. Sincroniza a ficha do funcionário (idempotente).
 // ============================================================================
-export async function homologarRescisaoAction(payload: { id: number; usuarioNome: string }): Promise<Resultado> {
+export async function homologarRescisaoAction(payload: { id: number; usuarioNome: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: r, error } = await db.from('folha_rescisoes').select('*').eq('id', payload.id).maybeSingle();
@@ -511,7 +557,10 @@ export async function homologarRescisaoAction(payload: { id: number; usuarioNome
 // CANCELAR — se já estava homologada, NÃO reverte a ficha automaticamente
 // (operação distinta e mais arriscada); avisa a UI para ajuste manual.
 // ============================================================================
-export async function cancelarRescisaoAction(payload: { id: number; motivo?: string }): Promise<Resultado> {
+export async function cancelarRescisaoAction(payload: { id: number; motivo?: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: r, error } = await db.from('folha_rescisoes').select('status, funcionario_nome').eq('id', payload.id).maybeSingle();
@@ -541,7 +590,14 @@ export async function cancelarRescisaoAction(payload: { id: number; motivo?: str
 // PAINEL: lista todas as rescisões + KPIs, para a própria página e para o
 // painel de pendências do HUB (actions-dashboard.ts).
 // ============================================================================
-export async function painelRescisoesAction(): Promise<Resultado> {
+export async function painelRescisoesAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) {
+    // Também usada pelo painel de pendências do hub /admin/rh.
+    const acessoHub = await validarAcesso(accessToken, '/admin/rh');
+    if (!acessoHub.ok) return { ok: false, erro: acesso.message };
+  }
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db.from('folha_rescisoes').select('*').order('data_desligamento', { ascending: false });
@@ -577,7 +633,10 @@ export async function painelRescisoesAction(): Promise<Resultado> {
 // ============================================================================
 export async function enviarRescisaoParaAssinaturaAction(payload: {
   id: number; usuarioNome: string; sandbox: boolean;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: r, error } = await db.from('folha_rescisoes').select('*').eq('id', payload.id).maybeSingle();
@@ -648,7 +707,10 @@ export async function enviarRescisaoParaAssinaturaAction(payload: {
 
 // Leitura "fria" (sem chamar a Autentique) do último envio — usada ao abrir
 // a página, pra já mostrar o status sem gastar uma consulta à API.
-export async function obterAssinaturaRescisaoAction(payload: { id: number }): Promise<Resultado> {
+export async function obterAssinaturaRescisaoAction(payload: { id: number }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: r } = await db.from('folha_rescisoes').select('funcionario_nome').eq('id', payload.id).maybeSingle();
@@ -666,23 +728,29 @@ export async function obterAssinaturaRescisaoAction(payload: { id: number }): Pr
 
 // Consulta "quente" — pergunta o status atual pra Autentique e atualiza o
 // controle local (assinado/visualizado/rejeitado).
-export async function atualizarAssinaturaRescisaoAction(payload: { id: number }): Promise<Resultado> {
+export async function atualizarAssinaturaRescisaoAction(payload: { id: number }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: r } = await db.from('folha_rescisoes').select('funcionario_nome').eq('id', payload.id).maybeSingle();
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
-    return await consultarAssinaturaAction({ funcionarioNome: r.funcionario_nome, mesReferencia: marcadorAssinatura(payload.id) });
+    return await consultarAssinaturaAction({ funcionarioNome: r.funcionario_nome, mesReferencia: marcadorAssinatura(payload.id) }, accessToken);
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
 }
 
-export async function baixarAssinadoRescisaoAction(payload: { id: number }): Promise<Resultado> {
+export async function baixarAssinadoRescisaoAction(payload: { id: number }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: r } = await db.from('folha_rescisoes').select('funcionario_nome').eq('id', payload.id).maybeSingle();
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
-    return await baixarAssinadoAction({ funcionarioNome: r.funcionario_nome, mesReferencia: marcadorAssinatura(payload.id) });
+    return await baixarAssinadoAction({ funcionarioNome: r.funcionario_nome, mesReferencia: marcadorAssinatura(payload.id) }, accessToken);
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
@@ -693,7 +761,10 @@ export async function baixarAssinadoRescisaoAction(payload: { id: number }): Pro
 // de TRCT (qualquer mês/rescisão), já com o id da rescisão extraído do
 // marcador pra dar link direto de volta pra tela de detalhe.
 // ============================================================================
-export async function listarAssinaturasRescisaoAction(): Promise<Resultado> {
+export async function listarAssinaturasRescisaoAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db.from('folha_holerite_assinaturas')
@@ -744,7 +815,10 @@ async function montarPdfBytesRescisao(db: ReturnType<typeof supabaseAdmin>, r: a
   });
 }
 
-export async function gerarPdfRescisaoAction(payload: { id: number }): Promise<Resultado> {
+export async function gerarPdfRescisaoAction(payload: { id: number }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: r, error } = await db.from('folha_rescisoes').select('*').eq('id', payload.id).maybeSingle();

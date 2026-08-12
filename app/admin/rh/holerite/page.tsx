@@ -3,7 +3,7 @@
 "use client";
  
 import { useState, useEffect, useMemo } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
@@ -12,21 +12,9 @@ import { listarAbonosPendentesDoMesAction } from '../actions/actions-ponto-whats
 import { enviarHoleriteAssinaturaAction, enviarHoleritesLoteAction, previaDocumentoAssinaturaAction } from '../actions/actions-assinatura';
 import SepararHolerites from './SepararHolerites';
 import logoColorido from '../../../../app/imgs/logo.png';
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO'; 
-};
 // Utilitários
 const formatCurrency = (value: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
 
@@ -603,11 +591,6 @@ const extrairDadosSalariais = (f: FuncionarioFin | null) => f ? {
 
 export default function HoleritePage() {
   const router = useRouter();
-  const pathname = usePathname();
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [emailUsuario, setEmailUsuario] = useState('');
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [loadingLote, setLoadingLote] = useState(false);
@@ -674,58 +657,20 @@ export default function HoleritePage() {
     return `${comp.getFullYear()}-${String(comp.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  // Valida a sessão e a permissão antes de liberar a página
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.push('/login'); return; }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios').select('*').eq('id', session.user.id).single();
-
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      // Consulta no banco de dados quem pode aceder a esta rota
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      // Normaliza o perfil logado e verifica contra o banco
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-      setUsuarioAtual(perfil.nome || 'Equipe RH');
-      setEmailUsuario(perfil.email || session.user.email || '');
-      // Espera as regras (folha_parametros) e a lista de funcionários
-      // carregarem ANTES de liberar authLoading: o efeito abaixo dispara
-      // carregarLote() assim que authLoading vira false, e carregarLote()
-      // monta o holerite de cada funcionário usando regrasContrato — se essa
-      // chamada corresse contra um regrasContrato ainda vazio (fetch em
-      // andamento), cada funcionário caía no REGRA_PADRAO em vez da regra
-      // real do contrato dele (ex.: PJ mostrando hora extra em vez de diária,
-      // CLT mostrando salário base que a regra manda esconder). Como
-      // dependia de qual fetch vencia a corrida, o resultado mudava a cada
-      // recarregamento da página.
-      await Promise.all([carregarRegras(), carregarListaFuncionarios()]);
-      setAuthLoading(false);
-    }
-    checkAuth();
-  }, [router, pathname]);
+  // Valida a sessão e a permissão antes de liberar a página. Espera as regras
+  // (folha_parametros) e a lista de funcionários carregarem ANTES de liberar
+  // authLoading: o efeito abaixo dispara carregarLote() assim que authLoading
+  // vira false, e carregarLote() monta o holerite de cada funcionário usando
+  // regrasContrato — se essa chamada corresse contra um regrasContrato ainda
+  // vazio (fetch em andamento), cada funcionário caía no REGRA_PADRAO em vez
+  // da regra real do contrato dele (ex.: PJ mostrando hora extra em vez de
+  // diária, CLT mostrando salário base que a regra manda esconder). Como
+  // dependia de qual fetch vencia a corrida, o resultado mudava a cada
+  // recarregamento da página.
+  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({
+    nomeFallback: 'Equipe RH',
+    aoAutorizar: () => Promise.all([carregarRegras(), carregarListaFuncionarios()])
+  });
 
   useEffect(() => {
     if (!authLoading) carregarLote(mesReferencia);
@@ -848,7 +793,7 @@ export default function HoleritePage() {
         descontos: descontosSelecionado,
         bonus: bonusSelecionado,
         usuarioNome: usuarioAtual
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
 
       const resSalarial = await salvarDadosSalariaisAction({
@@ -860,7 +805,7 @@ export default function HoleritePage() {
         valor_adiantamento: formSelecionado.valor_adiantamento,
         valor_premio_diaria_viagem: formSelecionado.valor_premio_diaria_viagem,
         usuarioNome: usuarioAtual
-      });
+      }, accessToken);
       if (!resSalarial.ok) throw new Error(resSalarial.erro);
 
       alert("Bônus, descontos e dados salariais guardados com sucesso!");
@@ -942,14 +887,29 @@ export default function HoleritePage() {
   const carregarLote = async (mesAno: string) => {
     setLoadingLote(true);
     try {
-      const [{ data: funcs }, { data: descs }, { data: bons }, { data: fechs }, { data: assins }, ponto] = await Promise.all([
-        supabase.from('folha_funcionarios').select('*').eq('ativo', true).order('nome_completo'),
-        supabase.from('folha_descontos').select('*'),
-        supabase.from('folha_bonus').select('*'),
+      const { data: funcs, error: erroFuncs } = await supabase.from('folha_funcionarios').select('*').eq('ativo', true).order('nome_completo');
+      // Descontos parcelados e bônus recorrentes dependem do histórico inteiro
+      // do funcionário pra calcular se já quitaram/encerraram (não dá pra
+      // filtrar por mês) — mas só interessam os funcionários ativos que
+      // aparecem na grade, então cortamos por nome em vez de trazer a tabela
+      // inteira (incluindo desligados que nem seriam exibidos aqui).
+      const nomesAtivos = (funcs || []).map(f => f.nome_completo);
+      const [{ data: descs, error: erroDescs }, { data: bons, error: erroBons }, { data: fechs, error: erroFechs }, { data: assins, error: erroAssins }, ponto] = await Promise.all([
+        nomesAtivos.length ? supabase.from('folha_descontos').select('*').in('funcionario_nome', nomesAtivos) : Promise.resolve({ data: [] as Desconto[], error: null }),
+        nomesAtivos.length ? supabase.from('folha_bonus').select('*').in('funcionario_nome', nomesAtivos) : Promise.resolve({ data: [] as Bonus[], error: null }),
         supabase.from('folha_holerites').select('*').eq('mes_referencia', mesAno),
         supabase.from('folha_holerite_assinaturas').select('funcionario_nome, status').eq('mes_referencia', mesAno),
         buscarPontoDoMes(mesAno)
       ]);
+
+      if (erroFuncs || erroDescs || erroBons || erroFechs || erroAssins) {
+        if (erroFuncs) console.error('Erro ao buscar funcionários:', erroFuncs);
+        if (erroDescs) console.error('Erro ao buscar descontos:', erroDescs);
+        if (erroBons) console.error('Erro ao buscar bônus:', erroBons);
+        if (erroFechs) console.error('Erro ao buscar fechamentos:', erroFechs);
+        if (erroAssins) console.error('Erro ao buscar assinaturas:', erroAssins);
+        alert('Alguns dados da folha deste mês podem estar incompletos — falha ao carregar. Recarregue a página e tente novamente.');
+      }
 
       const assinPorFunc: Record<string, string> = {};
       (assins || []).forEach(a => { assinPorFunc[a.funcionario_nome] = a.status; });
@@ -1019,7 +979,7 @@ export default function HoleritePage() {
       const nomesAbertos = abertos.map(l => l.func.nome_completo);
       const [{ porFuncionario }, resAbonos] = await Promise.all([
         buscarPontoDoMes(mesReferencia),
-        listarAbonosPendentesDoMesAction({ mesAno: mesReferencia, nomes: nomesAbertos })
+        listarAbonosPendentesDoMesAction({ mesAno: mesReferencia, nomes: nomesAbertos }, accessToken)
       ]);
       if (!resAbonos.ok) throw new Error(resAbonos.erro);
 
@@ -1077,7 +1037,7 @@ export default function HoleritePage() {
     setLoadingLote(true);
     try {
       const linhas = abertos.map(l => ({ funcionario_nome: l.func.nome_completo, dados: l.dados }));
-      const res = await fecharFolhaLoteAction({ mesReferencia, linhas, usuarioNome: usuarioAtual });
+      const res = await fecharFolhaLoteAction({ mesReferencia, linhas, usuarioNome: usuarioAtual }, accessToken);
       if (!res.ok) throw new Error(res.erro);
 
       alert(`Folha de ${formatarMesAnoBR(mesReferencia)} fechada para ${abertos.length} funcionário(s)!`);
@@ -1100,7 +1060,7 @@ export default function HoleritePage() {
       const res = await reabrirFolhaAction({
         ids: [fech.id], mesReferencia: fech.mes_referencia, usuarioNome: usuarioAtual,
         descricao: fech.funcionario_nome
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       carregarLote(mesReferencia);
     } catch (e: any) {
@@ -1128,7 +1088,7 @@ export default function HoleritePage() {
       const res = await reabrirFolhaAction({
         ids, mesReferencia, usuarioNome: usuarioAtual,
         descricao: `${fechados.length} funcionário(s) em lote`
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
 
       alert(`${fechados.length} folha(s) de ${formatarMesAnoBR(mesReferencia)} reaberta(s).`);
@@ -1147,7 +1107,7 @@ export default function HoleritePage() {
         mesReferencia,
         soDocumental: item.soDocumental,
         dadosAoVivo: item.fechamento ? undefined : item.dados
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       const bin = atob(res.info.pdfBase64);
       const bytes = new Uint8Array(bin.length);
@@ -1191,7 +1151,7 @@ export default function HoleritePage() {
         enviadoPor: usuarioAtual,
         sandbox: sandboxAssinatura,
         soDocumental: item.soDocumental
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       const anexosMsg = res.info?.anexados?.length ? `\n\nAnexado: ${item.soDocumental ? '' : 'resumo + '}${res.info.anexados.join(' + ')}` : '';
       alert(`Enviado para assinatura!${anexosMsg}${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`);
@@ -1218,7 +1178,7 @@ export default function HoleritePage() {
 
     setEnviandoAssinatura('LOTE');
     try {
-      const res = await enviarHoleritesLoteAction({ mesReferencia, enviadoPor: usuarioAtual, sandbox: sandboxAssinatura });
+      const res = await enviarHoleritesLoteAction({ mesReferencia, enviadoPor: usuarioAtual, sandbox: sandboxAssinatura }, accessToken);
       const falhasMsg = res.info?.falhas?.length ? `\n\nFalhas:\n${res.info.falhas.join('\n')}` : '';
       const docMsg = res.info?.documentais ? `\n(inclui ${res.info.documentais} ficha(s) documental(is))` : '';
       alert(`${res.info?.enviados || 0} de ${res.info?.total || 0} documento(s) enviado(s).${docMsg}${falhasMsg}`);
@@ -1246,6 +1206,8 @@ export default function HoleritePage() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (
@@ -1597,6 +1559,7 @@ export default function HoleritePage() {
               <SepararHolerites
                 mesReferencia={mesReferencia}
                 usuarioAtual={usuarioAtual}
+                accessToken={accessToken}
                 elegiveis={elegiveisContabilidade}
                 onFechar={() => setMostrarSepararHolerites(false)}
               />

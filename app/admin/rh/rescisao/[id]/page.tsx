@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-import { supabase } from '../../../../lib/supabase';
 import {
   obterRescisaoAction, atualizarItemCalculoAction, recalcularRescisaoAction, atualizarFgtsAction,
   uploadTrctRescisaoAction, urlTrctRescisaoAction, homologarRescisaoAction, cancelarRescisaoAction,
@@ -11,23 +10,8 @@ import {
   baixarAssinadoRescisaoAction, gerarPdfRescisaoAction
 } from '../../actions/actions-rescisao';
 import type { ItemRescisao, MotivoRescisao } from '../../../../lib/calculoRescisao';
-
-// Rota fixa usada para checar permissão — a permissão é registrada para o
-// módulo (/admin/rh/rescisao), não para cada id individual do segmento
-// dinâmico (que seria algo como /admin/rh/rescisao/42).
-const ROTA_PERMISSAO = '/admin/rh/rescisao';
-
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { usePageAccess } from '../../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../../components/ui/HubStates';
 
 const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 const fmtMoeda = (v: number | null | undefined) => (v == null ? 'R$ 0,00' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
@@ -98,31 +82,13 @@ export default function DetalheRescisaoPage() {
   const params = useParams<{ id: string }>();
   const id = Number(params.id);
 
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
-
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.push('/login'); return; }
-
-      const { data: perfil, error: perfilError } = await supabase.from('perfis_usuarios').select('*').eq('id', session.user.id).single();
-      if (perfilError || !perfil) { router.push('/login'); return; }
-
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes').select('permissoes_permitidas').eq('endereco_route', ROTA_PERMISSAO).single();
-      if (rotaError && rotaError.code !== 'PGRST116') console.error('Erro ao buscar permissão da rota:', rotaError);
-
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) { setAcessoNegado(true); setAuthLoading(false); return; }
-
-      setUsuarioAtual(perfil.nome || 'Equipe RH');
-      setAuthLoading(false);
-    }
-    checkAuth();
-  }, [router]);
+  // A permissão é registrada para o módulo (/admin/rh/rescisao), não para
+  // cada id individual do segmento dinâmico (que seria algo como
+  // /admin/rh/rescisao/42).
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({
+    nomeFallback: 'Equipe RH',
+    rota: '/admin/rh/rescisao'
+  });
 
   const [loading, setLoading] = useState(true);
   const [rescisao, setRescisao] = useState<RescisaoRow | null>(null);
@@ -133,7 +99,7 @@ export default function DetalheRescisaoPage() {
   const carregar = async () => {
     setLoading(true);
     try {
-      const res = await obterRescisaoAction({ id });
+      const res = await obterRescisaoAction({ id }, accessToken);
       if (!res.ok) { alert('Erro ao carregar rescisão: ' + res.erro); return; }
       const r: RescisaoRow = res.info.rescisao;
       setRescisao(r);
@@ -171,7 +137,7 @@ export default function DetalheRescisaoPage() {
   const salvarItens = async () => {
     setSalvandoItens(true);
     try {
-      const res = await atualizarItemCalculoAction({ id, itens });
+      const res = await atualizarItemCalculoAction({ id, itens }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       await carregar();
     } catch (e: any) { alert('Erro ao salvar alterações: ' + e.message); }
@@ -183,7 +149,7 @@ export default function DetalheRescisaoPage() {
     if (!confirm('Recalcular vai sobrescrever qualquer edição manual feita nas linhas do cálculo e atualizar a estimativa do saldo do FGTS (mantendo o percentual da multa já salvo). Continuar?')) return;
     setRecalculando(true);
     try {
-      const res = await recalcularRescisaoAction({ id });
+      const res = await recalcularRescisaoAction({ id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       // Atualiza os itens/totais do cálculo e o saldo estimado do FGTS — não
       // usa carregar() aqui pra não sobrescrever o percentual da multa caso
@@ -199,7 +165,7 @@ export default function DetalheRescisaoPage() {
   const salvarFgts = async () => {
     setSalvandoFgts(true);
     try {
-      const res = await atualizarFgtsAction({ id, saldoFgtsInformado: saldoFgts, percentualOverride: Number(percentualFgts) || 0 });
+      const res = await atualizarFgtsAction({ id, saldoFgtsInformado: saldoFgts, percentualOverride: Number(percentualFgts) || 0 }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       await carregar();
     } catch (e: any) { alert('Erro ao salvar FGTS: ' + e.message); }
@@ -217,7 +183,7 @@ export default function DetalheRescisaoPage() {
     setEnviandoArquivo(true);
     try {
       const arquivoBase64 = await fileParaBase64(file);
-      const res = await uploadTrctRescisaoAction({ id, arquivoBase64, nomeArquivo: file.name, tipoMime: file.type });
+      const res = await uploadTrctRescisaoAction({ id, arquivoBase64, nomeArquivo: file.name, tipoMime: file.type }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       if (arquivoRef.current) arquivoRef.current.value = '';
       await carregar();
@@ -227,7 +193,7 @@ export default function DetalheRescisaoPage() {
 
   const abrirAnexo = async () => {
     try {
-      const res = await urlTrctRescisaoAction({ id });
+      const res = await urlTrctRescisaoAction({ id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
     } catch (e: any) { alert('Erro ao abrir anexo: ' + e.message); }
@@ -239,7 +205,7 @@ export default function DetalheRescisaoPage() {
   const visualizarTermoCalculado = async () => {
     setGerandoPdf(true);
     try {
-      const res = await gerarPdfRescisaoAction({ id });
+      const res = await gerarPdfRescisaoAction({ id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       const bin = atob(res.info.pdfBase64);
       const bytes = new Uint8Array(bin.length);
@@ -256,7 +222,7 @@ export default function DetalheRescisaoPage() {
     if (!confirm('Homologar esta rescisão vai marcar o funcionário como inativo, gravar a data de desligamento na ficha e lançar a movimentação de demissão. Esta ação não é facilmente reversível. Continuar?')) return;
     setHomologando(true);
     try {
-      const res = await homologarRescisaoAction({ id, usuarioNome: usuarioAtual });
+      const res = await homologarRescisaoAction({ id, usuarioNome: usuarioAtual }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       await carregar();
     } catch (e: any) { alert('Erro ao homologar: ' + e.message); }
@@ -268,7 +234,7 @@ export default function DetalheRescisaoPage() {
     if (!confirm('Cancelar esta rescisão?')) return;
     setCancelando(true);
     try {
-      const res = await cancelarRescisaoAction({ id });
+      const res = await cancelarRescisaoAction({ id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       if (res.info?.avisoManual) alert('Rescisão cancelada. Como já estava homologada, ajuste manualmente a ficha do funcionário (ativo/data de desligamento) se necessário.');
       await carregar();
@@ -287,7 +253,7 @@ export default function DetalheRescisaoPage() {
   const [baixandoAssinado, setBaixandoAssinado] = useState(false);
 
   const carregarAssinatura = async () => {
-    const res = await obterAssinaturaRescisaoAction({ id });
+    const res = await obterAssinaturaRescisaoAction({ id }, accessToken);
     if (res.ok) setAssinatura(res.info.assinatura);
   };
 
@@ -300,7 +266,7 @@ export default function DetalheRescisaoPage() {
     )) return;
     setEnviandoAssinatura(true);
     try {
-      const res = await enviarRescisaoParaAssinaturaAction({ id, usuarioNome: usuarioAtual, sandbox: sandboxAssinatura });
+      const res = await enviarRescisaoParaAssinaturaAction({ id, usuarioNome: usuarioAtual, sandbox: sandboxAssinatura }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       await carregarAssinatura();
     } catch (e: any) { alert('Erro ao enviar para assinatura: ' + e.message); }
@@ -310,7 +276,7 @@ export default function DetalheRescisaoPage() {
   const atualizarStatusAssinatura = async () => {
     setAtualizandoAssinatura(true);
     try {
-      const res = await atualizarAssinaturaRescisaoAction({ id });
+      const res = await atualizarAssinaturaRescisaoAction({ id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       await carregarAssinatura();
     } catch (e: any) { alert('Erro ao atualizar status: ' + e.message); }
@@ -320,7 +286,7 @@ export default function DetalheRescisaoPage() {
   const baixarAssinado = async () => {
     setBaixandoAssinado(true);
     try {
-      const res = await baixarAssinadoRescisaoAction({ id });
+      const res = await baixarAssinadoRescisaoAction({ id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
     } catch (e: any) { alert('Erro ao baixar assinado: ' + e.message); }
@@ -337,6 +303,8 @@ export default function DetalheRescisaoPage() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (
@@ -452,9 +420,11 @@ export default function DetalheRescisaoPage() {
                     {ASSINATURA_STATUS_INFO[assinatura.status]?.label || assinatura.status}
                     {assinatura.sandbox && ' · teste'}
                   </span>
-                  <button onClick={atualizarStatusAssinatura} disabled={atualizandoAssinatura} className="text-[10px] font-black text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg uppercase disabled:opacity-50">
-                    {atualizandoAssinatura ? 'Atualizando...' : '↻ Atualizar status'}
-                  </button>
+                  {assinatura.status !== 'ASSINADO' && (
+                    <button onClick={atualizarStatusAssinatura} disabled={atualizandoAssinatura} className="text-[10px] font-black text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg uppercase disabled:opacity-50">
+                      {atualizandoAssinatura ? 'Atualizando...' : '↻ Atualizar status'}
+                    </button>
+                  )}
                   {assinatura.status !== 'ASSINADO' && assinatura.link_assinatura && (
                     <button onClick={() => window.open(assinatura.link_assinatura!, '_blank', 'noopener,noreferrer')} className="text-[10px] font-black text-white bg-[#336699] hover:bg-[#284B8C] px-3 py-1.5 rounded-lg uppercase">
                       🔗 Link de assinatura

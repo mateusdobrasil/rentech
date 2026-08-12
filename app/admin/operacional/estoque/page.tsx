@@ -1,25 +1,12 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria, salvarRegistroEstoque, buscarEstoque, criarVinculoAcessorio, removerVinculoAcessorio } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO'; 
-};
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 // Interfaces do Banco de Dados
 interface Categoria {
@@ -66,12 +53,7 @@ const ESTOQUE_VAZIO: EstoqueItem = { equipamento_id: '', qtd_total: 0, qtd_manut
 
 export default function PainelEstoque() {
   const router = useRouter();
-  const pathname = usePathname();
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-
-  // Estados de Segurança e Autenticação
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Usuário' });
 
   // Estados de Dados
   const [equipamentos, setEquipamentos] = useState<Equipamento[]>([]);
@@ -113,59 +95,11 @@ export default function PainelEstoque() {
   const [editandoCategoriaId, setEditandoCategoriaId] = useState<string | null>(null);
   const [editandoCategoriaNome, setEditandoCategoriaNome] = useState('');
 
-  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
-    useEffect(() => {
-      async function checkAuth() {
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        if (!session) { 
-          router.push('/login'); 
-          return; 
-        }
-  
-        const { data: perfil, error: perfilError } = await supabase
-          .from('perfis_usuarios')
-          .select('*')
-          .eq('id', session.user.id)
-          .single();
-        
-        if (perfilError || !perfil) {
-          console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-          router.push('/login');
-          return;
-        }
-  
-        // Consulta no banco de dados quem pode aceder a esta rota
-        const { data: rotaPermissao, error: rotaError } = await supabase
-          .from('folha_paginas_permissoes')
-          .select('permissoes_permitidas')
-          .eq('endereco_route', pathname)
-          .single();
-  
-        if (rotaError && rotaError.code !== 'PGRST116') {
-          console.error("Erro ao buscar permissão da rota:", rotaError);
-        }
-  
-        // Normaliza o perfil logado e verifica contra o banco
-        const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-        const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-  
-        if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-          setAcessoNegado(true);
-          setAuthLoading(false);
-          return;
-        }
-  
-        // Aprovado
-        setUsuarioAtual(perfil.nome || 'Usuário');
-        setAuthLoading(false);
-        carregarDados();
-      }
-      
-      checkAuth();
-    }, [router, pathname]);
-
   // 2. Carregar Dados Principais (Equipamentos e Categorias)
+  useEffect(() => {
+    if (!authLoading && !acessoNegado) carregarDados();
+  }, [authLoading, acessoNegado]);
+
   const carregarDados = async () => {
     setLoading(true);
     
@@ -176,7 +110,7 @@ export default function PainelEstoque() {
     const [resEq, resCat, resEst] = await Promise.all([
       supabase.from('equipamentos').select('*').order('nome', { ascending: true }),
       supabase.from('categorias').select('*').order('nome', { ascending: true }),
-      buscarEstoque()
+      buscarEstoque(accessToken)
     ]);
 
     if (resCat.data) setCategorias(resCat.data);
@@ -326,7 +260,7 @@ export default function PainelEstoque() {
       avarias: avarias || null,
     };
 
-    const resultado = await salvarRegistroEstoque(payload);
+    const resultado = await salvarRegistroEstoque(payload, accessToken);
 
     if (!resultado.success) {
       setDialog({ open: true, type: 'error', title: 'Erro', msg: resultado.message || 'Falha ao salvar estoque.' });
@@ -474,7 +408,7 @@ export default function PainelEstoque() {
       acessorio_id: novoAcessorioId
     };
 
-    const resultado = await criarVinculoAcessorio(payload);
+    const resultado = await criarVinculoAcessorio(payload, accessToken);
 
     if (resultado.success && resultado.data) {
       const accInfo = equipamentos.find(e => e.id === resultado.data.acessorio_id);
@@ -495,7 +429,7 @@ export default function PainelEstoque() {
 
   const desvincularAcessorio = async (gatilhoId: string) => {
     const gatilho = modalAcessorios.gatilhos.find(g => g.id === gatilhoId);
-    const resultado = await removerVinculoAcessorio(gatilhoId);
+    const resultado = await removerVinculoAcessorio(gatilhoId, accessToken);
     if (resultado.success) {
       registrarLogAuditoria({
         usuario_nome: usuarioAtual,
@@ -560,7 +494,7 @@ export default function PainelEstoque() {
       ? { categoria_alvo_id: categoriaAlvoSelecionada, equipamento_alvo_id: null, acessorio_id: acessorioCategoriaId, acessorio_categoria_id: null }
       : { categoria_alvo_id: categoriaAlvoSelecionada, equipamento_alvo_id: null, acessorio_id: null, acessorio_categoria_id: acessorioCategoriaAlvoId };
 
-    const resultado = await criarVinculoAcessorio(payload);
+    const resultado = await criarVinculoAcessorio(payload, accessToken);
 
     if (resultado.success && resultado.data) {
       const catNome = getNomeCategoria(categoriaAlvoSelecionada);
@@ -585,7 +519,7 @@ export default function PainelEstoque() {
 
   const desvincularAcessorioCategoria = async (gatilhoId: string) => {
     const gatilho = modalAcessoriosCategoria.gatilhos.find(g => g.id === gatilhoId);
-    const resultado = await removerVinculoAcessorio(gatilhoId);
+    const resultado = await removerVinculoAcessorio(gatilhoId, accessToken);
     if (resultado.success) {
       registrarLogAuditoria({
         usuario_nome: usuarioAtual,
@@ -610,6 +544,8 @@ export default function PainelEstoque() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

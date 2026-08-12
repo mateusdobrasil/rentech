@@ -9,10 +9,16 @@ import { supabaseAdmin } from '../../../lib/supabase';
 import { enviarComProvedor, type ProvedorWhatsApp } from '../../../lib/whatsapp';
 import { enviarWhatsAppMetaTemplate } from '../../../lib/metaWhatsapp';
 import { statusCredenciaisP2s, testarConexao as testarConexaoP2s, type AmbienteP2s } from '../../../lib/p2s';
+import { validarAcesso } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
-export async function listarIntegracoesAction(): Promise<Resultado> {
+const ROTA = '/admin/parametros/integracao';
+
+export async function listarIntegracoesAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db.from('folha_integracoes').select('*').order('tipo');
@@ -25,13 +31,19 @@ export async function listarIntegracoesAction(): Promise<Resultado> {
 
 // Confirma (sem nunca expor o valor) se o token da Autentique está definido
 // no ambiente do servidor. O token nunca é lido/gravado via cliente do banco.
-export async function statusTokenAutentiqueAction(): Promise<Resultado> {
+export async function statusTokenAutentiqueAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   return { ok: true, info: { configurado: !!process.env.AUTENTIQUE_API_TOKEN } };
 }
 
 // Estatísticas de uso da integração com a Autentique, para exibir no card e
 // no modal de configuração.
-export async function estatisticasAutentiqueAction(): Promise<Resultado> {
+export async function estatisticasAutentiqueAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db
@@ -63,7 +75,10 @@ export async function estatisticasAutentiqueAction(): Promise<Resultado> {
 // Confirma (sem nunca expor os valores) se as credenciais da Z-API estão
 // definidas no ambiente do servidor. Usadas pelo Cron (app/lib/zapi.ts) para
 // os disparos de WhatsApp configurados em Agendamentos e Disparos.
-export async function statusZapiAction(): Promise<Resultado> {
+export async function statusZapiAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   return {
     ok: true,
     info: {
@@ -78,7 +93,10 @@ export async function statusZapiAction(): Promise<Resultado> {
 // API estão definidas no ambiente do servidor. Usadas pelo Cron (app/lib/
 // metaWhatsapp.ts) sempre que o roteamento (ver *RoteamentoWhatsAppAction)
 // apontar para META em vez de ZAPI.
-export async function statusMetaAction(): Promise<Resultado> {
+export async function statusMetaAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   return {
     ok: true,
     info: {
@@ -100,7 +118,10 @@ export async function statusMetaAction(): Promise<Resultado> {
 // funciona com o token do outro), por isso todo o status é por ambiente.
 // Consumida por app/lib/itauSispag.ts, chamada em enviarLoteAoBancoAction
 // (app/admin/rh/actions/actions-financeiro.ts).
-export async function statusItauApiAction(): Promise<Resultado> {
+export async function statusItauApiAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   return {
     ok: true,
     info: {
@@ -124,7 +145,10 @@ export async function statusItauApiAction(): Promise<Resultado> {
 // da API "Crédito Trabalhador" da Dataprev (GOV.BR) estão definidos no
 // ambiente do servidor. Usados por consultarConsignacoesEmpregadorGovBr em
 // app/admin/rh/actions/actions-consignado.ts (tela RH → Consignado).
-export async function statusGovBrConsignadoAction(): Promise<Resultado> {
+export async function statusGovBrConsignadoAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   return {
     ok: true,
     info: {
@@ -141,14 +165,20 @@ export async function statusGovBrConsignadoAction(): Promise<Resultado> {
 // no Demo público da P2S por padrão (sempre "configurado", sem env var
 // nenhuma); PRODUCAO usa P2S_API_HOST/PORTA/USUARIO/SENHA (ou as variantes
 // com sufixo _PRODUCAO) — ver credenciaisAmbiente em app/lib/p2s.ts.
-export async function statusP2sAction(): Promise<Resultado> {
+export async function statusP2sAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   return { ok: true, info: statusCredenciaisP2s() };
 }
 
 // Testa a conexão de verdade (Basic Auth + rede) fazendo uma consulta leve
 // que sempre retorna 0 resultados, sem depender do tamanho da base do
 // cliente — ver testarConexao em app/lib/p2s.ts.
-export async function testarConexaoP2sAction(ambiente: AmbienteP2s): Promise<Resultado> {
+export async function testarConexaoP2sAction(ambiente: AmbienteP2s, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const res = await testarConexaoP2s(ambiente);
   return res.ok ? { ok: true, info: { detalhe: 'Conexão e autenticação confirmadas.' } } : { ok: false, erro: res.erro };
 }
@@ -168,7 +198,10 @@ const ROTEAMENTO_PADRAO: ConfigRoteamentoWhatsApp = {
 // recebimento (webhook do fluxo de Ponto), se o WhatsApp usa a Z-API ou a
 // Meta Cloud API — ver app/lib/whatsapp.ts (resolverProvedor), que é quem
 // realmente aplica essa config em tempo de execução.
-export async function obterRoteamentoWhatsAppAction(): Promise<Resultado> {
+export async function obterRoteamentoWhatsAppAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db
@@ -183,7 +216,10 @@ export async function obterRoteamentoWhatsAppAction(): Promise<Resultado> {
   }
 }
 
-export async function salvarRoteamentoWhatsAppAction(config: ConfigRoteamentoWhatsApp): Promise<Resultado> {
+export async function salvarRoteamentoWhatsAppAction(config: ConfigRoteamentoWhatsApp, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { error } = await db.from('folha_integracoes').update({
@@ -201,7 +237,10 @@ export async function salvarRoteamentoWhatsAppAction(config: ConfigRoteamentoWha
 // provedor isoladamente, inclusive o que não está "no ar" no momento).
 // Usa o mesmo enviarComProvedor que automacoes.ts chama em produção, então
 // o teste exercita o caminho real de envio.
-export async function enviarTesteWhatsAppAction(provedor: ProvedorWhatsApp, celular: string): Promise<Resultado> {
+export async function enviarTesteWhatsAppAction(provedor: ProvedorWhatsApp, celular: string, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const celularLimpo = (celular || '').replace(/\D/g, '');
   if (!celularLimpo) return { ok: false, erro: 'Informe um celular válido (com DDD).' };
 
@@ -218,7 +257,10 @@ export async function enviarTesteWhatsAppAction(provedor: ProvedorWhatsApp, celu
 // nem pela checagem de janela de 24h) — serve tanto pra validar o
 // `hello_world` (template padrão, sempre aprovado, sem variáveis) quanto
 // os templates próprios depois de aprovados no Business Manager.
-export async function enviarTesteTemplateWhatsAppAction(templateNome: string, idioma: string, parametros: string, celular: string, botaoCodigo?: string): Promise<Resultado> {
+export async function enviarTesteTemplateWhatsAppAction(templateNome: string, idioma: string, parametros: string, celular: string, botaoCodigo: string | undefined, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const celularLimpo = (celular || '').replace(/\D/g, '');
   if (!celularLimpo) return { ok: false, erro: 'Informe um celular válido (com DDD).' };
   if (!templateNome.trim()) return { ok: false, erro: 'Informe o nome do template.' };
@@ -232,7 +274,10 @@ export async function enviarTesteTemplateWhatsAppAction(templateNome: string, id
 // para dar uma ideia de uso real da integração no card. Serve tanto para o
 // card da Z-API quanto para o da Meta — o canal salvo em folha_automacoes
 // é genérico ("WhatsApp"), não por provedor.
-export async function estatisticasZapiAction(): Promise<Resultado> {
+export async function estatisticasZapiAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db
@@ -259,7 +304,10 @@ export async function estatisticasZapiAction(): Promise<Resultado> {
 // Salva metadados de configuração (NÃO segredos) e status de uma integração
 export async function salvarIntegracaoAction(payload: {
   parceiro: string; ativo: boolean; ambiente: 'SANDBOX' | 'PRODUCAO'; config: any;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { error } = await db.from('folha_integracoes').update({

@@ -4,10 +4,21 @@
 // Gestão de documentos dos funcionários: upload no Storage, metadados no banco,
 // controle de validade e painel de pendências.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
 const BUCKET = 'documentos-funcionarios';
+
+const ROTAS_PERMITIDAS = ['/admin/rh/documentos', '/admin/rh/funcionario', '/admin/rh/relatorios'];
+
+async function validarAcessoQualquerRota(accessToken: string) {
+  for (const rota of ROTAS_PERMITIDAS) {
+    const acesso = await validarAcesso(accessToken, rota);
+    if (acesso.ok) return acesso;
+  }
+  return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
+}
 
 const slug = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
@@ -15,7 +26,10 @@ const slug = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 // ============================================================================
 // CATÁLOGO DE CATEGORIAS
 // ============================================================================
-export async function listarCategoriasDocAction(): Promise<Resultado> {
+export async function listarCategoriasDocAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db.from('folha_documento_categorias')
@@ -27,7 +41,10 @@ export async function listarCategoriasDocAction(): Promise<Resultado> {
   }
 }
 
-export async function criarCategoriaDocAction(payload: { nome: string; exigeValidade: boolean }): Promise<Resultado> {
+export async function criarCategoriaDocAction(payload: { nome: string; exigeValidade: boolean }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const nome = payload.nome.toUpperCase().trim();
   if (!nome) return { ok: false, erro: 'Digite um nome para a categoria.' };
@@ -57,7 +74,10 @@ export async function uploadDocumentoAction(payload: {
   observacao?: string | null;
   enviadoPor: string;
   visivelPortal?: boolean;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { funcionarioNome, categoriaId, titulo, arquivoBase64, nomeArquivo, tipoMime, dataValidade, observacao, enviadoPor, visivelPortal } = payload;
 
@@ -113,7 +133,10 @@ export async function uploadFotoFuncionarioAction(payload: {
   arquivoBase64: string;
   nomeArquivo: string;
   tipoMime: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { funcionarioNome, arquivoBase64, nomeArquivo, tipoMime } = payload;
 
@@ -140,7 +163,10 @@ export async function uploadFotoFuncionarioAction(payload: {
   }
 }
 
-export async function urlFotoFuncionarioAction(payload: { fotoPath: string }): Promise<Resultado> {
+export async function urlFotoFuncionarioAction(payload: { fotoPath: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data, error } = await db.storage.from(BUCKET).createSignedUrl(payload.fotoPath, 60 * 10);
@@ -158,7 +184,10 @@ export async function urlFotoFuncionarioAction(payload: { fotoPath: string }): P
 export async function listarDocumentosAction(payload: {
   funcionarioNome?: string | null;
   categoriaId?: number | null;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     let q = db.from('folha_documentos')
@@ -194,7 +223,10 @@ export async function listarDocumentosAction(payload: {
 // ============================================================================
 // URL de preview/download (signed URL de 10 min)
 // ============================================================================
-export async function urlDocumentoAction(payload: { id: number; download?: boolean }): Promise<Resultado> {
+export async function urlDocumentoAction(payload: { id: number; download?: boolean }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: doc } = await db.from('folha_documentos')
@@ -216,7 +248,10 @@ export async function urlDocumentoAction(payload: { id: number; download?: boole
 // aparece pro próprio funcionário em /portal (ver app/portal/actions/actions-documentos.ts).
 // Default é sempre false: nada fica visível sem essa marcação explícita.
 // ============================================================================
-export async function alternarVisivelPortalAction(payload: { id: number; visivel: boolean }): Promise<Resultado> {
+export async function alternarVisivelPortalAction(payload: { id: number; visivel: boolean }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { error } = await db.from('folha_documentos').update({ visivel_portal: payload.visivel }).eq('id', payload.id);
@@ -230,7 +265,10 @@ export async function alternarVisivelPortalAction(payload: { id: number; visivel
 // ============================================================================
 // EXCLUIR documento (remove do Storage e do banco)
 // ============================================================================
-export async function excluirDocumentoAction(payload: { id: number }): Promise<Resultado> {
+export async function excluirDocumentoAction(payload: { id: number }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: doc } = await db.from('folha_documentos')
@@ -249,7 +287,16 @@ export async function excluirDocumentoAction(payload: { id: number }): Promise<R
 // ============================================================================
 // PAINEL: visão geral por funcionário + pendências + vencimentos
 // ============================================================================
-export async function painelDocumentosAction(empresaIds?: number[] | null): Promise<Resultado> {
+export async function painelDocumentosAction(empresaIds: number[] | null, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) {
+    // Também usada pelo painel de pendências do hub /admin/rh — quem enxerga
+    // o hub mas não tem uma das rotas específicas do módulo ainda assim
+    // precisa ver a contagem agregada.
+    const acessoHub = await validarAcesso(accessToken, '/admin/rh');
+    if (!acessoHub.ok) return { ok: false, erro: acesso.message };
+  }
+
   const db = supabaseAdmin();
   try {
     let qFuncs = db.from('folha_funcionarios')

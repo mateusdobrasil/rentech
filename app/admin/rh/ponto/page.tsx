@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
@@ -16,21 +16,9 @@ import {
 import RegistroPontoConsulta from '../../operacional/registro-ponto/RegistroPontoConsulta';
 import SolicitacoesFolga from '../../operacional/registro-ponto/SolicitacoesFolga';
 import logoColorido from '../../../../app/imgs/logo.png';
-
-// ============================================================================
-// MOTOR DE NORMALIZAÇÃO DE PERMISSÕES
-// ============================================================================
-const normalizarPermissao = (permissaoBruta: string): string => {
-  const p = (permissaoBruta || '').toUpperCase().trim();
-  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
-  if (p.includes('FINAN')) return 'FINANCEIRO';
-  if (p.includes('OPER')) return 'OPERACIONAL';
-  if (p.includes('ESTOQ')) return 'ESTOQUE';
-  if (p.includes('EDIT')) return 'EDITOR';
-  if (p.includes('GESTOR')) return 'GESTORES';
-  return 'USUARIO';
-};
+import { useToast, useConfirm, usePrompt } from '../../../components/ui/NotificationProvider';
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 interface RegistroDiario {
   id?: string;
@@ -56,63 +44,10 @@ interface Abono {
 
 export default function GestaoDePonto() {
   const router = useRouter();
-  const pathname = usePathname();
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [emailUsuario, setEmailUsuario] = useState('');
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
-
-  // 1. Validar Sessão e Consultar Permissões Dinâmicas no Banco
-  useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-
-      if (!session) {
-        router.push('/login');
-        return;
-      }
-
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-
-      if (perfilError || !perfil) {
-        console.error("Erro crítico ao buscar perfil do usuário:", perfilError);
-        router.push('/login');
-        return;
-      }
-
-      // Consulta no banco de dados quem pode aceder a esta rota
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes')
-        .select('permissoes_permitidas')
-        .eq('endereco_route', pathname)
-        .single();
-
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      // Normaliza o perfil logado e verifica contra o banco
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true);
-        setAuthLoading(false);
-        return;
-      }
-
-      // Aprovado
-      setUsuarioAtual(perfil.nome || 'Equipe RH');
-      setEmailUsuario(perfil.email || session.user.email || '');
-      setAuthLoading(false);
-    }
-
-    checkAuth();
-  }, [router, pathname]);
+  const toast = useToast();
+  const confirm = useConfirm();
+  const prompt = usePrompt();
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abonoFileInputRef = useRef<HTMLInputElement>(null);
@@ -254,7 +189,7 @@ export default function GestaoDePonto() {
     setLoading(true);
 
     // Busca Feriados Dinâmicos do Banco
-    const { data: fData } = await supabase.from('folha_feriados').select('data_feriado');
+    const { data: fData, error: erroFeriados } = await supabase.from('folha_feriados').select('data_feriado');
     const feriadosList = fData ? fData.map(f => f.data_feriado) : [];
     setFeriadosGlobais(feriadosList);
 
@@ -265,21 +200,28 @@ export default function GestaoDePonto() {
     const dataFim = `${ano}-${mes}-${String(ultimoDia).padStart(2, '0')}`;
 
     // Busca Abonos do Mês
-    const { data: abonosData } = await supabase
+    const { data: abonosData, error: erroAbonos } = await supabase
       .from('folha_ponto_abono')
       .select('id, funcionario_nome, data_abono, dia_todo, hora_inicio, hora_fim, minutos_abonados, motivo')
       .gte('data_abono', dataInicio)
       .lte('data_abono', dataFim);
     if (abonosData) setAbonos(abonosData);
 
-    const { data } = await supabase
+    const { data, error: erroRegistros } = await supabase
       .from('folha_ponto_diaria')
       .select('id, funcionario_nome, data_registro, entrada_1, saida_1, entrada_2, saida_2, minutos_trabalhados')
       .gte('data_registro', dataInicio)
       .lte('data_registro', dataFim)
       .order('data_registro', { ascending: true });
-    
+
     if (data) setRegistros(data);
+
+    if (erroFeriados || erroAbonos || erroRegistros) {
+      if (erroFeriados) console.error('Erro ao buscar feriados:', erroFeriados);
+      if (erroAbonos) console.error('Erro ao buscar abonos do mês:', erroAbonos);
+      if (erroRegistros) console.error('Erro ao buscar registros de ponto do mês:', erroRegistros);
+      toast('Não foi possível carregar todos os dados de ponto do mês. Tente novamente.', 'error');
+    }
 
     setLoading(false);
   };
@@ -288,7 +230,7 @@ export default function GestaoDePonto() {
   // (mesAnoWhatsapp), independente da competência de folha da tela.
   useEffect(() => {
     if (authLoading || acessoNegado) return;
-    estatisticasPontoWhatsappAction(mesAnoWhatsapp).then(res => {
+    estatisticasPontoWhatsappAction(mesAnoWhatsapp, accessToken).then(res => {
       if (res.ok) setEstatisticasWhatsapp(res.info || null);
     });
   }, [mesAnoWhatsapp, authLoading, acessoNegado]);
@@ -430,17 +372,17 @@ export default function GestaoDePonto() {
           anoRef, mesRef,
           usuarioNome: usuarioAtual,
           nomeArquivo: file.name
-        });
+        }, accessToken);
         if (!res.ok) throw new Error(res.erro);
 
-        alert(`Sucesso! ${res.info?.gravados ?? registrosProcessados.length} dias de trabalho importados.${res.info?.aviso ? `\n\n⚠️ ${res.info.aviso}` : ''}`);
+        toast(`Sucesso! ${res.info?.gravados ?? registrosProcessados.length} dias de trabalho importados.${res.info?.aviso ? `\n\n⚠️ ${res.info.aviso}` : ''}`, 'success');
 
         const mesIdentificado = `${anoRef}-${mesRef}`;
         setMesAnoSelecionado(mesIdentificado);
         carregarAcessoEDados(mesIdentificado);
         setViewMode('resumo');
 
-      } catch (error: any) { alert(error.message); } 
+      } catch (error: any) { toast(error.message, 'error'); }
       finally { setIsProcessing(false); if (fileInputRef.current) fileInputRef.current.value = ''; }
     };
     reader.readAsText(file);
@@ -522,26 +464,26 @@ export default function GestaoDePonto() {
           anoRef, mesRef,
           usuarioNome: usuarioAtual,
           nomeArquivo: file.name
-        });
+        }, accessToken);
         if (!res.ok) throw new Error(res.erro);
 
-        alert(`Sucesso! ${res.info?.gravados ?? abonosProcessados.length} registros de abono importados.${res.info?.aviso ? `\n\n⚠️ ${res.info.aviso}` : ''}`);
+        toast(`Sucesso! ${res.info?.gravados ?? abonosProcessados.length} registros de abono importados.${res.info?.aviso ? `\n\n⚠️ ${res.info.aviso}` : ''}`, 'success');
 
         const mesIdentificado = `${anoRef}-${mesRef}`;
         setMesAnoSelecionado(mesIdentificado);
         carregarAcessoEDados(mesIdentificado);
         setViewMode('resumo');
 
-      } catch (error: any) { alert(`Erro ao processar arquivo de abonos: ${error.message}`); }
+      } catch (error: any) { toast(`Erro ao processar arquivo de abonos: ${error.message}`, 'error'); }
       finally { setIsProcessing(false); if (abonoFileInputRef.current) abonoFileInputRef.current.value = ''; }
     };
     reader.readAsText(file, 'UTF-8');
   };
 
   const handleLancarPontoManual = async () => {
-    if (!manualFuncionario) { alert('Selecione o funcionário.'); return; }
-    if (!manualData) { alert('Selecione a data.'); return; }
-    if (!manualE1 && !manualS1 && !manualE2 && !manualS2) { alert('Informe ao menos a Entrada e a Saída.'); return; }
+    if (!manualFuncionario) { toast('Selecione o funcionário.', 'error'); return; }
+    if (!manualData) { toast('Selecione a data.', 'error'); return; }
+    if (!manualE1 && !manualS1 && !manualE2 && !manualS2) { toast('Informe ao menos a Entrada e a Saída.', 'error'); return; }
 
     const resumoBatidas = (manualE2 || manualS2)
       ? `Entrada ${manualE1 || '--:--'} · Saída Almoço ${manualS1 || '--:--'} · Retorno Almoço ${manualE2 || '--:--'} · Saída ${manualS2 || '--:--'}`
@@ -553,20 +495,20 @@ export default function GestaoDePonto() {
       // O ledger via WhatsApp em si nunca é apagado (fica intacto para
       // auditoria) — esta ação só corrige o retrato do dia usado no
       // cálculo da folha, então pede uma confirmação à parte, mais explícita.
-      if (!confirm(
+      if (!(await confirm(
         `⚠ Este dia tem batida confirmada via WhatsApp (ledger legal, nunca é apagado).\n\n` +
         `Você está corrigindo apenas a versão usada no CÁLCULO DA FOLHA de ${manualFuncionario} em ${manualData.split('-').reverse().join('/')} — por exemplo, para remover uma batida a mais feita sem querer.\n\n` +
         `O ledger original do WhatsApp permanece intacto para auditoria. Deseja continuar?`
-      )) return;
+      ))) return;
     }
 
     const avisoSobreposicao = registroExistente
       ? `\n\n⚠ Já existe ponto lançado nesse dia (origem: ${registroExistente.origem}) — os valores acima vão SUBSTITUIR o que está gravado.`
       : '';
 
-    if (!confirm(
+    if (!(await confirm(
       `Lançar ponto de ${manualFuncionario} em ${manualData.split('-').reverse().join('/')}?\n\n${resumoBatidas}${avisoSobreposicao}`
-    )) return;
+    ))) return;
 
     setLancandoManual(true);
     try {
@@ -579,43 +521,43 @@ export default function GestaoDePonto() {
         saida2: manualS2 || null,
         usuarioNome: usuarioAtual,
         confirmarSobreposicaoWhatsapp: sobrepondoWhatsapp
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
 
-      alert(sobrepondoWhatsapp
+      toast(sobrepondoWhatsapp
         ? 'Ponto corrigido! O ledger original do WhatsApp continua intacto para auditoria — só o valor usado na folha foi ajustado.'
-        : 'Ponto lançado com sucesso!');
+        : 'Ponto lançado com sucesso!', 'success');
       await verificarRegistroExistente(manualFuncionario, manualData);
       setMesAnoSelecionado(manualData.slice(0, 7));
       carregarAcessoEDados(manualData.slice(0, 7));
     } catch (e: any) {
-      alert('Erro ao lançar o ponto: ' + e.message);
+      toast('Erro ao lançar o ponto: ' + e.message, 'error');
     } finally {
       setLancandoManual(false);
     }
   };
 
   const handleAbonarDia = async () => {
-    if (!abonoFuncionario) { alert('Selecione o funcionário.'); return; }
-    if (!abonoData) { alert('Selecione a data.'); return; }
-    if (!abonoMotivo.trim()) { alert('Informe o motivo do abono.'); return; }
+    if (!abonoFuncionario) { toast('Selecione o funcionário.', 'error'); return; }
+    if (!abonoData) { toast('Selecione a data.', 'error'); return; }
+    if (!abonoMotivo.trim()) { toast('Informe o motivo do abono.', 'error'); return; }
 
     const sobrepondoWhatsapp = abonoExistente?.origem === 'WHATSAPP';
 
     if (sobrepondoWhatsapp) {
-      if (!confirm(
+      if (!(await confirm(
         `⚠ Este dia tem abono confirmado via WhatsApp.\n\n` +
         `Você está corrigindo o abono de ${abonoFuncionario} em ${abonoData.split('-').reverse().join('/')}. Deseja continuar?`
-      )) return;
+      ))) return;
     }
 
     const avisoSobreposicao = abonoExistente
       ? `\n\n⚠ Já existe abono lançado nesse dia (origem: ${abonoExistente.origem}) — vai SUBSTITUIR o que está gravado.`
       : '';
 
-    if (!confirm(
+    if (!(await confirm(
       `Abonar o dia de ${abonoFuncionario} em ${abonoData.split('-').reverse().join('/')}?\n\nMotivo: ${abonoMotivo}${avisoSobreposicao}`
-    )) return;
+    ))) return;
 
     setAbonando(true);
     try {
@@ -625,15 +567,15 @@ export default function GestaoDePonto() {
         motivo: abonoMotivo,
         usuarioNome: usuarioAtual,
         confirmarSobreposicaoWhatsapp: sobrepondoWhatsapp
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
 
-      alert('Dia abonado com sucesso!');
+      toast('Dia abonado com sucesso!', 'success');
       await verificarAbonoExistente(abonoFuncionario, abonoData);
       setMesAnoSelecionado(abonoData.slice(0, 7));
       carregarAcessoEDados(abonoData.slice(0, 7));
     } catch (e: any) {
-      alert('Erro ao abonar o dia: ' + e.message);
+      toast('Erro ao abonar o dia: ' + e.message, 'error');
     } finally {
       setAbonando(false);
     }
@@ -836,7 +778,7 @@ export default function GestaoDePonto() {
       setCopiadoImpares(true);
       setTimeout(() => setCopiadoImpares(false), 2000);
     } catch {
-      alert('Não foi possível copiar automaticamente. Selecione o texto manualmente.');
+      toast('Não foi possível copiar automaticamente. Selecione o texto manualmente.', 'error');
     }
   };
 
@@ -846,7 +788,7 @@ export default function GestaoDePonto() {
 
   const carregarLedgerWhatsapp = async (mesAnoAlvo?: string) => {
     setCarregandoLedger(true);
-    const res = await listarLedgerPontoWhatsappAction(mesAnoAlvo || mesAnoWhatsapp);
+    const res = await listarLedgerPontoWhatsappAction(mesAnoAlvo || mesAnoWhatsapp, accessToken);
     if (res.ok) setLedgerWhatsapp(res.info || []);
     setCarregandoLedger(false);
   };
@@ -859,7 +801,7 @@ export default function GestaoDePonto() {
 
   const carregarSolicitacoesPendentes = async () => {
     setCarregandoSolicitacoes(true);
-    const res = await listarSolicitacoesPendentesAction();
+    const res = await listarSolicitacoesPendentesAction(accessToken);
     if (res.ok) setSolicitacoesPendentes(res.info || []);
     setCarregandoSolicitacoes(false);
   };
@@ -871,27 +813,27 @@ export default function GestaoDePonto() {
   };
 
   const aprovarSolicitacao = async (id: number) => {
-    if (!confirm('Aprovar esta solicitação? Isso já grava o ajuste/abono e avisa o funcionário pelo WhatsApp.')) return;
+    if (!(await confirm('Aprovar esta solicitação? Isso já grava o ajuste/abono e avisa o funcionário pelo WhatsApp.'))) return;
     setProcessandoSolicitacaoId(id);
-    const res = await aprovarSolicitacaoAction({ id, aprovadorNome: usuarioAtual });
+    const res = await aprovarSolicitacaoAction({ id, aprovadorNome: usuarioAtual }, accessToken);
     setProcessandoSolicitacaoId(null);
-    if (!res.ok) { alert(res.erro); return; }
+    if (!res.ok) { toast(res.erro || 'Erro ao aprovar a solicitação.', 'error'); return; }
     await Promise.all([carregarSolicitacoesPendentes(), carregarAcessoEDados(), carregarHistoricoSolicitacoes()]);
   };
 
   const rejeitarSolicitacao = async (id: number) => {
-    const motivo = prompt('Motivo da rejeição (o funcionário verá esta mensagem):');
+    const motivo = await prompt('Motivo da rejeição (o funcionário verá esta mensagem):');
     if (!motivo?.trim()) return;
     setProcessandoSolicitacaoId(id);
-    const res = await rejeitarSolicitacaoAction({ id, aprovadorNome: usuarioAtual, motivoRejeicao: motivo.trim() });
+    const res = await rejeitarSolicitacaoAction({ id, aprovadorNome: usuarioAtual, motivoRejeicao: motivo.trim() }, accessToken);
     setProcessandoSolicitacaoId(null);
-    if (!res.ok) { alert(res.erro); return; }
+    if (!res.ok) { toast(res.erro || 'Erro ao rejeitar a solicitação.', 'error'); return; }
     await Promise.all([carregarSolicitacoesPendentes(), carregarHistoricoSolicitacoes()]);
   };
 
   const carregarHistoricoSolicitacoes = async () => {
     setCarregandoHistorico(true);
-    const res = await listarHistoricoSolicitacoesAction();
+    const res = await listarHistoricoSolicitacoesAction(undefined, accessToken);
     if (res.ok) setHistoricoSolicitacoes(res.info || []);
     setCarregandoHistorico(false);
   };
@@ -914,8 +856,8 @@ export default function GestaoDePonto() {
   };
 
   const verAnexoSolicitacao = async (id: number) => {
-    const res = await urlAnexoSolicitacaoAction({ id });
-    if (!res.ok || !res.info) { alert(res.erro || 'Não foi possível abrir o anexo.'); return; }
+    const res = await urlAnexoSolicitacaoAction({ id }, accessToken);
+    if (!res.ok || !res.info) { toast(res.erro || 'Não foi possível abrir o anexo.', 'error'); return; }
     window.open(res.info.url, '_blank');
   };
 
@@ -1068,6 +1010,8 @@ export default function GestaoDePonto() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (
@@ -1460,7 +1404,7 @@ export default function GestaoDePonto() {
             )}
 
             {abaWhatsapp === 'folga' && (
-              <SolicitacoesFolga usuarioAtual={usuarioAtual} onCountChange={atualizarFolgasPendentes} />
+              <SolicitacoesFolga usuarioAtual={usuarioAtual} accessToken={accessToken} onCountChange={atualizarFolgasPendentes} />
             )}
           </div>
         )}

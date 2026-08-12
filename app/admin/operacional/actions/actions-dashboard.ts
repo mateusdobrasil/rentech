@@ -6,6 +6,7 @@
 // agrega, num só round-trip, números que hoje só apareciam depois de entrar
 // em cada módulo.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -18,7 +19,10 @@ function diasAteVencer(dataStr: string | null | undefined, hoje: Date): number |
   return Math.ceil((alvo.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-export async function painelOperacionalAction(): Promise<Resultado> {
+export async function painelOperacionalAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, '/admin/operacional');
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const hoje = new Date();

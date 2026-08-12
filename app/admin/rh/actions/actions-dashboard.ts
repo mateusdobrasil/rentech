@@ -4,6 +4,7 @@
 // Painel de pendências do hub de RH (/admin/rh) — agrega, num só round-trip,
 // os números que hoje só aparecem depois de entrar em cada módulo.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso } from '../../../lib/serverAuth';
 import { painelDocumentosAction } from './actions-documentos-func';
 import { painelFeriasAction } from './actions-ferias';
 import { painelAfastamentosAction } from './actions-afastamentos';
@@ -30,7 +31,10 @@ function diaComBatidasOk(r: { entrada_1: string | null; saida_1: string | null; 
   return false;
 }
 
-export async function painelRhAction(): Promise<Resultado> {
+export async function painelRhAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, '/admin/rh');
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const mesAno = competenciaAberta();
@@ -51,7 +55,7 @@ export async function painelRhAction(): Promise<Resultado> {
       afastamentosRes,
       rescisoesRes
     ] = await Promise.all([
-      painelDocumentosAction(),
+      painelDocumentosAction(null, accessToken),
       db.from('folha_funcionarios').select('nome_completo, tipo_contrato, ativo, data_admissao, data_nascimento, departamento').eq('ativo', true),
       db.from('folha_parametros').select('nome_regra, so_documental'),
       db.from('folha_holerites').select('funcionario_nome').eq('mes_referencia', mesAno),
@@ -59,9 +63,9 @@ export async function painelRhAction(): Promise<Resultado> {
       db.from('folha_ponto_whatsapp_solicitacoes').select('id').eq('status', 'PENDENTE'),
       db.from('folha_ponto_diaria').select('funcionario_nome, data_registro, entrada_1, saida_1, entrada_2, saida_2')
         .gte('data_registro', dataInicio).lte('data_registro', dataFim),
-      painelFeriasAction(),
-      painelAfastamentosAction(),
-      painelRescisoesAction()
+      painelFeriasAction(accessToken),
+      painelAfastamentosAction(accessToken),
+      painelRescisoesAction(accessToken)
     ]);
 
     // Holerites em aberto: funcionário ativo, já admitido até a competência,

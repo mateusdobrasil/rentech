@@ -3,8 +3,11 @@
 // app/admin/rh/parametros/actions-parametros.ts (ajuste o caminho conforme a localização)
 // Server actions para as gravações da tela de Parâmetros, com service role.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
+
+const ROTA = '/admin/rh/parametros';
 
 const calcularMesFim = (mesInicio: string, parcelas: number) => {
   if (!mesInicio || parcelas < 1) return mesInicio;
@@ -18,7 +21,10 @@ const calcularMesFim = (mesInicio: string, parcelas: number) => {
 // ============================================================================
 export async function salvarFeriadoAction(payload: {
   id?: number; data_feriado: string; descricao: string | null;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { id, data_feriado, descricao } = payload;
   if (!data_feriado) return { ok: false, erro: 'Informe a data do feriado.' };
@@ -38,7 +44,10 @@ export async function salvarFeriadoAction(payload: {
   }
 }
 
-export async function excluirFeriadoAction(id: number): Promise<Resultado> {
+export async function excluirFeriadoAction(id: number, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { error } = await db.from('folha_feriados').delete().eq('id', id);
@@ -54,7 +63,10 @@ export async function excluirFeriadoAction(id: number): Promise<Resultado> {
 // ============================================================================
 export async function adicionarCatalogoAction(payload: {
   tabela: 'folha_cargo' | 'folha_tipocontrato' | 'folha_departamento'; nome: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const nome = payload.nome.toUpperCase().trim();
   if (!nome) return { ok: false, erro: 'Digite um nome antes de adicionar.' };
@@ -73,7 +85,10 @@ export async function adicionarCatalogoAction(payload: {
 
 export async function removerCatalogoAction(payload: {
   tabela: 'folha_cargo' | 'folha_tipocontrato' | 'folha_departamento'; id: number; nome: string;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const { tabela, id, nome } = payload;
 
@@ -102,7 +117,10 @@ export async function removerCatalogoAction(payload: {
 export async function salvarRegraAction(payload: {
   regra: any;
   nomeOriginal: string | null;
-}): Promise<Resultado> {
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   const nomeNormalizado = payload.regra.nome_regra.toUpperCase().trim();
   const regra = { ...payload.regra, nome_regra: nomeNormalizado };
@@ -135,7 +153,10 @@ export async function salvarRegraAction(payload: {
   }
 }
 
-export async function excluirRegraAction(nome: string): Promise<Resultado> {
+export async function excluirRegraAction(nome: string, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { data: vinculados, error: buscaErr } = await db
@@ -158,7 +179,10 @@ export async function atualizarFontesCargoAction(payload: {
   cargoId: number;
   recebeFechamento: boolean | null;
   recebeHolerite: boolean | null;
-}): Promise<{ ok: boolean; erro?: string }> {
+}, accessToken: string): Promise<{ ok: boolean; erro?: string }> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
   const db = supabaseAdmin();
   try {
     const { error } = await db.from('folha_cargo').update({

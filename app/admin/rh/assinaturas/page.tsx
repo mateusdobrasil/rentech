@@ -4,7 +4,6 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { Analytics } from "@vercel/analytics/next";
-import { supabase } from '../../../lib/supabase'; 
 import
   {
     listarAssinaturasAction, consultarAssinaturaAction, enviarDocumentoAvulsoAction,
@@ -12,6 +11,8 @@ import
   } from '../actions/actions-assinatura';
 import { listarAssinaturasRescisaoAction } from '../actions/actions-rescisao';
 import logoColorido from '../../../../app/imgs/logo.png';
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 interface Assinatura {
   id: number;
@@ -43,6 +44,7 @@ const STATUS_INFO: Record<string, { label: string; cor: string; bg: string; icon
 
 export default function AssinaturasPage() {
   const router = useRouter();
+  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
   const [aba, setAba] = useState<'HOLERITES' | 'RESCISAO'>('HOLERITES');
 
   const [loading, setLoading] = useState(true);
@@ -67,7 +69,7 @@ export default function AssinaturasPage() {
   const carregarRescisoes = async () => {
     setLoadingRescisao(true);
     try {
-      const res = await listarAssinaturasRescisaoAction();
+      const res = await listarAssinaturasRescisaoAction(accessToken);
       if (!res.ok) throw new Error(res.erro);
       setAssinaturasRescisao(res.info.assinaturas);
     } catch (e: any) {
@@ -77,12 +79,12 @@ export default function AssinaturasPage() {
     }
   };
 
-  useEffect(() => { carregarRescisoes(); }, []);
+  useEffect(() => { if (accessToken) carregarRescisoes(); }, [accessToken]);
 
   const atualizarStatusRescisao = async (a: Assinatura) => {
     setAtualizandoRescisao(a.funcionario_nome);
     try {
-      const res = await consultarAssinaturaAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia });
+      const res = await consultarAssinaturaAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       carregarRescisoes();
     } catch (e: any) {
@@ -95,7 +97,7 @@ export default function AssinaturasPage() {
   const abrirAssinadoRescisao = async (a: Assinatura) => {
     setBaixandoRescisao(a.funcionario_nome);
     try {
-      const res = await baixarAssinadoAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia });
+      const res = await baixarAssinadoAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
     } catch (e: any) {
@@ -125,47 +127,6 @@ export default function AssinaturasPage() {
   const [enviandoAvulso, setEnviandoAvulso] = useState(false);
   const avulsoFileRef = useRef<HTMLInputElement>(null);
 
-  // Estados de Autenticação
-  const [usuarioAtual, setUsuarioAtual] = useState('');
-  const [emailUsuario, setEmailUsuario] = useState(''); 
-  const [authLoading, setAuthLoading] = useState(true);
-
-  // 1. Validar a Sessão e Puxar Dados do Usuário Logado
-    useEffect(() => {
-      async function checkAuth() {
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        if (!session) {
-          router.push('/login');
-          return;
-        }
-  
-        const { data: perfil } = await supabase
-          .from('perfis_usuarios')
-          .select('*')
-          .eq('id', session.user.id)
-          .single();
-  
-        if (perfil) {
-          setUsuarioAtual(perfil.nome || 'Equipe RH');
-          setEmailUsuario(perfil.email || session.user.email || ''); 
-          
-          const permissaoBanco = String(perfil.permissao || perfil.nivel || '').toUpperCase();
-          const cargosAltaGestao = ['DIR', 'DIRETOR', 'ADMINISTRADOR', 'ADMIN', 'FINANCEIRO'];
-          
-          if (!cargosAltaGestao.includes(permissaoBanco)) {
-            router.push('/admin');
-            return;
-          }
-        } else {
-          setUsuarioAtual('Equipe RH');
-        }
-        
-        setAuthLoading(false);
-      }
-      
-      checkAuth();
-    }, [router]);
 
   const [mesReferencia, setMesReferencia] = useState(() => {
     const h = new Date();
@@ -173,12 +134,12 @@ export default function AssinaturasPage() {
     return `${comp.getFullYear()}-${String(comp.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  useEffect(() => { carregar(mesReferencia); }, [mesReferencia]);
+  useEffect(() => { if (accessToken) carregar(mesReferencia); }, [mesReferencia, accessToken]);
 
   const carregar = async (mes: string) => {
     setLoading(true);
     try {
-      const res = await listarAssinaturasAction({ mesReferencia: mes });
+      const res = await listarAssinaturasAction({ mesReferencia: mes }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setAssinaturas(res.info.assinaturas);
     } catch (e: any) {
@@ -191,7 +152,7 @@ export default function AssinaturasPage() {
   const atualizarStatus = async (a: Assinatura) => {
     setAtualizando(a.funcionario_nome);
     try {
-      const res = await consultarAssinaturaAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia });
+      const res = await consultarAssinaturaAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       carregar(mesReferencia);
     } catch (e: any) {
@@ -207,7 +168,7 @@ export default function AssinaturasPage() {
 
     setAtualizandoTodas(true);
     try {
-      const res = await atualizarTodasAssinaturasAction({ mesReferencia });
+      const res = await atualizarTodasAssinaturasAction({ mesReferencia }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       const mudancasMsg = res.info?.mudancas?.length
         ? `\n\nMudanças:\n${res.info.mudancas.join('\n')}`
@@ -224,7 +185,7 @@ export default function AssinaturasPage() {
   const abrirAssinado = async (a: Assinatura) => {
     setBaixandoAssinado(a.funcionario_nome);
     try {
-      const res = await baixarAssinadoAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia });
+      const res = await baixarAssinadoAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
     } catch (e: any) {
@@ -237,7 +198,7 @@ export default function AssinaturasPage() {
   const abrirUpload = async () => {
     setMostrarUpload(true);
     if (funcionarios.length === 0) {
-      const res = await listarFuncionariosAtivosAction();
+      const res = await listarFuncionariosAtivosAction(accessToken);
       if (res.ok) setFuncionarios(res.info.funcionarios);
     }
   };
@@ -266,7 +227,7 @@ export default function AssinaturasPage() {
       const res = await enviarDocumentoAvulsoAction({
         funcionarioNome: avulsoFunc, tituloDocumento: avulsoTitulo, pdfBase64,
         mesReferencia, enviadoPor: '', sandbox: avulsoSandbox
-      });
+      }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       const anexosMsg = res.info?.anexados?.length ? `\n\nAnexado: resumo + ${res.info.anexados.join(' + ')}` : '';
       alert(`Documento enviado para assinatura!${anexosMsg}${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`);
@@ -292,6 +253,31 @@ export default function AssinaturasPage() {
   }, [assinaturas]);
 
   const pctAssinado = contagem.total > 0 ? Math.round((contagem.ASSINADO / contagem.total) * 100) : 0;
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center pt-16">
+        <div className="w-10 h-10 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin shadow-sm"></div>
+      </div>
+    );
+  }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
+
+  if (acessoNegado) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200">
+          <div className="text-5xl mb-4">⛔</div>
+          <h2 className="text-xl font-black text-red-600 uppercase tracking-wider mb-2">Acesso Restrito</h2>
+          <p className="text-sm text-gray-500 mb-6">Você não possui permissão para acessar esta página.</p>
+          <button onClick={() => router.push('/admin')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
+            Voltar ao Menu Principal
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">

@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
-import { listarConsignadosAction } from '../../../admin/rh/actions/actions-consignado';
+// Importa a lógica de negócio direto de consignadoCore.ts (sem "use server"),
+// não de actions-consignado.ts — esta rotina roda sem sessão de usuário
+// (protegida só por CRON_SECRET), então não pode passar pela action que exige
+// accessToken de admin.
+import { listarConsignados } from '../../../admin/rh/actions/consignadoCore';
 
 // Chave do card "Consulta Mensal Consignado" em /admin/agendamentos — criado
 // pelo usuário com esse nome exato, gerando essa chave via slugify. Esse card
@@ -46,7 +50,7 @@ export async function GET(request: Request) {
     }
 
     const competencia = competenciaAtualBR();
-    const resultado = await listarConsignadosAction(competencia);
+    const resultado = await listarConsignados(competencia);
 
     await db.from('folha_automacoes').update({ ultima_execucao: new Date().toISOString() }).eq('chave', CHAVE_CARD_CONTROLE);
 

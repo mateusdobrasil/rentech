@@ -99,6 +99,7 @@ export default function Navbar() {
     { href: '/simulador/tela', label: 'Simulador de Tela' },
     { href: '/simulador/grid', label: 'Simulador de LED em GRID' },
     { href: '/simulador/curvatura', label: 'Simulador de Curvatura' },
+    { href: '/simulador/boxtruss', label: 'Simulador de Boxtruss' },
   ];
 
   const ferramentas = [

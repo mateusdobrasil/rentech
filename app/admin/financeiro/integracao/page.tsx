@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-import { supabase } from '../../../lib/supabase';
-import { normalizarPermissao } from '../../../lib/permissoes';
 import { consultarPagamentosItauAction, consultarPagamentoItauAction, type FiltrosConsultaItau } from './actions';
 import { listarIntegracoesAction, statusItauApiAction } from '../../parametros/integracao/actions';
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../components/ui/HubStates';
 
 const BRL = (v: string | number | null | undefined) => 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtData = (d: string | null | undefined) => {
@@ -54,9 +54,7 @@ interface StatusItauApiAmbiente {
 
 export default function IntegracaoFinanceiraPage() {
   const router = useRouter();
-  const pathname = usePathname();
-  const [authLoading, setAuthLoading] = useState(true);
-  const [acessoNegado, setAcessoNegado] = useState(false);
+  const { authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Usuário' });
 
   // Abas por instituição bancária — hoje só o Itaú está integrado via API;
   // se outro banco entrar no futuro, basta somar um item aqui e um painel
@@ -83,35 +81,11 @@ export default function IntegracaoFinanceiraPage() {
   const [carregandoDetalhe, setCarregandoDetalhe] = useState(false);
 
   useEffect(() => {
-    async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.push('/login'); return; }
+    if (!authLoading && !acessoNegado) carregar(accessToken);
+  }, [authLoading, acessoNegado, accessToken]);
 
-      const { data: perfil, error: perfilError } = await supabase
-        .from('perfis_usuarios').select('*').eq('id', session.user.id).single();
-      if (perfilError || !perfil) { router.push('/login'); return; }
-
-      const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes').select('permissoes_permitidas')
-        .eq('endereco_route', pathname).single();
-      if (rotaError && rotaError.code !== 'PGRST116') {
-        console.error("Erro ao buscar permissão da rota:", rotaError);
-      }
-
-      const permissaoNormalizada = normalizarPermissao(perfil.permissao || perfil.nivel || '');
-      const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
-      if (!permissoesLiberadas.includes(permissaoNormalizada)) {
-        setAcessoNegado(true); setAuthLoading(false); return;
-      }
-
-      setAuthLoading(false);
-      carregar();
-    }
-    checkAuth();
-  }, [router, pathname]);
-
-  const carregar = async () => {
-    const [integRes, statusRes] = await Promise.all([listarIntegracoesAction(), statusItauApiAction()]);
+  const carregar = async (token: string) => {
+    const [integRes, statusRes] = await Promise.all([listarIntegracoesAction(token), statusItauApiAction(token)]);
     if (integRes.ok) setIntegracaoItau(integRes.info.integracoes.find((i: Integracao) => i.parceiro === 'ITAU') || null);
     if (statusRes.ok) setStatusItauApi(statusRes.info);
   };
@@ -119,7 +93,7 @@ export default function IntegracaoFinanceiraPage() {
   const consultar = async () => {
     setConsultando(true);
     try {
-      const res = await consultarPagamentosItauAction(filtros);
+      const res = await consultarPagamentosItauAction(filtros, accessToken);
       if (!res.ok) { alert(res.erro || 'Não foi possível consultar.'); setResultados([]); setTotalResultado(null); return; }
       setResultados(res.info.itens || []);
       setTotalResultado(res.info.total ?? null);
@@ -134,7 +108,7 @@ export default function IntegracaoFinanceiraPage() {
     setDetalhe(null);
     setCarregandoDetalhe(true);
     try {
-      const res = await consultarPagamentoItauAction(idPagamento);
+      const res = await consultarPagamentoItauAction(idPagamento, accessToken);
       if (!res.ok) { alert(res.erro || 'Não foi possível abrir o detalhe.'); setDetalheId(null); return; }
       setDetalhe(res.info.pagamento);
     } finally {
@@ -149,6 +123,8 @@ export default function IntegracaoFinanceiraPage() {
       </div>
     );
   }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
   if (acessoNegado) {
     return (

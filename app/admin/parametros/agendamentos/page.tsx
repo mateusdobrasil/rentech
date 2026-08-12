@@ -33,8 +33,8 @@ export default function GestaoAgendamentos() {
   };
 
   useEffect(() => {
-    carregarRotinas();
-  }, []);
+    if (accessToken) carregarRotinas();
+  }, [accessToken]);
 
   // Contadores reais de envio (mês corrente) e status ao vivo da Z-API —
   // antes eram números/badge fixos no código.
@@ -43,21 +43,23 @@ export default function GestaoAgendamentos() {
   const [statusZapiLoading, setStatusZapiLoading] = useState(true);
 
   useEffect(() => {
+    if (!accessToken) return;
     contarEnviosMesAction(accessToken).then(res => { if (res.ok) setEnviosMes(res.data || { whatsapp: 0, email: 0 }); });
     verificarStatusZapiAction(accessToken).then(res => {
       if (res.ok) setStatusZapi(res.data || { conectado: false });
       setStatusZapiLoading(false);
     });
-  }, []);
+  }, [accessToken]);
 
   // Funcionários ativos disponíveis para seleção como destinatários (agrupados por cargo,
   // já que não existe uma coluna de "departamento" na tabela de funcionários)
   const [funcionarios, setFuncionarios] = useState<FuncionarioParaAutomacao[]>([]);
   useEffect(() => {
+    if (!accessToken) return;
     listarFuncionariosParaAutomacaoAction(accessToken).then(res => {
       if (res.ok) setFuncionarios(res.data || []);
     });
-  }, []);
+  }, [accessToken]);
 
   const gruposCargo = funcionarios.reduce<Record<string, FuncionarioParaAutomacao[]>>((acc, f) => {
     const cargo = f.cargo || 'Sem Cargo';

@@ -12,7 +12,7 @@ import { calcularBeneficiosMes } from './actions-beneficios';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
 import { extrairTextoPdf } from '../../../lib/textract';
 import { registrarLogAuditoria } from '../../../actions';
-import { enviarPixPorChave, enviarPixPorDadosBancarios, credenciaisItauConfiguradas, type PagadorSispag } from '../../../lib/itauSispag';
+import { enviarPixPorChave, enviarPixPorDadosBancarios, consultarPagamentoSispag, credenciaisItauConfiguradas, type PagadorSispag } from '../../../lib/itauSispag';
 import { ispbPorCompe } from '../../../lib/bancosCompeIspb';
 
 const ROTA = '/admin/financeiro/rh';
@@ -604,6 +604,12 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
       }
 
       item.api_enviado_em = new Date().toISOString();
+      // Corpo bruto da resposta da API, sem seleção de campos — pedido
+      // explicitamente pra investigar caso a API diga sucesso mas a
+      // transação não apareça no app do Itaú (2026-08-10): campos que os
+      // outros api_* abaixo não cobrem (dados_pix_transferencia, txid,
+      // comprovante etc.) podem ter a pista que falta.
+      item.api_resposta_bruta = resultado.respostaBruta ?? null;
       if (resultado.erro) {
         item.api_status = 'Erro'; item.api_erro = resultado.erro;
         comErro++;
@@ -644,6 +650,38 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
       erro: sucesso === 0 ? 'Nenhum pagamento foi enviado com sucesso — veja os detalhes por funcionário.' : undefined,
       info: { sucesso, rejeitado, comErro, total: pendentes.length }
     };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// CONSULTAR STATUS ATUAL NO ITAÚ — o api_status salvo em folha_lotes_pagamento
+// fica congelado no momento do envio (ex.: "Sucesso" só significa "aceito
+// pela API", não "pago de fato"). Pagamentos SISPAG passam por aprovação
+// manual no Itaú Empresas antes de serem efetivados, então o status real só
+// se sabe consultando de novo — GET /pagamentos_sispag/{id}, ver
+// consultarPagamentoSispag em itauSispag.ts. Usado pela aba "🔌 Retorno API
+// Itaú" (botão "Consultar status atual").
+// ============================================================================
+export async function consultarStatusAtualItauAction(payload: { idPagamentoSispag: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const { data: integ } = await db.from('folha_integracoes')
+      .select('ambiente').eq('parceiro', 'ITAU').maybeSingle();
+    const ambienteItau: 'SANDBOX' | 'PRODUCAO' = integ?.ambiente === 'PRODUCAO' ? 'PRODUCAO' : 'SANDBOX';
+
+    const { status, ok, data } = await consultarPagamentoSispag(ambienteItau, payload.idPagamentoSispag);
+    if (!ok) {
+      return { ok: false, erro: `Consulta rejeitada pela API do Itaú (HTTP ${status}): ${data?.mensagem || 'sem detalhe.'}` };
+    }
+    // Mesmo embrulho extra "data" dos outros endpoints do SISPAG — ver nota
+    // em app/admin/financeiro/integracao/actions.ts.
+    const pagamento = data?.data ?? data;
+    return { ok: true, info: { ambiente: ambienteItau, pagamento } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

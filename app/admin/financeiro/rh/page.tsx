@@ -6,7 +6,8 @@ import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../../lib/supabase';
 import {
   montarLoteSalariosAction, salvarLoteAction, listarLotesAction, enviarLoteAoBancoAction,
-  listarPdfsContabilidadeAction, processarOcrAwsAction, alternarAtivoLoteAction, buscarLoteAction
+  listarPdfsContabilidadeAction, processarOcrAwsAction, alternarAtivoLoteAction, buscarLoteAction,
+  consultarStatusAtualItauAction
 } from '../../rh/actions/actions-financeiro';
 import { listarIntegracoesAction } from '../../parametros/integracao/actions';
 import SepararHolerites from '../../rh/holerite/SepararHolerites';
@@ -53,6 +54,7 @@ interface ItemLote {
   api_motivo_recusa?: { codigo?: string; nome?: string }[] | null;
   api_erro?: string | null;
   api_enviado_em?: string | null;
+  api_resposta_bruta?: any;
 }
 interface Lote {
   id: number; parceiro: string; mes_referencia: string; tipo_lote: string;
@@ -112,6 +114,9 @@ export default function FinanceiroPage() {
   const [loteRetornoId, setLoteRetornoId] = useState<number | null>(null);
   const [itensRetorno, setItensRetorno] = useState<ItemLote[]>([]);
   const [carregandoRetorno, setCarregandoRetorno] = useState(false);
+  const [detalheBrutoItem, setDetalheBrutoItem] = useState<ItemLote | null>(null);
+  const [consultandoStatusId, setConsultandoStatusId] = useState<string | null>(null);
+  const [statusAtual, setStatusAtual] = useState<{ item: ItemLote; ambiente: string; pagamento: any } | null>(null);
 
   useEffect(() => {
     if (!authLoading && !acessoNegado) carregar();
@@ -680,6 +685,31 @@ export default function FinanceiroPage() {
     }
   };
 
+  // "Sucesso" salvo em api_status é só o que a API respondeu na hora do
+  // envio (aceito pela API) — pagamentos SISPAG passam por aprovação manual
+  // no Itaú Empresas antes de serem efetivados de verdade, então o status
+  // real só se sabe consultando de novo. Ver consultarStatusAtualItauAction.
+  const consultarStatusAtual = async (item: ItemLote) => {
+    if (!item.api_cod_pagamento) return;
+    setConsultandoStatusId(item.api_cod_pagamento);
+    try {
+      const res = await consultarStatusAtualItauAction({ idPagamentoSispag: item.api_cod_pagamento }, accessToken);
+      if (!res.ok) { alert(res.erro || 'Não foi possível consultar o status atual.'); return; }
+      setStatusAtual({ item, ambiente: res.info.ambiente, pagamento: res.info.pagamento });
+    } finally {
+      setConsultandoStatusId(null);
+    }
+  };
+
+  // Datas do Itaú vêm como "2026-08-12-22.46.12.850000" — não é ISO.
+  const fmtDataItau = (d: string | null | undefined) => {
+    if (!d) return '—';
+    const m = d.match(/^(\d{4})-(\d{2})-(\d{2})-(\d{2})\.(\d{2})\.(\d{2})/);
+    if (!m) return d;
+    const [, ano, mes, dia, h, min, s] = m;
+    return `${dia}/${mes}/${ano} ${h}:${min}:${s}`;
+  };
+
   // Ao abrir a aba pela primeira vez, seleciona automaticamente o lote Itaú
   // mais recente (lotes já vem ordenado por criado_em desc de listarLotesAction).
   useEffect(() => {
@@ -1106,25 +1136,36 @@ export default function FinanceiroPage() {
             <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider mb-1">🔌 Retorno da API Itaú (SISPAG)</h3>
             <p className="text-[11px] text-gray-500 mb-4">Status devolvido pelo Itaú, item a item, para cada pagamento enviado via API — por chave PIX ou, quando não há chave cadastrada, por dados bancários (agência/conta). Itens sem chave PIX nem conta bancária, ou com banco não reconhecido, continuam só no arquivo CNAB.</p>
 
-            <div className="mb-4 max-w-md">
-              <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Lote</label>
-              <select
-                value={loteRetornoId ?? ''}
-                onChange={e => {
-                  const id = e.target.value ? Number(e.target.value) : null;
-                  setLoteRetornoId(id);
-                  if (id) carregarRetornoLote(id);
-                  else setItensRetorno([]);
-                }}
-                className="w-full p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]"
-              >
-                <option value="">Selecione um lote</option>
-                {lotes.filter(l => l.parceiro === 'ITAU').map(l => (
-                  <option key={l.id} value={l.id}>
-                    {(l.nome_lote || l.tipo_lote)} · {fmtMesBR(l.mes_referencia)} · {l.status}
-                  </option>
-                ))}
-              </select>
+            <div className="mb-4 max-w-md flex items-end gap-3">
+              <div className="flex-1">
+                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Lote</label>
+                <select
+                  value={loteRetornoId ?? ''}
+                  onChange={e => {
+                    const id = e.target.value ? Number(e.target.value) : null;
+                    setLoteRetornoId(id);
+                    if (id) carregarRetornoLote(id);
+                    else setItensRetorno([]);
+                  }}
+                  className="w-full p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]"
+                >
+                  <option value="">Selecione um lote</option>
+                  {lotes.filter(l => l.parceiro === 'ITAU').map(l => (
+                    <option key={l.id} value={l.id}>
+                      {(l.nome_lote || l.tipo_lote)} · {fmtMesBR(l.mes_referencia)} · {l.status}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {loteRetornoId && (() => {
+                const loteSelecionado = lotes.find(l => l.id === loteRetornoId);
+                return loteSelecionado ? (
+                  <div className="pb-2.5">
+                    <span className="block text-[10px] font-black text-gray-500 uppercase mb-1">Status do lote</span>
+                    {badgeStatus(loteSelecionado.status)}
+                  </div>
+                ) : null;
+              })()}
             </div>
 
             {carregandoRetorno && (
@@ -1151,6 +1192,7 @@ export default function FinanceiroPage() {
                       <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px]">Código / Lote Itaú</th>
                       <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px]">Motivo / Erro</th>
                       <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px]">Enviado em</th>
+                      <th className="p-3 text-center font-black text-[#0C1D4D] uppercase text-[10px]"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1178,12 +1220,92 @@ export default function FinanceiroPage() {
                           )}
                         </td>
                         <td className="p-3 text-[11px] text-gray-500">{item.api_enviado_em ? fmtDataHora(item.api_enviado_em) : '—'}</td>
+                        <td className="p-3 text-center whitespace-nowrap">
+                          {item.api_cod_pagamento && (
+                            <button onClick={() => consultarStatusAtual(item)} disabled={consultandoStatusId === item.api_cod_pagamento} className="text-[10px] font-black text-emerald-700 hover:underline uppercase disabled:opacity-50 mr-2">
+                              {consultandoStatusId === item.api_cod_pagamento ? '⏳...' : '🔄 Status atual'}
+                            </button>
+                          )}
+                          {item.api_resposta_bruta && (
+                            <button onClick={() => setDetalheBrutoItem(item)} className="text-[10px] font-black text-[#1E40AF] hover:underline uppercase">
+                              Ver JSON
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
+          </div>
+        )}
+
+        {detalheBrutoItem && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setDetalheBrutoItem(null)}>
+            <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-5" onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider">
+                  Resposta bruta da API — {detalheBrutoItem.funcionario_nome}
+                </h3>
+                <button onClick={() => setDetalheBrutoItem(null)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
+              </div>
+              <pre className="text-[10px] bg-[#F8FAFC] rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">
+                {JSON.stringify(detalheBrutoItem.api_resposta_bruta, null, 2)}
+              </pre>
+            </div>
+          </div>
+        )}
+
+        {statusAtual && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setStatusAtual(null)}>
+            <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-5" onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider">
+                  Status atual no Itaú — {statusAtual.item.funcionario_nome}
+                </h3>
+                <button onClick={() => setStatusAtual(null)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
+              </div>
+              <span className={`inline-block mb-3 text-[9px] font-black px-2.5 py-1 rounded-full uppercase ${statusAtual.ambiente === 'PRODUCAO' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-700'}`}>
+                Ambiente: {statusAtual.ambiente === 'PRODUCAO' ? 'Produção' : 'Sandbox'}
+              </span>
+
+              {statusAtual.pagamento?.dados_pagamento && (() => {
+                const p = statusAtual.pagamento.dados_pagamento;
+                return (
+                  <div className="bg-[#F8FAFC] rounded-lg p-3 text-xs space-y-1.5 mb-3">
+                    <p><span className="text-gray-400">Status:</span> <span className="font-black text-[#0C1D4D]">{p.status || '—'}</span></p>
+                    <p><span className="text-gray-400">Nº do lote / lançamento:</span> <strong>{p.numero_lote || '—'} / {p.numero_lancamento || '—'}</strong></p>
+                    <p><span className="text-gray-400">Favorecido:</span> <strong>{p.nome_favorecido || '—'}</strong></p>
+                    <p><span className="text-gray-400">Banco favorecido:</span> {p.nome_banco_favorecido || '—'} · Ag {p.numero_agencia_favorecido || '—'} · C/C {p.numero_conta_favorecido || '—'}</p>
+                    <p><span className="text-gray-400">Valor:</span> <strong>{BRL(Number(p.valor_pagamento) || 0)}</strong></p>
+                    {p.motivo_rejeicao && p.motivo_rejeicao.length > 0 && (
+                      <p className="text-red-600"><span className="text-gray-400">Motivo:</span> {p.motivo_rejeicao.map((m: any) => m.nome).filter(Boolean).join('; ')}</p>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {Array.isArray(statusAtual.pagamento?.historico_pagamento) && statusAtual.pagamento.historico_pagamento.length > 0 && (
+                <div>
+                  <p className="text-[9px] font-black text-gray-400 uppercase mb-2">Histórico</p>
+                  <div className="space-y-2">
+                    {statusAtual.pagamento.historico_pagamento.map((h: any, i: number) => (
+                      <div key={i} className="flex items-center justify-between text-xs border-b border-gray-100 pb-1.5">
+                        <span className="font-bold">{h.status}</span>
+                        <span className="text-gray-400">{fmtDataItau(h.data)}{h.nome_operador ? ` · ${h.nome_operador}` : ''}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {!statusAtual.pagamento?.dados_pagamento && (
+                <pre className="text-[10px] bg-[#F8FAFC] rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">
+                  {JSON.stringify(statusAtual.pagamento, null, 2)}
+                </pre>
+              )}
+            </div>
           </div>
         )}
       </div>

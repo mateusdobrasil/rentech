@@ -327,6 +327,12 @@ export interface ResultadoTransferenciaSispag {
   numeroLancamento?: string;
   motivoRecusa?: { codigo?: string; nome?: string }[];
   erro?: string;
+  // Corpo bruto da resposta da API (sucesso, rejeição ou erro de validação),
+  // sem seleção de campos — pedido explicitamente pra investigar casos como
+  // "a API disse sucesso mas não acho a transação no app do Itaú": campos
+  // que não extraímos aqui (ex.: dados_pix_transferencia, comprovante,
+  // txid) podem ter a pista que falta.
+  respostaBruta?: any;
 }
 
 // Inclui uma transferência Pix por chave (DICT) no SISPAG. Não cobre QR
@@ -342,7 +348,7 @@ export async function enviarPixPorChave(params: EnviarPixPorChaveParams): Promis
     });
 
     if (status === 400) {
-      return { httpStatus: status, erro: data?.mensagem || 'Requisição inválida (dados do pagamento rejeitados pela API antes de tentar o pagamento).' };
+      return { httpStatus: status, erro: data?.mensagem || 'Requisição inválida (dados do pagamento rejeitados pela API antes de tentar o pagamento).', respostaBruta: data };
     }
     if (status === 200 || status === 422) {
       return {
@@ -352,9 +358,10 @@ export async function enviarPixPorChave(params: EnviarPixPorChaveParams): Promis
         numeroLote: data?.numero_lote,
         numeroLancamento: data?.numero_lancamento,
         motivoRecusa: data?.motivo_recusa,
+        respostaBruta: data,
       };
     }
-    return { httpStatus: status, erro: `Resposta inesperada da API do Itaú (HTTP ${status}).` };
+    return { httpStatus: status, erro: `Resposta inesperada da API do Itaú (HTTP ${status}).`, respostaBruta: data };
   } catch (e: any) {
     return { httpStatus: 0, erro: e.message };
   }
@@ -392,7 +399,7 @@ export async function enviarPixPorDadosBancarios(params: EnviarPixPorDadosBancar
     });
 
     if (status === 400) {
-      return { httpStatus: status, erro: data?.mensagem || 'Requisição inválida (dados do pagamento rejeitados pela API antes de tentar o pagamento).' };
+      return { httpStatus: status, erro: data?.mensagem || 'Requisição inválida (dados do pagamento rejeitados pela API antes de tentar o pagamento).', respostaBruta: data };
     }
     if (status === 200 || status === 422) {
       return {
@@ -402,9 +409,10 @@ export async function enviarPixPorDadosBancarios(params: EnviarPixPorDadosBancar
         numeroLote: data?.numero_lote,
         numeroLancamento: data?.numero_lancamento,
         motivoRecusa: data?.motivo_recusa,
+        respostaBruta: data,
       };
     }
-    return { httpStatus: status, erro: `Resposta inesperada da API do Itaú (HTTP ${status}).` };
+    return { httpStatus: status, erro: `Resposta inesperada da API do Itaú (HTTP ${status}).`, respostaBruta: data };
   } catch (e: any) {
     return { httpStatus: 0, erro: e.message };
   }

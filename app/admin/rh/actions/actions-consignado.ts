@@ -24,10 +24,8 @@ import { validarAcesso } from '../../../lib/serverAuth';
 import {
   buscarFuncionariosAtivos, construirLista, agruparPorCpf, isoParaCompetenciaBr,
   persistirConsignacoesEDetectarNovos, listarConsignados,
-  type ResultadoConsignado, type ConsignadoFuncionario,
+  type ResultadoConsignado,
 } from './consignadoCore';
-
-export type { ConsignadoFuncionario, ResultadoConsignado };
 
 const ROTA = '/admin/financeiro/consignado';
 

@@ -5,8 +5,8 @@ import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import {
   listarConsignadosAction, importarConsignacoesArquivoAction, listarConsignadosPersistidosAction,
-  type ConsignadoFuncionario
 } from '../../rh/actions/actions-consignado';
+import { type ConsignadoFuncionario } from '../../rh/actions/consignadoCore';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 

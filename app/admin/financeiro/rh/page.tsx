@@ -24,6 +24,11 @@ const BRL = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFra
 const fmtDataHora = (d: string) => new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 const fmtMesBR = (m: string) => { const [a, mm] = m.split('-'); return `${mm}/${a}`; };
+// Espelha STATUS_PIX_SUCESSO em actions-financeiro.ts — itens já pagos com
+// sucesso via API (PIX por chave OU por dados bancários, ambos passam pelo
+// mesmo "Enviar ao banco") não podem entrar nos exports CNAB manuais, senão
+// pagam em dobro.
+const STATUS_JA_PAGO_VIA_API = ['Sucesso', 'Sucesso (pre-autorizado)'];
 
 interface Integracao {
   id: number; parceiro: string; nome_exibicao: string; tipo: string;
@@ -326,10 +331,17 @@ export default function FinanceiroPage() {
   };
 
   const exportarCnabItauPix = () => {
-    const pagamentosPix = prontos.filter(i => i.metodo === 'PIX');
+    const candidatosPix = prontos.filter(i => i.metodo === 'PIX');
+    const pagamentosPix = candidatosPix.filter(i => !STATUS_JA_PAGO_VIA_API.includes(i.api_status || ''));
+    const jaPagosViaApi = candidatosPix.length - pagamentosPix.length;
 
     if (pagamentosPix.length === 0) {
-      alert('Nenhum pagamento via PIX pronto para exportar.');
+      alert(jaPagosViaApi > 0
+        ? `Todos os ${jaPagosViaApi} pagamento(s) via PIX deste lote já foram enviados com sucesso pela API — nada para exportar (evita pagar em dobro).`
+        : 'Nenhum pagamento via PIX pronto para exportar.');
+      return;
+    }
+    if (jaPagosViaApi > 0 && !confirm(`${jaPagosViaApi} pagamento(s) via PIX deste lote já foram enviados com sucesso pela API e serão EXCLUÍDOS deste arquivo (evita pagar em dobro). Continuar exportando os ${pagamentosPix.length} restantes?`)) {
       return;
     }
 
@@ -462,10 +474,17 @@ export default function FinanceiroPage() {
   // outro banco (forma 41) — a Nota 5 do manual exige negociação prévia com o
   // Itaú para liberar TED de salário; sem isso o lote 2 será rejeitado.
   const exportarCnabContaCorrenteTed = () => {
-    const pagamentosConta = prontos.filter(i => i.metodo === 'TED');
+    const candidatosConta = prontos.filter(i => i.metodo === 'TED');
+    const pagamentosConta = candidatosConta.filter(i => !STATUS_JA_PAGO_VIA_API.includes(i.api_status || ''));
+    const jaPagosViaApi = candidatosConta.length - pagamentosConta.length;
 
     if (pagamentosConta.length === 0) {
-      alert('Nenhum pagamento via conta bancária pronto para exportar.');
+      alert(jaPagosViaApi > 0
+        ? `Todos os ${jaPagosViaApi} pagamento(s) via conta bancária deste lote já foram enviados com sucesso pela API (Pix por dados bancários) — nada para exportar (evita pagar em dobro).`
+        : 'Nenhum pagamento via conta bancária pronto para exportar.');
+      return;
+    }
+    if (jaPagosViaApi > 0 && !confirm(`${jaPagosViaApi} pagamento(s) via conta bancária deste lote já foram enviados com sucesso pela API (Pix por dados bancários) e serão EXCLUÍDOS deste arquivo (evita pagar em dobro). Continuar exportando os ${pagamentosConta.length} restantes?`)) {
       return;
     }
 
@@ -590,7 +609,7 @@ export default function FinanceiroPage() {
   };
 
   const enviarLote = async (loteId: number) => {
-    if (!confirm(`Enviar os pagamentos PIX deste lote via API do Itaú, com data de pagamento ${dataPagamento.split('-').reverse().join('/')}?\n\nIsso move dinheiro de verdade (ou do sandbox, conforme o Ambiente configurado em Integrações). TED e outras formas não são enviadas por aqui — continue exportando o CNAB para elas.`)) return;
+    if (!confirm(`Enviar os pagamentos deste lote via API do Itaú (Pix por chave, ou por dados bancários pra quem não tem chave cadastrada), com data de pagamento ${dataPagamento.split('-').reverse().join('/')}?\n\nIsso move dinheiro de verdade (ou do sandbox, conforme o Ambiente configurado em Integrações). Se algum favorecido não tiver chave PIX nem conta bancária cadastrada, ou o banco não for reconhecido, esse item fica pendente pra exportação manual (CNAB).`)) return;
     setEnviandoLoteId(loteId);
     try {
       const res = await enviarLoteAoBancoAction({ loteId, dataPagamento, usuarioNome: usuarioAtual }, accessToken);
@@ -652,7 +671,10 @@ export default function FinanceiroPage() {
       const res = await buscarLoteAction({ loteId }, accessToken);
       if (!res.ok) { alert(res.erro || 'Não foi possível abrir o lote.'); setItensRetorno([]); return; }
       const itensSalvos: ItemLote[] = res.info.lote.itens || [];
-      setItensRetorno(itensSalvos.filter(i => i.metodo === 'PIX' && i.pronto));
+      // 'TED' também é enviado via API hoje (Pix por dados bancários quando
+      // não há chave PIX cadastrada — ver enviarLoteAoBancoAction), por isso
+      // entra aqui igual a 'PIX', não só quem tem chave.
+      setItensRetorno(itensSalvos.filter(i => (i.metodo === 'PIX' || i.metodo === 'TED') && i.pronto));
     } finally {
       setCarregandoRetorno(false);
     }
@@ -1082,7 +1104,7 @@ export default function FinanceiroPage() {
         {abaAtiva === 'retorno_itau' && (
           <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0]">
             <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider mb-1">🔌 Retorno da API Itaú (SISPAG)</h3>
-            <p className="text-[11px] text-gray-500 mb-4">Status devolvido pelo Itaú, item a item, para cada pagamento PIX enviado via API. TED e demais formas não passam pela API — continuam só no arquivo CNAB.</p>
+            <p className="text-[11px] text-gray-500 mb-4">Status devolvido pelo Itaú, item a item, para cada pagamento enviado via API — por chave PIX ou, quando não há chave cadastrada, por dados bancários (agência/conta). Itens sem chave PIX nem conta bancária, ou com banco não reconhecido, continuam só no arquivo CNAB.</p>
 
             <div className="mb-4 max-w-md">
               <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Lote</label>
@@ -1110,7 +1132,7 @@ export default function FinanceiroPage() {
             )}
 
             {!carregandoRetorno && loteRetornoId && itensRetorno.length === 0 && (
-              <div className="p-12 text-center text-gray-400 font-bold uppercase tracking-wider">Nenhum pagamento PIX pronto neste lote.</div>
+              <div className="p-12 text-center text-gray-400 font-bold uppercase tracking-wider">Nenhum pagamento pronto pra envio via API neste lote.</div>
             )}
 
             {!carregandoRetorno && !loteRetornoId && (
@@ -1123,7 +1145,7 @@ export default function FinanceiroPage() {
                   <thead>
                     <tr className="bg-[#F8FAFC] border-b-2 border-[#E2E8F0]">
                       <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px]">Funcionário</th>
-                      <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px]">Chave PIX</th>
+                      <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px]">Chave PIX / Conta</th>
                       <th className="p-3 text-right font-black text-[#0C1D4D] uppercase text-[10px]">Valor</th>
                       <th className="p-3 text-center font-black text-[#0C1D4D] uppercase text-[10px]">Status Itaú</th>
                       <th className="p-3 text-left font-black text-[#0C1D4D] uppercase text-[10px]">Código / Lote Itaú</th>
@@ -1138,7 +1160,11 @@ export default function FinanceiroPage() {
                           <span className="font-black text-[#0C1D4D] block">{item.funcionario_nome}</span>
                           <span className="text-[10px] font-bold text-gray-400 uppercase">{item.fonte_rotulo}</span>
                         </td>
-                        <td className="p-3 text-[11px] text-gray-600">{item.pix_tipo}: {item.pix_chave}</td>
+                        <td className="p-3 text-[11px] text-gray-600">
+                          {item.pix_chave
+                            ? `${item.pix_tipo}: ${item.pix_chave}`
+                            : `Ag ${item.banco_agencia || '—'} C/C ${item.banco_conta || '—'} (${item.banco_codigo || '—'})`}
+                        </td>
                         <td className="p-3 text-right font-black text-[#0C1D4D] tabular-nums">{BRL(item.valor)}</td>
                         <td className="p-3 text-center">{badgeApiStatus(item)}</td>
                         <td className="p-3 text-[10px] text-gray-500 font-mono">

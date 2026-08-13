@@ -329,14 +329,65 @@ export interface ResultadoTransferenciaSispag {
   erro?: string;
 }
 
-// Inclui uma transferência Pix por chave (DICT) no SISPAG. Não cobre Pix por
-// dados bancários nem QR Code — não são usados hoje pela folha da empresa.
+// Inclui uma transferência Pix por chave (DICT) no SISPAG. Não cobre QR
+// Code — não é usado hoje pela folha da empresa. Pix por dados bancários
+// (agência+conta) é enviarPixPorDadosBancarios, logo abaixo.
 export async function enviarPixPorChave(params: EnviarPixPorChaveParams): Promise<ResultadoTransferenciaSispag> {
   const { ambiente, valor_pagamento, ...resto } = params;
   try {
     const { status, data } = await chamarApi(ambiente, '/transferencias', {
       method: 'POST',
       // valor_pagamento como string "123.45" — ver nota no topo do arquivo.
+      body: JSON.stringify({ ...resto, valor_pagamento: valor_pagamento.toFixed(2) }),
+    });
+
+    if (status === 400) {
+      return { httpStatus: status, erro: data?.mensagem || 'Requisição inválida (dados do pagamento rejeitados pela API antes de tentar o pagamento).' };
+    }
+    if (status === 200 || status === 422) {
+      return {
+        httpStatus: status,
+        statusPagamento: data?.status_pagamento,
+        codPagamento: data?.cod_pagamento,
+        numeroLote: data?.numero_lote,
+        numeroLancamento: data?.numero_lancamento,
+        motivoRecusa: data?.motivo_recusa,
+      };
+    }
+    return { httpStatus: status, erro: `Resposta inesperada da API do Itaú (HTTP ${status}).` };
+  } catch (e: any) {
+    return { httpStatus: 0, erro: e.message };
+  }
+}
+
+export interface EnviarPixPorDadosBancariosParams {
+  ambiente: AmbienteItau;
+  valor_pagamento: number;
+  data_pagamento: string; // "yyyy-MM-dd" — ver nota no topo do arquivo
+  ispb: string; // código ISPB (8 dígitos) do banco do recebedor — Itaú = "60701190"
+  tipo_identificacao_conta: 'CC' | 'CP' | 'PP';
+  agencia_recebedor: string;
+  conta_recebedor: string;
+  tipo_de_identificacao_do_recebedor: 'F' | 'J';
+  identificacao_recebedor: string; // CPF/CNPJ do recebedor, só dígitos
+  referencia_empresa?: string;
+  identificacao_comprovante?: string;
+  informacoes_entre_usuarios?: string;
+  pagador: PagadorSispag;
+}
+
+// Inclui uma transferência Pix por dados bancários (agência+conta do
+// recebedor, identificado pelo ISPB do banco dele) no SISPAG — mesmo
+// endpoint POST /transferencias de enviarPixPorChave, payload diferente
+// (sem "chave", com ispb/agencia_recebedor/conta_recebedor/etc). Payload
+// confirmado no Postman oficial "API Pagamentos PIX" (request
+// "transferencias dados bancário"), não na Especificação Técnica genérica
+// (que mistura campos de request e response num schema só).
+export async function enviarPixPorDadosBancarios(params: EnviarPixPorDadosBancariosParams): Promise<ResultadoTransferenciaSispag> {
+  const { ambiente, valor_pagamento, ...resto } = params;
+  try {
+    const { status, data } = await chamarApi(ambiente, '/transferencias', {
+      method: 'POST',
       body: JSON.stringify({ ...resto, valor_pagamento: valor_pagamento.toFixed(2) }),
     });
 

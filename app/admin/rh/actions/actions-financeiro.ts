@@ -12,7 +12,8 @@ import { calcularBeneficiosMes } from './actions-beneficios';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
 import { extrairTextoPdf } from '../../../lib/textract';
 import { registrarLogAuditoria } from '../../../actions';
-import { enviarPixPorChave, credenciaisItauConfiguradas, type PagadorSispag } from '../../../lib/itauSispag';
+import { enviarPixPorChave, enviarPixPorDadosBancarios, credenciaisItauConfiguradas, type PagadorSispag } from '../../../lib/itauSispag';
+import { ispbPorCompe } from '../../../lib/bancosCompeIspb';
 
 const ROTA = '/admin/financeiro/rh';
 
@@ -543,32 +544,64 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
     };
 
     const itens: any[] = Array.isArray(lote.itens) ? lote.itens : [];
-    const pendentes = itens.filter(i => i.pronto && i.metodo === 'PIX' && !STATUS_PIX_SUCESSO.includes(i.api_status));
+    // 'TED' aqui só indica "sem chave PIX cadastrada, mas tem conta" — desde
+    // que passamos a suportar Pix por dados bancários (agência+conta+ISPB),
+    // esses itens também vão via API, não só pelo CNAB manual.
+    const pendentes = itens.filter(i => i.pronto && (i.metodo === 'PIX' || i.metodo === 'TED') && !STATUS_PIX_SUCESSO.includes(i.api_status));
     if (pendentes.length === 0) {
-      return { ok: false, erro: 'Nenhum pagamento pendente de envio via PIX neste lote (já enviados com sucesso, ou sem chave PIX cadastrada).' };
+      return { ok: false, erro: 'Nenhum pagamento pendente de envio neste lote (já enviados com sucesso, ou sem PIX/conta bancária cadastrados).' };
     }
+
+    // CORRENTE/POUPANCA (domínio do cadastro do funcionário) -> CC/PP
+    // (domínio do SISPAG: CC Conta Corrente, CP Conta Pagamento, PP Conta
+    // Poupança — confirmado na Especificação Técnica). Funcionário nunca
+    // cadastra "Conta Pagamento", por isso não há opção pra CP aqui.
+    const tipoContaSispag = (bancoTipo: string | null): 'CC' | 'PP' => bancoTipo === 'POUPANCA' ? 'PP' : 'CC';
 
     let sucesso = 0, rejeitado = 0, comErro = 0;
     for (const item of pendentes) {
-      if (!item.pix_chave) {
-        item.api_status = 'Erro'; item.api_erro = 'Sem chave PIX cadastrada.'; item.api_enviado_em = new Date().toISOString();
+      const referencia_empresa = `FOLHA ${lote.mes_referencia}`.slice(0, 20);
+      const identificacao_comprovante = `Pagamento - ${item.funcionario_nome}`.slice(0, 100);
+      const informacoes_entre_usuarios = `Pagamento de ${item.fonte_rotulo || 'folha'} - ${lote.mes_referencia}`;
+
+      let resultado;
+      if (item.pix_chave) {
+        resultado = await enviarPixPorChave({
+          ambiente: ambienteItau,
+          valor_pagamento: Number(item.valor || 0),
+          // Data pura "yyyy-MM-dd" — confirmado na Especificação Técnica
+          // (tamanho 10, exemplos sem horário). dataPagamento já vem nesse
+          // formato do <input type="date"> no front.
+          data_pagamento: payload.dataPagamento,
+          chave: item.pix_chave,
+          referencia_empresa, identificacao_comprovante, informacoes_entre_usuarios,
+          pagador,
+        });
+      } else if (item.banco_codigo && item.banco_agencia && item.banco_conta) {
+        const ispb = ispbPorCompe(item.banco_codigo);
+        if (!ispb) {
+          item.api_status = 'Erro'; item.api_erro = `Código do banco "${item.banco_codigo}" não reconhecido para envio via Pix — use a exportação manual (CNAB) para este funcionário.`; item.api_enviado_em = new Date().toISOString();
+          comErro++;
+          continue;
+        }
+        resultado = await enviarPixPorDadosBancarios({
+          ambiente: ambienteItau,
+          valor_pagamento: Number(item.valor || 0),
+          data_pagamento: payload.dataPagamento,
+          ispb,
+          tipo_identificacao_conta: tipoContaSispag(item.banco_tipo),
+          agencia_recebedor: String(item.banco_agencia).replace(/\D/g, ''),
+          conta_recebedor: String(item.banco_conta).replace(/\D/g, ''),
+          tipo_de_identificacao_do_recebedor: 'F',
+          identificacao_recebedor: String(item.cpf || '').replace(/\D/g, ''),
+          referencia_empresa, identificacao_comprovante, informacoes_entre_usuarios,
+          pagador,
+        });
+      } else {
+        item.api_status = 'Erro'; item.api_erro = 'Sem chave PIX nem conta bancária cadastrada.'; item.api_enviado_em = new Date().toISOString();
         comErro++;
         continue;
       }
-
-      const resultado = await enviarPixPorChave({
-        ambiente: ambienteItau,
-        valor_pagamento: Number(item.valor || 0),
-        // Data pura "yyyy-MM-dd" — confirmado na Especificação Técnica
-        // (tamanho 10, exemplos sem horário). dataPagamento já vem nesse
-        // formato do <input type="date"> no front.
-        data_pagamento: payload.dataPagamento,
-        chave: item.pix_chave,
-        referencia_empresa: `FOLHA ${lote.mes_referencia}`.slice(0, 20),
-        identificacao_comprovante: `Pagamento - ${item.funcionario_nome}`.slice(0, 100),
-        informacoes_entre_usuarios: `Pagamento de ${item.fonte_rotulo || 'folha'} - ${lote.mes_referencia}`,
-        pagador,
-      });
 
       item.api_enviado_em = new Date().toISOString();
       if (resultado.erro) {

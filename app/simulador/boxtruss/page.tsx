@@ -2,14 +2,25 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
+import dynamic from 'next/dynamic';
 import { Analytics } from "@vercel/analytics/next";
 import logoColorido from '../../../app/imgs/logo.png';
+import { StraightIcon, CuboIcon, SleeveIcon, SapataIcon, TalhaIcon, PauCargaIcon, TPieceIcon, DiagonalIcon } from './icons';
+import { TorreSVG, VaoSVG, BoxSVG } from './schematics';
+import { type NoAcessorio, NODE_META, AUTO_CONEXAO_META } from './livre-meta';
+import { buildTorreGeometry3D, buildVaoGeometry3D, buildPortalGeometry3D, buildBoxGeometry3D, buildLivreGeometry3D } from './geometry3d';
+
+const Loading3D = () => (
+  <div className="h-[420px] flex items-center justify-center text-[10px] font-bold text-gray-400 uppercase tracking-widest">Carregando visualização 3D…</div>
+);
+const MontadorTruss3D = dynamic(() => import('./Truss3D').then(m => m.MontadorTruss3D), { ssr: false, loading: Loading3D });
+const LivreTruss3D = dynamic(() => import('./Truss3D').then(m => m.LivreTruss3D), { ssr: false, loading: Loading3D });
 
 // ============================================================================
 // DADOS DE ENGENHARIA (valores médios de mercado — validar com engenharia antes da execução)
 // ============================================================================
 type QSize = 'Q15' | 'Q25' | 'Q30' | 'Q50';
-type StructureType = 'torre' | 'vao' | 'portal';
+type StructureType = 'torre' | 'vao' | 'portal' | 'box';
 
 const Q_SIZES: QSize[] = ['Q15', 'Q25', 'Q30', 'Q50'];
 
@@ -59,9 +70,13 @@ interface ResultadoEstrutura {
   tipo: StructureType;
   alturaReal?: number;
   vaoReal?: number;
+  larguraReal?: number;
+  profundidadeReal?: number;
   jointsM?: number[];
   jointsAltura?: number[];
   jointsVao?: number[];
+  jointsLargura?: number[];
+  jointsProfundidade?: number[];
   retas: { len: number; qty: number }[];
   sleeves: number;
   cubos: number;
@@ -126,6 +141,37 @@ function computePortal(alturaInput: number, vaoInput: number, qSize: QSize): Res
   };
 }
 
+function computeBox(alturaInput: number, larguraInput: number, profundidadeInput: number, qSize: QSize): ResultadoEstrutura {
+  const info = Q_INFO[qSize];
+  const torres = computeTorre(alturaInput, qSize, 4); // 4 torres de canto
+  const vaoLargura = computeVao(larguraInput, qSize, 2); // moldura do topo, lados de largura (frente + fundo)
+  const vaoProfundidade = computeVao(profundidadeInput, qSize, 2); // moldura do topo, lados de profundidade
+
+  // Cubos das pontas dos vãos reaproveitam os cubos do topo das torres — não somar em dobro
+  const pesoLargura = vaoLargura.pesoTotal - vaoLargura.cubos * info.cuboKg;
+  const pesoProfundidade = vaoProfundidade.pesoTotal - vaoProfundidade.cubos * info.cuboKg;
+
+  const retasMap = new Map<number, number>();
+  [torres, vaoLargura, vaoProfundidade].forEach(r => r.retas.forEach(p => retasMap.set(p.len, (retasMap.get(p.len) || 0) + p.qty)));
+  const retas = Array.from(retasMap.entries()).map(([len, qty]) => ({ len, qty })).sort((a, b) => b.len - a.len);
+
+  return {
+    tipo: 'box',
+    alturaReal: torres.alturaReal,
+    larguraReal: vaoLargura.vaoReal,
+    profundidadeReal: vaoProfundidade.vaoReal,
+    jointsAltura: torres.jointsM,
+    jointsLargura: vaoLargura.jointsM,
+    jointsProfundidade: vaoProfundidade.jointsM,
+    retas,
+    cubos: torres.cubos,
+    sleeves: torres.sleeves + vaoLargura.sleeves + vaoProfundidade.sleeves,
+    sapatas: torres.sapatas,
+    diagonais: torres.diagonais,
+    pesoTotal: torres.pesoTotal + pesoLargura + pesoProfundidade,
+  };
+}
+
 function recomendarTalha(cargaKgPorPonto: number) {
   return TALHA_OPTIONS.find(t => t.capKg >= cargaKgPorPonto) ?? TALHA_OPTIONS[TALHA_OPTIONS.length - 1];
 }
@@ -144,125 +190,6 @@ function buildMateriais(resultado: ResultadoEstrutura, qSize: QSize) {
   if (resultado.sapatas) linhas.push({ nome: 'Sapata / base ajustável', qtd: resultado.sapatas, unidade: 'pç', pesoTotalKg: resultado.sapatas * info.sapataKg });
   if (resultado.diagonais) linhas.push({ nome: 'Diagonal (contraventamento)', qtd: resultado.diagonais, unidade: 'pç', pesoTotalKg: resultado.diagonais * info.diagonalKg });
   return linhas;
-}
-
-// ============================================================================
-// ÍCONES TÉCNICOS (SVG estilo "desenho de linha")
-// ============================================================================
-function IconWrap({ children, viewBox }: { children: React.ReactNode; viewBox: string }) {
-  return (
-    <svg viewBox={viewBox} className="w-full h-24 md:h-28" fill="none">
-      {children}
-    </svg>
-  );
-}
-
-function StraightIcon() {
-  return (
-    <IconWrap viewBox="0 0 240 70">
-      <line x1="15" y1="15" x2="225" y2="15" stroke="#0C1D4D" strokeWidth="3" />
-      <line x1="15" y1="55" x2="225" y2="55" stroke="#0C1D4D" strokeWidth="3" />
-      {[15, 67, 119, 171].map((x, i) => (
-        <line key={`d${i}`} x1={x} y1={i % 2 === 0 ? 15 : 55} x2={x + 52} y2={i % 2 === 0 ? 55 : 15} stroke="#336699" strokeWidth="1.5" strokeDasharray="4 3" />
-      ))}
-      {[15, 225].map((x, i) => (
-        <g key={i}>
-          <circle cx={x} cy="15" r="4" fill="#fff" stroke="#0C1D4D" strokeWidth="2" />
-          <circle cx={x} cy="55" r="4" fill="#fff" stroke="#0C1D4D" strokeWidth="2" />
-        </g>
-      ))}
-    </IconWrap>
-  );
-}
-
-function CuboIcon() {
-  return (
-    <IconWrap viewBox="0 0 100 100">
-      <rect x="35" y="35" width="30" height="30" fill="#fff" stroke="#0C1D4D" strokeWidth="3" />
-      <line x1="50" y1="5" x2="50" y2="35" stroke="#336699" strokeWidth="4" />
-      <line x1="50" y1="65" x2="50" y2="95" stroke="#336699" strokeWidth="4" />
-      <line x1="5" y1="50" x2="35" y2="50" stroke="#336699" strokeWidth="4" />
-      <line x1="65" y1="50" x2="95" y2="50" stroke="#336699" strokeWidth="4" />
-      <circle cx="50" cy="5" r="4" fill="#0C1D4D" />
-      <circle cx="50" cy="95" r="4" fill="#0C1D4D" />
-      <circle cx="5" cy="50" r="4" fill="#0C1D4D" />
-      <circle cx="95" cy="50" r="4" fill="#0C1D4D" />
-    </IconWrap>
-  );
-}
-
-function SleeveIcon() {
-  return (
-    <IconWrap viewBox="0 0 200 60">
-      <line x1="10" y1="30" x2="90" y2="30" stroke="#0C1D4D" strokeWidth="4" />
-      <line x1="110" y1="30" x2="190" y2="30" stroke="#0C1D4D" strokeWidth="4" />
-      <rect x="80" y="14" width="40" height="32" rx="4" fill="#EFF4FA" stroke="#336699" strokeWidth="2.5" />
-      <line x1="88" y1="14" x2="88" y2="46" stroke="#336699" strokeWidth="1" />
-      <line x1="100" y1="14" x2="100" y2="46" stroke="#336699" strokeWidth="1" />
-      <line x1="112" y1="14" x2="112" y2="46" stroke="#336699" strokeWidth="1" />
-    </IconWrap>
-  );
-}
-
-function SapataIcon() {
-  return (
-    <IconWrap viewBox="0 0 100 120">
-      <line x1="50" y1="5" x2="50" y2="70" stroke="#0C1D4D" strokeWidth="4" />
-      <rect x="35" y="70" width="30" height="16" fill="#fff" stroke="#336699" strokeWidth="2.5" />
-      <line x1="50" y1="86" x2="50" y2="100" stroke="#336699" strokeWidth="3" />
-      <rect x="15" y="100" width="70" height="10" rx="2" fill="#94A3B8" />
-    </IconWrap>
-  );
-}
-
-function TalhaIcon() {
-  return (
-    <IconWrap viewBox="0 0 80 120">
-      <path d="M40 5 a8 8 0 1 0 0.1 0" fill="none" stroke="#0C1D4D" strokeWidth="3" />
-      <rect x="20" y="20" width="40" height="45" rx="4" fill="#EFF4FA" stroke="#0C1D4D" strokeWidth="3" />
-      <text x="40" y="47" fontSize="11" textAnchor="middle" fill="#0C1D4D" fontWeight="700">CM</text>
-      {[70, 80, 90, 100].map((y, i) => (
-        <line key={i} x1={i % 2 === 0 ? 34 : 46} y1={y - 8} x2={i % 2 === 0 ? 46 : 34} y2={y} stroke="#336699" strokeWidth="2.5" />
-      ))}
-      <path d="M34 108 a6 8 0 1 0 12 0 a6 8 0 1 0 -12 0" fill="none" stroke="#336699" strokeWidth="2.5" />
-    </IconWrap>
-  );
-}
-
-function PauCargaIcon() {
-  return (
-    <IconWrap viewBox="0 0 100 140">
-      <line x1="50" y1="5" x2="50" y2="120" stroke="#0C1D4D" strokeWidth="4" />
-      <circle cx="50" cy="8" r="6" fill="#fff" stroke="#336699" strokeWidth="2.5" />
-      <line x1="50" y1="14" x2="20" y2="60" stroke="#336699" strokeWidth="1.5" strokeDasharray="3 3" />
-      <line x1="50" y1="14" x2="80" y2="60" stroke="#336699" strokeWidth="1.5" strokeDasharray="3 3" />
-      <path d="M50 60 L20 120 M50 60 L80 120" stroke="#94A3B8" strokeWidth="2" />
-      <rect x="30" y="120" width="40" height="10" rx="2" fill="#94A3B8" />
-    </IconWrap>
-  );
-}
-
-function TPieceIcon() {
-  return (
-    <IconWrap viewBox="0 0 100 80">
-      <line x1="5" y1="20" x2="95" y2="20" stroke="#0C1D4D" strokeWidth="4" />
-      <line x1="50" y1="20" x2="50" y2="75" stroke="#0C1D4D" strokeWidth="4" />
-      <circle cx="5" cy="20" r="4" fill="#fff" stroke="#336699" strokeWidth="2" />
-      <circle cx="95" cy="20" r="4" fill="#fff" stroke="#336699" strokeWidth="2" />
-      <circle cx="50" cy="75" r="4" fill="#fff" stroke="#336699" strokeWidth="2" />
-    </IconWrap>
-  );
-}
-
-function DiagonalIcon() {
-  return (
-    <IconWrap viewBox="0 0 140 90">
-      <rect x="10" y="10" width="120" height="70" fill="none" stroke="#CBD5E1" strokeWidth="2" strokeDasharray="4 3" />
-      <line x1="10" y1="80" x2="130" y2="10" stroke="#0C1D4D" strokeWidth="4" />
-      <circle cx="10" cy="80" r="5" fill="#fff" stroke="#336699" strokeWidth="2.5" />
-      <circle cx="130" cy="10" r="5" fill="#fff" stroke="#336699" strokeWidth="2.5" />
-    </IconWrap>
-  );
 }
 
 const CATALOGO: { id: string; nome: string; categoria: string; descricao: string; Icon: () => React.JSX.Element; specs: string[] }[] = [
@@ -317,117 +244,22 @@ const CATALOGO: { id: string; nome: string; categoria: string; descricao: string
 ];
 
 // ============================================================================
-// DESENHOS ESQUEMÁTICOS DA ESTRUTURA MONTADA
-// ============================================================================
-function TorreSVG({ alturaM, jointsM }: { alturaM: number; jointsM: number[] }) {
-  const pxPerM = Math.min(70, 340 / Math.max(alturaM, 1));
-  const H = alturaM * pxPerM;
-  const marginTop = 24, marginBottom = 34;
-  const xL = 55, xR = 125;
-  const yTop = marginTop, yBase = marginTop + H;
-
-  const cumHeights = jointsM.slice(0, -1).reduce<number[]>((acc, len) => {
-    const prev = acc.length ? acc[acc.length - 1] : 0;
-    acc.push(prev + len);
-    return acc;
-  }, []);
-  const jointYs = cumHeights.map(cum => yBase - cum * pxPerM);
-  const panelYs = [yBase, ...jointYs, yTop];
-  const diagonais = panelYs.slice(0, -1).map((yBot, i) => {
-    const yT = panelYs[i + 1];
-    return i % 2 === 0 ? { x1: xL, y1: yBot, x2: xR, y2: yT } : { x1: xR, y1: yBot, x2: xL, y2: yT };
-  });
-
-  return (
-    <svg viewBox={`0 0 180 ${marginTop + H + marginBottom}`} className="w-full h-full max-h-[380px]">
-      <line x1={xL} y1={yTop} x2={xL} y2={yBase} stroke="#0C1D4D" strokeWidth={3} />
-      <line x1={xR} y1={yTop} x2={xR} y2={yBase} stroke="#0C1D4D" strokeWidth={3} />
-      {jointYs.map((y, i) => (
-        <g key={i}><circle cx={xL} cy={y} r={2.2} fill="#336699" /><circle cx={xR} cy={y} r={2.2} fill="#336699" /></g>
-      ))}
-      {diagonais.map((d, i) => (
-        <line key={i} x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="#336699" strokeWidth={1.2} strokeDasharray="4 2" />
-      ))}
-      {[xL, xR].map((x, i) => (
-        <g key={i}>
-          <rect x={x - 6} y={yTop - 6} width={12} height={12} fill="#fff" stroke="#0C1D4D" strokeWidth={2} />
-          <rect x={x - 6} y={yBase - 6} width={12} height={12} fill="#fff" stroke="#0C1D4D" strokeWidth={2} />
-        </g>
-      ))}
-      <rect x={xL - 14} y={yBase + 4} width={28} height={8} rx={2} fill="#94A3B8" />
-      <rect x={xR - 14} y={yBase + 4} width={28} height={8} rx={2} fill="#94A3B8" />
-    </svg>
-  );
-}
-
-function VaoSVG({ vaoM, jointsM }: { vaoM: number; jointsM: number[] }) {
-  const pxPerM = Math.min(60, 460 / Math.max(vaoM, 1));
-  const W = vaoM * pxPerM;
-  const marginL = 24, marginR = 24;
-  const yTop = 20, yBot = 60;
-  const xStart = marginL, xEnd = marginL + W;
-
-  const cumLengths = jointsM.slice(0, -1).reduce<number[]>((acc, len) => {
-    const prev = acc.length ? acc[acc.length - 1] : 0;
-    acc.push(prev + len);
-    return acc;
-  }, []);
-  const jointXs = cumLengths.map(cum => xStart + cum * pxPerM);
-  const panelXs = [xStart, ...jointXs, xEnd];
-  const diagonais = panelXs.slice(0, -1).map((xA, i) => {
-    const xB = panelXs[i + 1];
-    return i % 2 === 0 ? { x1: xA, y1: yBot, x2: xB, y2: yTop } : { x1: xA, y1: yTop, x2: xB, y2: yBot };
-  });
-
-  return (
-    <svg viewBox={`0 0 ${marginL + W + marginR} 90`} className="w-full h-auto">
-      <line x1={xStart} y1={yTop} x2={xEnd} y2={yTop} stroke="#0C1D4D" strokeWidth={3} />
-      <line x1={xStart} y1={yBot} x2={xEnd} y2={yBot} stroke="#0C1D4D" strokeWidth={3} />
-      {jointXs.map((x, i) => (
-        <g key={i}><circle cx={x} cy={yTop} r={2.2} fill="#336699" /><circle cx={x} cy={yBot} r={2.2} fill="#336699" /></g>
-      ))}
-      {diagonais.map((d, i) => (
-        <line key={i} x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="#336699" strokeWidth={1.2} strokeDasharray="4 2" />
-      ))}
-      {[xStart, xEnd].map((x, i) => (
-        <g key={i}>
-          <rect x={x - 6} y={yTop - 6} width={12} height={12} fill="#fff" stroke="#0C1D4D" strokeWidth={2} />
-          <rect x={x - 6} y={yBot - 6} width={12} height={12} fill="#fff" stroke="#0C1D4D" strokeWidth={2} />
-        </g>
-      ))}
-      <line x1={xStart} y1={yTop} x2={xStart} y2={2} stroke="#94A3B8" strokeWidth={1} strokeDasharray="3 2" />
-      <line x1={xEnd} y1={yTop} x2={xEnd} y2={2} stroke="#94A3B8" strokeWidth={1} strokeDasharray="3 2" />
-    </svg>
-  );
-}
-
-// ============================================================================
 // MONTAGEM LIVRE (grid de nós/arestas onde o usuário posiciona as peças)
 // ============================================================================
-type NoAcessorio = 'cubo' | 'sleeve' | 'sapata' | 'talha' | 'pauCarga';
 type Ferramenta = 'reta' | 'diagonal' | NoAcessorio | 'apagar';
 
 const FERRAMENTAS: { id: Ferramenta; label: string; cor: string }[] = [
   { id: 'reta', label: 'Reta', cor: '#0C1D4D' },
   { id: 'diagonal', label: 'Diagonal', cor: '#336699' },
-  { id: 'cubo', label: 'Cubo', cor: '#0C1D4D' },
-  { id: 'sleeve', label: 'Sleeve', cor: '#336699' },
   { id: 'sapata', label: 'Sapata', cor: '#94A3B8' },
   { id: 'talha', label: 'Talha', cor: '#D97706' },
   { id: 'pauCarga', label: 'Pau de Carga', cor: '#7C3AED' },
   { id: 'apagar', label: 'Apagar', cor: '#DC2626' },
 ];
 
-const NODE_META: Record<NoAcessorio, { cor: string; letra: string; nome: string }> = {
-  cubo: { cor: '#0C1D4D', letra: 'C', nome: 'Cubo' },
-  sleeve: { cor: '#336699', letra: 'S', nome: 'Sleeve' },
-  sapata: { cor: '#94A3B8', letra: 'B', nome: 'Sapata' },
-  talha: { cor: '#D97706', letra: 'T', nome: 'Talha' },
-  pauCarga: { cor: '#7C3AED', letra: 'P', nome: 'Pau de Carga' },
-};
-
 const CELL = 44;
 const OFFSET = 22;
+const STORAGE_KEY = 'rentech-boxtruss-simulador-v1';
 
 function buildGridGeom(cols: number, rows: number) {
   const nodes: { id: string; x: number; y: number }[] = [];
@@ -445,6 +277,28 @@ function buildGridGeom(cols: number, rows: number) {
   return { nodes, hEdges, vEdges, cells, width: OFFSET * 2 + cols * CELL, height: OFFSET * 2 + rows * CELL };
 }
 
+// Para cada nó do grid, infere a peça de conexão a partir das retas incidentes:
+// 2 retas em linha reta (colineares) => Sleeve; qualquer canto, T ou cruzamento => Cubo.
+function computeConexoesAutomaticas(cols: number, rows: number, retasLivres: Set<string>) {
+  const nodes: { id: string; c: number; r: number; tipo: 'cubo' | 'sleeve' }[] = [];
+  let cubos = 0, sleeves = 0;
+  for (let r = 0; r <= rows; r++) {
+    for (let c = 0; c <= cols; c++) {
+      const left = c > 0 && retasLivres.has(`H-${c - 1}-${r}`);
+      const right = c < cols && retasLivres.has(`H-${c}-${r}`);
+      const up = r > 0 && retasLivres.has(`V-${c}-${r - 1}`);
+      const down = r < rows && retasLivres.has(`V-${c}-${r}`);
+      const degree = [left, right, up, down].filter(Boolean).length;
+      if (degree < 2) continue;
+      const colinear = (left && right && !up && !down) || (up && down && !left && !right);
+      const tipo: 'cubo' | 'sleeve' = degree === 2 && colinear ? 'sleeve' : 'cubo';
+      if (tipo === 'cubo') cubos++; else sleeves++;
+      nodes.push({ id: `N-${c}-${r}`, c, r, tipo });
+    }
+  }
+  return { nodes, cubos, sleeves };
+}
+
 // ============================================================================
 // PÁGINA
 // ============================================================================
@@ -459,21 +313,46 @@ export default function SimuladorBoxtruss() {
   const [vao, setVao] = useState<number>(6);
   const [numTorres, setNumTorres] = useState<number>(1);
   const [numVaos, setNumVaos] = useState<number>(1);
-  const [cargaKg, setCargaKg] = useState<number>(200);
+  const [boxLargura, setBoxLargura] = useState<number>(4);
+  const [boxProfundidade, setBoxProfundidade] = useState<number>(3);
+  const [cargaEquipamentosKg, setCargaEquipamentosKg] = useState<number>(0);
 
   const resultado = useMemo<ResultadoEstrutura>(() => {
     if (estrutura === 'torre') return computeTorre(altura, qSize, Math.max(1, numTorres));
     if (estrutura === 'vao') return computeVao(vao, qSize, Math.max(1, numVaos));
+    if (estrutura === 'box') return computeBox(altura, boxLargura, boxProfundidade, qSize);
     return computePortal(altura, vao, qSize);
-  }, [estrutura, altura, vao, qSize, numTorres, numVaos]);
+  }, [estrutura, altura, vao, qSize, numTorres, numVaos, boxLargura, boxProfundidade]);
 
   const materiais = useMemo(() => buildMateriais(resultado, qSize), [resultado, qSize]);
 
-  const pontosIcamento = estrutura === 'torre' ? Math.max(1, numTorres) : estrutura === 'portal' ? 2 : Math.max(1, numVaos) * 2;
-  const talha = recomendarTalha(cargaKg);
+  const pontosIcamento = estrutura === 'torre' ? Math.max(1, numTorres) : estrutura === 'portal' ? 2 : estrutura === 'box' ? 4 : Math.max(1, numVaos) * 2;
+  const cargaTotalKg = resultado.pesoTotal + Math.max(0, cargaEquipamentosKg);
+  const cargaPorPontoKg = cargaTotalKg / Math.max(1, pontosIcamento);
+  const talha = recomendarTalha(cargaPorPontoKg);
   const pauCarga = estrutura !== 'vao' ? recomendarPauCarga(resultado.alturaReal ?? altura) : null;
 
   const totalRetas = resultado.retas.reduce((s, r) => s + r.qty, 0);
+  const dimensoesLabel = [
+    resultado.alturaReal ? `${resultado.alturaReal.toFixed(1)}m alt.` : null,
+    resultado.vaoReal ? `${resultado.vaoReal.toFixed(1)}m vão` : null,
+    resultado.larguraReal ? `${resultado.larguraReal.toFixed(1)}m larg.` : null,
+    resultado.profundidadeReal ? `${resultado.profundidadeReal.toFixed(1)}m prof.` : null,
+  ].filter(Boolean).join(' × ');
+
+  const [modo3D, setModo3D] = useState(false);
+  const geometria3D = useMemo(() => {
+    const ladoM = Q_INFO[qSize].ladoM;
+    if (estrutura === 'torre') return buildTorreGeometry3D(resultado.alturaReal ?? altura, ladoM, resultado.jointsM ?? []);
+    if (estrutura === 'vao') return buildVaoGeometry3D(resultado.vaoReal ?? vao, ladoM, resultado.jointsM ?? []);
+    if (estrutura === 'box') {
+      return buildBoxGeometry3D(
+        resultado.alturaReal ?? altura, resultado.larguraReal ?? boxLargura, resultado.profundidadeReal ?? boxProfundidade, ladoM,
+        resultado.jointsAltura ?? [], resultado.jointsLargura ?? [], resultado.jointsProfundidade ?? []
+      );
+    }
+    return buildPortalGeometry3D(resultado.alturaReal ?? altura, resultado.vaoReal ?? vao, ladoM, resultado.jointsAltura ?? [], resultado.jointsVao ?? []);
+  }, [estrutura, resultado, altura, vao, boxLargura, boxProfundidade, qSize]);
 
   // -------- Montagem Livre --------
   const [freeCols, setFreeCols] = useState(10);
@@ -488,6 +367,7 @@ export default function SimuladorBoxtruss() {
   const [nosLivres, setNosLivres] = useState<Record<string, NoAcessorio>>({});
   const [isPaintingFree, setIsPaintingFree] = useState(false);
   const [paintMode, setPaintMode] = useState(true);
+  const [freeZoom, setFreeZoom] = useState(1);
 
   useEffect(() => {
     const stop = () => setIsPaintingFree(false);
@@ -495,7 +375,74 @@ export default function SimuladorBoxtruss() {
     return () => window.removeEventListener('mouseup', stop);
   }, []);
 
+  // -------- Salvamento automático no navegador (localStorage) --------
+  const [hidratado, setHidratado] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const s = JSON.parse(raw);
+        if (typeof s.projeto === 'string') setProjeto(s.projeto);
+        if (typeof s.cliente === 'string') setCliente(s.cliente);
+        if (s.qSize) setQSize(s.qSize);
+        if (s.estrutura) setEstrutura(s.estrutura);
+        if (typeof s.altura === 'number') setAltura(s.altura);
+        if (typeof s.vao === 'number') setVao(s.vao);
+        if (typeof s.numTorres === 'number') setNumTorres(s.numTorres);
+        if (typeof s.numVaos === 'number') setNumVaos(s.numVaos);
+        if (typeof s.boxLargura === 'number') setBoxLargura(s.boxLargura);
+        if (typeof s.boxProfundidade === 'number') setBoxProfundidade(s.boxProfundidade);
+        if (typeof s.cargaEquipamentosKg === 'number') setCargaEquipamentosKg(s.cargaEquipamentosKg);
+        if (typeof s.freeCols === 'number') { setFreeCols(s.freeCols); setFreeColsInput(s.freeCols); }
+        if (typeof s.freeRows === 'number') { setFreeRows(s.freeRows); setFreeRowsInput(s.freeRows); }
+        if (typeof s.freeModuloM === 'number') { setFreeModuloM(s.freeModuloM); setFreeModuloInput(s.freeModuloM); }
+        if (Array.isArray(s.retasLivres)) setRetasLivres(new Set(s.retasLivres));
+        if (Array.isArray(s.diagonaisLivres)) setDiagonaisLivres(new Set(s.diagonaisLivres));
+        if (s.nosLivres && typeof s.nosLivres === 'object') setNosLivres(s.nosLivres);
+        if (typeof s.freeZoom === 'number') setFreeZoom(s.freeZoom);
+      }
+    } catch {
+      // localStorage indisponível ou dado corrompido — segue com os padrões
+    }
+    setHidratado(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hidratado) return;
+    const timeout = setTimeout(() => {
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          projeto, cliente, qSize, estrutura, altura, vao, numTorres, numVaos,
+          boxLargura, boxProfundidade, cargaEquipamentosKg,
+          freeCols, freeRows, freeModuloM,
+          retasLivres: Array.from(retasLivres), diagonaisLivres: Array.from(diagonaisLivres), nosLivres, freeZoom,
+        }));
+      } catch {
+        // localStorage indisponível (modo privado, cota excedida) — ignora silenciosamente
+      }
+    }, 400);
+    return () => clearTimeout(timeout);
+  }, [hidratado, projeto, cliente, qSize, estrutura, altura, vao, numTorres, numVaos, boxLargura, boxProfundidade, cargaEquipamentosKg, freeCols, freeRows, freeModuloM, retasLivres, diagonaisLivres, nosLivres, freeZoom]);
+
+  const novoProjeto = () => {
+    if (!window.confirm('Isso apaga o projeto atual (Montador e Montagem Livre) salvo neste navegador. Continuar?')) return;
+    try { window.localStorage.removeItem(STORAGE_KEY); } catch { /* ignora */ }
+    setProjeto(''); setCliente('');
+    setQSize('Q30'); setEstrutura('torre'); setAltura(3); setVao(6); setNumTorres(1); setNumVaos(1);
+    setBoxLargura(4); setBoxProfundidade(3); setCargaEquipamentosKg(0);
+    setFreeCols(10); setFreeRows(6); setFreeModuloM(1);
+    setFreeColsInput(10); setFreeRowsInput(6); setFreeModuloInput(1);
+    setRetasLivres(new Set()); setDiagonaisLivres(new Set()); setNosLivres({});
+    setFreeZoom(1);
+  };
+
   const gridGeom = useMemo(() => buildGridGeom(freeCols, freeRows), [freeCols, freeRows]);
+  const autoConexoes = useMemo(() => computeConexoesAutomaticas(freeCols, freeRows, retasLivres), [freeCols, freeRows, retasLivres]);
+  const geometriaLivre3D = useMemo(
+    () => buildLivreGeometry3D(freeCols, freeRows, freeModuloM, retasLivres, diagonaisLivres, autoConexoes.nodes, nosLivres),
+    [freeCols, freeRows, freeModuloM, retasLivres, diagonaisLivres, autoConexoes, nosLivres]
+  );
 
   const aplicarNovaGradeLivre = () => {
     setFreeCols(Math.min(24, Math.max(1, Math.round(freeColsInput))));
@@ -563,12 +510,12 @@ export default function SimuladorBoxtruss() {
     const numDiag = diagonaisLivres.size;
     const pesoRetas = numRetas * freeModuloM * info.kgPerM;
     const pesoDiag = numDiag * info.diagonalKg;
-    const pesoCubos = (contagemNos.cubo ?? 0) * info.cuboKg;
-    const pesoSleeves = (contagemNos.sleeve ?? 0) * info.sleeveKg;
+    const pesoCubos = autoConexoes.cubos * info.cuboKg;
+    const pesoSleeves = autoConexoes.sleeves * info.sleeveKg;
     const pesoSapatas = (contagemNos.sapata ?? 0) * info.sapataKg;
     const pesoTotal = pesoRetas + pesoDiag + pesoCubos + pesoSleeves + pesoSapatas;
     return { numRetas, numDiag, contagemNos, pesoTotal };
-  }, [retasLivres, diagonaisLivres, nosLivres, qSize, freeModuloM]);
+  }, [retasLivres, diagonaisLivres, nosLivres, qSize, freeModuloM, autoConexoes]);
 
   return (
     <div className="flex flex-col lg:flex-row gap-4 px-4 md:px-8 py-6 bg-[#F0F4F8] text-[#0F172A] min-h-screen font-sans print:bg-white print:text-black print:block print:p-0">
@@ -588,6 +535,10 @@ export default function SimuladorBoxtruss() {
           <button onClick={() => setAba('livre')} className={`py-2.5 text-[9px] md:text-[10px] font-black uppercase rounded ${aba === 'livre' ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:bg-gray-200'}`}>Montagem Livre</button>
         </div>
 
+        <button onClick={novoProjeto} className="w-full bg-white border border-gray-200 text-gray-500 py-2 rounded-xl font-black uppercase text-[9px] tracking-widest hover:border-red-300 hover:text-red-500 transition-colors">
+          Novo Projeto (apaga o salvo neste navegador)
+        </button>
+
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0] space-y-5">
           <div>
             <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-xs border-b border-gray-100 pb-2 mb-3">1. Dados do Projeto</h3>
@@ -595,16 +546,18 @@ export default function SimuladorBoxtruss() {
               <div><label className="text-[10px] font-bold text-gray-500 uppercase">Projeto / Evento</label><input type="text" className="w-full p-2 border border-gray-300 rounded text-sm font-bold uppercase focus:border-[#336699] outline-none" value={projeto} onChange={(e) => setProjeto(e.target.value)} /></div>
               <div><label className="text-[10px] font-bold text-gray-500 uppercase">Cliente</label><input type="text" className="w-full p-2 border border-gray-300 rounded text-sm font-bold focus:border-[#336699] outline-none" value={cliente} onChange={(e) => setCliente(e.target.value)} /></div>
             </div>
+            <p className="text-[9px] text-gray-400 uppercase tracking-widest font-bold mt-2">Salvo automaticamente neste navegador.</p>
           </div>
 
           {aba === 'montador' && (
             <>
               <div>
                 <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-xs border-b border-gray-100 pb-2 mb-3">2. Tipo de Estrutura</h3>
-                <div className="grid grid-cols-3 gap-1 bg-gray-100 p-1 rounded-lg mb-3">
+                <div className="grid grid-cols-2 gap-1 bg-gray-100 p-1 rounded-lg mb-3">
                   <button onClick={() => setEstrutura('torre')} className={`py-2 text-[9px] font-black uppercase rounded ${estrutura === 'torre' ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:bg-gray-200'}`}>Torre</button>
                   <button onClick={() => setEstrutura('vao')} className={`py-2 text-[9px] font-black uppercase rounded ${estrutura === 'vao' ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:bg-gray-200'}`}>Vão / Viga</button>
                   <button onClick={() => setEstrutura('portal')} className={`py-2 text-[9px] font-black uppercase rounded ${estrutura === 'portal' ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:bg-gray-200'}`}>Portal</button>
+                  <button onClick={() => setEstrutura('box')} className={`py-2 text-[9px] font-black uppercase rounded ${estrutura === 'box' ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:bg-gray-200'}`}>Box / Estande</button>
                 </div>
 
                 <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Tamanho da Treliça (Q)</label>
@@ -641,13 +594,40 @@ export default function SimuladorBoxtruss() {
                     )}
                   </div>
                 )}
+
+                {estrutura === 'box' && (
+                  <div className="grid grid-cols-3 gap-2 mb-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-[#336699] uppercase mb-1 block">Altura (m)</label>
+                      <input type="number" min="1" step="0.5" className="w-full p-2 border border-blue-200 bg-blue-50/50 rounded-lg text-sm text-[#0C1D4D] font-black focus:border-[#336699] outline-none" value={altura} onChange={(e) => setAltura(parseFloat(e.target.value) || 1)} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-[#336699] uppercase mb-1 block">Largura (m)</label>
+                      <input type="number" min="0.5" step="0.5" className="w-full p-2 border border-blue-200 bg-blue-50/50 rounded-lg text-sm text-[#0C1D4D] font-black focus:border-[#336699] outline-none" value={boxLargura} onChange={(e) => setBoxLargura(parseFloat(e.target.value) || 0.5)} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-[#336699] uppercase mb-1 block">Profund. (m)</label>
+                      <input type="number" min="0.5" step="0.5" className="w-full p-2 border border-blue-200 bg-blue-50/50 rounded-lg text-sm text-[#0C1D4D] font-black focus:border-[#336699] outline-none" value={boxProfundidade} onChange={(e) => setBoxProfundidade(parseFloat(e.target.value) || 0.5)} />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>
                 <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-xs border-b border-gray-100 pb-2 mb-3">3. Içamento</h3>
-                <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Carga a suspender por ponto (kg)</label>
-                <input type="number" min="0" step="10" className="w-full p-2 border border-gray-300 rounded text-sm font-bold focus:border-[#336699] outline-none" value={cargaKg} onChange={(e) => setCargaKg(parseFloat(e.target.value) || 0)} />
-                <p className="text-[9px] text-gray-500 uppercase tracking-widest font-bold mt-2">Usado para recomendar a talha e o pau de carga da estrutura.</p>
+                <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Carga de equipamentos (áudio/vídeo/luz) somada à estrutura (kg)</label>
+                <input type="number" min="0" step="10" className="w-full p-2 border border-gray-300 rounded text-sm font-bold focus:border-[#336699] outline-none" value={cargaEquipamentosKg} onChange={(e) => setCargaEquipamentosKg(parseFloat(e.target.value) || 0)} />
+                <div className="grid grid-cols-2 gap-2 mt-3 text-[10px]">
+                  <div className="bg-gray-50 rounded-lg p-2">
+                    <span className="block text-gray-500 uppercase font-bold">Peso da estrutura</span>
+                    <strong className="text-[#0C1D4D]">{resultado.pesoTotal.toFixed(0)} kg</strong>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-2">
+                    <span className="block text-gray-500 uppercase font-bold">Carga por ponto</span>
+                    <strong className="text-[#0C1D4D]">{cargaPorPontoKg.toFixed(0)} kg</strong>
+                  </div>
+                </div>
+                <p className="text-[9px] text-gray-500 uppercase tracking-widest font-bold mt-2">(Estrutura + equipamentos) ÷ {pontosIcamento} ponto(s) define a talha e o pau de carga recomendados.</p>
               </div>
 
               <button onClick={() => window.print()} className="w-full bg-[#0C1D4D] text-white py-3 rounded-xl font-black uppercase text-[10px] tracking-widest hover:bg-[#284B8C] shadow-md transition-colors">
@@ -705,7 +685,7 @@ export default function SimuladorBoxtruss() {
         <div className="hidden print:flex justify-between items-end border-b-2 border-black pb-4 mb-2 flex-shrink-0">
           <Image src={logoColorido} alt="Rentech Logo" width={180} height={55} />
           <div className="text-right">
-            <h2 className="text-xl font-black uppercase tracking-tight text-[#0C1D4D]">Estrutura Boxtruss — {aba === 'livre' ? 'Montagem Livre' : estrutura === 'torre' ? 'Torre' : estrutura === 'vao' ? 'Vão / Viga' : 'Portal'}</h2>
+            <h2 className="text-xl font-black uppercase tracking-tight text-[#0C1D4D]">Estrutura Boxtruss — {aba === 'livre' ? 'Montagem Livre' : estrutura === 'torre' ? 'Torre' : estrutura === 'vao' ? 'Vão / Viga' : estrutura === 'box' ? 'Box / Estande' : 'Portal'}</h2>
             <p className="text-sm font-bold text-gray-600 mt-1">Data: {new Date().toLocaleDateString('pt-BR')}</p>
           </div>
         </div>
@@ -751,9 +731,7 @@ export default function SimuladorBoxtruss() {
               </div>
               <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#336699] p-3 rounded-xl shadow-sm print:bg-white print:border-gray-400">
                 <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1 print:text-gray-600">Dimensões</span>
-                <strong className="block text-lg text-[#336699] font-black print:text-black">
-                  {resultado.alturaReal ? `${resultado.alturaReal.toFixed(1)}m alt.` : ''}{resultado.alturaReal && resultado.vaoReal ? ' × ' : ''}{resultado.vaoReal ? `${resultado.vaoReal.toFixed(1)}m vão` : ''}
-                </strong>
+                <strong className="block text-lg text-[#336699] font-black print:text-black">{dimensoesLabel}</strong>
                 <span className="text-[9px] font-bold text-[#336699] uppercase print:text-gray-500">Arredondado p/ módulo de 0,5m</span>
               </div>
               <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#16A34A] p-3 rounded-xl shadow-sm print:bg-white print:border-gray-400">
@@ -769,37 +747,61 @@ export default function SimuladorBoxtruss() {
             </div>
 
             {/* DESENHO ESQUEMÁTICO */}
-            <div className="bg-white border border-[#E2E8F0] rounded-2xl shadow-sm p-4 flex-shrink-0 bg-[radial-gradient(#CBD5E1_1px,transparent_1px)] bg-[size:32px_32px] print:border print:bg-none">
-              <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-xs mb-3">Desenho Esquemático — {estrutura === 'torre' ? `Torre ${qSize}` : estrutura === 'vao' ? `Vão ${qSize}` : `Portal ${qSize}`}</h3>
-
-              {estrutura === 'torre' && (
-                <div className="flex justify-center">
-                  <div className="w-40">
-                    <TorreSVG alturaM={resultado.alturaReal ?? altura} jointsM={resultado.jointsM ?? []} />
-                    <p className="text-center text-xs font-black text-[#0C1D4D] mt-1">{(resultado.alturaReal ?? altura).toFixed(1)}m</p>
-                  </div>
+            <div className="bg-white border border-[#E2E8F0] rounded-2xl shadow-sm p-4 flex-shrink-0 print:border">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-xs">Desenho Esquemático — {estrutura === 'torre' ? `Torre ${qSize}` : estrutura === 'vao' ? `Vão ${qSize}` : estrutura === 'box' ? `Box ${qSize}` : `Portal ${qSize}`}</h3>
+                <div className="grid grid-cols-2 gap-1 bg-gray-100 p-1 rounded-lg print:hidden">
+                  <button onClick={() => setModo3D(false)} className={`px-3 py-1 text-[9px] font-black uppercase rounded ${!modo3D ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:bg-gray-200'}`}>2D</button>
+                  <button onClick={() => setModo3D(true)} className={`px-3 py-1 text-[9px] font-black uppercase rounded ${modo3D ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:bg-gray-200'}`}>3D</button>
                 </div>
-              )}
+              </div>
 
-              {estrutura === 'vao' && (
-                <div className="flex flex-col items-center">
-                  <VaoSVG vaoM={resultado.vaoReal ?? vao} jointsM={resultado.jointsM ?? []} />
-                  <p className="text-center text-xs font-black text-[#0C1D4D] mt-1">{(resultado.vaoReal ?? vao).toFixed(1)}m</p>
-                </div>
-              )}
+              <div className={`${modo3D ? 'hidden print:block' : 'block'} bg-[radial-gradient(#CBD5E1_1px,transparent_1px)] bg-[size:32px_32px] print:bg-none rounded-xl`}>
+                {estrutura === 'torre' && (
+                  <div className="flex justify-center">
+                    <div className="w-40">
+                      <TorreSVG alturaM={resultado.alturaReal ?? altura} jointsM={resultado.jointsM ?? []} />
+                      <p className="text-center text-xs font-black text-[#0C1D4D] mt-1">{(resultado.alturaReal ?? altura).toFixed(1)}m</p>
+                    </div>
+                  </div>
+                )}
 
-              {estrutura === 'portal' && (
-                <div className="flex flex-col items-center gap-1">
-                  <div className="w-full max-w-md">
-                    <VaoSVG vaoM={resultado.vaoReal ?? vao} jointsM={resultado.jointsVao ?? []} />
+                {estrutura === 'vao' && (
+                  <div className="flex flex-col items-center">
+                    <VaoSVG vaoM={resultado.vaoReal ?? vao} jointsM={resultado.jointsM ?? []} />
+                    <p className="text-center text-xs font-black text-[#0C1D4D] mt-1">{(resultado.vaoReal ?? vao).toFixed(1)}m</p>
                   </div>
-                  <div className="flex justify-between w-full max-w-md -mt-2">
-                    <div className="w-28"><TorreSVG alturaM={resultado.alturaReal ?? altura} jointsM={resultado.jointsAltura ?? []} /></div>
-                    <div className="w-28"><TorreSVG alturaM={resultado.alturaReal ?? altura} jointsM={resultado.jointsAltura ?? []} /></div>
+                )}
+
+                {estrutura === 'portal' && (
+                  <div className="flex flex-col items-center gap-1">
+                    <div className="w-full max-w-md">
+                      <VaoSVG vaoM={resultado.vaoReal ?? vao} jointsM={resultado.jointsVao ?? []} />
+                    </div>
+                    <div className="flex justify-between w-full max-w-md -mt-2">
+                      <div className="w-28"><TorreSVG alturaM={resultado.alturaReal ?? altura} jointsM={resultado.jointsAltura ?? []} /></div>
+                      <div className="w-28"><TorreSVG alturaM={resultado.alturaReal ?? altura} jointsM={resultado.jointsAltura ?? []} /></div>
+                    </div>
+                    <p className="text-center text-xs font-black text-[#0C1D4D]">{(resultado.alturaReal ?? altura).toFixed(1)}m alt. × {(resultado.vaoReal ?? vao).toFixed(1)}m vão</p>
                   </div>
-                  <p className="text-center text-xs font-black text-[#0C1D4D]">{(resultado.alturaReal ?? altura).toFixed(1)}m alt. × {(resultado.vaoReal ?? vao).toFixed(1)}m vão</p>
+                )}
+
+                {estrutura === 'box' && (
+                  <div className="flex flex-col items-center gap-1">
+                    <div className="w-64">
+                      <BoxSVG alturaM={resultado.alturaReal ?? altura} larguraM={resultado.larguraReal ?? boxLargura} profundidadeM={resultado.profundidadeReal ?? boxProfundidade} />
+                    </div>
+                    <p className="text-center text-xs font-black text-[#0C1D4D]">{(resultado.alturaReal ?? altura).toFixed(1)}m alt. × {(resultado.larguraReal ?? boxLargura).toFixed(1)}m larg. × {(resultado.profundidadeReal ?? boxProfundidade).toFixed(1)}m prof.</p>
+                  </div>
+                )}
+              </div>
+
+              <div className={`${modo3D ? 'block' : 'hidden'} print:hidden`}>
+                <div className="h-[420px] rounded-xl overflow-hidden border border-[#E2E8F0]">
+                  <MontadorTruss3D geometry={geometria3D} ladoM={Q_INFO[qSize].ladoM} />
                 </div>
-              )}
+                <p className="text-[9px] text-gray-400 uppercase tracking-widest font-bold mt-2 text-center">Arraste para rotacionar · scroll para zoom · visualização esquemática, não substitui o memorial de cálculo</p>
+              </div>
             </div>
 
             {/* LISTA DE MATERIAIS */}
@@ -864,8 +866,9 @@ export default function SimuladorBoxtruss() {
                 {ferramenta === 'reta' && 'Clique e arraste sobre as bordas do grid para desenhar retas.'}
                 {ferramenta === 'diagonal' && 'Clique dentro de um módulo, na diagonal desejada, para adicionar um contraventamento.'}
                 {ferramenta === 'apagar' && 'Clique (ou clique e arraste) sobre uma reta, diagonal ou nó para remover a peça.'}
-                {(ferramenta === 'cubo' || ferramenta === 'sleeve' || ferramenta === 'sapata' || ferramenta === 'talha' || ferramenta === 'pauCarga') && 'Clique num nó (interseção) do grid para posicionar essa peça.'}
+                {(ferramenta === 'sapata' || ferramenta === 'talha' || ferramenta === 'pauCarga') && 'Clique num nó (interseção) do grid para posicionar essa peça.'}
               </p>
+              <p className="text-[9px] text-gray-400 tracking-widest font-bold mt-1">Cubos e sleeves são calculados automaticamente a partir da geometria das retas — não precisam ser marcados.</p>
             </div>
 
             {/* MÉTRICAS */}
@@ -882,7 +885,8 @@ export default function SimuladorBoxtruss() {
               </div>
               <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#16A34A] p-3 rounded-xl shadow-sm print:bg-white print:border-gray-400">
                 <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1 print:text-gray-600">Cubos / Sleeves / Sapatas</span>
-                <strong className="block text-lg text-[#16A34A] font-black print:text-black">{materiaisLivres.contagemNos.cubo ?? 0} / {materiaisLivres.contagemNos.sleeve ?? 0} / {materiaisLivres.contagemNos.sapata ?? 0}</strong>
+                <strong className="block text-lg text-[#16A34A] font-black print:text-black">{autoConexoes.cubos} / {autoConexoes.sleeves} / {materiaisLivres.contagemNos.sapata ?? 0}</strong>
+                <span className="text-[9px] font-bold text-[#16A34A] uppercase print:text-gray-500">Cubo/sleeve automáticos</span>
               </div>
               <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-amber-500 p-3 rounded-xl shadow-sm print:bg-white print:border-gray-400">
                 <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1 print:text-gray-600">Talhas / Pau de Carga</span>
@@ -891,10 +895,36 @@ export default function SimuladorBoxtruss() {
             </div>
 
             {/* CANVAS */}
-            <div className="bg-white border border-[#E2E8F0] rounded-2xl shadow-sm p-4 flex-grow overflow-auto bg-[radial-gradient(#CBD5E1_1px,transparent_1px)] bg-[size:22px_22px] print:border print:bg-none">
+            <div className="bg-white border border-[#E2E8F0] rounded-2xl shadow-sm p-4 flex-grow flex flex-col gap-2 print:border">
+              <div className="flex items-center justify-between gap-1 print:hidden">
+                <div className="grid grid-cols-2 gap-1 bg-gray-100 p-1 rounded-lg">
+                  <button onClick={() => setModo3D(false)} className={`px-3 py-1 text-[9px] font-black uppercase rounded ${!modo3D ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:bg-gray-200'}`}>2D</button>
+                  <button onClick={() => setModo3D(true)} className={`px-3 py-1 text-[9px] font-black uppercase rounded ${modo3D ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:bg-gray-200'}`}>3D</button>
+                </div>
+                {!modo3D && (
+                  <div className="flex items-center gap-1">
+                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mr-1">Zoom</span>
+                    <button onClick={() => setFreeZoom(z => Math.max(0.5, Math.round((z - 0.1) * 10) / 10))} className="w-7 h-7 rounded-lg border border-gray-200 text-[#0C1D4D] font-black hover:bg-gray-100">−</button>
+                    <button onClick={() => setFreeZoom(1)} className="px-2 h-7 rounded-lg border border-gray-200 text-[10px] font-black text-[#0C1D4D] hover:bg-gray-100">{Math.round(freeZoom * 100)}%</button>
+                    <button onClick={() => setFreeZoom(z => Math.min(2, Math.round((z + 0.1) * 10) / 10))} className="w-7 h-7 rounded-lg border border-gray-200 text-[#0C1D4D] font-black hover:bg-gray-100">+</button>
+                  </div>
+                )}
+              </div>
+
+              {modo3D && (
+                <div className="print:hidden">
+                  <div className="h-[420px] rounded-xl overflow-hidden border border-[#E2E8F0]">
+                    <LivreTruss3D geometry={geometriaLivre3D} ladoM={Q_INFO[qSize].ladoM} />
+                  </div>
+                  <p className="text-[9px] text-gray-400 uppercase tracking-widest font-bold mt-2 text-center">Arraste para rotacionar · scroll para zoom · visualização esquemática, não substitui o memorial de cálculo</p>
+                </div>
+              )}
+
+              <div className={`${modo3D ? 'hidden print:block' : 'block'} overflow-auto bg-[radial-gradient(#CBD5E1_1px,transparent_1px)] bg-[size:22px_22px] rounded-xl print:bg-none`}>
               <svg
-                width={gridGeom.width}
-                height={gridGeom.height}
+                width={gridGeom.width * freeZoom}
+                height={gridGeom.height * freeZoom}
+                viewBox={`0 0 ${gridGeom.width} ${gridGeom.height}`}
                 className="select-none"
                 onDragStart={(e) => e.preventDefault()}
               >
@@ -939,13 +969,25 @@ export default function SimuladorBoxtruss() {
                   );
                 })}
 
-                {/* Nós (cubo / sleeve / sapata / talha / pau de carga) */}
+                {/* Cubo / Sleeve — inferidos automaticamente pela geometria das retas */}
+                {autoConexoes.nodes.map(n => {
+                  const meta = AUTO_CONEXAO_META[n.tipo];
+                  const x = OFFSET + n.c * CELL, y = OFFSET + n.r * CELL;
+                  return (
+                    <g key={`auto-${n.id}`} pointerEvents="none">
+                      <circle cx={x} cy={y} r={7} fill={meta.cor} stroke="#fff" strokeWidth={1.5} opacity={0.9} />
+                      <text x={x} y={y + 3} fontSize={7.5} textAnchor="middle" fill="#fff" fontWeight={700}>{meta.letra}</text>
+                    </g>
+                  );
+                })}
+
+                {/* Nós (sapata / talha / pau de carga — posicionados manualmente) */}
                 {gridGeom.nodes.map(n => {
                   const acc = nosLivres[n.id];
                   const meta = acc ? NODE_META[acc] : null;
                   return (
                     <g key={n.id}>
-                      <circle cx={n.x} cy={n.y} r={meta ? 8 : 2.5} fill={meta ? meta.cor : '#94A3B8'} stroke={meta ? '#fff' : 'none'} strokeWidth={meta ? 1.5 : 0} pointerEvents="none" />
+                      {meta && <circle cx={n.x} cy={n.y} r={8} fill={meta.cor} stroke="#fff" strokeWidth={1.5} pointerEvents="none" />}
                       {meta && <text x={n.x} y={n.y + 3} fontSize={8} textAnchor="middle" fill="#fff" fontWeight={700} pointerEvents="none">{meta.letra}</text>}
                       <circle
                         cx={n.x} cy={n.y} r={13} fill="transparent"
@@ -956,10 +998,17 @@ export default function SimuladorBoxtruss() {
                   );
                 })}
               </svg>
+              </div>
             </div>
 
             {/* LEGENDA */}
             <div className="hidden print:grid grid-cols-5 gap-2 flex-shrink-0">
+              {(['cubo', 'sleeve'] as const).map(k => (
+                <div key={k} className="flex items-center gap-1.5 text-[9px] font-bold text-gray-700">
+                  <span className="w-3 h-3 rounded-full flex items-center justify-center text-white text-[7px]" style={{ backgroundColor: AUTO_CONEXAO_META[k].cor }}>{AUTO_CONEXAO_META[k].letra}</span>
+                  {AUTO_CONEXAO_META[k].nome}
+                </div>
+              ))}
               {(Object.keys(NODE_META) as NoAcessorio[]).map(k => (
                 <div key={k} className="flex items-center gap-1.5 text-[9px] font-bold text-gray-700">
                   <span className="w-3 h-3 rounded-full flex items-center justify-center text-white text-[7px]" style={{ backgroundColor: NODE_META[k].cor }}>{NODE_META[k].letra}</span>
@@ -994,10 +1043,24 @@ export default function SimuladorBoxtruss() {
                       <td className="py-2 text-right font-medium text-[#64748B]">{(materiaisLivres.numDiag * Q_INFO[qSize].diagonalKg).toFixed(1)}</td>
                     </tr>
                   )}
+                  {autoConexoes.cubos > 0 && (
+                    <tr className="border-b border-gray-100">
+                      <td className="py-2 font-bold text-[#334155]">Cubo (peça de canto) <span className="text-[#94A3B8] font-medium">({qSize}) · sugestão automática</span></td>
+                      <td className="py-2 text-right font-black text-[#0C1D4D]">{autoConexoes.cubos} pç</td>
+                      <td className="py-2 text-right font-medium text-[#64748B]">{(autoConexoes.cubos * Q_INFO[qSize].cuboKg).toFixed(1)}</td>
+                    </tr>
+                  )}
+                  {autoConexoes.sleeves > 0 && (
+                    <tr className="border-b border-gray-100">
+                      <td className="py-2 font-bold text-[#334155]">Sleeve (luva de emenda) <span className="text-[#94A3B8] font-medium">({qSize}) · sugestão automática</span></td>
+                      <td className="py-2 text-right font-black text-[#0C1D4D]">{autoConexoes.sleeves} pç</td>
+                      <td className="py-2 text-right font-medium text-[#64748B]">{(autoConexoes.sleeves * Q_INFO[qSize].sleeveKg).toFixed(1)}</td>
+                    </tr>
+                  )}
                   {(Object.keys(NODE_META) as NoAcessorio[]).map(tipo => {
                     const qtd = materiaisLivres.contagemNos[tipo] ?? 0;
                     if (!qtd) return null;
-                    const pesoUnit = tipo === 'cubo' ? Q_INFO[qSize].cuboKg : tipo === 'sleeve' ? Q_INFO[qSize].sleeveKg : tipo === 'sapata' ? Q_INFO[qSize].sapataKg : null;
+                    const pesoUnit = tipo === 'sapata' ? Q_INFO[qSize].sapataKg : null;
                     return (
                       <tr key={tipo} className="border-b border-gray-100">
                         <td className="py-2 font-bold text-[#334155]">{NODE_META[tipo].nome} {pesoUnit !== null && <span className="text-[#94A3B8] font-medium">({qSize})</span>}</td>
@@ -1006,7 +1069,7 @@ export default function SimuladorBoxtruss() {
                       </tr>
                     );
                   })}
-                  {materiaisLivres.numRetas === 0 && materiaisLivres.numDiag === 0 && Object.keys(materiaisLivres.contagemNos).length === 0 && (
+                  {materiaisLivres.numRetas === 0 && materiaisLivres.numDiag === 0 && autoConexoes.cubos === 0 && autoConexoes.sleeves === 0 && Object.keys(materiaisLivres.contagemNos).length === 0 && (
                     <tr><td colSpan={3} className="py-4 text-center text-[#94A3B8] font-bold uppercase text-[10px]">Nenhuma peça posicionada ainda</td></tr>
                   )}
                 </tbody>

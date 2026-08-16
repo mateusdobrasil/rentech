@@ -105,15 +105,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, ignorado: true });
     }
 
-    const resultado = await processarMensagemPontoWhatsApp({
-      telefone: mensagem.telefone,
-      texto: mensagem.texto,
-      messageId: mensagem.messageId,
-      anexo: mensagem.anexo,
-      payloadBruto: body,
-    });
-    if (resultado?.mensagem) {
-      await enviarWhatsAppMeta(mensagem.telefone, resultado.mensagem);
+    try {
+      const resultado = await processarMensagemPontoWhatsApp({
+        telefone: mensagem.telefone,
+        texto: mensagem.texto,
+        messageId: mensagem.messageId,
+        anexo: mensagem.anexo,
+        payloadBruto: body,
+      });
+      if (resultado?.mensagem) {
+        await enviarWhatsAppMeta(mensagem.telefone, resultado.mensagem);
+      }
+    } catch (eProcessamento: any) {
+      // Erro dentro do processamento (não de validação do webhook em si):
+      // loga o detalhe pro servidor E avisa o funcionário — antes disso o
+      // funcionário ficava sem resposta nenhuma, achando que o bot travou.
+      console.error('Webhook Meta Ponto WhatsApp — erro ao processar mensagem:', eProcessamento.message);
+      await enviarWhatsAppMeta(mensagem.telefone, '⚠ Ocorreu um erro ao registrar seu ponto. Tente novamente em instantes ou avise o RH se persistir.').catch(() => {});
     }
 
     return NextResponse.json({ ok: true });

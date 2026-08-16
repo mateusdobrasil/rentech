@@ -115,8 +115,9 @@ export default function JogoBolhas() {
 
   return (
     <>
+      <BackButton />
+
       <div className="relative w-full h-[calc(100vh-5rem)] bg-black overflow-hidden touch-none select-none">
-        <BackButton />
         {fase === 'jogando' && bolhas.map((b) => <Bolha key={b.id} bolha={b} onPop={popar} onMiss={perder} />)}
 
         {fase === 'jogando' && (

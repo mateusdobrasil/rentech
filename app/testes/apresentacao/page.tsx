@@ -8,8 +8,9 @@ const PPTX_SRC = '/testes/apresentacao-teste.pptx';
 export default function Apresentacao() {
   return (
     <>
+      <BackButton />
+
       <div className="relative w-full h-[calc(100vh-5rem)] bg-[#000000] bg-[radial-gradient(circle_at_20%_30%,_rgba(12,29,77,0.4)_0%,_transparent_45%),radial-gradient(circle_at_80%_70%,_rgba(51,102,153,0.2)_0%,_transparent_45%)] flex flex-col items-center justify-center text-center px-6 gap-6">
-        <BackButton />
         <div className="text-[10px] font-black uppercase tracking-widest text-[#336699]">Exibição • PPTX</div>
         <h1 className="text-2xl md:text-4xl font-black uppercase tracking-tight text-white">Apresentação de Teste</h1>
         <p className="text-sm text-[#999999] max-w-md">

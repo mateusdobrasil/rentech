@@ -8,8 +8,9 @@ const VIDEO_SRC = '/videos/Rio Open - Claro.mp4';
 export default function VideoHorizontal() {
   return (
     <>
+      <BackButton />
+
       <div className="relative w-full h-[calc(100vh-5rem)] bg-black flex items-center justify-center">
-        <BackButton />
         <video
           src={encodeURI(VIDEO_SRC)}
           className="w-full h-full object-contain"

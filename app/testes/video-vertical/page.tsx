@@ -8,8 +8,9 @@ const VIDEO_SRC = '/videos/VIDEO-2025-09-14-23-14-16.mp4';
 export default function VideoVertical() {
   return (
     <>
+      <BackButton />
+
       <div className="relative w-full h-[calc(100vh-5rem)] bg-black flex items-center justify-center">
-        <BackButton />
         <video
           src={encodeURI(VIDEO_SRC)}
           className="h-full w-full object-contain"

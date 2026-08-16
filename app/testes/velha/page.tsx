@@ -154,10 +154,10 @@ export default function JogoDaVelha() {
 
   return (
     <>
+      <BackButton />
       <Confetti trigger={confettiTrigger} />
 
       <div className="relative w-full min-h-[calc(100vh-5rem)] bg-[#000000] bg-[radial-gradient(circle_at_20%_30%,_rgba(12,29,77,0.4)_0%,_transparent_45%),radial-gradient(circle_at_80%_70%,_rgba(51,102,153,0.2)_0%,_transparent_45%)] text-white overflow-y-auto select-none">
-        <BackButton />
         <div className="min-h-full flex flex-col items-center justify-center gap-6 px-6 py-16">
 
           <div className="text-[10px] font-black uppercase text-[#336699] tracking-widest">Touchscreen • Jogo da Velha</div>

@@ -53,13 +53,12 @@ export default function JogoReflexo() {
 
   return (
     <>
+      <BackButton />
+
       <div
         onPointerDown={handleAreaPointerDown}
         className="relative w-full h-[calc(100vh-5rem)] bg-[#000000] bg-[radial-gradient(circle_at_20%_30%,_rgba(12,29,77,0.4)_0%,_transparent_45%),radial-gradient(circle_at_80%_70%,_rgba(51,102,153,0.2)_0%,_transparent_45%)] text-white select-none overflow-hidden touch-none"
       >
-        <div onPointerDown={(e) => e.stopPropagation()}>
-          <BackButton />
-        </div>
         {/* Alvo */}
         {estado === 'pronto' && (
           <button

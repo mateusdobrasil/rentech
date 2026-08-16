@@ -345,8 +345,7 @@ export default function ChecklistCargaRetorno() {
       let query = supabase
         .from('checklists')
         .select('id, numero, evento_feira, cliente, local, periodo_inicio, periodo_fim, status, created_at', { count: 'exact' })
-        .order('created_at', { ascending: false })
-        .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
+        .order('created_at', { ascending: false });
 
       if (filtroStatus) query = query.eq('status', filtroStatus);
       if (busca.trim()) {
@@ -354,10 +353,32 @@ export default function ChecklistCargaRetorno() {
         query = query.or(`cliente.ilike.${termo},evento_feira.ilike.${termo},local.ilike.${termo}`);
       }
 
-      const { data, error, count } = await query;
-      if (!error) {
-        setChecklists(data || []);
-        setTotalRegistros(count || 0);
+      if (filtroStatus) {
+        // Filtro já deixa todo mundo com o mesmo status — pode paginar direto no banco.
+        query = query.range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
+        const { data, error, count } = await query;
+        if (!error) {
+          setChecklists(data || []);
+          setTotalRegistros(count || 0);
+        }
+      } else {
+        // Sem filtro de status: finalizados vão pro final da fila, então a
+        // ordenação não dá pra fazer só com .order() do banco (misturaria
+        // RASCUNHO e SAÍDA_CONFERIDA por status em vez de por recência).
+        // Busca tudo que bate com a busca textual e pagina no cliente depois
+        // de reordenar: ativos primeiro (por data mais recente), finalizados
+        // por último (também por data mais recente).
+        const { data, error, count } = await query;
+        if (!error) {
+          const ordenados = [...(data || [])].sort((a, b) => {
+            const aFinalizado = a.status === 'FINALIZADO' ? 1 : 0;
+            const bFinalizado = b.status === 'FINALIZADO' ? 1 : 0;
+            if (aFinalizado !== bFinalizado) return aFinalizado - bFinalizado;
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          });
+          setTotalRegistros(count ?? ordenados.length);
+          setChecklists(ordenados.slice(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA));
+        }
       }
       setListaLoading(false);
     }, 300);

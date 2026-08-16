@@ -15,8 +15,18 @@ interface BolhaType {
 }
 
 const DURACAO_JOGO = 30;
-const INTERVALO_SPAWN = 550;
 const CORES = ['#336699', '#F59E0B', '#16A34A', '#DC2626', '#7C3AED', '#0EA5E9'];
+
+// Ritmo do jogo: no início as bolhas nascem devagar e demoram para cruzar a tela;
+// conforme o tempo passa, spawn e travessia aceleram até ficar bem rápido no final.
+const SPAWN_DELAY_INICIAL = 650;
+const SPAWN_DELAY_FINAL = 180;
+const BOLHA_DURACAO_MIN_INICIAL = 2500;
+const BOLHA_DURACAO_MAX_INICIAL = 4700;
+const BOLHA_DURACAO_MIN_FINAL = 700;
+const BOLHA_DURACAO_MAX_FINAL = 1300;
+
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 function Bolha({ bolha, onPop, onMiss }: { bolha: BolhaType; onPop: (id: number) => void; onMiss: (id: number) => void }) {
   const [subir, setSubir] = useState(false);
@@ -60,6 +70,7 @@ export default function JogoBolhas() {
   const [perdidas, setPerdidas] = useState(0);
   const [tempoRestante, setTempoRestante] = useState(DURACAO_JOGO);
   const idRef = useRef(0);
+  const tempoRestanteRef = useRef(DURACAO_JOGO);
 
   const iniciar = () => {
     setPontos(0);
@@ -72,25 +83,42 @@ export default function JogoBolhas() {
   useEffect(() => {
     if (fase !== 'jogando') return;
 
-    const spawnInterval = setInterval(() => {
-      idRef.current += 1;
-      const nova: BolhaType = {
-        id: idRef.current,
-        left: 5 + Math.random() * 85,
-        size: 50 + Math.random() * 55,
-        duracao: 2500 + Math.random() * 2200,
-        cor: CORES[Math.floor(Math.random() * CORES.length)],
-        estourada: false,
-      };
-      setBolhas((prev) => [...prev, nova]);
-    }, INTERVALO_SPAWN);
+    tempoRestanteRef.current = DURACAO_JOGO;
+    let spawnTimeoutId: ReturnType<typeof setTimeout>;
+
+    const agendarBolha = () => {
+      const progresso = 1 - tempoRestanteRef.current / DURACAO_JOGO;
+      const atraso = lerp(SPAWN_DELAY_INICIAL, SPAWN_DELAY_FINAL, progresso);
+
+      spawnTimeoutId = setTimeout(() => {
+        idRef.current += 1;
+        const durMin = lerp(BOLHA_DURACAO_MIN_INICIAL, BOLHA_DURACAO_MIN_FINAL, progresso);
+        const durMax = lerp(BOLHA_DURACAO_MAX_INICIAL, BOLHA_DURACAO_MAX_FINAL, progresso);
+        const nova: BolhaType = {
+          id: idRef.current,
+          left: 5 + Math.random() * 85,
+          size: 50 + Math.random() * 55,
+          duracao: durMin + Math.random() * (durMax - durMin),
+          cor: CORES[Math.floor(Math.random() * CORES.length)],
+          estourada: false,
+        };
+        setBolhas((prev) => [...prev, nova]);
+        agendarBolha();
+      }, atraso);
+    };
+
+    agendarBolha();
 
     const timerInterval = setInterval(() => {
-      setTempoRestante((t) => Math.max(0, t - 1));
+      setTempoRestante((t) => {
+        const proximo = Math.max(0, t - 1);
+        tempoRestanteRef.current = proximo;
+        return proximo;
+      });
     }, 1000);
 
     return () => {
-      clearInterval(spawnInterval);
+      clearTimeout(spawnTimeoutId);
       clearInterval(timerInterval);
     };
   }, [fase]);

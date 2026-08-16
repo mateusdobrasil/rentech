@@ -330,31 +330,53 @@ export async function consolidarDia(db: Db, funcionarioNome: string, dataReferen
       .eq('data_referencia', dataReferencia),
   ]);
 
-  const porTipo: Partial<Record<TipoBatida, string>> = {};
+  // Guarda o timestamp completo (não só HH:MM) porque uma batida que fecha
+  // um turno noturno (ver iniciarFluxoConfirmarBatida) é gravada sob a data
+  // de ontem com um horário real de hoje de madrugada — sem a data completa,
+  // "01:57" pareceria vir ANTES de "08:13" na comparação e inverteria o
+  // cálculo do período trabalhado.
+  const porTipoData: Partial<Record<TipoBatida, Date>> = {};
   for (const b of (batidas || []) as { tipo_batida: TipoBatida; data_hora_batida: string }[]) {
-    if (!porTipo[b.tipo_batida]) porTipo[b.tipo_batida] = horaHHMM(new Date(b.data_hora_batida));
+    if (!porTipoData[b.tipo_batida]) porTipoData[b.tipo_batida] = new Date(b.data_hora_batida);
   }
   // Ajustes do RH prevalecem sobre a batida original do ledger para o dia
   for (const a of (ajustes || []) as { tipo_batida: TipoBatida; data_hora_ajustada: string }[]) {
-    porTipo[a.tipo_batida] = horaHHMM(new Date(a.data_hora_ajustada));
+    porTipoData[a.tipo_batida] = new Date(a.data_hora_ajustada);
   }
 
-  const e1 = porTipo.ENTRADA_1 || null;
-  const s1 = porTipo.SAIDA_1 || null;
-  const e2 = porTipo.ENTRADA_2 || null;
-  const s2 = porTipo.SAIDA_2 || null;
+  const e1Data = porTipoData.ENTRADA_1 || null;
+  const s1Data = porTipoData.SAIDA_1 || null;
+  const e2Data = porTipoData.ENTRADA_2 || null;
+  const s2Data = porTipoData.SAIDA_2 || null;
+
+  const e1 = e1Data ? horaHHMM(e1Data) : null;
+  const s1 = s1Data ? horaHHMM(s1Data) : null;
+  const e2 = e2Data ? horaHHMM(e2Data) : null;
+  const s2 = s2Data ? horaHHMM(s2Data) : null;
+
+  const diffMin = (inicio: Date, fim: Date): number => Math.round((fim.getTime() - inicio.getTime()) / 60000);
 
   // Mesma regra de cálculo usada na importação do CSV do Pontomais
-  // (app/admin/rh/ponto/page.tsx) — desconta 1h de almoço quando só há um
-  // par de batidas cobrindo 6h ou mais corridas.
+  // (app/admin/rh/ponto/page.tsx) — com exatamente 2 batidas no dia
+  // (quaisquer duas, independente de em qual dos 4 campos caíram — ex.:
+  // ajuste de justificativa que deixa só ENTRADA_1 e SAIDA_2 preenchidos),
+  // elas são tratadas como entrada+saída, descontando 1h de almoço quando
+  // cobrem 6h ou mais corridas. Com as 4 preenchidas, soma os dois períodos.
   let minutosTrabalhados = 0;
-  if (e1 && s1 && !e2 && !s2) {
-    let mins = timeToMinutes(s1) - timeToMinutes(e1);
-    if (mins >= 360) mins -= 60;
-    minutosTrabalhados = mins;
+  const qtdBatidas = [e1Data, s1Data, e2Data, s2Data].filter(Boolean).length;
+  if (qtdBatidas === 4) {
+    minutosTrabalhados = diffMin(e1Data!, s1Data!) + diffMin(e2Data!, s2Data!);
+  } else if (qtdBatidas === 2) {
+    const entrada = e1Data || e2Data;
+    const saida = s1Data || s2Data;
+    if (entrada && saida) {
+      let mins = diffMin(entrada, saida);
+      if (mins >= 360) mins -= 60;
+      minutosTrabalhados = mins;
+    }
   } else {
-    if (e1 && s1) minutosTrabalhados += timeToMinutes(s1) - timeToMinutes(e1);
-    if (e2 && s2) minutosTrabalhados += timeToMinutes(s2) - timeToMinutes(e2);
+    if (e1Data && s1Data) minutosTrabalhados += diffMin(e1Data, s1Data);
+    if (e2Data && s2Data) minutosTrabalhados += diffMin(e2Data, s2Data);
   }
 
   await db.from('folha_ponto_diaria').delete()
@@ -376,16 +398,20 @@ interface DadosConfirmacaoBatida {
   celular: string;
   tipo_batida: TipoBatida;
   data_hora_proposta: string;
+  // Normalmente a batida pertence ao dia calendário do próprio horário. Mas
+  // numa batida de madrugada que fecha um turno noturno (ver
+  // iniciarFluxoConfirmarBatida), ela é gravada sob a data de ontem mesmo com
+  // o timestamp real caindo hoje — por isso o dia é decidido explicitamente
+  // em vez de sempre derivado de data_hora_proposta.
+  data_referencia: string;
 }
 
 async function confirmarBatida(db: Db, dados: DadosConfirmacaoBatida, messageId: string | null, payloadBruto: unknown): Promise<{ nsr: number; tipo_batida: TipoBatida; data_hora_batida: string }> {
-  const dataReferencia = dataReferenciaBR(new Date(dados.data_hora_proposta));
-
   const { data, error } = await db.from('folha_ponto_whatsapp_registros').insert({
     funcionario_nome: dados.funcionario_nome,
     celular: dados.celular,
     tipo_batida: dados.tipo_batida,
-    data_referencia: dataReferencia,
+    data_referencia: dados.data_referencia,
     data_hora_batida: dados.data_hora_proposta,
     zapi_message_id: messageId,
     payload_bruto: payloadBruto ?? null,
@@ -393,7 +419,7 @@ async function confirmarBatida(db: Db, dados: DadosConfirmacaoBatida, messageId:
 
   if (error) throw new Error(`Falha ao gravar a batida no ledger: ${error.message}`);
 
-  await consolidarDia(db, dados.funcionario_nome, dataReferencia);
+  await consolidarDia(db, dados.funcionario_nome, dados.data_referencia);
 
   return data as { nsr: number; tipo_batida: TipoBatida; data_hora_batida: string };
 }
@@ -401,9 +427,26 @@ async function confirmarBatida(db: Db, dados: DadosConfirmacaoBatida, messageId:
 // ============================================================================
 // FLUXO: CONFIRMAR_BATIDA (bater ponto em tempo real — comportamento original)
 // ============================================================================
+// Janela de madrugada em que uma primeira batida do dia é ambígua: pode ser
+// o início do turno de hoje ou o fechamento de um turno noturno que começou
+// ontem (ex.: entrou 08:13 ontem, só bate de novo 01:57). Fora dessa janela,
+// a primeira batida do dia é sempre tratada como início do turno de hoje.
+const INICIO_JANELA_MADRUGADA_MIN = 1;   // 00:01
+const FIM_JANELA_MADRUGADA_MIN = 5 * 60 + 59; // 05:59
+
 async function iniciarFluxoConfirmarBatida(db: Db, funcionarioNome: string, celular: string, agora: Date): Promise<ResultadoPonto> {
   const dataReferencia = dataReferenciaBR(agora);
   const faltantes = await batidasFaltantesNoDia(db, funcionarioNome, dataReferencia);
+
+  const minutosAgora = timeToMinutes(horaHHMM(agora));
+  const naJanelaMadrugada = minutosAgora >= INICIO_JANELA_MADRUGADA_MIN && minutosAgora <= FIM_JANELA_MADRUGADA_MIN;
+  if (faltantes.length === 4 && naJanelaMadrugada) {
+    await salvarPendencia(db, celular, funcionarioNome, 'CONFIRMAR_BATIDA', 'ESCOLHER_TIPO_MADRUGADA', {
+      data_hora_proposta: agora.toISOString(),
+    }, agora);
+    return { mensagem: `Essa batida das ${horaHHMM(agora)} é:\n1) Entrada (começando o turno de hoje)\n2) Saída (fechando o turno de ontem)\nResponda com o número.` };
+  }
+
   const proxima = faltantes[0];
   if (!proxima) {
     return { mensagem: 'Todas as batidas de hoje já foram registradas. Se precisar corrigir algo, envie qualquer mensagem para ver as opções.' };
@@ -412,14 +455,66 @@ async function iniciarFluxoConfirmarBatida(db: Db, funcionarioNome: string, celu
   await salvarPendencia(db, celular, funcionarioNome, 'CONFIRMAR_BATIDA', 'AGUARDANDO_CONFIRMACAO', {
     tipo_batida: proxima,
     data_hora_proposta: agora.toISOString(),
+    data_referencia: dataReferencia,
   }, agora);
 
   return { mensagem: `Confirma ${ROTULO_BATIDA[proxima]} às ${horaHHMM(agora)}? Responda SIM ou NAO.` };
 }
 
-async function avancarConfirmarBatida(db: Db, pendencia: PendenciaPonto, texto: string, messageId: string | null, payloadBruto: unknown): Promise<ResultadoPonto> {
-  const { tipo_batida, data_hora_proposta } = pendencia.contexto;
-  if (!tipo_batida || !data_hora_proposta) {
+// Resposta à pergunta de desambiguação da janela de madrugada: a batida
+// abre o turno de hoje (ENTRADA) ou fecha o turno noturno de ontem (SAÍDA)?
+async function avancarEscolherTipoMadrugada(db: Db, pendencia: PendenciaPonto, texto: string, agora: Date): Promise<ResultadoPonto> {
+  const { data_hora_proposta } = pendencia.contexto;
+  if (!data_hora_proposta) {
+    await limparPendencia(db, pendencia.celular);
+    return { mensagem: 'Ocorreu um erro no fluxo. Envie qualquer mensagem para recomeçar.' };
+  }
+
+  const escolha = texto.trim();
+  const dataBatida = dataReferenciaBR(new Date(data_hora_proposta));
+  const horaBatida = horaHHMM(new Date(data_hora_proposta));
+
+  if (escolha === '1') {
+    const faltantesHoje = await batidasFaltantesNoDia(db, pendencia.funcionario_nome, dataBatida);
+    const proxima = faltantesHoje[0];
+    if (!proxima) {
+      await limparPendencia(db, pendencia.celular);
+      return { mensagem: 'Todas as batidas de hoje já foram registradas. Se precisar corrigir algo, envie qualquer mensagem para ver as opções.' };
+    }
+    await salvarPendencia(db, pendencia.celular, pendencia.funcionario_nome, 'CONFIRMAR_BATIDA', 'AGUARDANDO_CONFIRMACAO', {
+      tipo_batida: proxima,
+      data_hora_proposta,
+      data_referencia: dataBatida,
+    }, agora);
+    return { mensagem: `Confirma ${ROTULO_BATIDA[proxima]} às ${horaBatida}? Responda SIM ou NAO.` };
+  }
+
+  if (escolha === '2') {
+    const ontem = subtrairDias(dataBatida, 1);
+    const faltantesOntem = await batidasFaltantesNoDia(db, pendencia.funcionario_nome, ontem);
+    const pendenteOntem = faltantesOntem[0];
+    if (pendenteOntem !== 'SAIDA_1' && pendenteOntem !== 'SAIDA_2') {
+      await limparPendencia(db, pendencia.celular);
+      return { mensagem: `Não encontramos um turno em aberto em ${formatarDataBR(ontem)} pra fechar. Envie uma nova mensagem pra bater o ponto normalmente.` };
+    }
+    await salvarPendencia(db, pendencia.celular, pendencia.funcionario_nome, 'CONFIRMAR_BATIDA', 'AGUARDANDO_CONFIRMACAO', {
+      tipo_batida: pendenteOntem,
+      data_hora_proposta,
+      data_referencia: ontem,
+    }, agora);
+    return { mensagem: `Confirma ${ROTULO_BATIDA[pendenteOntem]} às ${horaBatida}, fechando o turno de ${formatarDataBR(ontem)}? Responda SIM ou NAO.` };
+  }
+
+  return { mensagem: `Não entendi. Essa batida das ${horaBatida} é:\n1) Entrada (começando o turno de hoje)\n2) Saída (fechando o turno de ontem)\nResponda com o número.` };
+}
+
+async function avancarConfirmarBatida(db: Db, pendencia: PendenciaPonto, texto: string, messageId: string | null, payloadBruto: unknown, agora: Date): Promise<ResultadoPonto> {
+  if (pendencia.etapa === 'ESCOLHER_TIPO_MADRUGADA') {
+    return await avancarEscolherTipoMadrugada(db, pendencia, texto, agora);
+  }
+
+  const { tipo_batida, data_hora_proposta, data_referencia } = pendencia.contexto;
+  if (!tipo_batida || !data_hora_proposta || !data_referencia) {
     await limparPendencia(db, pendencia.celular);
     return { mensagem: 'Ocorreu um erro no fluxo. Envie qualquer mensagem para recomeçar.' };
   }
@@ -431,6 +526,7 @@ async function avancarConfirmarBatida(db: Db, pendencia: PendenciaPonto, texto: 
       celular: pendencia.celular,
       tipo_batida,
       data_hora_proposta,
+      data_referencia,
     }, messageId, payloadBruto);
     await limparPendencia(db, pendencia.celular);
     return { mensagem: `✅ Ponto registrado: ${ROTULO_BATIDA[registro.tipo_batida]} às ${horaHHMM(new Date(registro.data_hora_batida))} (NSR ${registro.nsr}).` };
@@ -801,7 +897,7 @@ export async function processarMensagemPontoWhatsApp(payload: {
       return await avancarMenuInicial(db, pendencia, texto, agora);
     }
     if (pendencia.fluxo === 'CONFIRMAR_BATIDA') {
-      return await avancarConfirmarBatida(db, pendencia, texto, payload.messageId, payload.payloadBruto);
+      return await avancarConfirmarBatida(db, pendencia, texto, payload.messageId, payload.payloadBruto, agora);
     }
     if (pendencia.fluxo === 'JUSTIFICAR') {
       return await avancarJustificar(db, pendencia, texto, agora);

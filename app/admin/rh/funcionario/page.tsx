@@ -10,6 +10,7 @@ import { salvarColaboradorAction, atribuirEmpresaEmMassaAction } from '../action
 import { uploadFotoFuncionarioAction, urlFotoFuncionarioAction } from '../actions/actions-documentos-func';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 
 // Utilitários
 const formatarMesAnoBR = (mesAnoIso: string) => {
@@ -81,6 +82,8 @@ interface Movimentacao { id?: string; funcionario_nome?: string; motivo: 'ADMISS
 export default function FuncionarioPage() {
   const router = useRouter();
   const { usuarioAtual, emailUsuario, permissaoNormalizada, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const toast = useToast();
+  const confirm = useConfirm();
 
   const [loading, setLoading] = useState(false);
   const [listaFuncionarios, setListaFuncionarios] = useState<FuncionarioFin[]>([]);
@@ -221,7 +224,7 @@ export default function FuncionarioPage() {
     const { data: funcData, error: funcError } = await supabase
       .from('folha_funcionarios').select('*').eq('nome_completo', nome).single();
     if (funcError || !funcData) {
-      alert(`Não foi possível carregar a ficha de ${nome}: ${funcError?.message || 'registro não encontrado'}`);
+      toast(`Não foi possível carregar a ficha de ${nome}: ${funcError?.message || 'registro não encontrado'}`, 'error');
       setLoading(false);
       return;
     }
@@ -261,7 +264,7 @@ export default function FuncionarioPage() {
     const arquivo = e.target.files?.[0];
     e.target.value = '';
     if (!arquivo) return;
-    if (!form.nome_completo || funcionarioSelecionado === 'NOVO') { alert('Grave a ficha do colaborador antes de enviar a foto.'); return; }
+    if (!form.nome_completo || funcionarioSelecionado === 'NOVO') { toast('Grave a ficha do colaborador antes de enviar a foto.', 'error'); return; }
 
     setEnviandoFoto(true);
     try {
@@ -284,27 +287,27 @@ export default function FuncionarioPage() {
       const fotoRes = await urlFotoFuncionarioAction({ fotoPath: res.info.path }, accessToken);
       if (fotoRes.ok) setFotoPreviewUrl(fotoRes.info.url);
     } catch (e: any) {
-      alert('Erro ao enviar foto: ' + e.message);
+      toast('Erro ao enviar foto: ' + e.message, 'error');
     } finally {
       setEnviandoFoto(false);
     }
   };
 
   const salvarColaborador = async (): Promise<boolean> => {
-    if (!form.nome_completo) { alert("O Nome Completo é obrigatório."); return false; }
-    if (!form.empresa_id) { alert("Selecione a Empresa do colaborador."); return false; }
+    if (!form.nome_completo) { toast("O Nome Completo é obrigatório.", 'error'); return false; }
+    if (!form.empresa_id) { toast("Selecione a Empresa do colaborador.", 'error'); return false; }
     setLoading(true);
 
     try {
       const res = await salvarColaboradorAction({ form, dependentes, movimentacoes, usuarioNome: usuarioAtual }, accessToken);
       if (!res.ok) throw new Error(res.erro);
 
-      alert("Ficha guardada com sucesso!");
+      toast("Ficha guardada com sucesso!", 'success');
       setSnapshotFicha(JSON.stringify({ form, dependentes, movimentacoes }));
       carregarListaFuncionarios();
       if (funcionarioSelecionado === 'NOVO') setFuncionarioSelecionado(form.nome_completo);
       return true;
-    } catch (e: any) { alert("Erro ao salvar: " + e.message); return false; }
+    } catch (e: any) { toast("Erro ao salvar: " + e.message, 'error'); return false; }
     finally { setLoading(false); }
   };
 
@@ -312,9 +315,9 @@ export default function FuncionarioPage() {
     if (nome === funcionarioSelecionado) return;
 
     if (temAlteracoesNaoSalvas) {
-      const salvar = confirm(
+      const salvar = await confirm(
         `A ficha de ${form.nome_completo || 'este colaborador'} tem alterações não salvas.\n\n` +
-        `OK = Salvar antes de trocar\nCancelar = Descartar as alterações`
+        `Confirmar = Salvar antes de trocar\nCancelar = Descartar as alterações`
       );
       if (salvar) {
         const ok = await salvarColaborador();
@@ -384,13 +387,13 @@ export default function FuncionarioPage() {
         usuarioNome: usuarioAtual,
       }, accessToken);
       if (!res.ok) throw new Error(res.erro);
-      alert(`Empresa atribuída a ${selecionadosMassa.size} funcionário(s).`);
+      toast(`Empresa atribuída a ${selecionadosMassa.size} funcionário(s).`, 'success');
       setSelecionadosMassa(new Set());
       setEmpresaMassa('');
       setModoAtribuicaoMassa(false);
       carregarListaFuncionarios();
     } catch (e: any) {
-      alert('Erro ao atribuir empresa em massa: ' + e.message);
+      toast('Erro ao atribuir empresa em massa: ' + e.message, 'error');
     } finally {
       setAplicandoMassa(false);
     }

@@ -15,6 +15,7 @@ import {
 } from './actions';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 const fmtDataHora = (d: string) => new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
@@ -58,6 +59,7 @@ const ROTULO_PROVEDOR: Record<'ZAPI' | 'META', string> = { ZAPI: 'Z-API', META: 
 export default function IntegracaoPage() {
   const router = useRouter();
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const toast = useToast();
 
   const [integracoes, setIntegracoes] = useState<Integracao[]>([]);
   const [loading, setLoading] = useState(true);
@@ -150,7 +152,7 @@ export default function IntegracaoPage() {
         cnpj: edCnpj, razao_social: edRazaoSocial
       }
     }, accessToken);
-    if (!res.ok) { alert(res.erro); return; }
+    if (!res.ok) { toast(res.erro || 'Erro ao salvar a integração.', 'error'); return; }
     setEditParceiro(null);
     carregar();
   };
@@ -191,7 +193,7 @@ export default function IntegracaoPage() {
         modo: edModoRoteamento, provedor_global: edProvedorGlobal,
         provedor_envio: edProvedorEnvio, provedor_recebimento: edProvedorRecebimento
       }, accessToken);
-      if (!res.ok) { alert(res.erro); return; }
+      if (!res.ok) { toast(res.erro || 'Erro ao salvar o roteamento.', 'error'); return; }
       setEditParceiro(null);
       carregar();
     } finally { setSalvandoRoteamento(false); }

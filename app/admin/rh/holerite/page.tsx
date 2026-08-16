@@ -282,18 +282,16 @@ const apurarPonto = (
 
 // ============================================================================
 // VALIDAÇÃO DAS BATIDAS DE PONTO — usada antes de fechar a folha do mês
-// Um dia só é considerado OK se tiver: nenhuma batida (dia sem registro, a
-// falta é tratada à parte), ENTRADA+SAÍDA, ou ENTRADA+SAÍDA ALMOÇO+RETORNO
-// ALMOÇO+SAÍDA. Qualquer combinação parcial (ex: só entrada, ou só a volta
-// do almoço sem saída) é uma batida incompleta e bloqueia o fechamento.
+// Um dia só é considerado OK se tiver uma quantidade par de batidas: nenhuma
+// (dia sem registro, a falta é tratada à parte), duas (quaisquer duas —
+// contam como entrada+saída automaticamente) ou as 4 completas. Uma
+// quantidade ímpar de batidas (1 ou 3) é incompleta e bloqueia o fechamento.
 // ============================================================================
 const diaComBatidasOk = (r?: RegistroDiaPonto): boolean => {
   if (!r) return true;
   const { entrada_1: e1, saida_1: s1, entrada_2: e2, saida_2: s2 } = r;
-  if (!e1 && !s1 && !e2 && !s2) return true;
-  if (e1 && s1 && !e2 && !s2) return true;
-  if (e1 && s1 && e2 && s2) return true;
-  return false;
+  const qtdBatidas = [e1, s1, e2, s2].filter(Boolean).length;
+  return qtdBatidas % 2 === 0;
 };
 
 const encontrarBatidasIncompletas = (

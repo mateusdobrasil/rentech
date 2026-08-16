@@ -22,6 +22,27 @@ const DIAS_SEMANA = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
 const hhmm = (min: number) => `${Math.floor((min || 0) / 60).toString().padStart(2, '0')}:${((min || 0) % 60).toString().padStart(2, '0')}`;
 const hhmmBatida = (t: string | null) => (t ? t.slice(0, 5) : '--:--');
 
+function timeToMinutesLocal(t: string): number {
+  const [h, m] = t.slice(0, 5).split(':').map(Number);
+  return (h * 60) + m;
+}
+
+// Pra cada uma das 4 batidas (Entrada, Saída Alm., Ret. Alm., Saída), indica
+// se ela caiu no dia seguinte à data do registro — detectado comparando com
+// a batida anterior: se o horário "voltou pra trás", só pode ser porque
+// virou a meia-noite (turno noturno, ex.: entrou 08:13 e só saiu 01:57).
+function diasSeguintesBatidas(e1: string | null, s1: string | null, e2: string | null, s2: string | null): boolean[] {
+  let diaAtual = 0;
+  let anteriorMin: number | null = null;
+  return [e1, s1, e2, s2].map(v => {
+    if (!v) return false;
+    const mins = timeToMinutesLocal(v);
+    if (anteriorMin !== null && mins < anteriorMin) diaAtual += 1;
+    anteriorMin = mins;
+    return diaAtual > 0;
+  });
+}
+
 function mesAtualSaoPaulo(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).slice(0, 7);
 }
@@ -151,7 +172,9 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
         <>
           {/* Mobile: cartões empilhados */}
           <div className="md:hidden space-y-2">
-            {linhas.map(l => (
+            {linhas.map(l => {
+              const diasL = diasSeguintesBatidas(l.reg?.entrada_1 || null, l.reg?.saida_1 || null, l.reg?.entrada_2 || null, l.reg?.saida_2 || null);
+              return (
               <div key={l.dataIso} className="bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] p-3">
                 <div className="flex items-center justify-between gap-2 mb-2">
                   <span className="font-black text-[#0C1D4D] text-[13px]">
@@ -161,14 +184,18 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
                 </div>
                 <div className="grid grid-cols-4 gap-1.5 text-center mb-2">
                   {[l.reg?.entrada_1, l.reg?.saida_1, l.reg?.entrada_2, l.reg?.saida_2].map((v, i) => (
-                    <div key={i} className="bg-white rounded-lg py-1.5 text-[11px] font-bold text-[#0C1D4D] border border-[#E2E8F0]">{hhmmBatida(v || null)}</div>
+                    <div key={i} className="bg-white rounded-lg py-1.5 text-[11px] font-bold text-[#0C1D4D] border border-[#E2E8F0]">
+                      {hhmmBatida(v || null)}
+                      {diasL[i] && <div className="text-[8px] font-black text-amber-600 uppercase leading-tight mt-0.5">dia seguinte</div>}
+                    </div>
                   ))}
                 </div>
                 {l.observacao && (
                   <p className={`text-[10px] font-bold uppercase break-words ${l.alerta ? 'text-red-600' : 'text-gray-500'}`}>{l.observacao}</p>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Desktop: tabela completa */}
@@ -191,15 +218,19 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
                   const colSaidaAlmoco = temIntervalo ? l.reg?.saida_1 ?? null : null;
                   const colRetAlmoco = temIntervalo ? l.reg?.entrada_2 ?? null : null;
                   const colSaida = temIntervalo ? l.reg?.saida_2 ?? null : l.reg?.saida_1 ?? null;
+                  const diasL = diasSeguintesBatidas(l.reg?.entrada_1 || null, l.reg?.saida_1 || null, l.reg?.entrada_2 || null, l.reg?.saida_2 || null);
+                  const diaSaidaAlmoco = temIntervalo && diasL[1];
+                  const diaRetAlmoco = temIntervalo && diasL[2];
+                  const diaSaida = temIntervalo ? diasL[3] : diasL[1];
                   return (
                     <tr key={l.dataIso} className="hover:bg-[#F8FAFC] transition-colors">
                       <td className="p-2 text-left font-bold text-[#0C1D4D]">
                         {l.dataIso.split('-').reverse().slice(0, 2).join('/')} <span className="text-gray-400 font-medium">{DIAS_SEMANA[l.diaSemana]}</span>
                       </td>
                       <td className="p-2 font-medium">{hhmmBatida(l.reg?.entrada_1 || null)}</td>
-                      <td className="p-2 font-medium">{hhmmBatida(colSaidaAlmoco)}</td>
-                      <td className="p-2 font-medium">{hhmmBatida(colRetAlmoco)}</td>
-                      <td className="p-2 font-medium">{hhmmBatida(colSaida)}</td>
+                      <td className="p-2 font-medium">{hhmmBatida(colSaidaAlmoco)}{diaSaidaAlmoco && <div className="text-[8px] font-black text-amber-600 uppercase leading-tight">dia seguinte</div>}</td>
+                      <td className="p-2 font-medium">{hhmmBatida(colRetAlmoco)}{diaRetAlmoco && <div className="text-[8px] font-black text-amber-600 uppercase leading-tight">dia seguinte</div>}</td>
+                      <td className="p-2 font-medium">{hhmmBatida(colSaida)}{diaSaida && <div className="text-[8px] font-black text-amber-600 uppercase leading-tight">dia seguinte</div>}</td>
                       <td className="p-2 font-bold">{l.reg?.minutosTrabalhados ? hhmm(l.reg.minutosTrabalhados) : '-'}</td>
                       <td className={`p-2 text-left text-[11px] font-bold ${l.alerta ? 'text-red-600' : 'text-gray-500'}`}>{l.observacao}</td>
                     </tr>

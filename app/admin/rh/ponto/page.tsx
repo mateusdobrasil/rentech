@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
-import { importarPontoAction, importarAbonosAction, lancarPontoManualAction, abonarDiaManualAction } from '../actions/actions-ponto';
+import { importarPontoAction, importarAbonosAction, lancarPontoManualAction, descartarPontoManualAction, abonarDiaManualAction } from '../actions/actions-ponto';
 import {
   estatisticasPontoWhatsappAction, listarLedgerPontoWhatsappAction,
   listarSolicitacoesPendentesAction, aprovarSolicitacaoAction, rejeitarSolicitacaoAction,
@@ -99,6 +99,7 @@ export default function GestaoDePonto() {
   const [manualE2, setManualE2] = useState('');
   const [manualS2, setManualS2] = useState('');
   const [lancandoManual, setLancandoManual] = useState(false);
+  const [descartandoManual, setDescartandoManual] = useState(false);
   // Ponto já lançado nesse dia, consultado ao vivo ao escolher funcionário +
   // data — evita que o RH sobreponha uma batida sem perceber.
   const [registroExistente, setRegistroExistente] = useState<{ origem: string; entrada_1: string | null; saida_1: string | null; entrada_2: string | null; saida_2: string | null } | null | undefined>(undefined);
@@ -130,7 +131,10 @@ export default function GestaoDePonto() {
 
   useEffect(() => {
     if (authLoading || acessoNegado) return;
-    supabase.from('folha_funcionarios').select('nome_completo, data_admissao, data_desligamento').eq('ativo', true).order('nome_completo')
+    // Só entra nos controles de ponto quem bate ponto pelo WhatsApp — quem
+    // tem essa opção desligada na ficha não gera batida nenhuma por aqui,
+    // então não faz sentido aparecer nos seletores nem na apuração de faltas.
+    supabase.from('folha_funcionarios').select('nome_completo, data_admissao, data_desligamento').eq('ativo', true).eq('ponto_whatsapp_ativo', true).order('nome_completo')
       .then(({ data }) => {
         setListaFuncionariosAtivos((data || []).map(f => f.nome_completo));
         setFuncionariosAtivosDetalhe(data || []);
@@ -199,13 +203,19 @@ export default function GestaoDePonto() {
     const ultimoDia = new Date(Number(ano), Number(mes), 0).getDate();
     const dataFim = `${ano}-${mes}-${String(ultimoDia).padStart(2, '0')}`;
 
+    // Quem tem "Bate ponto pelo WhatsApp" desligado na ficha não entra nos
+    // controles desta tela — nem em registros/abonos históricos que tenham
+    // sobrado de antes da opção ser desativada.
+    const { data: funcData } = await supabase.from('folha_funcionarios').select('nome_completo').eq('ponto_whatsapp_ativo', true);
+    const nomesHabilitados = new Set((funcData || []).map(f => f.nome_completo));
+
     // Busca Abonos do Mês
     const { data: abonosData, error: erroAbonos } = await supabase
       .from('folha_ponto_abono')
       .select('id, funcionario_nome, data_abono, dia_todo, hora_inicio, hora_fim, minutos_abonados, motivo')
       .gte('data_abono', dataInicio)
       .lte('data_abono', dataFim);
-    if (abonosData) setAbonos(abonosData);
+    if (abonosData) setAbonos(abonosData.filter(a => nomesHabilitados.has(a.funcionario_nome)));
 
     const { data, error: erroRegistros } = await supabase
       .from('folha_ponto_diaria')
@@ -214,7 +224,7 @@ export default function GestaoDePonto() {
       .lte('data_registro', dataFim)
       .order('data_registro', { ascending: true });
 
-    if (data) setRegistros(data);
+    if (data) setRegistros(data.filter(r => nomesHabilitados.has(r.funcionario_nome)));
 
     if (erroFeriados || erroAbonos || erroRegistros) {
       if (erroFeriados) console.error('Erro ao buscar feriados:', erroFeriados);
@@ -239,6 +249,23 @@ export default function GestaoDePonto() {
     if (!timeStr) return 0;
     const [h, m] = timeStr.split(':').map(Number);
     return (h * 60) + m;
+  };
+
+  // Pra cada uma das 4 batidas (na ordem Entrada, Saída Alm., Ret. Alm.,
+  // Saída), indica se ela caiu no dia seguinte à data do registro — detectado
+  // comparando com a batida anterior: se o horário "voltou pra trás", só pode
+  // ser porque virou a meia-noite (turno noturno). Usado pra mostrar "dia
+  // seguinte" embaixo do horário em vez de deixar a virada implícita.
+  const diasSeguintesBatidas = (e1: string | null, s1: string | null, e2: string | null, s2: string | null): boolean[] => {
+    let diaAtual = 0;
+    let anteriorMin: number | null = null;
+    return [e1, s1, e2, s2].map(v => {
+      if (!v) return false;
+      const mins = timeToMinutes(v);
+      if (anteriorMin !== null && mins < anteriorMin) diaAtual += 1;
+      anteriorMin = mins;
+      return diaAtual > 0;
+    });
   };
 
   const minutesToTimeStr = (totalMins: number) => {
@@ -512,7 +539,7 @@ export default function GestaoDePonto() {
 
     setLancandoManual(true);
     try {
-      const res = await lancarPontoManualAction({
+      const payloadBase = {
         funcionarioNome: manualFuncionario,
         dataRegistro: manualData,
         entrada1: manualE1 || null,
@@ -521,7 +548,21 @@ export default function GestaoDePonto() {
         saida2: manualS2 || null,
         usuarioNome: usuarioAtual,
         confirmarSobreposicaoWhatsapp: sobrepondoWhatsapp
-      }, accessToken);
+      };
+
+      let res = await lancarPontoManualAction(payloadBase, accessToken);
+
+      // Saída "menor" que entrada: pode ser erro de digitação ou um turno
+      // noturno de verdade (saída de madrugada no dia seguinte). Confirma
+      // antes de somar 24h ao cálculo.
+      if (!res.ok && res.erro === 'VIRADA_NOITE') {
+        const ehTurnoNoturno = await confirm(
+          `O horário de saída informado é menor que o de entrada.\n\nIsso significa que a saída foi de madrugada, no dia seguinte a ${manualData.split('-').reverse().join('/')} (turno noturno)?\n\nSe não for isso, cancele e confira os horários digitados.`
+        );
+        if (!ehTurnoNoturno) { setLancandoManual(false); return; }
+        res = await lancarPontoManualAction({ ...payloadBase, confirmarViradaNoite: true }, accessToken);
+      }
+
       if (!res.ok) throw new Error(res.erro);
 
       toast(sobrepondoWhatsapp
@@ -534,6 +575,45 @@ export default function GestaoDePonto() {
       toast('Erro ao lançar o ponto: ' + e.message, 'error');
     } finally {
       setLancandoManual(false);
+    }
+  };
+
+  // Desconsidera uma batida feita por engano (ex.: funcionário bateu entrada
+  // num dia que não deveria trabalhar). O ledger via WhatsApp continua
+  // intacto para auditoria — isto só zera a linha usada no cálculo da folha
+  // e na verificação de inconsistências.
+  const handleDescartarPontoManual = async () => {
+    if (!manualFuncionario) { toast('Selecione o funcionário.', 'error'); return; }
+    if (!manualData) { toast('Selecione a data.', 'error'); return; }
+    if (!registroExistente) { toast('Não há ponto lançado nesse dia pra descartar.', 'error'); return; }
+
+    const sobrepondoWhatsapp = registroExistente.origem === 'WHATSAPP';
+    const dataFormatada = manualData.split('-').reverse().join('/');
+
+    if (!(await confirm(sobrepondoWhatsapp
+      ? `⚠ Este dia tem batida confirmada via WhatsApp (ledger legal, nunca é apagado).\n\nVocê está DESCARTANDO a versão usada no CÁLCULO DA FOLHA de ${manualFuncionario} em ${dataFormatada} — por exemplo, uma batida feita sem querer num dia que ele não deveria trabalhar.\n\nO ledger original do WhatsApp permanece intacto para auditoria. Deseja continuar?`
+      : `Descartar o ponto de ${manualFuncionario} em ${dataFormatada}? O dia vai ficar sem nenhuma batida registrada.`
+    ))) return;
+
+    setDescartandoManual(true);
+    try {
+      const res = await descartarPontoManualAction({
+        funcionarioNome: manualFuncionario,
+        dataRegistro: manualData,
+        usuarioNome: usuarioAtual,
+        confirmarSobreposicaoWhatsapp: sobrepondoWhatsapp
+      }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+
+      toast('Ponto descartado! O dia ficou sem nenhuma batida registrada.' + (sobrepondoWhatsapp ? ' O ledger original do WhatsApp continua intacto para auditoria.' : ''), 'success');
+      setManualE1(''); setManualS1(''); setManualE2(''); setManualS2('');
+      await verificarRegistroExistente(manualFuncionario, manualData);
+      setMesAnoSelecionado(manualData.slice(0, 7));
+      carregarAcessoEDados(manualData.slice(0, 7));
+    } catch (e: any) {
+      toast('Erro ao descartar o ponto: ' + e.message, 'error');
+    } finally {
+      setDescartandoManual(false);
     }
   };
 
@@ -659,16 +739,15 @@ export default function GestaoDePonto() {
 
   const totalAbonosMin = useMemo(() => abonos.reduce((acc, a) => acc + a.minutos_abonados, 0), [abonos]);
 
-  // Um dia só é considerado OK se tiver ENTRADA+SAÍDA, ou ENTRADA+SAÍDA
-  // ALMOÇO+RETORNO ALMOÇO+SAÍDA. Qualquer combinação parcial (batida ímpar —
-  // ex.: só entrada, ou 3 das 4 batidas) é inconsistente. Mesma regra usada
+  // Um dia só é considerado OK se tiver uma quantidade par de batidas: nenhuma,
+  // duas (quaisquer duas — viram entrada+saída automaticamente, independente
+  // de em quais dos 4 campos elas caíram) ou as 4 completas. Só uma
+  // quantidade ímpar de batidas (1 ou 3) é inconsistente. Mesma regra usada
   // para travar o fechamento da folha em /admin/rh/holerite.
   const diaComBatidasOk = (r: RegistroDiario): boolean => {
     const { entrada_1: e1, saida_1: s1, entrada_2: e2, saida_2: s2 } = r;
-    if (!e1 && !s1 && !e2 && !s2) return true;
-    if (e1 && s1 && !e2 && !s2) return true;
-    if (e1 && s1 && e2 && s2) return true;
-    return false;
+    const qtdBatidas = [e1, s1, e2, s2].filter(Boolean).length;
+    return qtdBatidas % 2 === 0;
   };
 
   // Faltas: dia útil (não sáb/dom/feriado) dentro do mês selecionado, até
@@ -947,8 +1026,13 @@ export default function GestaoDePonto() {
                 const e2 = registroDoDia?.entrada_2;
                 const s2 = registroDoDia?.saida_2;
 
-                const erroBatida = (e1 && !s1) || (!e2 && s2) || (e2 && !s2);
-                
+                // Mesma regra de "batida OK" usada na verificação de
+                // inconsistências (diaComBatidasOk): quantidade par de
+                // batidas está OK, só ímpar é erro.
+                const qtdBatidasDia = [e1, s1, e2, s2].filter(Boolean).length;
+                const erroBatida = qtdBatidasDia % 2 === 1;
+                const diasEspelho = diasSeguintesBatidas(e1 || null, s1 || null, e2 || null, s2 || null);
+
                 const cargaMins = is100 ? 0 : 480;
                 const saldoDiarioCalculado = minutosTotaisDoDia - cargaMins;
                 
@@ -962,10 +1046,10 @@ export default function GestaoDePonto() {
                       {abonoDoDia && !is100 && <span className="text-[9px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-black uppercase print:hidden">{abonoDoDia.dia_todo ? 'ABONO TOTAL' : 'ABONO PARCIAL'}</span>}
                       {abonoDoDia && is100 && <span className="text-[9px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-black uppercase print:hidden">ABONO (DIA NÃO ÚTIL)</span>}
                     </td>
-                    <td className="p-3">{e1 || '--:--'}</td>
-                    <td className="p-3">{s1 || '--:--'}</td>
-                    <td className="p-3">{e2 || '--:--'}</td>
-                    <td className="p-3">{s2 || '--:--'}</td>
+                    <td className="p-3">{e1 || '--:--'}{diasEspelho[0] && <div className="text-[9px] font-black text-amber-600 uppercase print:text-black">dia seguinte</div>}</td>
+                    <td className="p-3">{s1 || '--:--'}{diasEspelho[1] && <div className="text-[9px] font-black text-amber-600 uppercase print:text-black">dia seguinte</div>}</td>
+                    <td className="p-3">{e2 || '--:--'}{diasEspelho[2] && <div className="text-[9px] font-black text-amber-600 uppercase print:text-black">dia seguinte</div>}</td>
+                    <td className="p-3">{s2 || '--:--'}{diasEspelho[3] && <div className="text-[9px] font-black text-amber-600 uppercase print:text-black">dia seguinte</div>}</td>
                     <td className="p-3 font-bold bg-blue-50/50 print:bg-transparent text-[#336699] print:text-black">
                       {minutesToTimeStr(minutosTotaisDoDia)}
                     </td>
@@ -1542,28 +1626,41 @@ export default function GestaoDePonto() {
                     <p className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 uppercase">⚠ Já existe ponto lançado nesse dia (origem: {registroExistente.origem}). Campos pré-preenchidos abaixo — editar e salvar SUBSTITUI a batida atual.</p>
                   )}
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Entrada</label>
-                      <input type="time" value={manualE1} onChange={e => setManualE1(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
-                    </div>
-                    <div>
-                      <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Saída{(manualE2 || manualS2) ? ' (Almoço)' : ''}</label>
-                      <input type="time" value={manualS1} onChange={e => setManualS1(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
-                    </div>
-                    <div>
-                      <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Retorno Almoço</label>
-                      <input type="time" value={manualE2} onChange={e => setManualE2(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
-                    </div>
-                    <div>
-                      <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Saída</label>
-                      <input type="time" value={manualS2} onChange={e => setManualS2(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
-                    </div>
-                  </div>
+                  {(() => {
+                    const diasManual = diasSeguintesBatidas(manualE1 || null, manualS1 || null, manualE2 || null, manualS2 || null);
+                    return (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Entrada</label>
+                          <input type="time" value={manualE1} onChange={e => setManualE1(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Saída{(manualE2 || manualS2) ? ' (Almoço)' : ''}</label>
+                          <input type="time" value={manualS1} onChange={e => setManualS1(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
+                          {diasManual[1] && <p className="text-[9px] font-black text-amber-600 uppercase mt-0.5">📅 dia seguinte</p>}
+                        </div>
+                        <div>
+                          <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Retorno Almoço</label>
+                          <input type="time" value={manualE2} onChange={e => setManualE2(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
+                          {diasManual[2] && <p className="text-[9px] font-black text-amber-600 uppercase mt-0.5">📅 dia seguinte</p>}
+                        </div>
+                        <div>
+                          <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Saída</label>
+                          <input type="time" value={manualS2} onChange={e => setManualS2(e.target.value)} className="w-full p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold" />
+                          {diasManual[3] && <p className="text-[9px] font-black text-amber-600 uppercase mt-0.5">📅 dia seguinte</p>}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <p className="text-[9px] text-gray-400 font-bold uppercase">Deixe Retorno/Saída em branco para lançar só Entrada + Saída.</p>
-                  <button onClick={handleLancarPontoManual} disabled={lancandoManual} className="w-full bg-[#336699] hover:bg-[#284B8C] text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors disabled:opacity-50">
+                  <button onClick={handleLancarPontoManual} disabled={lancandoManual || descartandoManual} className="w-full bg-[#336699] hover:bg-[#284B8C] text-white font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors disabled:opacity-50">
                     {lancandoManual ? '⏳ Lançando...' : registroExistente ? '💾 SUBSTITUIR PONTO' : '💾 LANÇAR PONTO'}
                   </button>
+                  {registroExistente && (
+                    <button onClick={handleDescartarPontoManual} disabled={lancandoManual || descartandoManual} title="Remove a batida do relatório usado na folha, sem apagar o ledger original do WhatsApp" className="w-full bg-white border-2 border-red-200 hover:bg-red-50 text-red-600 font-black uppercase tracking-widest text-xs py-3 rounded-xl transition-colors disabled:opacity-50">
+                      {descartandoManual ? '⏳ Descartando...' : '🗑️ DESCARTAR BATIDA DO DIA'}
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1655,6 +1752,7 @@ export default function GestaoDePonto() {
                         <tbody className="divide-y divide-[#E2E8F0]">
                           {inconsistenciasFiltradas.map((r, idx) => {
                             const selecionada = manualFuncionario === r.funcionario_nome && manualData === r.data_registro;
+                            const diasR = diasSeguintesBatidas(r.entrada_1, r.saida_1, r.entrada_2, r.saida_2);
                             return (
                               <tr
                                 key={r.id || idx}
@@ -1664,10 +1762,10 @@ export default function GestaoDePonto() {
                               >
                                 <td className="p-4 font-black text-[#0C1D4D]">{r.funcionario_nome}</td>
                                 <td className="p-4 font-bold">{r.data_registro.split('-').reverse().join('/')}</td>
-                                <td className={`p-4 text-center font-bold ${!r.entrada_1 ? 'text-red-500' : ''}`}>{r.entrada_1 || '—'}</td>
-                                <td className={`p-4 text-center font-bold ${!r.saida_1 ? 'text-red-500' : ''}`}>{r.saida_1 || '—'}</td>
-                                <td className={`p-4 text-center font-bold ${!r.entrada_2 ? 'text-red-500' : ''}`}>{r.entrada_2 || '—'}</td>
-                                <td className={`p-4 text-center font-bold ${!r.saida_2 ? 'text-red-500' : ''}`}>{r.saida_2 || '—'}</td>
+                                <td className={`p-4 text-center font-bold ${!r.entrada_1 ? 'text-red-500' : ''}`}>{r.entrada_1 || '—'}{diasR[0] && <p className="text-[9px] font-black text-amber-600 uppercase">📅 dia seguinte</p>}</td>
+                                <td className={`p-4 text-center font-bold ${!r.saida_1 ? 'text-red-500' : ''}`}>{r.saida_1 || '—'}{diasR[1] && <p className="text-[9px] font-black text-amber-600 uppercase">📅 dia seguinte</p>}</td>
+                                <td className={`p-4 text-center font-bold ${!r.entrada_2 ? 'text-red-500' : ''}`}>{r.entrada_2 || '—'}{diasR[2] && <p className="text-[9px] font-black text-amber-600 uppercase">📅 dia seguinte</p>}</td>
+                                <td className={`p-4 text-center font-bold ${!r.saida_2 ? 'text-red-500' : ''}`}>{r.saida_2 || '—'}{diasR[3] && <p className="text-[9px] font-black text-amber-600 uppercase">📅 dia seguinte</p>}</td>
                               </tr>
                             );
                           })}

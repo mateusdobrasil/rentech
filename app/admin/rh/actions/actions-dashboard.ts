@@ -21,14 +21,12 @@ function competenciaAberta(): string {
 }
 
 // Mesma regra de "batida OK" usada em /admin/rh/ponto e /admin/rh/holerite:
-// nenhuma batida, ENTRADA+SAÍDA, ou as 4 batidas completas. Qualquer
-// combinação parcial é um ponto ímpar.
+// uma quantidade par de batidas (nenhuma, duas — quaisquer duas — ou as 4
+// completas) está OK. Só uma quantidade ímpar (1 ou 3) é inconsistência.
 function diaComBatidasOk(r: { entrada_1: string | null; saida_1: string | null; entrada_2: string | null; saida_2: string | null }): boolean {
   const { entrada_1: e1, saida_1: s1, entrada_2: e2, saida_2: s2 } = r;
-  if (!e1 && !s1 && !e2 && !s2) return true;
-  if (e1 && s1 && !e2 && !s2) return true;
-  if (e1 && s1 && e2 && s2) return true;
-  return false;
+  const qtdBatidas = [e1, s1, e2, s2].filter(Boolean).length;
+  return qtdBatidas % 2 === 0;
 }
 
 export async function painelRhAction(accessToken: string): Promise<Resultado> {

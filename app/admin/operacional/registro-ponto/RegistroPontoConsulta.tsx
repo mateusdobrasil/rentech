@@ -110,9 +110,11 @@ export default function RegistroPontoConsulta({ mostrarPainelDesabilitados = tru
         const e2 = registro?.entrada_2 || null;
         const s2 = registro?.saida_2 || null;
         const temAlgumaBatida = !!(e1 || s1 || e2 || s2);
-        // Mesma checagem de batida assimétrica usada no espelho de ponto do RH
-        // (app/admin/rh/ponto/page.tsx) — entrada sem saída correspondente etc.
-        const batidaAssimetrica = (!!e1 && !s1) || (!e2 && !!s2) || (!!e2 && !s2);
+        // Mesma checagem usada no espelho de ponto do RH (app/admin/rh/ponto/page.tsx):
+        // uma quantidade par de batidas está OK (duas quaisquer viram entrada+saída
+        // automaticamente); só uma quantidade ímpar é assimétrica/incompleta.
+        const qtdBatidas = [e1, s1, e2, s2].filter(Boolean).length;
+        const batidaAssimetrica = qtdBatidas % 2 === 1;
 
         let status: StatusPonto;
         if (!temAlgumaBatida && abono?.dia_todo) status = 'ABONADO';

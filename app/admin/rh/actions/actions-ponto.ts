@@ -188,12 +188,16 @@ export async function lancarPontoManualAction(payload: {
   saida2: string | null;
   usuarioNome: string;
   confirmarSobreposicaoWhatsapp?: boolean;
+  // RH confirmou que é um turno noturno (a saída caiu de madrugada, no dia
+  // seguinte a dataRegistro) — sem isso, um horário de saída "menor" que o
+  // de entrada é tratado como erro de digitação e a gravação é recusada.
+  confirmarViradaNoite?: boolean;
 }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
-  const { funcionarioNome, dataRegistro, entrada1, saida1, entrada2, saida2, usuarioNome, confirmarSobreposicaoWhatsapp } = payload;
+  const { funcionarioNome, dataRegistro, entrada1, saida1, entrada2, saida2, usuarioNome, confirmarSobreposicaoWhatsapp, confirmarViradaNoite } = payload;
 
   try {
     const mesAno = dataRegistro.slice(0, 7);
@@ -208,12 +212,30 @@ export async function lancarPontoManualAction(payload: {
       return { ok: false, erro: 'Lance Entrada e Saída, ou as 4 batidas completas (Entrada, Saída Almoço, Retorno Almoço, Saída).' };
     }
 
+    // Um par onde a saída marca um horário "menor" que a entrada normalmente
+    // é erro de digitação — mas também é exatamente a cara de um turno
+    // noturno (entrada à noite, saída de madrugada no dia seguinte). Sem
+    // confirmarViradaNoite, trata como erro; com a confirmação, soma 24h ao
+    // par antes de calcular.
+    const parVirouNoite = (ini: string, fim: string) => timeToMinutes(fim) - timeToMinutes(ini) < 0;
+    const par1Vira = parVirouNoite(entrada1!, saida1!);
+    const par2Vira = padraoCompleto ? parVirouNoite(entrada2!, saida2!) : false;
+
+    if ((par1Vira || par2Vira) && !confirmarViradaNoite) {
+      return { ok: false, erro: 'VIRADA_NOITE' };
+    }
+
+    const diffMin = (ini: string, fim: string, vira: boolean): number => {
+      const mins = timeToMinutes(fim) - timeToMinutes(ini);
+      return vira ? mins + 1440 : mins;
+    };
+
     let minutosTrabalhados: number;
     if (padraoEntradaSaida) {
-      minutosTrabalhados = timeToMinutes(saida1!) - timeToMinutes(entrada1!);
+      minutosTrabalhados = diffMin(entrada1!, saida1!, par1Vira);
       if (minutosTrabalhados >= 360) minutosTrabalhados -= 60;
     } else {
-      minutosTrabalhados = (timeToMinutes(saida1!) - timeToMinutes(entrada1!)) + (timeToMinutes(saida2!) - timeToMinutes(entrada2!));
+      minutosTrabalhados = diffMin(entrada1!, saida1!, par1Vira) + diffMin(entrada2!, saida2!, par2Vira);
     }
     if (minutosTrabalhados <= 0) {
       return { ok: false, erro: 'Os horários informados resultam em zero ou tempo negativo trabalhado. Confira as batidas.' };
@@ -262,6 +284,72 @@ export async function lancarPontoManualAction(payload: {
     });
 
     return { ok: true, info: { minutosTrabalhados, sobrepondoWhatsapp } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// DESCARTAR PONTO DO DIA — o RH desconsidera uma batida feita por engano
+// (ex.: funcionário bateu entrada num dia que não deveria trabalhar). O
+// ledger via WhatsApp nunca é apagado (fica intacto para auditoria); isto só
+// zera a linha do RELATÓRIO consolidado usada no cálculo da folha e na
+// verificação de inconsistências.
+// ============================================================================
+export async function descartarPontoManualAction(payload: {
+  funcionarioNome: string;
+  dataRegistro: string; // YYYY-MM-DD
+  usuarioNome: string;
+  confirmarSobreposicaoWhatsapp?: boolean;
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  const { funcionarioNome, dataRegistro, usuarioNome, confirmarSobreposicaoWhatsapp } = payload;
+
+  try {
+    const mesAno = dataRegistro.slice(0, 7);
+    const fechados = await nomesComFolhaFechada(db, mesAno);
+    if (fechados.includes(funcionarioNome)) {
+      return { ok: false, erro: `A folha de ${mesAno} já foi fechada para ${funcionarioNome}. Reabra a folha desse mês na tela de Holerites antes de descartar o ponto.` };
+    }
+
+    const { data: existente } = await db.from('folha_ponto_diaria')
+      .select('id, origem')
+      .eq('funcionario_nome', funcionarioNome)
+      .eq('data_registro', dataRegistro)
+      .maybeSingle();
+
+    if (!existente) {
+      return { ok: false, erro: 'Não há ponto lançado nesse dia pra descartar.' };
+    }
+
+    const sobrepondoWhatsapp = existente.origem === 'WHATSAPP';
+    if (sobrepondoWhatsapp && !confirmarSobreposicaoWhatsapp) {
+      return { ok: false, erro: 'Este dia tem batida confirmada via WhatsApp. Confirme a sobreposição para descartar mesmo assim (o ledger original é preservado para auditoria).' };
+    }
+
+    // Zera a linha em vez de excluí-la: mantém a origem MANUAL_RH gravada
+    // pra travar consolidarDia() de reconstruir a mesma batida indevida se o
+    // ledger do WhatsApp for reprocessado (ex.: uma justificativa aprovada
+    // depois nesse mesmo dia) — consolidarDia() nunca sobrescreve um dia de
+    // origem != WHATSAPP.
+    const { error } = await db.from('folha_ponto_diaria').update({
+      entrada_1: null, saida_1: null, entrada_2: null, saida_2: null,
+      minutos_trabalhados: 0, origem: 'MANUAL_RH'
+    }).eq('id', existente.id);
+    if (error) throw new Error(error.message);
+
+    await registrarLogAuditoria({
+      usuario_nome: usuarioNome,
+      acao: sobrepondoWhatsapp
+        ? `DESCARTE DE PONTO SOBRE DIA CONSOLIDADO DO WHATSAPP (ledger original preservado) — ${funcionarioNome} em ${dataRegistro}`
+        : `DESCARTE MANUAL DE PONTO — ${funcionarioNome} em ${dataRegistro}`,
+      setor: 'RECURSOS HUMANOS / PONTO'
+    });
+
+    return { ok: true, info: { sobrepondoWhatsapp } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

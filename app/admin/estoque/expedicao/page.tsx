@@ -1268,8 +1268,14 @@ export default function ChecklistCargaRetorno() {
     // confirmou (2026-08-17) que o jeito certo é chamar o método de negócio
     // gExpedicao.EfetuaRetornoLocacao, e finalizarFichasLocacaoPorEventoAction
     // (./actions) foi reescrita pra usar ele — validado em Sandbox com round-
-    // trip completo (Status virou "F", saldo de estoque voltou). Ainda
-    // Habilitada em 2026-08-17 após validação completa em Sandbox.
+    // trip completo (Status virou "F", saldo de estoque voltou). Habilitada em
+    // 2026-08-17 após validação completa em Sandbox.
+    //
+    // Baixa da OS (Ficha de Reserva): a P2S confirmou que é automática — o
+    // próprio EfetuaRetornoLocacao já encerra a Ficha de Reserva vinculada
+    // quando a Ficha de Locação é devolvida por completo, sem chamada extra
+    // daqui. info.osEncerradas só reflete esse efeito colateral pra exibir na
+    // mensagem, não dispara nada.
     const ESCRITA_P2S_FICHA_LOCACAO_HABILITADA = true;
     let erroP2s: string | null = null;
     let avisoP2s = '';
@@ -1282,12 +1288,12 @@ export default function ChecklistCargaRetorno() {
         if (info.falhas.length > 0) {
           erroP2s = `${info.atualizadas} ficha(s) finalizada(s), mas ${info.falhas.length} falharam: ${info.falhas.map(f => f.numero).join(', ')}`;
         } else if (info.atualizadas > 0 || info.jaEstavamFinalizadas > 0) {
-          avisoP2s = ` PrimeStart: ${info.atualizadas} ficha(s) de locação marcada(s) como finalizada(s)${info.jaEstavamFinalizadas > 0 ? ` (${info.jaEstavamFinalizadas} já estavam)` : ''}.`;
+          avisoP2s = ` PrimeStart: ${info.atualizadas} ficha(s) de locação marcada(s) como finalizada(s)${info.jaEstavamFinalizadas > 0 ? ` (${info.jaEstavamFinalizadas} já estavam)` : ''}${info.osEncerradas > 0 ? `, ${info.osEncerradas} Ordem(ns) de Serviço encerrada(s) automaticamente` : ''}.`;
           registrarLogAuditoria({
             usuario_nome: usuarioAtual,
             acao: 'FINALIZOU FICHAS DE LOCAÇÃO NO PRIMESTART (P2S)',
             setor: 'OPERACIONAL',
-            equipamento_nome: `${gerarNumeroExibicao(checklistAtual.numero)} — ${info.atualizadas} ficha(s)`,
+            equipamento_nome: `${gerarNumeroExibicao(checklistAtual.numero)} — ${info.atualizadas} ficha(s), ${info.osEncerradas} OS`,
           });
         }
       }

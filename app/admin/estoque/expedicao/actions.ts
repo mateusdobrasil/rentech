@@ -37,6 +37,14 @@
 // silenciosamente e devolve TODAS as fichas. O formato correto é
 // propvaluetype "int" com só a parte numérica do oid — ver criterioRef() em
 // app/lib/p2s.ts.
+//
+// Baixa da OS (Ficha de Reserva de Locação, TCustomFichaReservaLocacao):
+// confirmado com a P2S (2026-08-17) que NÃO precisa de chamada separada — ao
+// devolver por completo a Ficha de Locação via EfetuaRetornoLocacao, o
+// Status da Ficha de Reserva associada é recalculado junto (mesma rotina que
+// o próprio PrimeStart usa internamente). Validado em Sandbox: depois do
+// teste na Ficha 000005/A, a Ficha de Reserva 000005 já apareceu com
+// Status="E" (Encerrado/Finalizado) sem nenhuma ação extra daqui.
 import { buscarObjeto, consultarObjetos, criterioRef, dataParaP2s, invocarMetodo, type AmbienteP2s, type ObjetoP2s, type ParametroMetodoP2s } from '../../../lib/p2s';
 import { validarAcesso } from '../../../lib/serverAuth';
 
@@ -50,6 +58,10 @@ export interface FinalizarFichasLocacaoInfo {
   jaEstavamFinalizadas: number;
   atualizadas: number;
   falhas: { numero: string; erro: string }[];
+  // Ordens de Serviço (Fichas de Reserva) encerradas de tabela, como efeito
+  // automático do PrimeStart ao devolver por completo a Ficha de Locação —
+  // ver nota no topo do arquivo. Não é uma chamada separada.
+  osEncerradas: number;
 }
 
 function refOuNull(v: unknown): string | undefined {
@@ -158,6 +170,7 @@ export async function finalizarFichasLocacaoPorEventoAction(eventoP2sOid: string
 
     const pendentes = resultado.objectlist.filter(f => String(f.Status) !== STATUS_FINALIZADA);
     const falhas: { numero: string; erro: string }[] = [];
+    const osOids = new Set<string>();
     let atualizadas = 0;
 
     if (pendentes.length > 0) {
@@ -167,7 +180,11 @@ export async function finalizarFichasLocacaoPorEventoAction(eventoP2sOid: string
       for (const ficha of pendentes) {
         try {
           const { pulou } = await devolverFichaLocacao(ambiente, gExpedicao.oid, ficha, 'Devolucao via Checklist de Carga (Rentech Web)');
-          if (!pulou) atualizadas++;
+          if (!pulou) {
+            atualizadas++;
+            const osOid = refOuNull(ficha.FichaReservaLocacao);
+            if (osOid) osOids.add(osOid);
+          }
         } catch (e: any) {
           falhas.push({ numero: String(ficha.Numero || ficha.oid), erro: e.message });
         }
@@ -179,6 +196,7 @@ export async function finalizarFichasLocacaoPorEventoAction(eventoP2sOid: string
       jaEstavamFinalizadas: resultado.objectlist.length - pendentes.length,
       atualizadas,
       falhas,
+      osEncerradas: osOids.size,
     };
     return { ok: true, info };
   } catch (e: any) {

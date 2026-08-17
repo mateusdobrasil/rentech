@@ -34,6 +34,12 @@ const modulosComercial = [
     descricao: 'Cadastro de eventos e feiras com local padrão, usado para localizar o calendário operacional.',
     icone: '📍', link: '/admin/comercial/eventos-feiras',
     cor: 'bg-cyan-50 border-cyan-200 text-cyan-700', hover: 'hover:border-cyan-500'
+  },
+  {
+    titulo: 'Parceiros',
+    descricao: 'Cadastro de clientes, fornecedores e colaboradores sincronizado direto do PrimeStart (P2S).',
+    icone: '🤝', link: '/admin/comercial/parceiros',
+    cor: 'bg-amber-50 border-amber-200 text-amber-700', hover: 'hover:border-amber-500'
   }
 ];
 

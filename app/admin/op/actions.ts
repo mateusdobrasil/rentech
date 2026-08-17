@@ -8,6 +8,7 @@ import { dispararAutomacaoWhatsApp } from '../../lib/automacoes';
 import { normalizarPermissao, ehAltaGestaoOP } from '../../lib/permissoes';
 import { gerarHtmlEmailOP } from './emailTemplate';
 import { ItemOPNormalizado, validarNovaOP, validarItensOP } from './utils';
+import { criarContaPagarParaOP } from '../financeiro/ops/enviarOpP2sCore';
 
 // ============================================================================
 // CLIENTE ADMIN: IGNORA RLS PARA OPERAÇÕES DO SERVIDOR
@@ -191,6 +192,24 @@ export async function criarOP(data: NovaOPData, accessToken: string) {
       });
     } catch (whatsappError) {
       console.error("A OP foi criada, mas houve um erro no disparo do WhatsApp:", whatsappError);
+    }
+
+    // =========================================================
+    // DISPARO AUTOMÁTICO PARA O PRIMESTART NA CRIAÇÃO
+    // Cria a Conta a Pagar correspondente no ERP assim que a OP é salva —
+    // decisão explícita do usuário em 2026-08-17 (antes só existia o botão
+    // manual em /admin/financeiro/ops, pra dar controle antes de gravar no
+    // ERP real; trocado pra eliminar a redigitação manual da OP lá). Se não
+    // achar o fornecedor pelo CNPJ/CPF (nem local, nem ao vivo na API),
+    // CADASTRA um Parceiro novo automaticamente — ver enviarOpP2sCore.ts. Se
+    // isso falhar (ERP fora do ar, CNPJ/CPF ausente etc.), a OP continua
+    // criada normalmente e o botão manual em /admin/financeiro/ops fica
+    // disponível como fallback (p2s_conta_pagar_oid continua nulo).
+    // =========================================================
+    try {
+      await criarContaPagarParaOP({ ...payload, id: novaOp.id, numero_op: novaOp.numero_op }, payload.responsavel_nome);
+    } catch (p2sError) {
+      console.error("A OP foi criada, mas houve um erro ao enviar pro PrimeStart:", p2sError);
     }
 
     revalidatePath('/admin');

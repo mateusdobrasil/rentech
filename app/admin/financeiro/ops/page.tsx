@@ -6,6 +6,7 @@ import Image from 'next/image';
 import { listarOPs, atualizarStatus, dispararEmailOP } from '../../op/actions';
 import { conciliarOpsComContasPagarAction, enviarOpParaPrimeStartAction } from './actions';
 import { sincronizarContasPagarP2sAction } from '../contas-pagar/actions';
+import { sincronizarParceirosP2sAction, sincronizarColaboradoresP2sAction } from '../../comercial/parceiros/actions';
 import { registrarLogAuditoria } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
 import logoColorido from '../../../../app/imgs/logo.png';
@@ -200,19 +201,44 @@ export default function PainelFinanceiro() {
   // /admin/financeiro/contas-pagar — trazida pra cá pra permitir atualizar
   // as contas a pagar sem sair da tela de OPs antes de conciliar. Usa a
   // mesma permissão daquela tela (checada dentro da action), não a de
-  // /admin/financeiro/ops.
+  // /admin/financeiro/ops. Dispara junto Parceiros e Colaboradores (mesmas
+  // actions de /admin/comercial/parceiros) — é a base que "Enviar pro
+  // PrimeStart" usa pra achar o CPF/CNPJ do favorecido e vincular a
+  // Entidade certa, então mantê-la atualizada aqui evita ter que ir em duas
+  // telas separadas antes de mandar uma OP. Cada sincronização usa sua
+  // própria permissão (checada dentro de cada action) — se o usuário não
+  // tiver acesso a Parceiros/Colaboradores, aquela parte falha sem impedir
+  // as demais.
   const sincronizarContasPagar = async () => {
     if (!perfil) return;
     setSincronizandoContasPagar(true);
     try {
-      const res = await sincronizarContasPagarP2sAction({}, perfil.accessToken);
-      if (!res.ok) {
-        setDialog({ open: true, type: 'error', title: 'Falha ao sincronizar Contas a Pagar', msg: res.erro || 'Erro desconhecido.' });
-        return;
-      }
+      const [resContas, resParceiros, resColaboradores] = await Promise.all([
+        sincronizarContasPagarP2sAction({}, perfil.accessToken),
+        sincronizarParceirosP2sAction({}, perfil.accessToken),
+        sincronizarColaboradoresP2sAction({}, perfil.accessToken),
+      ]);
+
+      const partes: string[] = [];
+      const erros: string[] = [];
+
+      if (resContas.ok) partes.push(`${resContas.info.processados} conta(s) a pagar`);
+      else erros.push(`Contas a Pagar: ${resContas.erro}`);
+
+      if (resParceiros.ok) partes.push(`${resParceiros.info.processados} parceiro(s)`);
+      else erros.push(`Parceiros: ${resParceiros.erro}`);
+
+      if (resColaboradores.ok) partes.push(`${resColaboradores.info.processados} colaborador(es)`);
+      else erros.push(`Colaboradores: ${resColaboradores.erro}`);
+
       setDialog({
-        open: true, type: 'success', title: 'Sincronizado',
-        msg: `${res.info.processados} conta(s) a pagar sincronizada(s) direto do PrimeStart (${res.info.totalEncontradas} encontrada(s) no total).`,
+        open: true,
+        type: resContas.ok ? 'success' : 'error',
+        title: erros.length > 0 ? 'Sincronizado com Ressalvas' : 'Sincronizado',
+        msg: [
+          partes.length > 0 ? `Sincronizado: ${partes.join(', ')}.` : '',
+          erros.length > 0 ? `⚠ ${erros.join(' | ')}` : '',
+        ].filter(Boolean).join(' '),
       });
     } finally {
       setSincronizandoContasPagar(false);
@@ -276,13 +302,18 @@ export default function PainelFinanceiro() {
           return;
         }
         await carregarDados();
+        const mensagemVinculo: Record<string, string> = {
+          parceiro: 'vinculada ao parceiro já cadastrado no PrimeStart.',
+          colaborador: 'vinculada ao colaborador já cadastrado no PrimeStart.',
+          parceiro_criado: 'e um novo Parceiro/Fornecedor foi cadastrado automaticamente no PrimeStart (cadastro mínimo — vale complementar os dados depois).',
+        };
         setDialog({
           open: true,
           type: res.info.fornecedorVinculado ? 'success' : 'error',
-          title: res.info.fornecedorVinculado ? 'Enviado!' : 'Enviado — Confira o Fornecedor',
+          title: res.info.fornecedorVinculado ? 'Enviado!' : 'Enviado — Sem CNPJ/CPF',
           msg: res.info.fornecedorVinculado
-            ? `Conta a pagar criada no PrimeStart e vinculada ao ${res.info.origemVinculo === 'colaborador' ? 'colaborador' : 'parceiro'} cadastrado.`
-            : 'Conta a pagar criada no PrimeStart, mas nenhum parceiro/colaborador com esse CNPJ/CPF foi encontrado nas bases sincronizadas — o favorecido ficou só como texto. Vincule manualmente no PrimeStart.',
+            ? `Conta a pagar criada no PrimeStart ${mensagemVinculo[res.info.origemVinculo || ''] || 'e vinculada ao fornecedor.'}`
+            : 'Conta a pagar criada no PrimeStart, mas a OP não tem CNPJ/CPF do favorecido preenchido — não deu pra buscar nem cadastrar o fornecedor. Vincule manualmente no PrimeStart.',
         });
       }
     });
@@ -424,7 +455,7 @@ export default function PainelFinanceiro() {
             <button
               onClick={sincronizarContasPagar}
               disabled={sincronizandoContasPagar}
-              title="Puxa as contas a pagar quitadas direto do PrimeStart (mesma ação da tela de Contas a Pagar)"
+              title="Puxa contas a pagar quitadas, parceiros e colaboradores direto do PrimeStart — atualiza a base usada pra vincular o fornecedor ao enviar uma OP"
               className="text-[10px] md:text-xs font-black bg-white hover:bg-emerald-50 border border-emerald-200 text-emerald-700 disabled:opacity-50 px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase"
             >
               {sincronizandoContasPagar ? '🔄 Sincronizando...' : '🔄 Sincronizar Contas a Pagar'}

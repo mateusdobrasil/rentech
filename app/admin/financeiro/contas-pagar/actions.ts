@@ -71,13 +71,15 @@ function textoOuNull(v: unknown): string | null {
 export interface SincronizarContasPagarOpcoes {
   ambiente?: AmbienteP2s;
   diasRetroativos?: number;
-  incluirQuitadas?: boolean;
 }
 
-// Puxa Contas a Pagar em aberto (por padrão) com vencimento a partir de N
-// dias atrás (inclui todas as futuras, sem limite superior) — janela que,
-// de quebra, já filtra fora os registros com DataVencimento corrompida
-// (ver nota no topo do arquivo).
+// Puxa Contas a Pagar (abertas E quitadas) com vencimento a partir de N dias
+// atrás (inclui todas as futuras, sem limite superior) — janela que, de
+// quebra, já filtra fora os registros com DataVencimento corrompida (ver
+// nota no topo do arquivo). Trazer as quitadas também é o que permite o
+// upsert corrigir o campo `quitado` de contas que já estavam sincronizadas
+// como abertas e foram pagas depois — sem isso elas ficariam com
+// quitado=false pra sempre, já que sairiam da janela de consulta.
 export async function sincronizarContasPagarP2sAction(opcoes: SincronizarContasPagarOpcoes, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
@@ -90,7 +92,6 @@ export async function sincronizarContasPagarP2sAction(opcoes: SincronizarContasP
     const desde = hojeSerial - diasRetroativos;
 
     const criterios = [criterio('DataVencimento', 'ge', 'dbl', desde)];
-    if (!opcoes.incluirQuitadas) criterios.push(criterio('FlagQuitado', 'eq', 'bool', false));
 
     const resultado = await consultarObjetos(ambiente, 'TCustomContaPagar', criterios, { order: 'DataVencimento', proxy: true });
 

@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { listarOPs, atualizarStatus, dispararEmailOP } from '../../op/actions';
+import { conciliarOpsComContasPagarAction } from './actions';
 import { registrarLogAuditoria } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
 import logoColorido from '../../../../app/imgs/logo.png';
@@ -60,6 +61,7 @@ export default function PainelFinanceiro() {
   const [modalDetalhes, setModalDetalhes] = useState<{ open: boolean; op: OP | null }>({ open: false, op: null });
   const [modalRecibo, setModalRecibo] = useState<{ open: boolean; op: OP | null }>({ open: false, op: null });
   const [dialog, setDialog] = useState<DialogOPState>({ open: false, type: 'loading', title: '', msg: '' });
+  const [conciliando, setConciliando] = useState(false);
 
   // Busca os dados iniciais do banco — só executa depois que o hook resolve
   // sessão + permissão.
@@ -179,6 +181,45 @@ export default function PainelFinanceiro() {
         }
       }
     });
+  };
+
+  // Lê as Contas a Pagar já quitadas (sincronizadas do PrimeStart) em busca do
+  // padrão "OP: <número>" ou "#<número>" na descrição e baixa automaticamente
+  // as Ordens de Pagamento correspondentes para PAGO — evita clicar em
+  // "Baixar OP" uma por uma quando o Financeiro já identificou a OP na hora
+  // de lançar a conta.
+  const conciliarPagamentos = async () => {
+    if (!perfil) return;
+    setConciliando(true);
+    try {
+      const res = await conciliarOpsComContasPagarAction(perfil.accessToken);
+      if (!res.ok) {
+        setDialog({ open: true, type: 'error', title: 'Erro na Conciliação', msg: res.erro });
+        return;
+      }
+
+      const { baixadas, semCorrespondencia, jaEstavamPagas } = res.info;
+      if (baixadas.length === 0 && semCorrespondencia.length === 0) {
+        setDialog({ open: true, type: 'success', title: 'Nada a Conciliar', msg: 'Nenhuma conta paga com "OP: número" ou "#número" na descrição foi encontrada.' });
+        return;
+      }
+
+      const partes: string[] = [];
+      if (baixadas.length > 0) partes.push(`${baixadas.length} OP(s) baixada(s) para PAGO: ${baixadas.map(b => `#${b.numero_op}`).join(', ')}.`);
+      if (jaEstavamPagas > 0) partes.push(`${jaEstavamPagas} já estava(m) paga(s).`);
+      if (semCorrespondencia.length > 0) partes.push(`⚠ ${semCorrespondencia.length} conta(s) citam uma OP que não existe no sistema: ${semCorrespondencia.map(s => `#${s.numero_op}`).join(', ')} — confira o número digitado na descrição da conta.`);
+
+      setDialog({
+        open: true,
+        type: semCorrespondencia.length > 0 && baixadas.length === 0 ? 'error' : 'success',
+        title: 'Conciliação Concluída',
+        msg: partes.join(' '),
+      });
+
+      if (baixadas.length > 0) await carregarDados();
+    } finally {
+      setConciliando(false);
+    }
   };
 
   const dispararReenvio = (op: OP) => {
@@ -313,9 +354,19 @@ export default function PainelFinanceiro() {
           <p className="text-[#0369A1] font-medium text-sm">
             💳 <strong>Olá, {perfil.nome || 'Equipe Financeira'}</strong>. Bem-vindo ao painel financeiro de aprovação de OPs.
           </p>
-          <button onClick={() => router.push('/admin/financeiro')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
-            ⬅ VOLTAR AO FINANCEIRO
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={conciliarPagamentos}
+              disabled={conciliando}
+              title='Busca contas a pagar já quitadas com "OP: número" ou "#número" na descrição e baixa as OPs correspondentes'
+              className="text-[10px] md:text-xs font-black bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase"
+            >
+              {conciliando ? 'Conciliando...' : '🔗 Conciliar Contas Pagas'}
+            </button>
+            <button onClick={() => router.push('/admin/financeiro')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
+              ⬅ VOLTAR AO FINANCEIRO
+            </button>
+          </div>
         </div>
 
         {/* Métrica Dash */}

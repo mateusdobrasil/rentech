@@ -11,6 +11,7 @@ import { revalidatePath } from 'next/cache';
 import { registrarLogAuditoria } from '../../../actions';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso } from '../../../lib/serverAuth';
+import { consultarObjetos, criarObjeto, atualizarObjeto, criterio, dataParaP2s, type AmbienteP2s } from '../../../lib/p2s';
 
 const ROTA = '/admin/financeiro/ops';
 
@@ -132,6 +133,94 @@ export async function conciliarOpsComContasPagarAction(accessToken: string): Pro
     }));
 
     return { ok: true, info: { baixadas, semCorrespondencia, jaEstavamPagas } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// ENVIAR OP PARA O PRIMESTART — cria a Conta a Pagar correspondente lá, pra
+// não precisar redigitar a OP manualmente no ERP. Disparo manual (botão na
+// tela), nunca automático na criação da OP — o Financeiro decide quando
+// mandar. A conta nasce em aberto (sem FlagQuitado — em teste no sandbox,
+// forçar essa flag direto por PUT se mostrou não confiável, provavelmente
+// controlada pelo workflow de pagamento do próprio PrimeStart); a quitação
+// continua acontecendo dentro do PrimeStart e volta pra cá pela sincronização
+// + conciliarOpsComContasPagarAction, fechando o ciclo.
+// ============================================================================
+
+export interface ResultadoEnvioP2s {
+  p2sOid: string;
+  fornecedorVinculado: boolean;
+}
+
+type ResultadoEnvio =
+  | { ok: true; info: ResultadoEnvioP2s }
+  | { ok: false; erro: string };
+
+// Busca o TCustomParceiro do PrimeStart pelo CNPJ/CPF já digitado no
+// formulário da OP — o campo lá é guardado formatado (com pontuação), mesmo
+// padrão de máscara usado no nosso formulário, então a busca é por igualdade
+// direta (ver teste em sandbox: buscar só dígitos não bate).
+async function buscarEntidadePorDocumento(ambiente: AmbienteP2s, documentoFormatado: string): Promise<string | null> {
+  const digitos = documentoFormatado.replace(/\D/g, '');
+  if (!digitos) return null;
+  const campo = digitos.length > 11 ? 'CNPJ' : 'CPF';
+  const resultado = await consultarObjetos(ambiente, 'TCustomParceiro', [criterio(campo, 'eq', 'str', documentoFormatado)], { proxy: true });
+  return resultado.objectlist[0]?.oid ?? null;
+}
+
+export async function enviarOpParaPrimeStartAction(opId: string, accessToken: string): Promise<ResultadoEnvio> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  const { perfil } = acesso;
+
+  try {
+    const db = supabaseAdmin();
+    const { data: op, error: erroOp } = await db
+      .from('op_ordens_pagamento')
+      .select('id, numero_op, os_numero, os_cliente, os_evento, natureza_pagamento, empresa_recebedora, cnpj_cpf_recebedora, total_geral, data_vencimento, p2s_conta_pagar_oid')
+      .eq('id', opId)
+      .single();
+    if (erroOp) throw new Error(erroOp.message);
+    if (!op) throw new Error('OP não encontrada.');
+    if (op.p2s_conta_pagar_oid) throw new Error('Esta OP já foi enviada pro PrimeStart anteriormente.');
+
+    const ambiente: AmbienteP2s = 'PRODUCAO';
+
+    const entidadeOid = op.cnpj_cpf_recebedora
+      ? await buscarEntidadePorDocumento(ambiente, op.cnpj_cpf_recebedora as string)
+      : null;
+
+    const criado = await criarObjeto(ambiente, 'TCustomContaPagar');
+
+    const campos: Record<string, unknown> = {
+      Descricao: `OP: ${op.numero_op} - ${op.empresa_recebedora}`,
+      Valor: Number(op.total_geral) || 0,
+      DataVencimentoNominal: dataParaP2s(new Date(`${op.data_vencimento}T00:00:00Z`)),
+      Observacoes: `Lançada via sistema Rentech por ${perfil.nome} | Natureza: ${op.natureza_pagamento || '—'} | OS: ${op.os_numero || 'S/N'} | Cliente: ${op.os_cliente || '—'} | Evento: ${op.os_evento || '—'}`,
+    };
+    if (entidadeOid) campos.Entidade = entidadeOid;
+
+    await atualizarObjeto(ambiente, 'TCustomContaPagar', criado.oid, campos);
+
+    const agora = new Date().toISOString();
+    const { error: erroUpdate } = await db
+      .from('op_ordens_pagamento')
+      .update({ p2s_conta_pagar_oid: criado.oid, p2s_conta_pagar_enviado_em: agora, p2s_conta_pagar_enviado_por: perfil.nome })
+      .eq('id', opId);
+    if (erroUpdate) throw new Error(erroUpdate.message);
+
+    registrarLogAuditoria({
+      usuario_nome: perfil.nome,
+      acao: `ENVIOU OP PARA O PRIMESTART — CRIOU CONTA A PAGAR ${criado.oid}${entidadeOid ? '' : ' (SEM FORNECEDOR VINCULADO — CONFERIR CNPJ/CPF)'}`,
+      setor: 'OP',
+      equipamento_id: opId,
+      equipamento_nome: `OP #${op.numero_op} — OS ${op.os_numero || 'S/N'}`,
+    });
+
+    revalidatePath('/admin');
+    return { ok: true, info: { p2sOid: criado.oid, fornecedorVinculado: !!entidadeOid } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

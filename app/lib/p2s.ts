@@ -255,15 +255,38 @@ export async function podeAtualizar(ambiente: AmbienteP2s, oid: string, referenc
   return resp.data.canupdate === 'true';
 }
 
+// O servidor de PRODUÇÃO do PrimeStart não decodifica o corpo da requisição
+// como UTF-8 (o Demo/SANDBOX decodifica certo — só PRODUÇÃO tem esse
+// problema). Testado em 2026-08-17 (oid P,2681147/P,2681144): reinterpretar
+// os bytes UTF-8 como code points Latin-1 antes de enviar "conserta" letras
+// minúsculas acentuadas (ç, ã, é), mas NÃO letras maiúsculas acentuadas
+// (Ç, Ã viraram "?") nem caracteres fora do Latin-1 (o travessão "—" também
+// virou "?") — essas caem numa faixa de bytes que o servidor trata como
+// controle, não texto. Um truque de bytes que só funciona por metade não é
+// confiável, então em vez disso removemos os acentos antes de enviar: NFD
+// separa a letra do acento e descarta o acento, sobrando só ASCII puro, que
+// nenhuma codificação consegue corromper. Único efeito colateral é estético
+// (o texto chega sem acento no ERP) — aceitável para campos descritivos.
+function paraTextoP2s(ambiente: AmbienteP2s, valor: string): string {
+  if (ambiente !== 'PRODUCAO') return valor;
+  return valor
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // marcas de acento combinantes (pós-NFD)
+    .replace(/[‐-―]/g, '-') // hífens/travessões tipográficos (‐–—) -> hífen ASCII
+    .replace(/[^\x00-\x7F]/g, '?'); // qualquer não-ASCII residual (emoji etc.) -> "?", nunca quebra o campo inteiro
+}
+
 // PUT /objects/{oid}?saveparts=false — Update. `campos` são só as
 // propriedades alteradas; classname/oid/name/lastupdatetimestamp são
 // preenchidos automaticamente conforme exigido pela API (name sempre "",
 // lastupdatetimestamp sempre 0 no corpo do PUT).
 export async function atualizarObjeto(ambiente: AmbienteP2s, classname: string, oid: string, campos: Record<string, unknown>): Promise<void> {
+  const camposCorrigidos = Object.fromEntries(
+    Object.entries(campos).map(([k, v]) => [k, typeof v === 'string' ? paraTextoP2s(ambiente, v) : v])
+  );
   const resp = await chamar<never>(ambiente, `/objects/${encodeURIComponent(oid)}`, {
     method: 'PUT',
     query: { saveparts: 'false' },
-    body: { classname, oid, name: '', lastupdatetimestamp: 0, ...campos },
+    body: { classname, oid, name: '', lastupdatetimestamp: 0, ...camposCorrigidos },
   });
   if (!resp.ok) {
     throw new Error(`Falha ao atualizar ${oid} no PrimeStart (HTTP ${resp.status}): ${resp.textoErro || 'resposta inválida'}`);

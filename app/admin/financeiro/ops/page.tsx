@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { listarOPs, atualizarStatus, dispararEmailOP } from '../../op/actions';
-import { conciliarOpsComContasPagarAction } from './actions';
+import { conciliarOpsComContasPagarAction, enviarOpParaPrimeStartAction } from './actions';
 import { registrarLogAuditoria } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
 import logoColorido from '../../../../app/imgs/logo.png';
@@ -38,6 +38,7 @@ interface OP {
   file_url: string;
   recibo_url?: string;
   data_assinatura?: string;
+  p2s_conta_pagar_oid?: string | null;
 }
 
 export default function PainelFinanceiro() {
@@ -230,6 +231,36 @@ export default function PainelFinanceiro() {
     } finally {
       setConciliando(false);
     }
+  };
+
+  // Cria a Conta a Pagar correspondente no PrimeStart (produção) — evita
+  // redigitar a OP manualmente lá. Disparo manual, um clique por OP; depois
+  // de enviada, o backend bloqueia reenvio (p2s_conta_pagar_oid já setado).
+  const enviarParaPrimeStart = (op: OP) => {
+    if (!perfil) return;
+    setDialog({
+      open: true,
+      type: 'confirm',
+      title: 'Enviar pro PrimeStart',
+      msg: `Confirma a criação de uma Conta a Pagar no PrimeStart (produção) pra OP #${op.numero_op} — ${op.empresa_recebedora}, valor ${formatarMoeda(op.total_geral)}?`,
+      onConfirm: async () => {
+        setDialog({ open: true, type: 'loading', title: 'Aguarde...', msg: 'Criando lançamento no PrimeStart...' });
+        const res = await enviarOpParaPrimeStartAction(op.id, perfil.accessToken);
+        if (!res.ok) {
+          setDialog({ open: true, type: 'error', title: 'Erro no Envio', msg: res.erro });
+          return;
+        }
+        await carregarDados();
+        setDialog({
+          open: true,
+          type: res.info.fornecedorVinculado ? 'success' : 'error',
+          title: res.info.fornecedorVinculado ? 'Enviado!' : 'Enviado — Confira o Fornecedor',
+          msg: res.info.fornecedorVinculado
+            ? 'Conta a pagar criada no PrimeStart e vinculada ao fornecedor cadastrado.'
+            : 'Conta a pagar criada no PrimeStart, mas nenhum fornecedor com esse CNPJ/CPF foi encontrado lá — o favorecido ficou só como texto. Vincule o fornecedor manualmente no PrimeStart.',
+        });
+      }
+    });
   };
 
   const dispararReenvio = (op: OP) => {
@@ -536,6 +567,14 @@ export default function PainelFinanceiro() {
                             <button onClick={() => dispararReenvio(op)} title="Reenviar" className="w-8 h-8 flex items-center justify-center bg-orange-50 hover:bg-orange-100 border border-orange-200 text-orange-600 rounded transition-colors shrink-0">
                               🔄
                             </button>
+
+                            {op.p2s_conta_pagar_oid ? (
+                              <span title="Já enviado pro PrimeStart" className="w-8 h-8 flex items-center justify-center bg-blue-50 text-blue-600 rounded shrink-0">🏦</span>
+                            ) : (
+                              <button onClick={() => enviarParaPrimeStart(op)} title="Enviar pro PrimeStart (cria Conta a Pagar)" className="w-8 h-8 flex items-center justify-center bg-white hover:bg-blue-50 border border-[#CBD5E1] text-[#0C1D4D] rounded transition-colors shadow-sm shrink-0">
+                                🏦
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>

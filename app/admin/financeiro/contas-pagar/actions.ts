@@ -77,14 +77,15 @@ export interface SincronizarContasPagarOpcoes {
 // atrás (inclui todas as futuras, sem limite superior) — janela que, de
 // quebra, já filtra fora os registros com DataVencimento corrompida (ver
 // nota no topo do arquivo). Uso atual (conciliação de OPs em
-// /admin/financeiro/ops) só precisa de quitadas — restringir aqui evita
-// sincronizar/upsertar em massa contas abertas que ninguém consulta ainda.
+// /admin/financeiro/ops) só precisa de quitadas dos últimos 3 meses —
+// restringir aqui evita sincronizar/upsertar em massa contas antigas que
+// ninguém consulta.
 export async function sincronizarContasPagarP2sAction(opcoes: SincronizarContasPagarOpcoes, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const ambiente = opcoes.ambiente || 'PRODUCAO';
-  const diasRetroativos = opcoes.diasRetroativos ?? 180;
+  const diasRetroativos = opcoes.diasRetroativos ?? 90; // ~3 meses
 
   try {
     const hojeSerial = Math.floor((Date.now() - Date.UTC(1899, 11, 30)) / 86_400_000);

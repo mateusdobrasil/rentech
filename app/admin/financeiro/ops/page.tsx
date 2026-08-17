@@ -56,6 +56,7 @@ export default function PainelFinanceiro() {
   const [filtroData, setFiltroData] = useState('');
   const [filtroResponsavel, setFiltroResponsavel] = useState('');
   const [filtroFavorecido, setFiltroFavorecido] = useState('');
+  const [filtroStatus, setFiltroStatus] = useState('');
 
   // Estados de UI (Modais)
   const [modalDetalhes, setModalDetalhes] = useState<{ open: boolean; op: OP | null }>({ open: false, op: null });
@@ -96,6 +97,11 @@ export default function PainelFinanceiro() {
     return [...new Set(nomes)].sort();
   }, [ops]);
 
+  const statusUnicos = useMemo(() => {
+    const status = ops.map(op => (op.status || '').toUpperCase().trim()).filter(Boolean);
+    return [...new Set(status)].sort();
+  }, [ops]);
+
   // Formatadores Básicos
   const formatarMoeda = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
   const formatarData = (d: string) => {
@@ -126,24 +132,28 @@ export default function PainelFinanceiro() {
       const nomeFavorecidoLimpo = (op.empresa_recebedora || '').toUpperCase().trim();
       const matchFavorecido = !filtroFavorecido || nomeFavorecidoLimpo === filtroFavorecido;
 
+      const statusLimpo = (op.status || '').toUpperCase().trim();
+      const matchStatus = !filtroStatus || statusLimpo === filtroStatus;
+
       let matchData = true;
       if (filtroData) {
         const opDate = op.data_criacao ? op.data_criacao.split('T')[0] : '';
         matchData = opDate.startsWith(filtroData);
       }
 
-      return matchBusca && matchResponsavel && matchFavorecido && matchData;
+      return matchBusca && matchResponsavel && matchFavorecido && matchStatus && matchData;
     });
-  }, [ops, busca, filtroResponsavel, filtroFavorecido, filtroData]);
+  }, [ops, busca, filtroResponsavel, filtroFavorecido, filtroStatus, filtroData]);
 
   const limparFiltros = () => {
     setBusca('');
     setFiltroData('');
     setFiltroResponsavel('');
     setFiltroFavorecido('');
+    setFiltroStatus('');
   };
 
-  const temFiltroAtivo = busca || filtroData || filtroResponsavel || filtroFavorecido;
+  const temFiltroAtivo = busca || filtroData || filtroResponsavel || filtroFavorecido || filtroStatus;
 
   const metricas = useMemo(() => {
     let tGeral = 0, tPendente = 0, tPago = 0;
@@ -423,6 +433,13 @@ export default function PainelFinanceiro() {
               <select className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#64748B]" value={filtroFavorecido} onChange={(e) => setFiltroFavorecido(e.target.value)}>
                 <option value="">🏢 Favorecidos</option>
                 {favorecidosUnicos.map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+
+            <div className="w-full lg:w-48">
+              <select className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#64748B]" value={filtroStatus} onChange={(e) => setFiltroStatus(e.target.value)}>
+                <option value="">🏷️ Status</option>
+                {statusUnicos.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
 

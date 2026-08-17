@@ -48,18 +48,29 @@ export async function conciliarOpsComContasPagarAction(accessToken: string): Pro
   try {
     const db = supabaseAdmin();
 
-    const { data: contas, error: erroContas } = await db
-      .from('contas_pagar')
-      .select('descricao')
-      .eq('quitado', true)
-      .not('descricao', 'is', null);
-    if (erroContas) throw new Error(erroContas.message);
+    // O PostgREST corta em 1000 linhas por padrão — com ~2 mil contas
+    // quitadas na base, um select sem paginação descartava silenciosamente
+    // parte delas (a causa raiz de OPs citadas em contas fora do primeiro
+    // lote nunca serem encontradas). Pagina até esgotar.
+    const TAMANHO_PAGINA = 1000;
+    const contas: { descricao: string | null }[] = [];
+    for (let offset = 0; ; offset += TAMANHO_PAGINA) {
+      const { data: lote, error: erroContas } = await db
+        .from('contas_pagar')
+        .select('descricao')
+        .eq('quitado', true)
+        .not('descricao', 'is', null)
+        .range(offset, offset + TAMANHO_PAGINA - 1);
+      if (erroContas) throw new Error(erroContas.message);
+      contas.push(...(lote || []));
+      if (!lote || lote.length < TAMANHO_PAGINA) break;
+    }
 
     // Extrai todo número referenciado em "OP: N" ou "#N" nas descrições
     // quitadas — guarda a última descrição encontrada por número só pra
     // exibir contexto no resultado (não afeta a baixa em si).
     const numerosPorDescricao = new Map<number, string | null>();
-    for (const conta of contas || []) {
+    for (const conta of contas) {
       const descricao = conta.descricao as string | null;
       if (!descricao) continue;
       for (const match of descricao.matchAll(PADRAO_OP)) {

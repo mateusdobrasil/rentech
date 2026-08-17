@@ -17,6 +17,76 @@ const fmtData = (d: string | null | undefined) => {
   return `${dd}/${m}/${a}`;
 };
 
+// Formata a chave bruta de um campo do retorno do Itaú (snake_case) como
+// rótulo legível — sem dicionário de tradução, então acentos não entram.
+const humanizarLabel = (chave: string) => chave.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+const formatarValorCampo = (chave: string, valor: unknown): string => {
+  if (valor === null || valor === undefined || valor === '') return '—';
+  if (typeof valor === 'boolean') return valor ? 'Sim' : 'Não';
+  const chaveLower = chave.toLowerCase();
+  if (chaveLower.includes('valor') && !Number.isNaN(Number(valor))) return BRL(valor as string);
+  if (chaveLower.includes('data') && typeof valor === 'string' && /^\d{4}-\d{2}-\d{2}/.test(valor)) return fmtData(valor);
+  return String(valor);
+};
+
+// Renderiza qualquer objeto do retorno da API do Itaú como campo -> valor,
+// sem depender de conhecer os nomes de antemão — a Especificação Técnica
+// varia por tipo de pagamento (PIX/TED/boleto/DOC), então em vez de mapear
+// campo a campo (e deixar coisa de fora sempre que a API retornar algo a
+// mais), qualquer chave presente no objeto aparece automaticamente.
+function CamposGenericos({ objeto, omitir = [] }: { objeto: any; omitir?: string[] }) {
+  if (!objeto || typeof objeto !== 'object') return null;
+  const entradas = Object.entries(objeto).filter(([k, v]) => !omitir.includes(k) && v !== null && v !== undefined && v !== '');
+  if (entradas.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      {entradas.map(([chave, valor]) => {
+        if (Array.isArray(valor)) {
+          if (valor.length === 0) return null;
+          if (typeof valor[0] === 'object') {
+            return (
+              <div key={chave}>
+                <p className="text-[9px] font-black text-gray-400 uppercase mb-1">{humanizarLabel(chave)}</p>
+                <div className="space-y-2 pl-2 border-l-2 border-gray-100">
+                  {(valor as any[]).map((item, i) => (
+                    <div key={i} className="bg-white rounded-lg p-2 border border-gray-100">
+                      <CamposGenericos objeto={item} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          }
+          return (
+            <div key={chave} className="text-xs flex justify-between gap-3 border-b border-gray-50 pb-1">
+              <span className="text-gray-400">{humanizarLabel(chave)}</span>
+              <strong className="text-right">{(valor as unknown[]).join(', ')}</strong>
+            </div>
+          );
+        }
+        if (typeof valor === 'object') {
+          return (
+            <div key={chave}>
+              <p className="text-[9px] font-black text-gray-400 uppercase mb-1">{humanizarLabel(chave)}</p>
+              <div className="bg-white rounded-lg p-2 pl-3 border-l-2 border-gray-100">
+                <CamposGenericos objeto={valor} />
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div key={chave} className="text-xs flex justify-between gap-3 border-b border-gray-50 pb-1">
+            <span className="text-gray-400">{humanizarLabel(chave)}</span>
+            <strong className="text-right">{formatarValorCampo(chave, valor)}</strong>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // Domínio documentado pela Especificação Técnica do Itaú (GET /pagamentos_sispag)
 const STATUS_LABEL: Record<string, string> = { AE: 'A Efetuar', EF: 'Efetuado', NE: 'Não Efetuado', TD: 'Todos' };
 const STATUS_COR: Record<string, string> = {
@@ -285,7 +355,7 @@ export default function IntegracaoFinanceiraPage() {
       {/* Modal de detalhe — GET /pagamentos_sispag/{id}, inclui histórico de etapas */}
       {detalheId && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setDetalheId(null)}>
-          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-5" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-5" onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-3">
               <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider">Detalhe do Pagamento</h3>
               <button onClick={() => setDetalheId(null)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
@@ -294,18 +364,17 @@ export default function IntegracaoFinanceiraPage() {
             {carregandoDetalhe && <p className="text-xs text-gray-400 py-6 text-center">Carregando...</p>}
 
             {!carregandoDetalhe && detalhe && (
-              <div className="space-y-3">
+              <div className="space-y-4">
                 {detalhe.dados_pagamento && (
-                  <div className="bg-[#F8FAFC] rounded-lg p-3 text-xs space-y-1">
-                    <p><span className="text-gray-400">Favorecido:</span> <strong>{detalhe.dados_pagamento.nome_favorecido || '—'}</strong></p>
-                    <p><span className="text-gray-400">Valor:</span> <strong>{BRL(detalhe.dados_pagamento.valor_pagamento)}</strong></p>
-                    <p><span className="text-gray-400">Banco:</span> {detalhe.dados_pagamento.nome_banco_favorecido || '—'} · Ag {detalhe.dados_pagamento.numero_agencia_favorecido || '—'} · C/C {detalhe.dados_pagamento.numero_conta_favorecido || '—'}</p>
+                  <div className="bg-[#F8FAFC] rounded-lg p-3">
+                    <p className="text-[9px] font-black text-gray-400 uppercase mb-2">Dados do Pagamento</p>
+                    <CamposGenericos objeto={detalhe.dados_pagamento} />
                   </div>
                 )}
                 {detalhe.dados_debito && (
-                  <div className="bg-[#F8FAFC] rounded-lg p-3 text-xs space-y-1">
-                    <p className="text-[9px] font-black text-gray-400 uppercase mb-1">Débito</p>
-                    <p>{detalhe.dados_debito.nome_empresa_debito || '—'} · Ag {detalhe.dados_debito.numero_agencia_debito || '—'} · C/C {detalhe.dados_debito.numero_conta_debito || '—'}</p>
+                  <div className="bg-[#F8FAFC] rounded-lg p-3">
+                    <p className="text-[9px] font-black text-gray-400 uppercase mb-2">Dados do Débito</p>
+                    <CamposGenericos objeto={detalhe.dados_debito} />
                   </div>
                 )}
                 {Array.isArray(detalhe.historico_pagamento) && detalhe.historico_pagamento.length > 0 && (
@@ -313,16 +382,26 @@ export default function IntegracaoFinanceiraPage() {
                     <p className="text-[9px] font-black text-gray-400 uppercase mb-2">Histórico</p>
                     <div className="space-y-2">
                       {detalhe.historico_pagamento.map((h: any, i: number) => (
-                        <div key={i} className="flex items-center justify-between text-xs border-b border-gray-100 pb-1.5">
-                          <span className="font-bold">{h.status}</span>
-                          <span className="text-gray-400">{h.data} {h.nome_operador ? `· ${h.nome_operador}` : ''}</span>
+                        <div key={i} className="bg-[#F8FAFC] rounded-lg p-2.5 text-xs">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-bold">{h.status}</span>
+                            <span className="text-gray-400">{h.data} {h.nome_operador ? `· ${h.nome_operador}` : ''}</span>
+                          </div>
+                          <CamposGenericos objeto={h} omitir={['status', 'data', 'nome_operador']} />
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
-                {!detalhe.dados_pagamento && !detalhe.historico_pagamento && (
-                  <pre className="text-[10px] bg-[#F8FAFC] rounded-lg p-3 overflow-x-auto">{JSON.stringify(detalhe, null, 2)}</pre>
+
+                {/* Qualquer outro campo devolvido pelo Itaú que não caiu nas seções
+                    acima — garante que nada do retorno da API fica escondido, mesmo
+                    que a Especificação Técnica mude ou varie por tipo de pagamento. */}
+                {Object.keys(detalhe).some(k => !['dados_pagamento', 'dados_debito', 'historico_pagamento'].includes(k) && detalhe[k] !== null && detalhe[k] !== undefined && detalhe[k] !== '') && (
+                  <div>
+                    <p className="text-[9px] font-black text-gray-400 uppercase mb-2">Outras Informações</p>
+                    <CamposGenericos objeto={detalhe} omitir={['dados_pagamento', 'dados_debito', 'historico_pagamento']} />
+                  </div>
                 )}
               </div>
             )}

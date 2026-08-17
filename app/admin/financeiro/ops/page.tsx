@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { listarOPs, atualizarStatus, dispararEmailOP } from '../../op/actions';
 import { conciliarOpsComContasPagarAction, enviarOpParaPrimeStartAction } from './actions';
+import { sincronizarContasPagarP2sAction } from '../contas-pagar/actions';
 import { registrarLogAuditoria } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
 import logoColorido from '../../../../app/imgs/logo.png';
@@ -64,6 +65,7 @@ export default function PainelFinanceiro() {
   const [modalRecibo, setModalRecibo] = useState<{ open: boolean; op: OP | null }>({ open: false, op: null });
   const [dialog, setDialog] = useState<DialogOPState>({ open: false, type: 'loading', title: '', msg: '' });
   const [conciliando, setConciliando] = useState(false);
+  const [sincronizandoContasPagar, setSincronizandoContasPagar] = useState(false);
 
   // Busca os dados iniciais do banco — só executa depois que o hook resolve
   // sessão + permissão.
@@ -192,6 +194,29 @@ export default function PainelFinanceiro() {
         }
       }
     });
+  };
+
+  // Mesma Server Action do botão "Sincronizar agora" em
+  // /admin/financeiro/contas-pagar — trazida pra cá pra permitir atualizar
+  // as contas a pagar sem sair da tela de OPs antes de conciliar. Usa a
+  // mesma permissão daquela tela (checada dentro da action), não a de
+  // /admin/financeiro/ops.
+  const sincronizarContasPagar = async () => {
+    if (!perfil) return;
+    setSincronizandoContasPagar(true);
+    try {
+      const res = await sincronizarContasPagarP2sAction({}, perfil.accessToken);
+      if (!res.ok) {
+        setDialog({ open: true, type: 'error', title: 'Falha ao sincronizar Contas a Pagar', msg: res.erro || 'Erro desconhecido.' });
+        return;
+      }
+      setDialog({
+        open: true, type: 'success', title: 'Sincronizado',
+        msg: `${res.info.processados} conta(s) a pagar sincronizada(s) direto do PrimeStart (${res.info.totalEncontradas} encontrada(s) no total).`,
+      });
+    } finally {
+      setSincronizandoContasPagar(false);
+    }
   };
 
   // Lê as Contas a Pagar já quitadas (sincronizadas do PrimeStart) em busca do
@@ -396,6 +421,14 @@ export default function PainelFinanceiro() {
             💳 <strong>Olá, {perfil.nome || 'Equipe Financeira'}</strong>. Bem-vindo ao painel financeiro de aprovação de OPs.
           </p>
           <div className="flex gap-2">
+            <button
+              onClick={sincronizarContasPagar}
+              disabled={sincronizandoContasPagar}
+              title="Puxa as contas a pagar quitadas direto do PrimeStart (mesma ação da tela de Contas a Pagar)"
+              className="text-[10px] md:text-xs font-black bg-white hover:bg-emerald-50 border border-emerald-200 text-emerald-700 disabled:opacity-50 px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase"
+            >
+              {sincronizandoContasPagar ? '🔄 Sincronizando...' : '🔄 Sincronizar Contas a Pagar'}
+            </button>
             <button
               onClick={conciliarPagamentos}
               disabled={conciliando}

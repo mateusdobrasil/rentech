@@ -44,7 +44,7 @@ export default function ContasPagarPage() {
   const [gridLoading, setGridLoading] = useState(false);
   const [gridErro, setGridErro] = useState('');
   const [filtroTexto, setFiltroTexto] = useState('');
-  const [filtroSituacao, setFiltroSituacao] = useState<'abertas' | 'vencidas' | 'quitadas' | 'todas'>('abertas');
+  const [filtroSituacao, setFiltroSituacao] = useState<'abertas' | 'vencidas' | 'quitadas' | 'todas'>('quitadas');
   const [pagina, setPagina] = useState(0);
   const [totalRegistros, setTotalRegistros] = useState(0);
   const [refreshGrid, setRefreshGrid] = useState(0);
@@ -152,7 +152,7 @@ export default function ContasPagarPage() {
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
             <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Sincronizar via API</h2>
             <p className="text-xs text-[#64748B] mb-4">
-              Puxa direto do PrimeStart (produção) as contas a pagar (abertas e quitadas) com vencimento a partir de 180 dias atrás (mais todas as futuras). Sem tela de upload manual — essa integração é só via API.
+              Puxa direto do PrimeStart (produção) as contas a pagar já quitadas, com vencimento a partir de 180 dias atrás (mais todas as futuras). Sem tela de upload manual — essa integração é só via API.
             </p>
             <button
               onClick={sincronizarViaApi}

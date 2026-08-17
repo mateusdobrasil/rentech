@@ -22,6 +22,7 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { consultarObjetos, buscarObjeto, criterio, p2sParaData, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
 import { validarAcesso } from '../../../lib/serverAuth';
+import { registrarSincronizacao, obterUltimaSincronizacao } from '../../../lib/syncLog';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -85,16 +86,30 @@ export async function sincronizarEventosFeirasP2sAction(opcoes: SincronizarEvent
 
   const ambiente = opcoes.ambiente || 'PRODUCAO';
   const diasRetroativos = opcoes.diasRetroativos ?? 60;
+  const iniciadoEm = new Date();
 
   try {
     const hojeSerial = Math.floor((Date.now() - Date.UTC(1899, 11, 30)) / 86_400_000);
     const desde = hojeSerial - diasRetroativos;
 
+    // TCustomEvento não tem campo de "última alteração" (testado: nem
+    // DataUltimaAlteracaoCadastro existe nesta classe, nem o campo de
+    // sistema lastupdatetimestamp é filtrável via API — a P2S rejeita com
+    // "Unknown column" quando tentamos). Por isso não dá pra fazer
+    // sincronização incremental de verdade aqui: sempre busca a janela
+    // rolante de N dias pra trás + todos os futuros, sem cursor. A execução
+    // ainda é registrada no log (ver app/lib/syncLog.ts), só sem o ganho de
+    // performance que as outras integrações têm.
     const resultado = await consultarObjetos(ambiente, 'TCustomEvento', [
       criterio('DataInicial', 'ge', 'dbl', desde),
     ], { order: 'DataInicial' });
 
     if (resultado.objectlist.length === 0) {
+      await registrarSincronizacao({
+        integracao: 'eventos_feiras', ambiente, tipo: 'completa',
+        cursorDesde: null, cursorAte: null,
+        encontrados: 0, processados: 0, status: 'sucesso', iniciadoEm,
+      });
       return { ok: true, info: { processados: 0, totalEncontradas: 0 } };
     }
 
@@ -147,8 +162,25 @@ export async function sincronizarEventosFeirasP2sAction(opcoes: SincronizarEvent
       processados += lote.length;
     }
 
+    await registrarSincronizacao({
+      integracao: 'eventos_feiras', ambiente, tipo: 'completa',
+      cursorDesde: null, cursorAte: null,
+      encontrados: resultado.count, processados, status: 'sucesso', iniciadoEm,
+    });
     return { ok: true, info: { processados, totalEncontradas: resultado.count } };
   } catch (e: any) {
+    await registrarSincronizacao({
+      integracao: 'eventos_feiras', ambiente, tipo: 'completa',
+      cursorDesde: null, cursorAte: null,
+      encontrados: 0, processados: 0, status: 'erro', erro: e.message, iniciadoEm,
+    });
     return { ok: false, erro: e.message };
   }
+}
+
+export async function buscarUltimaSincronizacaoEventosAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  const info = await obterUltimaSincronizacao('eventos_feiras', 'PRODUCAO');
+  return { ok: true, info };
 }

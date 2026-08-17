@@ -25,6 +25,7 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { consultarObjetos, buscarObjeto, criterio, p2sParaData, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
 import { validarAcesso } from '../../../lib/serverAuth';
+import { obterCursorIncremental, registrarSincronizacao, obterUltimaSincronizacao, calcularProximoCursor, cursorParaSerialP2s } from '../../../lib/syncLog';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -87,18 +88,29 @@ export async function sincronizarProdutosP2sAction(opcoes: SincronizarProdutosOp
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const ambiente = opcoes.ambiente || 'PRODUCAO';
+  const iniciadoEm = new Date();
+  const cursor = await obterCursorIncremental('produtos', ambiente);
 
   try {
     // Catálogo pequeno o suficiente (algumas centenas de produtos) pra
-    // trazer tudo numa chamada só — sem paginação por data como as outras
-    // integrações. "Codigo ge 0" é um filtro sempre-verdadeiro (Codigo é
+    // trazer tudo numa chamada só — sem paginação por janela como Parceiros
+    // precisa. "Codigo ge 0" é um filtro sempre-verdadeiro (Codigo é
     // sequencial a partir de 1) que serve só pra satisfazer o corpo
-    // obrigatório da API.
-    const resultado = await consultarObjetos(ambiente, 'TCustomProduto', [
-      criterio('Codigo', 'ge', 'int', 0),
-    ], { order: 'Codigo' });
+    // obrigatório da API — só usado na PRIMEIRA sincronização (sem cursor
+    // ainda); depois disso, filtra por DataUltimaAlteracaoCadastro (ver
+    // app/lib/syncLog.ts) pra trazer só o que mudou desde a última vez.
+    const criterios = cursor
+      ? [criterio('DataUltimaAlteracaoCadastro', 'ge', 'dbl', cursorParaSerialP2s(cursor))]
+      : [criterio('Codigo', 'ge', 'int', 0)];
+
+    const resultado = await consultarObjetos(ambiente, 'TCustomProduto', criterios, { order: 'Codigo' });
 
     if (resultado.objectlist.length === 0) {
+      await registrarSincronizacao({
+        integracao: 'produtos', ambiente, tipo: cursor ? 'incremental' : 'completa',
+        cursorDesde: cursor, cursorAte: calcularProximoCursor(iniciadoEm),
+        encontrados: 0, processados: 0, status: 'sucesso', iniciadoEm,
+      });
       return { ok: true, info: { processados: 0, totalEncontradas: 0 } };
     }
 
@@ -263,8 +275,25 @@ export async function sincronizarProdutosP2sAction(opcoes: SincronizarProdutosOp
       processados += lote.length;
     }
 
+    await registrarSincronizacao({
+      integracao: 'produtos', ambiente, tipo: cursor ? 'incremental' : 'completa',
+      cursorDesde: cursor, cursorAte: calcularProximoCursor(iniciadoEm),
+      encontrados: resultado.count, processados, status: 'sucesso', iniciadoEm,
+    });
     return { ok: true, info: { processados, totalEncontradas: resultado.count } };
   } catch (e: any) {
+    await registrarSincronizacao({
+      integracao: 'produtos', ambiente, tipo: cursor ? 'incremental' : 'completa',
+      cursorDesde: cursor, cursorAte: null,
+      encontrados: 0, processados: 0, status: 'erro', erro: e.message, iniciadoEm,
+    });
     return { ok: false, erro: e.message };
   }
+}
+
+export async function buscarUltimaSincronizacaoProdutosAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  const info = await obterUltimaSincronizacao('produtos', 'PRODUCAO');
+  return { ok: true, info };
 }

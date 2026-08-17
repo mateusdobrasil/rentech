@@ -21,6 +21,7 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { consultarObjetos, buscarObjeto, criterio, p2sParaData, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
 import { validarAcesso } from '../../../lib/serverAuth';
+import { obterCursorIncremental, registrarSincronizacao, obterUltimaSincronizacao, calcularProximoCursor, cursorParaSerialP2s } from '../../../lib/syncLog';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -103,16 +104,31 @@ export async function sincronizarFichasReservaP2sAction(opcoes: SincronizarFicha
 
   const ambiente = opcoes.ambiente || 'PRODUCAO';
   const diasRetroativos = opcoes.diasRetroativos ?? 90;
+  const iniciadoEm = new Date();
+  const cursor = await obterCursorIncremental('fichas_reserva', ambiente);
 
   try {
-    const hojeSerial = Math.floor((Date.now() - Date.UTC(1899, 11, 30)) / 86_400_000);
-    const desde = hojeSerial - diasRetroativos;
+    // Primeira sincronização: mantém o recorte deliberado de N dias por
+    // DataEmissao (não é limite técnico, é o escopo pretendido do módulo).
+    // Depois disso, incremental por DataUltimaAlteracaoCadastro — sem o
+    // limite de dias, porque uma ficha antiga que for alterada hoje precisa
+    // ser pega mesmo estando fora da janela original de emissão.
+    let criterios;
+    if (cursor) {
+      criterios = [criterio('DataUltimaAlteracaoCadastro', 'ge', 'dbl', cursorParaSerialP2s(cursor))];
+    } else {
+      const hojeSerial = Math.floor((Date.now() - Date.UTC(1899, 11, 30)) / 86_400_000);
+      criterios = [criterio('DataEmissao', 'ge', 'dbl', hojeSerial - diasRetroativos)];
+    }
 
-    const resultado = await consultarObjetos(ambiente, 'TCustomFichaReservaLocacao', [
-      criterio('DataEmissao', 'ge', 'dbl', desde),
-    ], { order: 'DataEmissao', proxy: false });
+    const resultado = await consultarObjetos(ambiente, 'TCustomFichaReservaLocacao', criterios, { order: 'DataEmissao', proxy: false });
 
     if (resultado.objectlist.length === 0) {
+      await registrarSincronizacao({
+        integracao: 'fichas_reserva', ambiente, tipo: cursor ? 'incremental' : 'completa',
+        cursorDesde: cursor, cursorAte: calcularProximoCursor(iniciadoEm),
+        encontrados: 0, processados: 0, status: 'sucesso', iniciadoEm,
+      });
       return { ok: true, info: { processados: 0, totalEncontradas: 0 } };
     }
 
@@ -164,8 +180,25 @@ export async function sincronizarFichasReservaP2sAction(opcoes: SincronizarFicha
       processados += lote.length;
     }
 
+    await registrarSincronizacao({
+      integracao: 'fichas_reserva', ambiente, tipo: cursor ? 'incremental' : 'completa',
+      cursorDesde: cursor, cursorAte: calcularProximoCursor(iniciadoEm),
+      encontrados: resultado.count, processados, status: 'sucesso', iniciadoEm,
+    });
     return { ok: true, info: { processados, totalEncontradas: resultado.count } };
   } catch (e: any) {
+    await registrarSincronizacao({
+      integracao: 'fichas_reserva', ambiente, tipo: cursor ? 'incremental' : 'completa',
+      cursorDesde: cursor, cursorAte: null,
+      encontrados: 0, processados: 0, status: 'erro', erro: e.message, iniciadoEm,
+    });
     return { ok: false, erro: e.message };
   }
+}
+
+export async function buscarUltimaSincronizacaoFichasAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  const info = await obterUltimaSincronizacao('fichas_reserva', 'PRODUCAO');
+  return { ok: true, info };
 }

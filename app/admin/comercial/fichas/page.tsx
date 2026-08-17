@@ -5,10 +5,12 @@ import { useRouter } from 'next/navigation';
 import * as XLSX from 'xlsx';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../actions';
-import { sincronizarFichasReservaP2sAction } from './actions';
+import { sincronizarFichasReservaP2sAction, buscarUltimaSincronizacaoFichasAction } from './actions';
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import UltimaSincronizacaoInfo from '../../../components/ui/UltimaSincronizacaoInfo';
+import type { UltimaSincronizacao } from '../../../lib/syncLog';
 
 // ============================================================================
 // TIPOS
@@ -373,6 +375,21 @@ export default function ImportadorFichasReserva() {
     open: false, contando: false, total: null, excluindo: false,
   });
 
+  const [ultimaSync, setUltimaSync] = useState<UltimaSincronizacao | null>(null);
+  const [ultimaSyncLoading, setUltimaSyncLoading] = useState(true);
+
+  const carregarUltimaSync = async () => {
+    setUltimaSyncLoading(true);
+    const res = await buscarUltimaSincronizacaoFichasAction(accessToken);
+    if (res.ok) setUltimaSync(res.info);
+    setUltimaSyncLoading(false);
+  };
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    carregarUltimaSync();
+  }, [authLoading, acessoNegado]);
+
   useEffect(() => {
     if (authLoading || acessoNegado) return;
 
@@ -493,6 +510,7 @@ export default function ImportadorFichasReserva() {
       setFeedback({ show: true, tipo: 'success', msg: `${res.info.processados} ficha(s) sincronizada(s) direto do PrimeStart (últimos 90 dias, ${res.info.totalEncontradas} encontrada(s) no total).` });
       setPagina(0);
       setRefreshGrid(v => v + 1);
+      carregarUltimaSync();
     } finally {
       setSincronizando(false);
     }
@@ -585,6 +603,7 @@ export default function ImportadorFichasReserva() {
             >
               {sincronizando ? 'Sincronizando...' : '🔄 Sincronizar agora'}
             </button>
+            <UltimaSincronizacaoInfo info={ultimaSync} carregando={ultimaSyncLoading} />
           </div>
 
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">

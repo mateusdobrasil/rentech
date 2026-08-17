@@ -5,10 +5,12 @@ import { useRouter } from 'next/navigation';
 import * as XLSX from 'xlsx';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../actions';
-import { sincronizarEventosFeirasP2sAction } from './actions';
+import { sincronizarEventosFeirasP2sAction, buscarUltimaSincronizacaoEventosAction } from './actions';
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import UltimaSincronizacaoInfo from '../../../components/ui/UltimaSincronizacaoInfo';
+import type { UltimaSincronizacao } from '../../../lib/syncLog';
 
 // ============================================================================
 // TIPOS
@@ -228,6 +230,21 @@ export default function ImportadorEventosFeiras() {
   const [totalRegistros, setTotalRegistros] = useState(0);
   const [refreshGrid, setRefreshGrid] = useState(0);
 
+  const [ultimaSync, setUltimaSync] = useState<UltimaSincronizacao | null>(null);
+  const [ultimaSyncLoading, setUltimaSyncLoading] = useState(true);
+
+  const carregarUltimaSync = async () => {
+    setUltimaSyncLoading(true);
+    const res = await buscarUltimaSincronizacaoEventosAction(accessToken);
+    if (res.ok) setUltimaSync(res.info);
+    setUltimaSyncLoading(false);
+  };
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    carregarUltimaSync();
+  }, [authLoading, acessoNegado]);
+
   useEffect(() => {
     if (authLoading || acessoNegado) return;
 
@@ -358,6 +375,7 @@ export default function ImportadorEventosFeiras() {
       setFeedback({ show: true, tipo: 'success', msg: `${res.info.processados} evento(s) sincronizado(s) direto do PrimeStart (${res.info.totalEncontradas} encontrado(s) no total).` });
       setPagina(0);
       setRefreshGrid(v => v + 1);
+      carregarUltimaSync();
     } finally {
       setSincronizando(false);
     }
@@ -416,6 +434,7 @@ export default function ImportadorEventosFeiras() {
             >
               {sincronizando ? 'Sincronizando...' : '🔄 Sincronizar agora'}
             </button>
+            <UltimaSincronizacaoInfo info={ultimaSync} carregando={ultimaSyncLoading} />
           </div>
 
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">

@@ -4,10 +4,12 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../actions';
-import { sincronizarParceirosP2sAction, sincronizarColaboradoresP2sAction, buscarColaboradoresAction, buscarColaboradorDetalheAction } from './actions';
+import { sincronizarParceirosP2sAction, sincronizarColaboradoresP2sAction, buscarColaboradoresAction, buscarColaboradorDetalheAction, buscarUltimaSincronizacaoParceirosAction, buscarUltimaSincronizacaoColaboradoresAction } from './actions';
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import UltimaSincronizacaoInfo from '../../../components/ui/UltimaSincronizacaoInfo';
+import type { UltimaSincronizacao } from '../../../lib/syncLog';
 
 interface ParceiroGrid {
   id: number;
@@ -89,6 +91,21 @@ export default function ParceirosPage() {
   const [parceiroSelecionado, setParceiroSelecionado] = useState<ParceiroCompleto | null>(null);
   const [detalheLoading, setDetalheLoading] = useState(false);
 
+  const [ultimaSyncParceiros, setUltimaSyncParceiros] = useState<UltimaSincronizacao | null>(null);
+  const [ultimaSyncParceirosLoading, setUltimaSyncParceirosLoading] = useState(true);
+
+  const carregarUltimaSyncParceiros = async () => {
+    setUltimaSyncParceirosLoading(true);
+    const res = await buscarUltimaSincronizacaoParceirosAction(accessToken);
+    if (res.ok) setUltimaSyncParceiros(res.info);
+    setUltimaSyncParceirosLoading(false);
+  };
+
+  useEffect(() => {
+    if (authLoading || acessoNegado || abaAtiva !== 'parceiros') return;
+    carregarUltimaSyncParceiros();
+  }, [authLoading, acessoNegado, abaAtiva]);
+
   useEffect(() => {
     if (authLoading || acessoNegado || abaAtiva !== 'parceiros') return;
 
@@ -142,6 +159,7 @@ export default function ParceirosPage() {
       setFeedback({ show: true, tipo: 'success', msg: `${res.info.processados} parceiro(s) sincronizado(s) direto do PrimeStart.` });
       setPagina(0);
       setRefreshGrid(v => v + 1);
+      carregarUltimaSyncParceiros();
     } finally {
       setSincronizando(false);
     }
@@ -174,6 +192,21 @@ export default function ParceirosPage() {
 
   const [colaboradorSelecionado, setColaboradorSelecionado] = useState<Record<string, unknown> | null>(null);
   const [colabDetalheLoading, setColabDetalheLoading] = useState(false);
+
+  const [ultimaSyncColab, setUltimaSyncColab] = useState<UltimaSincronizacao | null>(null);
+  const [ultimaSyncColabLoading, setUltimaSyncColabLoading] = useState(true);
+
+  const carregarUltimaSyncColab = async () => {
+    setUltimaSyncColabLoading(true);
+    const res = await buscarUltimaSincronizacaoColaboradoresAction(accessToken);
+    if (res.ok) setUltimaSyncColab(res.info);
+    setUltimaSyncColabLoading(false);
+  };
+
+  useEffect(() => {
+    if (authLoading || acessoNegado || abaAtiva !== 'colaboradores') return;
+    carregarUltimaSyncColab();
+  }, [authLoading, acessoNegado, abaAtiva]);
 
   useEffect(() => {
     if (authLoading || acessoNegado || abaAtiva !== 'colaboradores') return;
@@ -215,6 +248,7 @@ export default function ParceirosPage() {
       setColabFeedback({ show: true, tipo: 'success', msg: `${res.info.processados} colaborador(es) sincronizado(s) direto do PrimeStart.` });
       setPaginaColab(0);
       setRefreshColabGrid(v => v + 1);
+      carregarUltimaSyncColab();
     } finally {
       setColabSincronizando(false);
     }
@@ -298,6 +332,7 @@ export default function ParceirosPage() {
                 >
                   {sincronizando ? 'Sincronizando...' : '🔄 Sincronizar agora'}
                 </button>
+                <UltimaSincronizacaoInfo info={ultimaSyncParceiros} carregando={ultimaSyncParceirosLoading} />
               </div>
 
               {feedback.show && (
@@ -416,6 +451,7 @@ export default function ParceirosPage() {
                 >
                   {colabSincronizando ? 'Sincronizando...' : '🔄 Sincronizar agora'}
                 </button>
+                <UltimaSincronizacaoInfo info={ultimaSyncColab} carregando={ultimaSyncColabLoading} />
               </div>
 
               {colabFeedback.show && (

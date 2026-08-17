@@ -4,10 +4,12 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../actions';
-import { sincronizarProdutosP2sAction } from './actions';
+import { sincronizarProdutosP2sAction, buscarUltimaSincronizacaoProdutosAction } from './actions';
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import UltimaSincronizacaoInfo from '../../../components/ui/UltimaSincronizacaoInfo';
+import type { UltimaSincronizacao } from '../../../lib/syncLog';
 
 interface ProdutoGrid {
   id: number;
@@ -71,6 +73,21 @@ export default function ProdutosPage() {
   const [produtoSelecionado, setProdutoSelecionado] = useState<ProdutoCompleto | null>(null);
   const [detalheLoading, setDetalheLoading] = useState(false);
 
+  const [ultimaSync, setUltimaSync] = useState<UltimaSincronizacao | null>(null);
+  const [ultimaSyncLoading, setUltimaSyncLoading] = useState(true);
+
+  const carregarUltimaSync = async () => {
+    setUltimaSyncLoading(true);
+    const res = await buscarUltimaSincronizacaoProdutosAction(accessToken);
+    if (res.ok) setUltimaSync(res.info);
+    setUltimaSyncLoading(false);
+  };
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    carregarUltimaSync();
+  }, [authLoading, acessoNegado]);
+
   useEffect(() => {
     if (authLoading || acessoNegado) return;
 
@@ -124,6 +141,7 @@ export default function ProdutosPage() {
       setFeedback({ show: true, tipo: 'success', msg: `${res.info.processados} produto(s) sincronizado(s) direto do PrimeStart (${res.info.totalEncontradas} no catálogo).` });
       setPagina(0);
       setRefreshGrid(v => v + 1);
+      carregarUltimaSync();
     } finally {
       setSincronizando(false);
     }
@@ -190,6 +208,7 @@ export default function ProdutosPage() {
             >
               {sincronizando ? 'Sincronizando...' : '🔄 Sincronizar agora'}
             </button>
+            <UltimaSincronizacaoInfo info={ultimaSync} carregando={ultimaSyncLoading} />
           </div>
 
           {feedback.show && (

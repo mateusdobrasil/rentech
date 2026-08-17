@@ -256,8 +256,8 @@ export default function PainelFinanceiro() {
           type: res.info.fornecedorVinculado ? 'success' : 'error',
           title: res.info.fornecedorVinculado ? 'Enviado!' : 'Enviado — Confira o Fornecedor',
           msg: res.info.fornecedorVinculado
-            ? 'Conta a pagar criada no PrimeStart e vinculada ao fornecedor cadastrado.'
-            : 'Conta a pagar criada no PrimeStart, mas nenhum fornecedor com esse CNPJ/CPF foi encontrado lá — o favorecido ficou só como texto. Vincule o fornecedor manualmente no PrimeStart.',
+            ? `Conta a pagar criada no PrimeStart e vinculada ao ${res.info.origemVinculo === 'colaborador' ? 'colaborador' : 'parceiro'} cadastrado.`
+            : 'Conta a pagar criada no PrimeStart, mas nenhum parceiro/colaborador com esse CNPJ/CPF foi encontrado nas bases sincronizadas — o favorecido ficou só como texto. Vincule manualmente no PrimeStart.',
         });
       }
     });

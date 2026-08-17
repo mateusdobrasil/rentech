@@ -27,6 +27,7 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { consultarObjetos, buscarObjeto, criterio, p2sParaData, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
 import { validarAcesso } from '../../../lib/serverAuth';
+import { obterCursorIncremental, registrarSincronizacao, obterUltimaSincronizacao, calcularProximoCursor, cursorParaSerialP2s } from '../../../lib/syncLog';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -138,30 +139,56 @@ export async function sincronizarParceirosP2sAction(opcoes: SincronizarParceiros
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const ambiente = opcoes.ambiente || 'PRODUCAO';
+  const iniciadoEm = new Date();
+  const cursorData = await obterCursorIncremental('parceiros', ambiente);
 
   try {
-    // Paginação por CodigoParceiro em janelas — consulta sem filtro deu
-    // timeout em produção (base grande + arrays aninhados pesados por
-    // registro). Ver nota no topo do arquivo.
     const todosObjetos: ObjetoP2s[] = [];
-    let cursor = 0;
-    let janelasVazias = 0;
-    for (let janela = 0; janela < MAX_JANELAS && janelasVazias < JANELAS_VAZIAS_PARA_PARAR; janela++) {
-      const resultado = await consultarObjetos(ambiente, 'TCustomParceiro', [
-        criterio('CodigoParceiro', 'gt', 'int', cursor),
-        criterio('CodigoParceiro', 'le', 'int', cursor + JANELA),
-      ], { order: 'CodigoParceiro' });
 
-      if (resultado.objectlist.length === 0) {
-        janelasVazias++;
-      } else {
-        janelasVazias = 0;
-        todosObjetos.push(...resultado.objectlist);
+    if (cursorData) {
+      // Incremental: só o que mudou desde a última sincronização — o
+      // resultado tende a ser pequeno (dezenas/centenas), então dá pra
+      // buscar numa chamada só, sem a paginação por código abaixo (que é só
+      // pra aguentar o payload pesado de uma carga completa). IMPORTANTE:
+      // não dá pra combinar esse filtro de data com o loop de janelas por
+      // CodigoParceiro usando o mesmo critério de parada de "N janelas
+      // vazias seguidas" — um parceiro alterado pode estar em qualquer
+      // faixa de código, então "janela vazia" deixaria de significar "não
+      // tem mais nada", e o loop poderia parar cedo demais e perder
+      // alterações em códigos mais altos.
+      const resultado = await consultarObjetos(ambiente, 'TCustomParceiro', [
+        criterio('DataUltimaAlteracaoCadastro', 'ge', 'dbl', cursorParaSerialP2s(cursorData)),
+      ], { order: 'CodigoParceiro' });
+      todosObjetos.push(...resultado.objectlist);
+    } else {
+      // Carga completa (primeira sincronização) — paginação por
+      // CodigoParceiro em janelas, pois consulta sem filtro deu timeout em
+      // produção (base grande + arrays aninhados pesados por registro). Ver
+      // nota no topo do arquivo.
+      let codigoCursor = 0;
+      let janelasVazias = 0;
+      for (let janela = 0; janela < MAX_JANELAS && janelasVazias < JANELAS_VAZIAS_PARA_PARAR; janela++) {
+        const resultado = await consultarObjetos(ambiente, 'TCustomParceiro', [
+          criterio('CodigoParceiro', 'gt', 'int', codigoCursor),
+          criterio('CodigoParceiro', 'le', 'int', codigoCursor + JANELA),
+        ], { order: 'CodigoParceiro' });
+
+        if (resultado.objectlist.length === 0) {
+          janelasVazias++;
+        } else {
+          janelasVazias = 0;
+          todosObjetos.push(...resultado.objectlist);
+        }
+        codigoCursor += JANELA;
       }
-      cursor += JANELA;
     }
 
     if (todosObjetos.length === 0) {
+      await registrarSincronizacao({
+        integracao: 'parceiros', ambiente, tipo: cursorData ? 'incremental' : 'completa',
+        cursorDesde: cursorData, cursorAte: calcularProximoCursor(iniciadoEm),
+        encontrados: 0, processados: 0, status: 'sucesso', iniciadoEm,
+      });
       return { ok: true, info: { processados: 0, totalEncontradas: 0 } };
     }
 
@@ -237,10 +264,27 @@ export async function sincronizarParceirosP2sAction(opcoes: SincronizarParceiros
       processados += lote.length;
     }
 
+    await registrarSincronizacao({
+      integracao: 'parceiros', ambiente, tipo: cursorData ? 'incremental' : 'completa',
+      cursorDesde: cursorData, cursorAte: calcularProximoCursor(iniciadoEm),
+      encontrados: todosObjetos.length, processados, status: 'sucesso', iniciadoEm,
+    });
     return { ok: true, info: { processados, totalEncontradas: todosObjetos.length } };
   } catch (e: any) {
+    await registrarSincronizacao({
+      integracao: 'parceiros', ambiente, tipo: cursorData ? 'incremental' : 'completa',
+      cursorDesde: cursorData, cursorAte: null,
+      encontrados: 0, processados: 0, status: 'erro', erro: e.message, iniciadoEm,
+    });
     return { ok: false, erro: e.message };
   }
+}
+
+export async function buscarUltimaSincronizacaoParceirosAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  const info = await obterUltimaSincronizacao('parceiros', 'PRODUCAO');
+  return { ok: true, info };
 }
 
 // ============================================================================
@@ -273,15 +317,26 @@ export async function sincronizarColaboradoresP2sAction(opcoes: SincronizarColab
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const ambiente = opcoes.ambiente || 'PRODUCAO';
+  const iniciadoEm = new Date();
+  const cursor = await obterCursorIncremental('colaboradores', ambiente);
 
   try {
     // "CodigoColaborador ge 0" é um filtro sempre-verdadeiro (só pra
     // satisfazer o corpo obrigatório da API) — mesmo truque de produtos.ts.
-    const resultado = await consultarObjetos(ambiente, 'TCustomColaborador', [
-      criterio('CodigoColaborador', 'ge', 'int', 0),
-    ], { order: 'CodigoColaborador' });
+    // Usado só na primeira sincronização; depois disso, filtra por
+    // DataUltimaAlteracaoCadastro (ver app/lib/syncLog.ts).
+    const criterios = cursor
+      ? [criterio('DataUltimaAlteracaoCadastro', 'ge', 'dbl', cursorParaSerialP2s(cursor))]
+      : [criterio('CodigoColaborador', 'ge', 'int', 0)];
+
+    const resultado = await consultarObjetos(ambiente, 'TCustomColaborador', criterios, { order: 'CodigoColaborador' });
 
     if (resultado.objectlist.length === 0) {
+      await registrarSincronizacao({
+        integracao: 'colaboradores', ambiente, tipo: cursor ? 'incremental' : 'completa',
+        cursorDesde: cursor, cursorAte: calcularProximoCursor(iniciadoEm),
+        encontrados: 0, processados: 0, status: 'sucesso', iniciadoEm,
+      });
       return { ok: true, info: { processados: 0, totalEncontradas: 0 } };
     }
 
@@ -369,10 +424,27 @@ export async function sincronizarColaboradoresP2sAction(opcoes: SincronizarColab
       processados += lote.length;
     }
 
+    await registrarSincronizacao({
+      integracao: 'colaboradores', ambiente, tipo: cursor ? 'incremental' : 'completa',
+      cursorDesde: cursor, cursorAte: calcularProximoCursor(iniciadoEm),
+      encontrados: resultado.count, processados, status: 'sucesso', iniciadoEm,
+    });
     return { ok: true, info: { processados, totalEncontradas: resultado.count } };
   } catch (e: any) {
+    await registrarSincronizacao({
+      integracao: 'colaboradores', ambiente, tipo: cursor ? 'incremental' : 'completa',
+      cursorDesde: cursor, cursorAte: null,
+      encontrados: 0, processados: 0, status: 'erro', erro: e.message, iniciadoEm,
+    });
     return { ok: false, erro: e.message };
   }
+}
+
+export async function buscarUltimaSincronizacaoColaboradoresAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA_COLABORADORES);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  const info = await obterUltimaSincronizacao('colaboradores', 'PRODUCAO');
+  return { ok: true, info };
 }
 
 export interface FiltroColaboradores {

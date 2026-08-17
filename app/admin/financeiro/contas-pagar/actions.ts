@@ -22,6 +22,7 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { consultarObjetos, buscarObjeto, criterio, p2sParaData, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
 import { validarAcesso } from '../../../lib/serverAuth';
+import { registrarSincronizacao, obterUltimaSincronizacao } from '../../../lib/syncLog';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -86,11 +87,19 @@ export async function sincronizarContasPagarP2sAction(opcoes: SincronizarContasP
 
   const ambiente = opcoes.ambiente || 'PRODUCAO';
   const diasRetroativos = opcoes.diasRetroativos ?? 90; // ~3 meses
+  const iniciadoEm = new Date();
 
   try {
     const hojeSerial = Math.floor((Date.now() - Date.UTC(1899, 11, 30)) / 86_400_000);
     const desde = hojeSerial - diasRetroativos;
 
+    // TCustomContaPagar não tem campo de "última alteração" (testado em
+    // produção, 2026-08-17 — nenhum DataUltimaAlteracaoCadastro nem
+    // equivalente nessa classe) — mesma limitação de TCustomEvento. Sem
+    // isso, não dá pra fazer sincronização incremental de verdade: sempre
+    // busca a janela rolante de N dias por vencimento + quitadas, sem
+    // cursor. A execução ainda é registrada no log (ver app/lib/syncLog.ts),
+    // só sem o ganho de performance que as outras integrações têm.
     const criterios = [
       criterio('DataVencimento', 'ge', 'dbl', desde),
       criterio('FlagQuitado', 'eq', 'bool', true),
@@ -99,6 +108,11 @@ export async function sincronizarContasPagarP2sAction(opcoes: SincronizarContasP
     const resultado = await consultarObjetos(ambiente, 'TCustomContaPagar', criterios, { order: 'DataVencimento', proxy: true });
 
     if (resultado.objectlist.length === 0) {
+      await registrarSincronizacao({
+        integracao: 'contas_pagar', ambiente, tipo: 'completa',
+        cursorDesde: null, cursorAte: null,
+        encontrados: 0, processados: 0, status: 'sucesso', iniciadoEm,
+      });
       return { ok: true, info: { processados: 0, totalEncontradas: 0 } };
     }
 
@@ -141,8 +155,25 @@ export async function sincronizarContasPagarP2sAction(opcoes: SincronizarContasP
       processados += lote.length;
     }
 
+    await registrarSincronizacao({
+      integracao: 'contas_pagar', ambiente, tipo: 'completa',
+      cursorDesde: null, cursorAte: null,
+      encontrados: resultado.count, processados, status: 'sucesso', iniciadoEm,
+    });
     return { ok: true, info: { processados, totalEncontradas: resultado.count } };
   } catch (e: any) {
+    await registrarSincronizacao({
+      integracao: 'contas_pagar', ambiente, tipo: 'completa',
+      cursorDesde: null, cursorAte: null,
+      encontrados: 0, processados: 0, status: 'erro', erro: e.message, iniciadoEm,
+    });
     return { ok: false, erro: e.message };
   }
+}
+
+export async function buscarUltimaSincronizacaoContasPagarAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  const info = await obterUltimaSincronizacao('contas_pagar', 'PRODUCAO');
+  return { ok: true, info };
 }

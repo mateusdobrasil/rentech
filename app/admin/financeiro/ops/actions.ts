@@ -11,7 +11,7 @@ import { revalidatePath } from 'next/cache';
 import { registrarLogAuditoria } from '../../../actions';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso } from '../../../lib/serverAuth';
-import { consultarObjetos, criarObjeto, atualizarObjeto, criterio, dataParaP2s, type AmbienteP2s } from '../../../lib/p2s';
+import { criarObjeto, atualizarObjeto, dataParaP2s, type AmbienteP2s } from '../../../lib/p2s';
 
 const ROTA = '/admin/financeiro/ops';
 
@@ -152,22 +152,37 @@ export async function conciliarOpsComContasPagarAction(accessToken: string): Pro
 export interface ResultadoEnvioP2s {
   p2sOid: string;
   fornecedorVinculado: boolean;
+  origemVinculo: 'parceiro' | 'colaborador' | null;
 }
 
 type ResultadoEnvio =
   | { ok: true; info: ResultadoEnvioP2s }
   | { ok: false; erro: string };
 
-// Busca o TCustomParceiro do PrimeStart pelo CNPJ/CPF já digitado no
-// formulário da OP — o campo lá é guardado formatado (com pontuação), mesmo
-// padrão de máscara usado no nosso formulário, então a busca é por igualdade
-// direta (ver teste em sandbox: buscar só dígitos não bate).
-async function buscarEntidadePorDocumento(ambiente: AmbienteP2s, documentoFormatado: string): Promise<string | null> {
+// Busca a Entidade pelo CNPJ/CPF já digitado no formulário da OP — não mais
+// via API ao vivo (a live query batia só contra TCustomParceiro; o
+// favorecido de uma OP pode ser um TCustomColaborador nosso, ex: freelancer,
+// que não é Parceiro). Usa as tabelas `parceiros` e `colaboradores`, já
+// sincronizadas do PrimeStart (ver app/admin/comercial/parceiros/actions.ts)
+// — mais rápido que ir na API a cada envio, e cobre as duas fontes.
+// Colaborador só tem CPF (é sempre pessoa física), por isso só entra na
+// busca quando o documento tem 11 dígitos.
+async function buscarEntidadeLocal(documentoFormatado: string): Promise<{ oid: string; origem: 'parceiro' | 'colaborador' } | null> {
   const digitos = documentoFormatado.replace(/\D/g, '');
   if (!digitos) return null;
-  const campo = digitos.length > 11 ? 'CNPJ' : 'CPF';
-  const resultado = await consultarObjetos(ambiente, 'TCustomParceiro', [criterio(campo, 'eq', 'str', documentoFormatado)], { proxy: true });
-  return resultado.objectlist[0]?.oid ?? null;
+  const campo = digitos.length > 11 ? 'cnpj' : 'cpf';
+
+  const db = supabaseAdmin();
+
+  const { data: parceiro } = await db.from('parceiros').select('p2s_oid').eq(campo, documentoFormatado).limit(1).maybeSingle();
+  if (parceiro?.p2s_oid) return { oid: parceiro.p2s_oid as string, origem: 'parceiro' };
+
+  if (campo === 'cpf') {
+    const { data: colaborador } = await db.from('colaboradores').select('p2s_oid').eq('cpf', documentoFormatado).limit(1).maybeSingle();
+    if (colaborador?.p2s_oid) return { oid: colaborador.p2s_oid as string, origem: 'colaborador' };
+  }
+
+  return null;
 }
 
 export async function enviarOpParaPrimeStartAction(opId: string, accessToken: string): Promise<ResultadoEnvio> {
@@ -188,8 +203,8 @@ export async function enviarOpParaPrimeStartAction(opId: string, accessToken: st
 
     const ambiente: AmbienteP2s = 'PRODUCAO';
 
-    const entidadeOid = op.cnpj_cpf_recebedora
-      ? await buscarEntidadePorDocumento(ambiente, op.cnpj_cpf_recebedora as string)
+    const entidade = op.cnpj_cpf_recebedora
+      ? await buscarEntidadeLocal(op.cnpj_cpf_recebedora as string)
       : null;
 
     const criado = await criarObjeto(ambiente, 'TCustomContaPagar');
@@ -200,7 +215,7 @@ export async function enviarOpParaPrimeStartAction(opId: string, accessToken: st
       DataVencimentoNominal: dataParaP2s(new Date(`${op.data_vencimento}T00:00:00Z`)),
       Observacoes: `Lançada via sistema Rentech por ${perfil.nome} | Natureza: ${op.natureza_pagamento || '—'} | OS: ${op.os_numero || 'S/N'} | Cliente: ${op.os_cliente || '—'} | Evento: ${op.os_evento || '—'}`,
     };
-    if (entidadeOid) campos.Entidade = entidadeOid;
+    if (entidade) campos.Entidade = entidade.oid;
 
     await atualizarObjeto(ambiente, 'TCustomContaPagar', criado.oid, campos);
 
@@ -213,14 +228,14 @@ export async function enviarOpParaPrimeStartAction(opId: string, accessToken: st
 
     registrarLogAuditoria({
       usuario_nome: perfil.nome,
-      acao: `ENVIOU OP PARA O PRIMESTART — CRIOU CONTA A PAGAR ${criado.oid}${entidadeOid ? '' : ' (SEM FORNECEDOR VINCULADO — CONFERIR CNPJ/CPF)'}`,
+      acao: `ENVIOU OP PARA O PRIMESTART — CRIOU CONTA A PAGAR ${criado.oid}${entidade ? ` (VINCULADA A ${entidade.origem.toUpperCase()})` : ' (SEM FORNECEDOR VINCULADO — CONFERIR CNPJ/CPF)'}`,
       setor: 'OP',
       equipamento_id: opId,
       equipamento_nome: `OP #${op.numero_op} — OS ${op.os_numero || 'S/N'}`,
     });
 
     revalidatePath('/admin');
-    return { ok: true, info: { p2sOid: criado.oid, fornecedorVinculado: !!entidadeOid } };
+    return { ok: true, info: { p2sOid: criado.oid, fornecedorVinculado: !!entidade, origemVinculo: entidade?.origem ?? null } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

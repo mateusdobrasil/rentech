@@ -4,10 +4,12 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../actions';
-import { sincronizarContasPagarP2sAction } from './actions';
+import { sincronizarContasPagarP2sAction, buscarUltimaSincronizacaoContasPagarAction } from './actions';
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import UltimaSincronizacaoInfo from '../../../components/ui/UltimaSincronizacaoInfo';
+import type { UltimaSincronizacao } from '../../../lib/syncLog';
 
 interface ContaPagarGrid {
   id: number;
@@ -48,6 +50,21 @@ export default function ContasPagarPage() {
   const [pagina, setPagina] = useState(0);
   const [totalRegistros, setTotalRegistros] = useState(0);
   const [refreshGrid, setRefreshGrid] = useState(0);
+
+  const [ultimaSync, setUltimaSync] = useState<UltimaSincronizacao | null>(null);
+  const [ultimaSyncLoading, setUltimaSyncLoading] = useState(true);
+
+  const carregarUltimaSync = async () => {
+    setUltimaSyncLoading(true);
+    const res = await buscarUltimaSincronizacaoContasPagarAction(accessToken);
+    if (res.ok) setUltimaSync(res.info);
+    setUltimaSyncLoading(false);
+  };
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    carregarUltimaSync();
+  }, [authLoading, acessoNegado]);
 
   useEffect(() => {
     if (authLoading || acessoNegado) return;
@@ -103,6 +120,7 @@ export default function ContasPagarPage() {
       setFeedback({ show: true, tipo: 'success', msg: `${res.info.processados} conta(s) sincronizada(s) direto do PrimeStart (${res.info.totalEncontradas} encontrada(s) no total).` });
       setPagina(0);
       setRefreshGrid(v => v + 1);
+      carregarUltimaSync();
     } finally {
       setSincronizando(false);
     }
@@ -161,6 +179,7 @@ export default function ContasPagarPage() {
             >
               {sincronizando ? 'Sincronizando...' : '🔄 Sincronizar agora'}
             </button>
+            <UltimaSincronizacaoInfo info={ultimaSync} carregando={ultimaSyncLoading} />
           </div>
 
           {feedback.show && (

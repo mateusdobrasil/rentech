@@ -110,6 +110,7 @@ export default function GestaoDePonto() {
   const [abonoData, setAbonoData] = useState('');
   const [abonoMotivo, setAbonoMotivo] = useState('');
   const [copiadoImpares, setCopiadoImpares] = useState(false);
+  const [copiadoFaltas, setCopiadoFaltas] = useState(false);
   const [abonando, setAbonando] = useState(false);
   const [abonoExistente, setAbonoExistente] = useState<{ origem: string; motivo: string | null } | null | undefined>(undefined);
   const [verificandoAbonoExistente, setVerificandoAbonoExistente] = useState(false);
@@ -856,6 +857,30 @@ export default function GestaoDePonto() {
       await navigator.clipboard.writeText(textoInconsistencias);
       setCopiadoImpares(true);
       setTimeout(() => setCopiadoImpares(false), 2000);
+    } catch {
+      toast('Não foi possível copiar automaticamente. Selecione o texto manualmente.', 'error');
+    }
+  };
+
+  // Texto pronto pra colar no grupo dos funcionários — agrupa por
+  // colaborador (pode ter mais de um dia de falta) e respeita o filtro de
+  // funcionário já aplicado no grid acima.
+  const textoFaltas = useMemo(() => {
+    const porFuncionario = new Map<string, string[]>();
+    faltasFiltradas.forEach(f => {
+      const data = f.data.split('-').reverse().join('/');
+      if (!porFuncionario.has(f.funcionario_nome)) porFuncionario.set(f.funcionario_nome, []);
+      porFuncionario.get(f.funcionario_nome)!.push(data);
+    });
+    const linhas = Array.from(porFuncionario.entries()).map(([nome, datas]) => `• ${nome} — ${datas.join(', ')}`);
+    return `⚠️ *Faltas (Dias sem Registro)* — Competência ${mesAnoSelecionado.split('-').reverse().join('/')}\nPor favor, regularizem o registro de ponto nos dias abaixo:\n\n${linhas.join('\n')}`;
+  }, [faltasFiltradas, mesAnoSelecionado]);
+
+  const copiarFaltas = async () => {
+    try {
+      await navigator.clipboard.writeText(textoFaltas);
+      setCopiadoFaltas(true);
+      setTimeout(() => setCopiadoFaltas(false), 2000);
     } catch {
       toast('Não foi possível copiar automaticamente. Selecione o texto manualmente.', 'error');
     }
@@ -1778,9 +1803,18 @@ export default function GestaoDePonto() {
 
               {faltasEncontradas !== null && (
                 <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col">
-                  <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC]">
-                    <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Faltas (Dias sem Registro)</h2>
-                    <p className="text-sm text-[#64748B]">Competência: {mesAnoSelecionado.split('-').reverse().join('/')} • {faltasFiltradas.length} de {faltasEncontradas.length} falta(s) • clique numa linha pra preencher os quadros ao lado</p>
+                  <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Faltas (Dias sem Registro)</h2>
+                      <p className="text-sm text-[#64748B]">Competência: {mesAnoSelecionado.split('-').reverse().join('/')} • {faltasFiltradas.length} de {faltasEncontradas.length} falta(s) • clique numa linha pra preencher os quadros ao lado</p>
+                    </div>
+                    <button
+                      onClick={copiarFaltas}
+                      disabled={faltasFiltradas.length === 0}
+                      className={`shrink-0 font-black uppercase tracking-widest text-xs px-4 py-2.5 rounded-xl transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${copiadoFaltas ? 'bg-emerald-600 text-white' : 'bg-[#336699] hover:bg-[#284B8C] text-white'}`}
+                    >
+                      {copiadoFaltas ? '✓ Copiado!' : '📋 Copiar p/ Grupo'}
+                    </button>
                   </div>
 
                   {faltasFiltradas.length === 0 ? (

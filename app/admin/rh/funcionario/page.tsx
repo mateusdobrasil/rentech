@@ -19,6 +19,26 @@ const formatarMesAnoBR = (mesAnoIso: string) => {
   return `${mes}/${ano}`;
 };
 
+// Máscaras de digitação (CPF e Celular) — formatam progressivamente enquanto
+// o usuário digita. O valor mascarado fica só no estado do formulário pra
+// exibição; salvarColaboradorAction (app/admin/rh/actions/actions-folha.ts)
+// remove a formatação antes de gravar no banco, que guarda só dígitos.
+const maskCpf = (valor: string): string => {
+  const d = valor.replace(/\D/g, '').slice(0, 11);
+  if (d.length > 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+  if (d.length > 6) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`;
+  if (d.length > 3) return `${d.slice(0, 3)}.${d.slice(3)}`;
+  return d;
+};
+
+const maskCelular = (valor: string): string => {
+  const d = valor.replace(/\D/g, '').slice(0, 11);
+  if (d.length > 7) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length > 2) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  if (d.length > 0) return `(${d}`;
+  return d;
+};
+
 // Interfaces
 interface RegraContrato {
   nome_regra: string;
@@ -230,7 +250,14 @@ export default function FuncionarioPage() {
     }
     // departamento é coluna nova — funcionários cadastrados antes dela têm
     // null no banco, e um <select> controlado não aceita value={null}.
-    setForm({ ...funcData, cargo: funcData.cargo || '', departamento: funcData.departamento || '' });
+    // cpf/celular: o banco guarda só dígitos (ver salvarColaboradorAction) —
+    // mascara aqui pra exibir formatado assim que a ficha é aberta.
+    setForm({
+      ...funcData,
+      cargo: funcData.cargo || '', departamento: funcData.departamento || '',
+      cpf: funcData.cpf ? maskCpf(funcData.cpf) : funcData.cpf,
+      celular: funcData.celular ? maskCelular(funcData.celular) : funcData.celular,
+    });
 
     setFotoPreviewUrl('');
     if (funcData.foto_path) {
@@ -585,9 +612,9 @@ export default function FuncionarioPage() {
 
                     <div className="col-span-2 grid grid-cols-2 gap-4 bg-indigo-50/50 p-3 rounded-lg border border-indigo-100">
                       <div className="col-span-2 text-[10px] font-black text-indigo-600 uppercase tracking-wider">Dados Pessoais (para assinatura digital)</div>
-                      <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">CPF</label><input type="text" value={form.cpf || ''} onChange={e => setForm({...form, cpf: e.target.value || null})} placeholder="000.000.000-00" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+                      <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">CPF</label><input type="text" inputMode="numeric" maxLength={14} value={form.cpf || ''} onChange={e => setForm({...form, cpf: maskCpf(e.target.value) || null})} placeholder="000.000.000-00" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
                       <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Data de Nascimento</label><input type="date" value={form.data_nascimento || ''} onChange={e => setForm({...form, data_nascimento: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
-                      <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Celular (WhatsApp)</label><input type="tel" value={form.celular || ''} onChange={e => setForm({...form, celular: e.target.value || null})} placeholder="(11) 90000-0000" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+                      <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Celular (WhatsApp)</label><input type="tel" inputMode="numeric" maxLength={15} value={form.celular || ''} onChange={e => setForm({...form, celular: maskCelular(e.target.value) || null})} placeholder="(11) 90000-0000" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
                       <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">E-mail</label><input type="email" value={form.email || ''} onChange={e => setForm({...form, email: e.target.value || null})} placeholder="nome@email.com" className="w-full p-2 border border-gray-300 rounded text-sm lowercase" /></div>
                       <div className="col-span-2 flex items-center gap-2 bg-white p-2.5 rounded-lg border border-indigo-100">
                         <input type="checkbox" id="ponto_whatsapp_ativo" checked={form.ponto_whatsapp_ativo} onChange={e => setForm({...form, ponto_whatsapp_ativo: e.target.checked})} className="w-4 h-4" />

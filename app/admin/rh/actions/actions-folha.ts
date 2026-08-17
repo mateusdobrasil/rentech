@@ -40,6 +40,12 @@ export async function salvarColaboradorAction(payload: {
   // Nome sempre em MAIÚSCULO no banco (padroniza a chave usada em todas as tabelas)
   form.nome_completo = String(form.nome_completo).trim().toUpperCase();
 
+  // CPF/Celular chegam mascarados da tela (000.000.000-00 / (00) 00000-0000)
+  // — o banco guarda só dígitos. Limpa aqui (não só no client) pra garantir
+  // isso independente de qualquer formatação que a tela venha a aplicar.
+  if (form.cpf) form.cpf = String(form.cpf).replace(/\D/g, '') || null;
+  if (form.celular) form.celular = String(form.celular).replace(/\D/g, '') || null;
+
   try {
     const { error: upsertError } = await db
       .from('folha_funcionarios')

@@ -13,8 +13,6 @@ type Resultado = { ok: boolean; erro?: string; info?: any };
 
 const ROTA = '/admin/comercial/fichas';
 
-export type { SincronizarFichasReservaOpcoes };
-
 export async function sincronizarFichasReservaP2sAction(opcoes: SincronizarFichasReservaOpcoes, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };

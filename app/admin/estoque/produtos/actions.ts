@@ -17,8 +17,6 @@ type Resultado = { ok: boolean; erro?: string; info?: any };
 
 const ROTA = '/admin/estoque/produtos';
 
-export type { SincronizarProdutosOpcoes };
-
 export async function sincronizarProdutosP2sAction(opcoes: SincronizarProdutosOpcoes, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };

@@ -315,6 +315,39 @@ export async function excluirObjeto(ambiente: AmbienteP2s, oid: string): Promise
   }
 }
 
+export type TipoParametroMetodoP2s = 'dbl' | 'str' | 'bool' | 'oid';
+
+export interface ParametroMetodoP2s {
+  paramname: string;
+  paramtype: TipoParametroMetodoP2s;
+  paramvalue: string | string[];
+}
+
+export interface RespostaMetodoP2s {
+  paramlist: ParametroMetodoP2s[];
+}
+
+// POST /methods/{classname}.{metodo}?oid={oid} — chama um método de negócio
+// do servidor (ex: gExpedicao.EfetuaRetornoLocacao), em vez das operações
+// genéricas de CRUD. Confirmado com o suporte da P2S em 2026-08-17: alguns
+// campos (Status de Ficha de Locação, DataUltimaMovDevolucao, saldo de
+// estoque) são recalculados por lógica interna do servidor e não são
+// alteráveis via Update genérico — só através desses métodos dedicados.
+// Diferente do Update genérico, erros de negócio aqui voltam DENTRO do
+// corpo 200 (AArrayMensagemErro no paramlist de resposta), não como HTTP de
+// erro — quem chama precisa checar esse array explicitamente.
+export async function invocarMetodo(ambiente: AmbienteP2s, classname: string, metodo: string, oid: string, paramlist: ParametroMetodoP2s[]): Promise<RespostaMetodoP2s> {
+  const resp = await chamar<RespostaMetodoP2s>(ambiente, `/methods/${classname}.${metodo}`, {
+    method: 'POST',
+    query: { oid },
+    body: { paramlist },
+  });
+  if (!resp.ok || !resp.data) {
+    throw new Error(`Falha ao chamar ${classname}.${metodo} no PrimeStart (HTTP ${resp.status}): ${resp.textoErro || 'resposta inválida'}`);
+  }
+  return resp.data;
+}
+
 // Teste de conectividade/autenticação leve — consulta TCustomParceiro com um
 // critério que nunca bate (CodigoParceiro = -1), então count vem sempre 0
 // independente do tamanho da base, mas o round-trip completo (rede + Basic

@@ -13,8 +13,6 @@ type Resultado = { ok: boolean; erro?: string; info?: any };
 
 const ROTA = '/admin/comercial/eventos-feiras';
 
-export type { SincronizarEventosOpcoes };
-
 export async function sincronizarEventosFeirasP2sAction(opcoes: SincronizarEventosOpcoes, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };

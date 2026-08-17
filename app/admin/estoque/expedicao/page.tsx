@@ -1262,18 +1262,15 @@ export default function ChecklistCargaRetorno() {
     }
 
     // ------------------------------------------------------------------------
-    // FINALIZAR FICHAS DE LOCAÇÃO NO PRIMESTART (P2S) — PAUSADO
-    // Testado em produção em 2026-08-17: o PUT retorna 204 e o
-    // lastupdatetimestamp do objeto muda de verdade (a chamada É aceita),
-    // mas o campo Status volta/permanece "A" — não vira "F". Ou seja, Status
-    // não é um campo livre: o PrimeStart provavelmente o recalcula a partir
-    // de alguma condição real (ex: devolução de fato registrada), e nosso
-    // PUT bruto é silenciosamente sobrescrito no processamento do servidor.
-    // Setar Status="F" direto NÃO finaliza a ficha de verdade — por isso
-    // essa chamada fica desligada até a P2S confirmar qual é a operação
-    // correta pra registrar a devolução/finalização. finalizarFichasLocacaoPorEventoAction
-    // continua existindo em ./actions, só não é chamada daqui por ora.
-    const ESCRITA_P2S_FICHA_LOCACAO_HABILITADA = false;
+    // FINALIZAR FICHAS DE LOCAÇÃO NO PRIMESTART (P2S)
+    // A tentativa original (Update genérico setando Status="F" direto) não
+    // funcionava — o campo é recalculado pelo servidor, não é livre. A P2S
+    // confirmou (2026-08-17) que o jeito certo é chamar o método de negócio
+    // gExpedicao.EfetuaRetornoLocacao, e finalizarFichasLocacaoPorEventoAction
+    // (./actions) foi reescrita pra usar ele — validado em Sandbox com round-
+    // trip completo (Status virou "F", saldo de estoque voltou). Ainda
+    // Habilitada em 2026-08-17 após validação completa em Sandbox.
+    const ESCRITA_P2S_FICHA_LOCACAO_HABILITADA = true;
     let erroP2s: string | null = null;
     let avisoP2s = '';
     if (ESCRITA_P2S_FICHA_LOCACAO_HABILITADA && statusSalvo === 'FINALIZADO' && checklistAtual.evento_p2s_oid) {

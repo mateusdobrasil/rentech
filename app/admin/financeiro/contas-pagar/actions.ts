@@ -13,8 +13,6 @@ type Resultado = { ok: boolean; erro?: string; info?: any };
 
 const ROTA = '/admin/financeiro/contas-pagar';
 
-export type { SincronizarContasPagarOpcoes };
-
 export async function sincronizarContasPagarP2sAction(opcoes: SincronizarContasPagarOpcoes, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };

@@ -192,13 +192,18 @@ const formatarDataBR = (iso: string | null | undefined): string => {
   return `${dia}/${mes}/${ano}`;
 };
 
-// A coluna "itens" de fichas_reserva é texto livre (uma OS por linha, geralmente
-// uma linha por item) — não tem estrutura garantida. Quebra em linhas e, se não
-// houver quebra de linha, tenta separar por vírgula/ponto-e-vírgula.
+// A coluna "itens" de fichas_reserva é texto livre — não tem estrutura
+// garantida. Quebra em linhas e, se não houver quebra de linha, tenta
+// separar por ponto-e-vírgula (formato usado pelo sync via API, ver
+// resumoItens() em app/admin/comercial/fichas/fichasCore.ts, que sempre
+// junta os itens com "; "). NÃO separa por vírgula: a observação de um item
+// pode ter vírgula decimal (ex: "3,0 X 50 = 1,5" numa medida de painel de
+// LED) — separar por vírgula também picava esse número em itens fantasmas
+// (confirmado com a OS 027048 em produção, 2026-08-17).
 const dividirItensTexto = (texto: string): string[] => {
   const porLinha = texto.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   if (porLinha.length > 1) return porLinha;
-  return texto.split(/[;,]/).map(l => l.trim()).filter(Boolean);
+  return texto.split(/;/).map(l => l.trim()).filter(Boolean);
 };
 
 // Formato da linha em fichas_reserva.itens: os dígitos até o primeiro espaço são

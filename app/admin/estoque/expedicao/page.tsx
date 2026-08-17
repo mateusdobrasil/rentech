@@ -202,12 +202,16 @@ const dividirItensTexto = (texto: string): string[] => {
 };
 
 // Formato da linha em fichas_reserva.itens: os dígitos até o primeiro espaço são
-// a quantidade, o restante da linha é a descrição do item (ex: "2 Mesa Redonda").
-// Sem número no início, a linha inteira vira descrição e a quantidade fica em
-// branco para o usuário revisar.
+// a quantidade, o restante da linha é a descrição do item. Dois formatos
+// convivem na mesma coluna: "2 Mesa Redonda" (upload manual antigo) e
+// "10x METROS DE PAINEL..." (sync via API do PrimeStart, ver resumoItens()
+// em app/admin/comercial/fichas/fichasCore.ts, que sempre grava "Nx descricao")
+// — o "x"/"X" opcional entre o número e a descrição cobre os dois. Sem número
+// no início, a linha inteira vira descrição e a quantidade fica em branco
+// para o usuário revisar.
 const parseLinhaItemOS = (linhaBruta: string): { qtd: string; descricao: string } => {
   const linha = linhaBruta.trim();
-  const m = linha.match(/^(\d+)\s+(.+)$/);
+  const m = linha.match(/^(\d+)\s*[xX]?\s+(.+)$/);
   if (m) return { qtd: String(parseInt(m[1], 10)), descricao: m[2].trim() };
   return { qtd: '', descricao: linha };
 };

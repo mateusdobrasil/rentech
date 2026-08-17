@@ -74,6 +74,18 @@ export function criterio(
   return { propname, operator, propvaluetype, propvalue: Array.isArray(propvalue) ? propvalue : [propvalue] };
 }
 
+// Filtrar por um campo de REFERÊNCIA (ex: "Evento eq P,573460") exige
+// propvaluetype "int" com só a parte numérica do oid — testado empiricamente
+// em 2026-08-10: propvaluetype "str" com o oid completo ("P,573460") não dá
+// erro nenhum, só IGNORA o critério silenciosamente e devolve tudo (só
+// percebido comparando contra um oid propositalmente inexistente, que
+// devolveu a mesma contagem). Usar esta função pra montar esse tipo de
+// critério em vez de criterio() direto evita reproduzir esse bug.
+export function criterioRef(propname: string, oid: string): CriterioP2s {
+  const numero = Number(oid.split(',')[1]);
+  return criterio(propname, 'eq', 'int', numero);
+}
+
 // PrimeStart guarda datas como dias desde 30/12/1899 (double; 0 = nula) e
 // horários como fração do dia na parte decimal.
 const EPOCA_P2S = Date.UTC(1899, 11, 30);

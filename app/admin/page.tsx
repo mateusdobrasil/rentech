@@ -45,11 +45,19 @@ const MODULOS_SISTEMA = [
   },
   {
     titulo: 'Operacional',
-    descricao: 'Controle de estoque e cadastros de equipamentos, acessórios, veículos e afins.',
+    descricao: 'Cadastros de equipamentos, acessórios, veículos e afins.',
     icone: '👷‍♂️',
     link: '/admin/operacional',
     cor: 'border-slate-500/50 hover:border-slate-500',
     bgIcon: 'bg-slate-50 text-slate-600'
+  },
+  {
+    titulo: 'Estoque',
+    descricao: 'Controle de estoque, expedição, produtos e marcas.',
+    icone: '📦',
+    link: '/admin/estoque',
+    cor: 'border-amber-500/50 hover:border-amber-500',
+    bgIcon: 'bg-amber-50 text-amber-600'
   },
   {
     titulo: 'Banco de Talentos',

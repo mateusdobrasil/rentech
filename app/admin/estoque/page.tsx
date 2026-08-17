@@ -3,48 +3,54 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-import { painelOperacionalAction } from './actions/actions-dashboard';
+import { painelEstoqueAction } from './actions/actions-dashboard';
 import { useModuleAccess } from '../../components/hooks/useModuleAccess';
 import ModuleGrid from '../../components/ui/ModuleGrid';
 import { HubLoading, HubPerfilNaoLocalizado, HubErro } from '../../components/ui/HubStates';
 import HubBackButton from '../../components/ui/HubBackButton';
 
-interface PainelOperacional {
-  documentosVencidos: number;
-  documentosVencendo: number;
-  checklistsVeiculosAbertos: number;
-  folgasPendentes: number;
+interface PainelEstoque {
+  expedicoesAbertas: number;
 }
 
 // Lista de módulos do hub. As permissões de cada um NÃO ficam mais aqui —
-// vêm da tabela folha_paginas_permissoes (gerida em /admin/permissoes),
+// vêm da tabela folha_paginas_permissoes (gerida em /admin/parametros/permissoes),
 // buscadas pelo campo "link" (= endereco_route). Isso mantém o hub sempre
 // em sincronia com o que a própria página de destino já exige para entrar.
-const modulosOperacional = [
+//
+// Transferidos para cá (antes viviam soltos em /admin/operacional): Controle
+// de Estoque, Produtos e Checklist de Carga (agora "Expedição").
+const modulosEstoque = [
   {
-    titulo: 'Controle de Frota',
-    descricao: 'Ficha dos veículos, documentos, seguros, vencimentos e manutenções.',
-    icone: '🚚', link: '/admin/operacional/frota',
-    cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
+    titulo: 'Controle de Estoque',
+    descricao: 'Gestão de entrada, saída e manutenção de equipamentos cadastrados.',
+    icone: '📦', link: '/admin/estoque/controle',
+    cor: 'bg-amber-50 border-amber-200 text-amber-700', hover: 'hover:border-amber-500'
   },
   {
-    titulo: 'Relatórios Operacionais',
-    descricao: 'Relatório completo da frota e controle de estoque, com indicadores e gráficos.',
-    icone: '📊', link: '/admin/operacional/relatorios',
+    titulo: 'Expedição',
+    descricao: 'Saída e retorno de equipamentos por evento, vinculado às fichas de reserva.',
+    icone: '✅', link: '/admin/estoque/expedicao',
+    cor: 'bg-teal-50 border-teal-200 text-teal-700', hover: 'hover:border-teal-500'
+  },
+  {
+    titulo: 'Produtos',
+    descricao: 'Catálogo de produtos sincronizado direto do PrimeStart (P2S) — todos os atributos, preços por tabela e estoque por local.',
+    icone: '📦', link: '/admin/estoque/produtos',
+    cor: 'bg-rose-50 border-rose-200 text-rose-700', hover: 'hover:border-rose-500'
+  },
+  {
+    titulo: 'Marcas',
+    descricao: 'Marcas dos produtos sincronizados do PrimeStart, agrupadas com a contagem de itens de cada uma.',
+    icone: '🏷️', link: '/admin/estoque/marcas',
     cor: 'bg-indigo-50 border-indigo-200 text-indigo-700', hover: 'hover:border-indigo-500'
-  },
-  {
-    titulo: 'Registro de Ponto',
-    descricao: 'Consulta (somente leitura) se cada colaborador já registrou o ponto do dia.',
-    icone: '🕒', link: '/admin/operacional/registro-ponto',
-    cor: 'bg-sky-50 border-sky-200 text-sky-700', hover: 'hover:border-sky-500'
   }
 ];
 
-export default function OperacionalHub() {
+export default function EstoqueHub() {
   const router = useRouter();
-  const { perfil, loading, modulosAutorizados, accessToken, erro, tentarNovamente } = useModuleAccess(modulosOperacional);
-  const [painel, setPainel] = useState<PainelOperacional | null>(null);
+  const { perfil, loading, modulosAutorizados, accessToken, erro, tentarNovamente } = useModuleAccess(modulosEstoque);
+  const [painel, setPainel] = useState<PainelEstoque | null>(null);
   const [painelLoading, setPainelLoading] = useState(true);
 
   // Painel de pendências: carrega só depois do perfil liberado, em paralelo
@@ -52,7 +58,7 @@ export default function OperacionalHub() {
   useEffect(() => {
     if (!perfil) return;
     setPainelLoading(true);
-    painelOperacionalAction(accessToken).then(res => {
+    painelEstoqueAction(accessToken).then(res => {
       if (res.ok) setPainel(res.info);
       setPainelLoading(false);
     });
@@ -67,8 +73,8 @@ export default function OperacionalHub() {
       <Analytics />
       <div className="max-w-6xl mx-auto">
         <div className="mb-10">
-          <h1 className="text-3xl font-black text-[#0C1D4D] uppercase tracking-tight">Setor Operacional</h1>
-          <p className="text-[#64748B] font-medium">Controle de frota, relatórios e registro de ponto.</p>
+          <h1 className="text-3xl font-black text-[#0C1D4D] uppercase tracking-tight">Estoque</h1>
+          <p className="text-[#64748B] font-medium">Controle de estoque, expedição, produtos e marcas.</p>
         </div>
 
         {/* PAINEL DE PENDÊNCIAS — cada cartão só aparece se o usuário tem acesso
@@ -77,28 +83,12 @@ export default function OperacionalHub() {
           const linksAutorizados = new Set(modulosAutorizados.map(m => m.link));
           const cartoes: { chave: string; titulo: string; icone: string; valor: string; destaque: boolean; link: string; sub?: string }[] = [];
 
-          if (linksAutorizados.has('/admin/operacional/frota')) {
-            const vencidos = painel?.documentosVencidos ?? 0;
-            const vencendo = painel?.documentosVencendo ?? 0;
+          if (linksAutorizados.has('/admin/estoque/expedicao')) {
             cartoes.push({
-              chave: 'documentos', titulo: 'Documentos da Frota', icone: '📁',
-              valor: painelLoading ? '—' : `${vencidos}`,
-              sub: painelLoading ? 'carregando...' : `${vencidos} vencido(s) · ${vencendo} a vencer (30d)`,
-              destaque: vencidos > 0, link: '/admin/operacional/frota'
-            });
-            cartoes.push({
-              chave: 'checklist_veiculos', titulo: 'Checklist de Veículos', icone: '🚚',
-              valor: painelLoading ? '—' : `${painel?.checklistsVeiculosAbertos ?? 0}`,
-              sub: 'em rota (saída sem retorno)',
-              destaque: false, link: '/admin/operacional/frota'
-            });
-          }
-          if (linksAutorizados.has('/admin/operacional/registro-ponto')) {
-            cartoes.push({
-              chave: 'folgas', titulo: 'Solicitações de Folga', icone: '🏖️',
-              valor: painelLoading ? '—' : `${painel?.folgasPendentes ?? 0}`,
-              sub: 'pendentes via WhatsApp',
-              destaque: (painel?.folgasPendentes ?? 0) > 0, link: '/admin/operacional/registro-ponto'
+              chave: 'expedicoes', titulo: 'Expedições em Aberto', icone: '✅',
+              valor: painelLoading ? '—' : `${painel?.expedicoesAbertas ?? 0}`,
+              sub: 'aguardando devolução/finalização',
+              destaque: (painel?.expedicoesAbertas ?? 0) > 0, link: '/admin/estoque/expedicao'
             });
           }
 

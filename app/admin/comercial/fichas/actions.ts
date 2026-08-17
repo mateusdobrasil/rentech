@@ -28,7 +28,11 @@ const ROTA = '/admin/comercial/fichas';
 
 function nomeExibicao(obj: ObjetoP2s | null): string | null {
   if (!obj) return null;
-  const nome = (obj.NomeExibicao || obj.NomeCompleto || obj.Nome || '') as string;
+  // NomeItem cobre o caso de ItemEstoque (ref de item de ficha) apontar pra
+  // um TCustomProduto — sem isso, o resumo de itens ficava só com a
+  // quantidade ("10x"), sem o nome do equipamento (ex: "METROS DE PAINEL DE
+  // LED P3 RETO"), porque a maioria dos itens tem Observacoes vazio.
+  const nome = (obj.NomeExibicao || obj.NomeCompleto || obj.Nome || obj.NomeItem || '') as string;
   return nome || null;
 }
 
@@ -63,19 +67,23 @@ function refOuNull(v: unknown): string | undefined {
   return s && s !== 'null' ? s : undefined;
 }
 
-// Resumo em texto dos itens da ficha, a partir do que já vem embutido na
-// própria resposta (sem chamada extra por item) — quantidade + observação
-// digitada na ficha (ex: "3.5X2", "8 PAINEL 0,50X4"). É uma aproximação:
-// não resolve o nome do produto (exigiria mais uma chamada em cadeia,
-// ItemEstoque → Produto, por item).
-function resumoItens(itens: unknown): string | null {
+// Resumo em texto dos itens da ficha: quantidade + nome do produto
+// (resolvido via ItemEstoque, que aponta direto pra um TCustomProduto) +
+// observação digitada na ficha, se houver (ex: "3.5X2", "8 PAINEL 0,50X4").
+// Nome do produto é essencial aqui — testado em produção (2026-08-17) que a
+// maioria dos itens tem Observacoes VAZIO, então sem resolver o produto o
+// resumo virava só "10x" sem dizer o quê.
+function resumoItens(itens: unknown, mapaNomesProduto: Map<string, string>): string | null {
   if (!Array.isArray(itens) || itens.length === 0) return null;
   const partes = itens
     .map((item: any) => {
       const qtd = Number(item?.QuantidadePositiva) || 0;
       const obs = String(item?.Observacoes || '').trim();
-      if (!qtd && !obs) return null;
-      return obs ? `${qtd}x ${obs}` : `${qtd}x`;
+      const itemEstoqueOid = refOuNull(item?.ItemEstoque);
+      const nomeProduto = itemEstoqueOid ? mapaNomesProduto.get(itemEstoqueOid) : undefined;
+      if (!qtd && !obs && !nomeProduto) return null;
+      const descricao = [nomeProduto, obs].filter(Boolean).join(' — ');
+      return descricao ? `${qtd}x ${descricao}` : `${qtd}x`;
     })
     .filter((s): s is string => !!s);
   return partes.length ? partes.join('; ') : null;
@@ -108,9 +116,13 @@ export async function sincronizarFichasReservaP2sAction(opcoes: SincronizarFicha
       return { ok: true, info: { processados: 0, totalEncontradas: 0 } };
     }
 
-    const mapaNomes = await resolverNomes(ambiente, resultado.objectlist.flatMap(o => [
-      refOuNull(o.Parceiro), refOuNull(o.Evento), refOuNull(o.VendedorRep), refOuNull(o.Centro),
-    ]));
+    const oidsItensEstoque = resultado.objectlist.flatMap(o =>
+      (Array.isArray(o.Itens) ? o.Itens : []).map((item: any) => refOuNull(item?.ItemEstoque))
+    );
+    const mapaNomes = await resolverNomes(ambiente, [
+      ...resultado.objectlist.flatMap(o => [refOuNull(o.Parceiro), refOuNull(o.Evento), refOuNull(o.VendedorRep), refOuNull(o.Centro)]),
+      ...oidsItensEstoque,
+    ]);
 
     const registros = resultado.objectlist.map(o => {
       const parceiroOid = refOuNull(o.Parceiro);
@@ -137,7 +149,7 @@ export async function sincronizarFichasReservaP2sAction(opcoes: SincronizarFicha
         faturamento_suspenso: String(o.FaturamentoSuspenso) === 'true',
         faturamento_antecipado: String(o.FlagTemFaturamentoAntecipado) === 'true',
         justificativa_suspensao: String(o.JustificativaSuspensao || '') || null,
-        itens: resumoItens(o.Itens),
+        itens: resumoItens(o.Itens, mapaNomes),
         updated_at: new Date().toISOString(),
       };
     });

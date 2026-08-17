@@ -376,7 +376,7 @@ interface DeltaEstoqueLocacao {
 }
 
 export async function sincronizarEstoqueEmLocacao(deltas: DeltaEstoqueLocacao[], accessToken: string) {
-  const acesso = await validarAcesso(accessToken, '/admin/operacional/checklist');
+  const acesso = await validarAcesso(accessToken, '/admin/estoque/expedicao');
   if (!acesso.ok) return { success: false, message: acesso.message };
 
   try {
@@ -420,7 +420,7 @@ export async function sincronizarEstoqueEmLocacao(deltas: DeltaEstoqueLocacao[],
 // autenticado do navegador recebe lista vazia em silêncio (sem erro) e a tela some
 // com os valores, mesmo estando tudo salvo no banco.
 export async function buscarEstoque(accessToken: string) {
-  const acesso = await validarAcesso(accessToken, '/admin/operacional/estoque');
+  const acesso = await validarAcesso(accessToken, '/admin/estoque/controle');
   if (!acesso.ok) return { success: false, message: acesso.message, data: [] };
 
   try {
@@ -451,7 +451,7 @@ interface RegistroEstoquePayload {
 }
 
 export async function salvarRegistroEstoque(payload: RegistroEstoquePayload, accessToken: string) {
-  const acesso = await validarAcesso(accessToken, '/admin/operacional/estoque');
+  const acesso = await validarAcesso(accessToken, '/admin/estoque/controle');
   if (!acesso.ok) return { success: false, message: acesso.message };
 
   try {
@@ -485,7 +485,7 @@ interface VinculoAcessorioPayload {
 }
 
 export async function criarVinculoAcessorio(payload: VinculoAcessorioPayload, accessToken: string) {
-  const acesso = await validarAcesso(accessToken, '/admin/operacional/estoque');
+  const acesso = await validarAcesso(accessToken, '/admin/estoque/controle');
   if (!acesso.ok) return { success: false, message: acesso.message };
 
   try {
@@ -504,7 +504,7 @@ export async function criarVinculoAcessorio(payload: VinculoAcessorioPayload, ac
 }
 
 export async function removerVinculoAcessorio(gatilhoId: string, accessToken: string) {
-  const acesso = await validarAcesso(accessToken, '/admin/operacional/estoque');
+  const acesso = await validarAcesso(accessToken, '/admin/estoque/controle');
   if (!acesso.ok) return { success: false, message: acesso.message };
 
   try {

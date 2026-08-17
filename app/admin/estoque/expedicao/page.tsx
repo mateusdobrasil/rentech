@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria, sincronizarEstoqueEmLocacao } from '../../../actions';
+import { finalizarFichasLocacaoPorEventoAction } from './actions';
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
@@ -51,6 +52,7 @@ interface EventoFeiraBusca {
   local: string | null;
   data_inicial: string | null;
   data_final: string | null;
+  p2s_oid: string | null;
 }
 
 interface ChecklistHeader {
@@ -67,6 +69,10 @@ interface ChecklistHeader {
   responsavel_montagem: string;
   responsavel_retorno: string;
   status: StatusChecklist;
+  // oid do Evento correspondente no PrimeStart (capturado ao vincular o
+  // checklist a um evento já sincronizado) — usado só ao Finalizar, pra
+  // localizar e marcar como concluídas as Fichas de Locação do evento lá.
+  evento_p2s_oid: string | null;
 }
 
 interface ChecklistGridRow {
@@ -217,6 +223,7 @@ const cabecalhoVazio: ChecklistHeader = {
   periodo_inicio: '', periodo_fim: '', data_entrega: '',
   observacoes: '', responsavel_saida: '', responsavel_montagem: '', responsavel_retorno: '',
   status: 'RASCUNHO',
+  evento_p2s_oid: null,
 };
 
 // ============================================================================
@@ -445,7 +452,7 @@ export default function ChecklistCargaRetorno() {
       const hojeISO = new Date().toISOString().slice(0, 10);
       let query = supabase
         .from('eventos_feiras')
-        .select('nome, local, data_inicial, data_final')
+        .select('nome, local, data_inicial, data_final, p2s_oid')
         .gte('data_inicial', hojeISO)
         .order('data_inicial', { ascending: true, nullsFirst: false })
         .limit(20);
@@ -532,6 +539,7 @@ export default function ChecklistCargaRetorno() {
       data_entrega: camposManuais.data_entrega || null,
       status: 'RASCUNHO',
       created_by: usuarioAtual,
+      evento_p2s_oid: eventoSelecionado?.p2s_oid || null,
     };
 
     const { data: header, error: erroHeader } = await supabase.from('checklists').insert([payloadHeader]).select().single();
@@ -574,6 +582,7 @@ export default function ChecklistCargaRetorno() {
       observacoes: header.observacoes || '', responsavel_saida: header.responsavel_saida || '',
       responsavel_montagem: header.responsavel_montagem || '', responsavel_retorno: header.responsavel_retorno || '',
       status: header.status,
+      evento_p2s_oid: header.evento_p2s_oid || null,
     });
     const itensIniciais = itensCriados.map(i => ({ ...i, qtd_prevista: i.qtd_prevista || '', extra: i.extra ?? false }));
     setItens(itensIniciais);
@@ -582,7 +591,7 @@ export default function ChecklistCargaRetorno() {
     setModalNovo(false);
     setView('editor');
     setCriando(false);
-    router.replace(`/admin/operacional/checklist?id=${header.id}`);
+    router.replace(`/admin/estoque/expedicao?id=${header.id}`);
   };
 
   // ------------------------------------------------------------------------
@@ -611,6 +620,7 @@ export default function ChecklistCargaRetorno() {
       observacoes: header.observacoes || '', responsavel_saida: header.responsavel_saida || '',
       responsavel_montagem: header.responsavel_montagem || '', responsavel_retorno: header.responsavel_retorno || '',
       status: header.status,
+      evento_p2s_oid: header.evento_p2s_oid || null,
     });
     const itensCarregados = (itensData || []).map((i: ChecklistItem) => ({ ...i, qtd_prevista: i.qtd_prevista || '', extra: i.extra ?? false }));
     setItens(itensCarregados);
@@ -1242,6 +1252,41 @@ export default function ChecklistCargaRetorno() {
       }
     }
 
+    // ------------------------------------------------------------------------
+    // FINALIZAR FICHAS DE LOCAÇÃO NO PRIMESTART (P2S) — PAUSADO
+    // Testado em produção em 2026-08-17: o PUT retorna 204 e o
+    // lastupdatetimestamp do objeto muda de verdade (a chamada É aceita),
+    // mas o campo Status volta/permanece "A" — não vira "F". Ou seja, Status
+    // não é um campo livre: o PrimeStart provavelmente o recalcula a partir
+    // de alguma condição real (ex: devolução de fato registrada), e nosso
+    // PUT bruto é silenciosamente sobrescrito no processamento do servidor.
+    // Setar Status="F" direto NÃO finaliza a ficha de verdade — por isso
+    // essa chamada fica desligada até a P2S confirmar qual é a operação
+    // correta pra registrar a devolução/finalização. finalizarFichasLocacaoPorEventoAction
+    // continua existindo em ./actions, só não é chamada daqui por ora.
+    const ESCRITA_P2S_FICHA_LOCACAO_HABILITADA = false;
+    let erroP2s: string | null = null;
+    let avisoP2s = '';
+    if (ESCRITA_P2S_FICHA_LOCACAO_HABILITADA && statusSalvo === 'FINALIZADO' && checklistAtual.evento_p2s_oid) {
+      const resultadoP2s = await finalizarFichasLocacaoPorEventoAction(checklistAtual.evento_p2s_oid, accessToken);
+      if (!resultadoP2s.ok) {
+        erroP2s = resultadoP2s.erro || 'Falha desconhecida ao atualizar fichas no PrimeStart.';
+      } else {
+        const info = resultadoP2s.info as import('./actions').FinalizarFichasLocacaoInfo;
+        if (info.falhas.length > 0) {
+          erroP2s = `${info.atualizadas} ficha(s) finalizada(s), mas ${info.falhas.length} falharam: ${info.falhas.map(f => f.numero).join(', ')}`;
+        } else if (info.atualizadas > 0 || info.jaEstavamFinalizadas > 0) {
+          avisoP2s = ` PrimeStart: ${info.atualizadas} ficha(s) de locação marcada(s) como finalizada(s)${info.jaEstavamFinalizadas > 0 ? ` (${info.jaEstavamFinalizadas} já estavam)` : ''}.`;
+          registrarLogAuditoria({
+            usuario_nome: usuarioAtual,
+            acao: 'FINALIZOU FICHAS DE LOCAÇÃO NO PRIMESTART (P2S)',
+            setor: 'OPERACIONAL',
+            equipamento_nome: `${gerarNumeroExibicao(checklistAtual.numero)} — ${info.atualizadas} ficha(s)`,
+          });
+        }
+      }
+    }
+
     // Recarrega do banco para normalizar ids dos itens recém-criados (necessário
     // antes de reconciliar divergências, que usam o id real do item como chave)
     const { data: itensAtualizados } = await supabase.from('checklist_itens').select('*').eq('checklist_id', checklistAtual.id).order('ordem', { ascending: true });
@@ -1305,16 +1350,21 @@ export default function ChecklistCargaRetorno() {
 
     setSalvando(false);
 
-    const erroPosSalvamento = erroDivergencia || erroEstoque;
+    const erroPosSalvamento = erroDivergencia || erroEstoque || erroP2s;
     const avisoEstoque = idsEquipamentosAfetados.length > 0 && !erroEstoque
       ? ` Estoque atualizado (${idsEquipamentosAfetados.length} equipamento(s) em locação/liberado(s)).`
       : '';
 
     setDialog(erroPosSalvamento
-      ? { open: true, type: 'error', title: 'Checklist salvo, mas...', msg: erroDivergencia ? `Falhou ao atualizar a aba Divergências: ${erroDivergencia}` : `Falhou ao atualizar o estoque: ${erroEstoque}` }
-      : { open: true, type: 'success', title: 'Salvo', msg: `Checklist atualizado com sucesso.${qtdDivergenciasAtivas > 0 ? ` ${qtdDivergenciasAtivas} item(ns) divergente(s) em Divergências.` : ''}${avisoEstoque}` });
+      ? {
+          open: true, type: 'error', title: 'Checklist salvo, mas...',
+          msg: erroDivergencia ? `Falhou ao atualizar a aba Divergências: ${erroDivergencia}`
+            : erroEstoque ? `Falhou ao atualizar o estoque: ${erroEstoque}`
+            : `Falhou ao atualizar fichas no PrimeStart: ${erroP2s}`,
+        }
+      : { open: true, type: 'success', title: 'Salvo', msg: `Checklist atualizado com sucesso.${qtdDivergenciasAtivas > 0 ? ` ${qtdDivergenciasAtivas} item(ns) divergente(s) em Divergências.` : ''}${avisoEstoque}${avisoP2s}` });
     if (!erroPosSalvamento) {
-      setTimeout(() => setDialog(prev => ({ ...prev, open: false })), qtdDivergenciasAtivas > 0 || avisoEstoque ? 2400 : 1800);
+      setTimeout(() => setDialog(prev => ({ ...prev, open: false })), qtdDivergenciasAtivas > 0 || avisoEstoque || avisoP2s ? 2400 : 1800);
       voltarParaLista();
     }
   };
@@ -1460,8 +1510,8 @@ export default function ChecklistCargaRetorno() {
         <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200">
           <div className="text-5xl mb-4">⛔</div>
           <h2 className="text-xl font-black text-red-600 uppercase tracking-wider mb-2">Acesso Restrito</h2>
-          <p className="text-sm text-gray-500 mb-6">Você não possui permissão para acessar o Checklist de Carga.</p>
-          <button onClick={() => router.push('/admin/operacional')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
+          <p className="text-sm text-gray-500 mb-6">Você não possui permissão para acessar a Expedição.</p>
+          <button onClick={() => router.push('/admin/estoque')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
             Voltar ao Menu Principal
           </button>
         </div>
@@ -1482,9 +1532,9 @@ export default function ChecklistCargaRetorno() {
 
       <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex-shrink-0 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 shadow-sm no-print">
         <p className="text-[#0369A1] font-medium text-sm">
-          ✅ <strong>Olá, {usuarioAtual}</strong>. Checklist de carga e retorno de equipamentos por evento.
+          ✅ <strong>Olá, {usuarioAtual}</strong>. Expedição: saída e retorno de equipamentos por evento.
         </p>
-        <button onClick={() => (view === 'lista' ? router.push('/admin/operacional') : voltarParaLista())} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
+        <button onClick={() => (view === 'lista' ? router.push('/admin/estoque') : voltarParaLista())} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
           ⬅ {view === 'lista' ? 'VOLTAR AO HUB' : 'VOLTAR À LISTA'}
         </button>
       </div>

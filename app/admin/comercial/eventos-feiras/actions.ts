@@ -113,6 +113,7 @@ export async function sincronizarEventosFeirasP2sAction(opcoes: SincronizarEvent
       const dataFinalNum = Number(o.DataFinal) || 0;
       return {
         nome: String(o.Nome || '').trim(),
+        p2s_oid: o.oid,
         data_inicial: paraDataISO(dataInicialNum),
         data_final: paraDataISO(dataFinalNum),
         tipo_evento: tipoOid ? (mapaNomes.get(tipoOid) || null) : null,

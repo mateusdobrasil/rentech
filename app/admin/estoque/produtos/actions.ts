@@ -1,10 +1,9 @@
 'use server';
 
-// app/admin/operacional/produtos/actions.ts
+// app/admin/estoque/produtos/actions.ts
 // Sincronização de Produtos (TCustomProduto) direto da API do PrimeStart —
-// tela nova em /admin/operacional/produtos, sem planilha/import manual
-// anterior. Grava na tabela produtos (ver sql/produtos.sql), upsert por
-// p2s_oid.
+// tela em /admin/estoque/produtos, sem planilha/import manual anterior.
+// Grava na tabela produtos (ver sql/produtos.sql), upsert por p2s_oid.
 //
 // Mapeamento validado empiricamente contra o servidor de produção em
 // 2026-08-10 (515 produtos reais inspecionados, catálogo inteiro):
@@ -29,7 +28,7 @@ import { validarAcesso } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
-const ROTA = '/admin/operacional/produtos';
+const ROTA = '/admin/estoque/produtos';
 
 // TCustomEstoque não segue o padrão NomeExibicao/NomeCompleto/Nome — seu
 // campo de nome é NomeEstoque (confirmado testando P,538 → "LOCACAO -

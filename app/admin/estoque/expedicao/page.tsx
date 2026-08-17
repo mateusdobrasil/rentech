@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria, sincronizarEstoqueEmLocacao } from '../../../actions';
 import { finalizarFichasLocacaoPorEventoAction } from './actions';
+import { sincronizarFichasReservaP2sAction } from '../../comercial/fichas/actions';
+import { sincronizarEventosFeirasP2sAction } from '../../comercial/eventos-feiras/actions';
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
@@ -246,6 +248,7 @@ export default function ChecklistCargaRetorno() {
 
   const [view, setView] = useState<'lista' | 'editor' | 'divergencias'>('lista');
   const [abrindoAutomatico, setAbrindoAutomatico] = useState(false);
+  const [sincronizandoP2s, setSincronizandoP2s] = useState(false);
 
   // Catálogo (equipamentos/categorias) — usado nos modais de item e no modelo padrão
   const [categorias, setCategorias] = useState<Categoria[]>([]);
@@ -475,6 +478,43 @@ export default function ChecklistCargaRetorno() {
     }, 300);
     return () => clearTimeout(handle);
   }, [camposManuais.evento_feira, modalNovo, eventoSelecionado, nonceEvento]);
+
+  // Sincroniza Fichas de Reserva e Eventos/Feiras num clique só — são as duas
+  // fontes que alimentam esta tela (evento do checklist e "Importar das
+  // OS's"), reaproveita as mesmas Server Actions das telas de origem
+  // (app/admin/comercial/fichas e app/admin/comercial/eventos-feiras).
+  // Sequencial, não em paralelo, pra não sobrecarregar o servidor
+  // on-premise da P2S com duas sincronizações simultâneas.
+  const sincronizarFichasEEventos = async () => {
+    setSincronizandoP2s(true);
+    setDialog({ open: true, type: 'loading', title: 'Sincronizando...', msg: 'Buscando Fichas de Reserva e Eventos/Feiras direto do PrimeStart.' });
+    try {
+      const resFichas = await sincronizarFichasReservaP2sAction({}, accessToken);
+      if (!resFichas.ok) {
+        setDialog({ open: true, type: 'error', title: 'Falha ao sincronizar Fichas de Reserva', msg: resFichas.erro || 'Erro desconhecido.' });
+        return;
+      }
+
+      const resEventos = await sincronizarEventosFeirasP2sAction({}, accessToken);
+      if (!resEventos.ok) {
+        setDialog({ open: true, type: 'error', title: 'Falha ao sincronizar Eventos/Feiras', msg: resEventos.erro || 'Erro desconhecido.' });
+        return;
+      }
+
+      registrarLogAuditoria({
+        usuario_nome: usuarioAtual,
+        acao: 'SINCRONIZOU FICHAS DE RESERVA + EVENTOS/FEIRAS VIA API (P2S) — EXPEDIÇÃO',
+        setor: 'OPERACIONAL',
+        equipamento_nome: `${resFichas.info.processados} ficha(s), ${resEventos.info.processados} evento(s)`,
+      });
+      setDialog({
+        open: true, type: 'success', title: 'Sincronizado',
+        msg: `${resFichas.info.processados} ficha(s) de reserva e ${resEventos.info.processados} evento(s)/feira(s) sincronizados direto do PrimeStart.`,
+      });
+    } finally {
+      setSincronizandoP2s(false);
+    }
+  };
 
   const abrirModalNovo = () => {
     setModalNovo(true);
@@ -1562,6 +1602,9 @@ export default function ChecklistCargaRetorno() {
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
                 <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Checklists de Carga</h2>
                 <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                  <button onClick={sincronizarFichasEEventos} disabled={sincronizandoP2s} className="bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 px-4 py-2.5 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-emerald-200">
+                    {sincronizandoP2s ? '🔄 Sincronizando...' : '🔄 Sincronizar Fichas/Eventos'}
+                  </button>
                   <button onClick={() => setView('divergencias')} className="bg-orange-50 hover:bg-orange-100 text-orange-700 px-4 py-2.5 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-orange-200">
                     ⚠️ Divergências{totalDivergenciasAbertas > 0 ? ` (${totalDivergenciasAbertas})` : ''}
                   </button>

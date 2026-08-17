@@ -138,22 +138,26 @@ export async function sincronizarEventosFeirasCore(opcoes: SincronizarEventosOpc
       };
     }).filter(r => r.nome);
 
-    // upsert por (nome, data_inicial) — mesma chave da importação manual;
-    // dedup necessário pois o Postgres rejeita atualizar a mesma linha
-    // duas vezes no mesmo lote.
-    const dedupPorChave = new Map<string, (typeof registrosBrutos)[number]>();
-    registrosBrutos.forEach((r, idx) => {
-      const chave = r.data_inicial ? `${r.nome}||${r.data_inicial}` : `__sem_data__${idx}`;
-      dedupPorChave.set(chave, r);
-    });
-    const registros = Array.from(dedupPorChave.values());
+    // upsert por p2s_oid — identificador estável do PrimeStart (a tabela tem
+    // índice único em p2s_oid, além do (nome, data_inicial) herdado da
+    // importação manual em planilha). Usar (nome, data_inicial) como chave
+    // de conflito aqui dava erro de "duplicate key ... eventos_feiras_p2s_oid_idx"
+    // sempre que um evento tinha nome ou data alterados no PrimeStart entre
+    // duas sincronizações: o upsert não achava a linha existente pelo par
+    // nome+data (que mudou) e tentava inserir uma linha nova com um p2s_oid
+    // que já existia — confirmado em produção, 2026-08-17. Dedup por
+    // p2s_oid pelo mesmo motivo de sempre: o Postgres rejeita atualizar a
+    // mesma linha duas vezes no mesmo lote.
+    const dedupPorOid = new Map<string, (typeof registrosBrutos)[number]>();
+    registrosBrutos.forEach(r => dedupPorOid.set(r.p2s_oid, r));
+    const registros = Array.from(dedupPorOid.values());
 
     const db = supabaseAdmin();
     const TAMANHO_LOTE = 500;
     let processados = 0;
     for (let i = 0; i < registros.length; i += TAMANHO_LOTE) {
       const lote = registros.slice(i, i + TAMANHO_LOTE);
-      const { error } = await db.from('eventos_feiras').upsert(lote, { onConflict: 'nome,data_inicial' });
+      const { error } = await db.from('eventos_feiras').upsert(lote, { onConflict: 'p2s_oid' });
       if (error) throw new Error(error.message);
       processados += lote.length;
     }

@@ -62,7 +62,7 @@ export default function ParametrosHub() {
       <div className="max-w-6xl mx-auto">
         <div className="mb-8">
           <h1 className="text-3xl font-black text-[#0C1D4D] uppercase tracking-tight">Parâmetros do Sistema</h1>
-          <p className="text-[#64748B] font-medium">Configurações centrais: acessos, integrações, conteúdo do site, agendamentos e auditoria.</p>
+          <p className="text-[#64748B] font-medium">Configurações centrais: acessos, integrações, conteúdo do site, agendamentos, empresas do grupo e auditoria.</p>
         </div>
 
         <ModuleGrid modulos={modulosAutorizados} variant="button-icon" />

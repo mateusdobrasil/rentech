@@ -50,7 +50,7 @@ export default function ComercialHub() {
       <div className="max-w-6xl mx-auto">
         <div className="mb-10">
           <h1 className="text-3xl font-black text-[#0C1D4D] uppercase tracking-tight">Setor Comercial</h1>
-          <p className="text-[#64748B] font-medium">Documentos, oportunidades e relacionamento com clientes.</p>
+          <p className="text-[#64748B] font-medium">Documentos da empresa e da frota, fichas de reserva e eventos/feiras.</p>
         </div>
 
         <ModuleGrid modulos={modulosAutorizados} variant="button-plain" />

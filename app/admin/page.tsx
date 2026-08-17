@@ -13,7 +13,7 @@ import { HubLoading, HubPerfilNaoLocalizado, HubErro } from '../components/ui/Hu
 const MODULOS_SISTEMA = [
   {
     titulo: 'Ordens de Pagamentos',
-    descricao: 'Acompanhe o status ou edite as Ordens de Pagamento solicitadas por você.',
+    descricao: 'Solicite novas Ordens de Pagamento, acompanhe as suas e gerencie assinaturas de contratos.',
     icone: '📋',
     link: '/admin/op',
     cor: 'border-[#336699]/50 hover:border-[#336699]',
@@ -21,7 +21,7 @@ const MODULOS_SISTEMA = [
   }, 
   {
     titulo: 'RH',
-    descricao: 'Importe os registros do relógio, calcule horas extras e gere espelhos de jornada.',
+    descricao: 'Funcionários, holerites, ponto, benefícios, documentos, férias, rescisões e relatórios de RH.',
     icone: '🫀',
     link: '/admin/rh',
     cor: 'border-rose-500/50 hover:border-rose-500',
@@ -29,7 +29,7 @@ const MODULOS_SISTEMA = [
   },
   {
     titulo: 'Financeiro',
-    descricao: 'Lotes de pagamento, Ordens de Pagamento e Crédito Consignado.',
+    descricao: 'Lotes de pagamento, Ordens de Pagamento, Consignado, contas a pagar e integração bancária.',
     icone: '💰',
     link: '/admin/financeiro',
     cor: 'border-emerald-500/50 hover:border-emerald-500',
@@ -37,7 +37,7 @@ const MODULOS_SISTEMA = [
   },
   {
     titulo: 'Comercial',
-    descricao: 'Gerencie documentos, oportunidades, leads e relacionamento com clientes.',
+    descricao: 'Documentos da empresa e da frota, fichas de reserva e cadastro de eventos/feiras.',
     icone: '🤝',
     link: '/admin/comercial',
     cor: 'border-slate-500/50 hover:border-slate-500',
@@ -45,7 +45,7 @@ const MODULOS_SISTEMA = [
   },
   {
     titulo: 'Operacional',
-    descricao: 'Cadastros de equipamentos, acessórios, veículos e afins.',
+    descricao: 'Controle de frota, documentos de veículos, relatórios operacionais e registro de ponto.',
     icone: '👷‍♂️',
     link: '/admin/operacional',
     cor: 'border-slate-500/50 hover:border-slate-500',
@@ -77,7 +77,7 @@ const MODULOS_SISTEMA = [
   },
   {
     titulo: 'Parâmetros',
-    descricao: 'Controle de acesso, conteúdo do site, integrações, agendamentos e log de auditoria.',
+    descricao: 'Controle de acesso, conteúdo do site, integrações, agendamentos, empresas do grupo e log de auditoria.',
     icone: '⚙️',
     link: '/admin/parametros',
     cor: 'border-purple-500/50 hover:border-purple-500',

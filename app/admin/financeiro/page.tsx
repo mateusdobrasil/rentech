@@ -66,7 +66,7 @@ export default function FinanceiroHub() {
       <div className="max-w-6xl mx-auto">
         <div className="mb-10">
           <h1 className="text-3xl font-black text-[#0C1D4D] uppercase tracking-tight">Financeiro</h1>
-          <p className="text-[#64748B] font-medium">Lotes de pagamento, Ordens de Pagamento e Crédito Consignado.</p>
+          <p className="text-[#64748B] font-medium">Lotes de pagamento, Ordens de Pagamento, Consignado, contas a pagar e integração bancária.</p>
         </div>
 
         <ModuleGrid modulos={modulosAutorizados} variant="button-plain" />

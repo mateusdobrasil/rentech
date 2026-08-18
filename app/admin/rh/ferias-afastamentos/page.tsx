@@ -13,6 +13,7 @@ import {
 } from '../actions/actions-afastamentos';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 
@@ -36,6 +37,7 @@ interface Afastamento {
 
 export default function FeriasAfastamentosPage() {
   const router = useRouter();
+  const toast = useToast();
   const [aba, setAba] = useState<'ferias' | 'afastamentos'>('ferias');
 
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
@@ -61,8 +63,8 @@ export default function FeriasAfastamentosPage() {
     try {
       const res = await painelFeriasAction(accessToken);
       if (res.ok) { setLinhasFerias(res.info.linhas); setTotaisFerias(res.info.totais); }
-      else alert('Erro ao carregar férias: ' + res.erro);
-    } catch (e: any) { alert('Erro ao carregar férias: ' + e.message); }
+      else toast('Erro ao carregar férias: ' + res.erro, 'error');
+    } catch (e: any) { toast('Erro ao carregar férias: ' + e.message, 'error'); }
     finally { setLoadingFerias(false); }
   };
 
@@ -78,7 +80,7 @@ export default function FeriasAfastamentosPage() {
 
   const salvarAgendamento = async () => {
     if (!modalPeriodo) return;
-    if (!fDataInicio) { alert('Escolha a data de início.'); return; }
+    if (!fDataInicio) { toast('Escolha a data de início.', 'error'); return; }
     setSalvandoFerias(true);
     try {
       const res = await agendarFeriasAction({
@@ -88,7 +90,7 @@ export default function FeriasAfastamentosPage() {
       if (!res.ok) throw new Error(res.erro);
       setModalPeriodo(null);
       carregarFerias();
-    } catch (e: any) { alert('Erro ao agendar: ' + e.message); }
+    } catch (e: any) { toast('Erro ao agendar: ' + e.message, 'error'); }
     finally { setSalvandoFerias(false); }
   };
 
@@ -98,7 +100,7 @@ export default function FeriasAfastamentosPage() {
       const res = await cancelarAgendamentoFeriasAction({ id: periodo.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       carregarFerias();
-    } catch (e: any) { alert('Erro ao cancelar: ' + e.message); }
+    } catch (e: any) { toast('Erro ao cancelar: ' + e.message, 'error'); }
   };
 
   // Um período "combina" com o filtro selecionado — usado tanto pra decidir
@@ -160,7 +162,7 @@ export default function FeriasAfastamentosPage() {
       const [painel, tipos] = await Promise.all([painelAfastamentosAction(accessToken), listarTiposAfastamentoAction(accessToken)]);
       if (painel.ok) { setAfastamentos(painel.info.linhas); setTotaisAfast(painel.info.totais); }
       if (tipos.ok) setTiposAfast(tipos.info.tipos);
-    } catch (e: any) { alert('Erro ao carregar afastamentos: ' + e.message); }
+    } catch (e: any) { toast('Erro ao carregar afastamentos: ' + e.message, 'error'); }
     finally { setLoadingAfast(false); }
   };
 
@@ -191,7 +193,7 @@ export default function FeriasAfastamentosPage() {
   });
 
   const salvarAfastamento = async () => {
-    if (!aFunc || !aTipo || !aInicio) { alert('Funcionário, tipo e data de início são obrigatórios.'); return; }
+    if (!aFunc || !aTipo || !aInicio) { toast('Funcionário, tipo e data de início são obrigatórios.', 'error'); return; }
     setSalvandoAfast(true);
     try {
       let arquivoBase64: string | null = null;
@@ -205,7 +207,7 @@ export default function FeriasAfastamentosPage() {
       if (!res.ok) throw new Error(res.erro);
       setModalAfast(false);
       carregarAfastamentos();
-    } catch (e: any) { alert('Erro ao salvar: ' + e.message); }
+    } catch (e: any) { toast('Erro ao salvar: ' + e.message, 'error'); }
     finally { setSalvandoAfast(false); }
   };
 
@@ -217,7 +219,7 @@ export default function FeriasAfastamentosPage() {
       const res = await encerrarAfastamentoAction({ id: a.id, dataFim }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       carregarAfastamentos();
-    } catch (e: any) { alert('Erro ao encerrar: ' + e.message); }
+    } catch (e: any) { toast('Erro ao encerrar: ' + e.message, 'error'); }
   };
 
   const excluirAgora = async (a: Afastamento) => {
@@ -226,7 +228,7 @@ export default function FeriasAfastamentosPage() {
       const res = await excluirAfastamentoAction({ id: a.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       carregarAfastamentos();
-    } catch (e: any) { alert('Erro ao excluir: ' + e.message); }
+    } catch (e: any) { toast('Erro ao excluir: ' + e.message, 'error'); }
   };
 
   const abrirAnexo = async (a: Afastamento) => {
@@ -234,13 +236,13 @@ export default function FeriasAfastamentosPage() {
       const res = await urlAnexoAfastamentoAction({ id: a.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
-    } catch (e: any) { alert('Erro ao abrir anexo: ' + e.message); }
+    } catch (e: any) { toast('Erro ao abrir anexo: ' + e.message, 'error'); }
   };
 
   const adicionarTipoAfast = async () => {
     if (!novoTipoNome.trim()) return;
     const res = await criarTipoAfastamentoAction({ nome: novoTipoNome }, accessToken);
-    if (!res.ok) { alert(res.erro); return; }
+    if (!res.ok) { toast(res.erro || 'Erro ao criar tipo de afastamento.', 'error'); return; }
     setNovoTipoNome(''); setMostrarNovoTipo(false);
     const tipos = await listarTiposAfastamentoAction(accessToken);
     if (tipos.ok) setTiposAfast(tipos.info.tipos);

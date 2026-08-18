@@ -10,6 +10,7 @@ import {
 } from '../actions/actions-beneficios';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 const BRL = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -44,6 +45,7 @@ export default function BeneficiosPage() {
   const [salvando, setSalvando] = useState(false);
 
   const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const toast = useToast();
 
   // Grid consolidado (mês)
   const [mostrarGrid, setMostrarGrid] = useState(false);
@@ -63,7 +65,7 @@ export default function BeneficiosPage() {
       if (!res.ok) throw new Error(res.erro);
       const linhas = res.info.linhas as any[];
       if (linhas.length === 0) {
-        alert('Nenhum funcionário com benefício no Cartão Flash neste mês.');
+        toast('Nenhum funcionário com benefício no Cartão Flash neste mês.', 'info');
         return;
       }
 
@@ -83,7 +85,7 @@ export default function BeneficiosPage() {
       a.href = url; a.download = `pedido-flash-${gridMes}.csv`; a.click();
       URL.revokeObjectURL(url);
     } catch (e: any) {
-      alert('Erro ao gerar o arquivo Flash: ' + e.message);
+      toast('Erro ao gerar o arquivo Flash: ' + e.message, 'error');
     } finally {
       setGerandoFlash(false);
     }
@@ -109,7 +111,7 @@ export default function BeneficiosPage() {
       if (painel.ok) setLinhas(painel.info.linhas);
       if (cats.ok) { setTipos(cats.info.tipos); setMeios(cats.info.meios); }
     } catch (e: any) {
-      alert('Erro ao carregar: ' + e.message);
+      toast('Erro ao carregar: ' + e.message, 'error');
     } finally {
       setLoading(false);
     }
@@ -151,9 +153,9 @@ export default function BeneficiosPage() {
   };
 
   const salvarBeneficio = async () => {
-    if (!formTipo || !formMeio) { alert('Escolha o tipo e o meio de pagamento.'); return; }
+    if (!formTipo || !formMeio) { toast('Escolha o tipo e o meio de pagamento.', 'error'); return; }
     if (formModalidade === 'DIAS_FIXOS' && (!Number(formQtdDias) || Number(formQtdDias) <= 0)) {
-      alert('Informe a quantidade de dias.'); return;
+      toast('Informe a quantidade de dias.', 'error'); return;
     }
     setSalvando(true);
     try {
@@ -169,7 +171,7 @@ export default function BeneficiosPage() {
       carregar();
       if (mostrarGrid) gerarGrid();
     } catch (e: any) {
-      alert('Erro ao salvar: ' + e.message);
+      toast('Erro ao salvar: ' + e.message, 'error');
     } finally {
       setSalvando(false);
     }
@@ -182,7 +184,7 @@ export default function BeneficiosPage() {
       const res = await gridBeneficiosAction({ mesReferencia: gridMes, meioId: gridFiltroMeio === 'TODOS' ? null : Number(gridFiltroMeio) }, accessToken);
       if (res.ok) setGrid(res.info);
     } catch (e: any) {
-      alert('Erro ao gerar grid: ' + e.message);
+      toast('Erro ao gerar grid: ' + e.message, 'error');
     } finally {
       setCarregandoGrid(false);
     }
@@ -221,7 +223,7 @@ export default function BeneficiosPage() {
       if (!res.ok) throw new Error(res.erro);
       carregar();
     } catch (e: any) {
-      alert('Erro ao remover: ' + e.message);
+      toast('Erro ao remover: ' + e.message, 'error');
     }
   };
 
@@ -234,7 +236,7 @@ export default function BeneficiosPage() {
   const adicionarTipo = async () => {
     if (!novoTipo.trim()) return;
     const res = await criarTipoBeneficioAction({ nome: novoTipo }, accessToken);
-    if (!res.ok) { alert(res.erro); return; }
+    if (!res.ok) { toast(res.erro || 'Erro ao criar o tipo de benefício.', 'error'); return; }
     setNovoTipo('');
     const cats = await listarCatalogosBeneficioAction(accessToken);
     if (cats.ok) setTipos(cats.info.tipos);
@@ -243,7 +245,7 @@ export default function BeneficiosPage() {
   const adicionarMeio = async () => {
     if (!novoMeio.trim()) return;
     const res = await criarMeioBeneficioAction({ nome: novoMeio }, accessToken);
-    if (!res.ok) { alert(res.erro); return; }
+    if (!res.ok) { toast(res.erro || 'Erro ao criar o meio de pagamento.', 'error'); return; }
     setNovoMeio('');
     const cats = await listarCatalogosBeneficioAction(accessToken);
     if (cats.ok) setMeios(cats.info.meios);

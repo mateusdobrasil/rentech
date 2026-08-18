@@ -10,6 +10,7 @@ import { sincronizarEventosFeirasP2sAction } from '../../comercial/eventos-feira
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 // ============================================================================
 // TIPOS
@@ -243,6 +244,7 @@ const cabecalhoVazio: ChecklistHeader = {
 export default function ChecklistCargaRetorno() {
   const router = useRouter();
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Usuário' });
+  const toast = useToast();
 
   const [dialog, setDialog] = useState<{ open: boolean; type: 'loading' | 'success' | 'error'; title: string; msg: string }>({ open: false, type: 'loading', title: '', msg: '' });
 
@@ -1488,7 +1490,7 @@ export default function ChecklistCargaRetorno() {
     }]);
 
     if (error) {
-      alert(`Erro: ${error.message}`);
+      toast(`Erro: ${error.message}`, 'error');
       return;
     }
 
@@ -1506,7 +1508,7 @@ export default function ChecklistCargaRetorno() {
   const removerItemModelo = async (item: ModeloItem) => {
     if (!confirm(`Remover "${item.descricao}" do modelo padrão?`)) return;
     const { error } = await supabase.from('checklist_modelo_itens').delete().eq('id', item.id);
-    if (error) { alert(`Erro: ${error.message}`); return; }
+    if (error) { toast(`Erro: ${error.message}`, 'error'); return; }
     registrarLogAuditoria({ usuario_nome: usuarioAtual, acao: 'REMOVEU ITEM DO MODELO PADRÃO DE CHECKLIST', setor: 'OPERACIONAL', equipamento_nome: item.descricao });
     setModeloItens(prev => prev.filter(m => m.id !== item.id));
   };

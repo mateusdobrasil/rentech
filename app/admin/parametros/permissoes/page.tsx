@@ -9,6 +9,7 @@ import { formatarCpf } from '../../../portal/lib/cpf';
 import { Analytics } from "@vercel/analytics/next"; // <-- CORRIGIDO: Barra adicionada
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
 import { normalizarPermissao } from '../../../lib/permissoes';
 
 // Setores de permissão: antes era uma lista fixa aqui no código, agora vem
@@ -57,6 +58,7 @@ export default function GestaoPermissoes() {
   const router = useRouter();
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Usuário' });
   const usuarioNome = usuarioAtual;
+  const toast = useToast();
 
   const [abaAtiva, setAbaAtiva] = useState<'usuarios' | 'paginas' | 'setores' | 'portal' | 'seguranca'>('usuarios');
   const [loading, setLoading] = useState(true);
@@ -271,7 +273,7 @@ export default function GestaoPermissoes() {
 
   const salvarConfigPagina = async () => {
     if (!formPagina.nome_pagina.trim() || !formPagina.endereco_route.trim()) {
-      return alert('Nome da página e Endereço (URL) são obrigatórios.');
+      return toast('Nome da página e Endereço (URL) são obrigatórios.', 'error');
     }
 
     setLoading(true);
@@ -308,7 +310,7 @@ export default function GestaoPermissoes() {
       setEditandoPaginaId(null);
       carregarPaginas();
     } catch (error: any) {
-      alert(error.message || 'Erro ao salvar parametrização da página.');
+      toast(error.message || 'Erro ao salvar parametrização da página.', 'error');
     } finally {
       setLoading(false);
     }

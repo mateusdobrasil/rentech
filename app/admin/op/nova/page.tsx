@@ -8,6 +8,7 @@ import { criarOP, NovaOPData } from '../actions';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { useAcessoRota } from '../useAcessoRota';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 interface ItemOP {
   id: number;
@@ -44,6 +45,7 @@ export default function NovaOrdemPagamento() {
 
   // Sessão + permissão da rota, resolvidas pelo hook compartilhado do módulo.
   const { authLoading, acessoNegado, perfil } = useAcessoRota('/admin/op/nova');
+  const toast = useToast();
 
   const [loading, setLoading] = useState(false);
   const [modal, setModal] = useState<{ open: boolean; success: boolean; msg: string; title: string }>({ open: false, success: false, msg: '', title: '' });
@@ -194,7 +196,7 @@ export default function NovaOrdemPagamento() {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       if (file.size > 5 * 1024 * 1024) {
-        alert("O arquivo é muito grande. O limite máximo é 5MB.");
+        toast("O arquivo é muito grande. O limite máximo é 5MB.", 'error');
         e.target.value = '';
         return;
       }

@@ -13,6 +13,7 @@ import { listarAssinaturasRescisaoAction } from '../actions/actions-rescisao';
 import logoColorido from '../../../../app/imgs/logo.png';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 interface Assinatura {
   id: number;
@@ -44,6 +45,7 @@ const STATUS_INFO: Record<string, { label: string; cor: string; bg: string; icon
 
 export default function AssinaturasPage() {
   const router = useRouter();
+  const toast = useToast();
   const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
   const [aba, setAba] = useState<'HOLERITES' | 'RESCISAO'>('HOLERITES');
 
@@ -73,7 +75,7 @@ export default function AssinaturasPage() {
       if (!res.ok) throw new Error(res.erro);
       setAssinaturasRescisao(res.info.assinaturas);
     } catch (e: any) {
-      alert('Erro ao carregar assinaturas de rescisão: ' + e.message);
+      toast('Erro ao carregar assinaturas de rescisão: ' + e.message, 'error');
     } finally {
       setLoadingRescisao(false);
     }
@@ -88,7 +90,7 @@ export default function AssinaturasPage() {
       if (!res.ok) throw new Error(res.erro);
       carregarRescisoes();
     } catch (e: any) {
-      alert('Erro ao atualizar status: ' + e.message);
+      toast('Erro ao atualizar status: ' + e.message, 'error');
     } finally {
       setAtualizandoRescisao(null);
     }
@@ -101,7 +103,7 @@ export default function AssinaturasPage() {
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
     } catch (e: any) {
-      alert('Erro ao abrir o documento assinado: ' + e.message);
+      toast('Erro ao abrir o documento assinado: ' + e.message, 'error');
     } finally {
       setBaixandoRescisao(null);
     }
@@ -143,7 +145,7 @@ export default function AssinaturasPage() {
       if (!res.ok) throw new Error(res.erro);
       setAssinaturas(res.info.assinaturas);
     } catch (e: any) {
-      alert('Erro ao carregar assinaturas: ' + e.message);
+      toast('Erro ao carregar assinaturas: ' + e.message, 'error');
     } finally {
       setLoading(false);
     }
@@ -156,7 +158,7 @@ export default function AssinaturasPage() {
       if (!res.ok) throw new Error(res.erro);
       carregar(mesReferencia);
     } catch (e: any) {
-      alert('Erro ao atualizar status: ' + e.message);
+      toast('Erro ao atualizar status: ' + e.message, 'error');
     } finally {
       setAtualizando(null);
     }
@@ -164,7 +166,7 @@ export default function AssinaturasPage() {
 
   const atualizarTodas = async () => {
     const pendentes = assinaturas.filter(a => a.status !== 'ASSINADO' && a.status !== 'REJEITADO').length;
-    if (pendentes === 0) { alert('Não há assinaturas pendentes para atualizar.'); return; }
+    if (pendentes === 0) { toast('Não há assinaturas pendentes para atualizar.', 'info'); return; }
 
     setAtualizandoTodas(true);
     try {
@@ -173,10 +175,10 @@ export default function AssinaturasPage() {
       const mudancasMsg = res.info?.mudancas?.length
         ? `\n\nMudanças:\n${res.info.mudancas.join('\n')}`
         : '\n\nNenhuma mudança de status desde a última consulta.';
-      alert(`${res.info?.atualizados || 0} de ${res.info?.total || 0} assinatura(s) consultada(s).${mudancasMsg}`);
+      toast(`${res.info?.atualizados || 0} de ${res.info?.total || 0} assinatura(s) consultada(s).${mudancasMsg}`, 'success');
       carregar(mesReferencia);
     } catch (e: any) {
-      alert('Erro ao atualizar as assinaturas: ' + e.message);
+      toast('Erro ao atualizar as assinaturas: ' + e.message, 'error');
     } finally {
       setAtualizandoTodas(false);
     }
@@ -189,7 +191,7 @@ export default function AssinaturasPage() {
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
     } catch (e: any) {
-      alert('Erro ao abrir o documento assinado: ' + e.message);
+      toast('Erro ao abrir o documento assinado: ' + e.message, 'error');
     } finally {
       setBaixandoAssinado(null);
     }
@@ -211,10 +213,10 @@ export default function AssinaturasPage() {
   });
 
   const enviarAvulso = async () => {
-    if (!avulsoFunc) { alert('Selecione o funcionário.'); return; }
-    if (!avulsoTitulo.trim()) { alert('Informe o título do documento (ex: Advertência).'); return; }
-    if (!avulsoArquivo) { alert('Selecione o arquivo PDF.'); return; }
-    if (avulsoArquivo.type !== 'application/pdf') { alert('O arquivo deve ser PDF.'); return; }
+    if (!avulsoFunc) { toast('Selecione o funcionário.', 'error'); return; }
+    if (!avulsoTitulo.trim()) { toast('Informe o título do documento (ex: Advertência).', 'error'); return; }
+    if (!avulsoArquivo) { toast('Selecione o arquivo PDF.', 'error'); return; }
+    if (avulsoArquivo.type !== 'application/pdf') { toast('O arquivo deve ser PDF.', 'error'); return; }
 
     if (!confirm(
       `Enviar "${avulsoTitulo}" para ${avulsoFunc} assinar?\n\n` +
@@ -230,13 +232,13 @@ export default function AssinaturasPage() {
       }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       const anexosMsg = res.info?.anexados?.length ? `\n\nAnexado: resumo + ${res.info.anexados.join(' + ')}` : '';
-      alert(`Documento enviado para assinatura!${anexosMsg}${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`);
+      toast(`Documento enviado para assinatura!${anexosMsg}${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`, 'success');
       setAvulsoFunc(''); setAvulsoTitulo(''); setAvulsoArquivo(null);
       if (avulsoFileRef.current) avulsoFileRef.current.value = '';
       setMostrarUpload(false);
       carregar(mesReferencia);
     } catch (e: any) {
-      alert('Erro ao enviar: ' + e.message);
+      toast('Erro ao enviar: ' + e.message, 'error');
     } finally {
       setEnviandoAvulso(false);
     }

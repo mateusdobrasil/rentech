@@ -9,6 +9,7 @@ import {
   listarSolicitacoesFolgaAction, aprovarSolicitacaoAction, rejeitarSolicitacaoAction,
   type SolicitacaoHistorico
 } from '../../rh/actions/actions-ponto-whatsapp';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 const DIAS_SEMANA_ABREV = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
@@ -111,6 +112,7 @@ function CalendarioFolgas({ solicitacoes }: { solicitacoes: SolicitacaoHistorico
 }
 
 export default function SolicitacoesFolga({ usuarioAtual, accessToken, onCountChange, mostrarCalendario }: { usuarioAtual: string; accessToken: string; onCountChange?: (pendentes: number) => void; mostrarCalendario?: boolean }) {
+  const toast = useToast();
   const [solicitacoes, setSolicitacoes] = useState<SolicitacaoHistorico[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [processandoId, setProcessandoId] = useState<number | null>(null);
@@ -138,7 +140,7 @@ export default function SolicitacoesFolga({ usuarioAtual, accessToken, onCountCh
     setProcessandoId(id);
     const res = await aprovarSolicitacaoAction({ id, aprovadorNome: usuarioAtual }, accessToken);
     setProcessandoId(null);
-    if (!res.ok) { alert(res.erro); return; }
+    if (!res.ok) { toast(res.erro || 'Erro ao aprovar a solicitação.', 'error'); return; }
     await carregar();
   };
 
@@ -148,7 +150,7 @@ export default function SolicitacoesFolga({ usuarioAtual, accessToken, onCountCh
     setProcessandoId(id);
     const res = await rejeitarSolicitacaoAction({ id, aprovadorNome: usuarioAtual, motivoRejeicao: motivo.trim() }, accessToken);
     setProcessandoId(null);
-    if (!res.ok) { alert(res.erro); return; }
+    if (!res.ok) { toast(res.erro || 'Erro ao rejeitar a solicitação.', 'error'); return; }
     await carregar();
   };
 

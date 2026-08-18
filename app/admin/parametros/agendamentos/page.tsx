@@ -11,12 +11,14 @@ import {
 } from './actions';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 // Tipos de Automação (RotinaAutomacaoDB vem de ./actions, refletindo a tabela folha_automacoes)
 
 export default function GestaoAgendamentos() {
   const router = useRouter();
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Gestor' });
+  const toast = useToast();
 
   const [rotinas, setRotinas] = useState<RotinaAutomacaoDB[]>([]);
   const [rotinasLoading, setRotinasLoading] = useState(true);
@@ -25,7 +27,7 @@ export default function GestaoAgendamentos() {
   const carregarRotinas = async () => {
     const res = await listarAutomacoesAction(accessToken);
     if (!res.ok) {
-      alert('Erro ao carregar as automações: ' + res.erro);
+      toast('Erro ao carregar as automações: ' + res.erro, 'error');
     } else {
       setRotinas(res.data || []);
     }
@@ -137,7 +139,7 @@ export default function GestaoAgendamentos() {
     if (!modalAutomacao) return;
     const modoAniversariantes = modalAutomacao.form.publico_dinamico === 'ANIVERSARIANTES_FUNCIONARIOS';
     if (!modoAniversariantes && !modalAutomacao.modoTodos && modalAutomacao.form.destinatarios.length === 0) {
-      alert('Selecione ao menos um funcionário, ou marque "Todos os funcionários ativos".');
+      toast('Selecione ao menos um funcionário, ou marque "Todos os funcionários ativos".', 'error');
       return;
     }
 
@@ -152,7 +154,7 @@ export default function GestaoAgendamentos() {
     setSalvandoAutomacao(false);
 
     if (!res.ok) {
-      alert('Erro ao salvar a automação: ' + res.erro);
+      toast('Erro ao salvar a automação: ' + res.erro, 'error');
       return;
     }
     setModalAutomacao(null);
@@ -168,7 +170,7 @@ export default function GestaoAgendamentos() {
     setSalvandoAutomacao(false);
 
     if (!res.ok) {
-      alert('Erro ao excluir a automação: ' + res.erro);
+      toast('Erro ao excluir a automação: ' + res.erro, 'error');
       return;
     }
     setModalAutomacao(null);
@@ -184,7 +186,7 @@ export default function GestaoAgendamentos() {
 
     const res = await alternarStatusAutomacaoAction(id, novoStatus, accessToken);
     if (!res.ok) {
-      alert('Erro ao atualizar o status: ' + res.erro);
+      toast('Erro ao atualizar o status: ' + res.erro, 'error');
       setRotinas(prev => prev.map(r => r.id === id ? { ...r, ativo: ativoAtual } : r));
     }
   };

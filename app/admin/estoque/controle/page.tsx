@@ -7,6 +7,7 @@ import { registrarLogAuditoria, salvarRegistroEstoque, buscarEstoque, criarVincu
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 // Interfaces do Banco de Dados
 interface Categoria {
@@ -54,6 +55,7 @@ const ESTOQUE_VAZIO: EstoqueItem = { equipamento_id: '', qtd_total: 0, qtd_manut
 export default function PainelEstoque() {
   const router = useRouter();
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Usuário' });
+  const toast = useToast();
 
   // Estados de Dados
   const [equipamentos, setEquipamentos] = useState<Equipamento[]>([]);
@@ -291,7 +293,7 @@ export default function PainelEstoque() {
     
     const { error } = await supabase.from('categorias').insert([{ id: idNormalizado, nome: novaCategoria.nome }]);
     if (error) {
-      alert(`Erro: ${error.message}`);
+      toast(`Erro: ${error.message}`, 'error');
     } else {
       registrarLogAuditoria({
         usuario_nome: usuarioAtual,
@@ -323,7 +325,7 @@ export default function PainelEstoque() {
       setEditandoCategoriaId(null);
       carregarDados();
     } else {
-      alert(`Erro: ${error.message}`);
+      toast(`Erro: ${error.message}`, 'error');
     }
   };
 
@@ -399,7 +401,7 @@ export default function PainelEstoque() {
     if (!novoAcessorioId || !modalAcessorios.eq) return;
 
     if (modalAcessorios.gatilhos.some(g => g.acessorio_id === novoAcessorioId)) {
-      alert("Este acessório já está vinculado a este equipamento.");
+      toast("Este acessório já está vinculado a este equipamento.", 'error');
       return;
     }
 
@@ -423,7 +425,7 @@ export default function PainelEstoque() {
       setModalAcessorios(prev => ({ ...prev, gatilhos: [...prev.gatilhos, novoGatilho] }));
       setNovoAcessorioId('');
     } else {
-      alert(`Erro: ${resultado.message}`);
+      toast(`Erro: ${resultado.message}`, 'error');
     }
   };
 
@@ -440,7 +442,7 @@ export default function PainelEstoque() {
       });
       setModalAcessorios(prev => ({ ...prev, gatilhos: prev.gatilhos.filter(g => g.id !== gatilhoId) }));
     } else {
-      alert(`Erro: ${resultado.message}`);
+      toast(`Erro: ${resultado.message}`, 'error');
     }
   };
 
@@ -486,7 +488,7 @@ export default function PainelEstoque() {
       : modalAcessoriosCategoria.gatilhos.some(g => g.categoria_alvo_id === categoriaAlvoSelecionada && g.acessorio_categoria_id === acessorioCategoriaAlvoId);
 
     if (duplicado) {
-      alert("Este vínculo já existe.");
+      toast("Este vínculo já existe.", 'error');
       return;
     }
 
@@ -513,7 +515,7 @@ export default function PainelEstoque() {
       setAcessorioCategoriaId('');
       setAcessorioCategoriaAlvoId('');
     } else {
-      alert(`Erro: ${resultado.message}`);
+      toast(`Erro: ${resultado.message}`, 'error');
     }
   };
 
@@ -529,7 +531,7 @@ export default function PainelEstoque() {
       });
       setModalAcessoriosCategoria(prev => ({ ...prev, gatilhos: prev.gatilhos.filter(g => g.id !== gatilhoId) }));
     } else {
-      alert(`Erro: ${resultado.message}`);
+      toast(`Erro: ${resultado.message}`, 'error');
     }
   };
 

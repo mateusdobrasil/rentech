@@ -11,6 +11,7 @@ import {
 } from '../actions/actions-parametros';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 interface RegraRH {
   id?: string;
@@ -37,6 +38,7 @@ interface Feriado { id: number; data_feriado: string; descricao: string | null; 
 
 export default function ParametrosRH() {
   const router = useRouter();
+  const toast = useToast();
   const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
 
   const [regras, setRegras] = useState<RegraRH[]>([]);
@@ -96,7 +98,7 @@ export default function ParametrosRH() {
   const carregarFeriados = async () => {
     const { data, error } = await supabase.from('folha_feriados').select('*').order('data_feriado');
     if (error) {
-      alert('Erro ao carregar os feriados: ' + error.message);
+      toast('Erro ao carregar os feriados: ' + error.message, 'error');
       return;
     }
     setFeriados(data || []);
@@ -110,7 +112,7 @@ export default function ParametrosRH() {
   };
 
   const adicionarFeriado = async () => {
-    if (!novoFeriado.data_feriado) return alert('Informe a data do feriado.');
+    if (!novoFeriado.data_feriado) return toast('Informe a data do feriado.', 'error');
 
     setSalvandoFeriado(true);
     try {
@@ -122,7 +124,7 @@ export default function ParametrosRH() {
       setNovoFeriado({ data_feriado: '', descricao: '' });
       carregarFeriados();
     } catch (e: any) {
-      alert('Erro ao adicionar feriado: ' + e.message);
+      toast('Erro ao adicionar feriado: ' + e.message, 'error');
     } finally {
       setSalvandoFeriado(false);
     }
@@ -130,7 +132,7 @@ export default function ParametrosRH() {
 
   const salvarEdicaoFeriado = async () => {
     if (!feriadoEditando) return;
-    if (!feriadoEditando.data_feriado) return alert('Informe a data do feriado.');
+    if (!feriadoEditando.data_feriado) return toast('Informe a data do feriado.', 'error');
 
     setSalvandoFeriado(true);
     try {
@@ -143,7 +145,7 @@ export default function ParametrosRH() {
       setFeriadoEditando(null);
       carregarFeriados();
     } catch (e: any) {
-      alert('Erro ao salvar feriado: ' + e.message);
+      toast('Erro ao salvar feriado: ' + e.message, 'error');
     } finally {
       setSalvandoFeriado(false);
     }
@@ -161,7 +163,7 @@ export default function ParametrosRH() {
       if (!res.ok) throw new Error(res.erro);
       carregarFeriados();
     } catch (e: any) {
-      alert('Erro ao excluir feriado: ' + e.message);
+      toast('Erro ao excluir feriado: ' + e.message, 'error');
     } finally {
       setSalvandoFeriado(false);
     }
@@ -174,7 +176,7 @@ export default function ParametrosRH() {
       supabase.from('folha_departamento').select('*').order('nome')
     ]);
     if (cargosError || tiposError || deptosError) {
-      alert('Erro ao carregar os catálogos: ' + (cargosError?.message || tiposError?.message || deptosError?.message));
+      toast('Erro ao carregar os catálogos: ' + (cargosError?.message || tiposError?.message || deptosError?.message), 'error');
       return;
     }
     setCargos(cargosData || []);
@@ -199,12 +201,12 @@ export default function ParametrosRH() {
       recebeFechamento: atualizado.recebe_fechamento ?? null,
       recebeHolerite: atualizado.recebe_holerite ?? null
     }, accessToken);
-    if (!res.ok) { alert('Erro ao salvar: ' + res.erro); carregarCatalogos(); }
+    if (!res.ok) { toast('Erro ao salvar: ' + res.erro, 'error'); carregarCatalogos(); }
   };
 
   const adicionarCatalogo = async (tabela: 'folha_cargo' | 'folha_tipocontrato' | 'folha_departamento', nome: string) => {
     const nomeNormalizado = nome.toUpperCase().trim();
-    if (!nomeNormalizado) return alert('Digite um nome antes de adicionar.');
+    if (!nomeNormalizado) return toast('Digite um nome antes de adicionar.', 'error');
 
     setSalvandoCatalogo(true);
     try {
@@ -215,7 +217,7 @@ export default function ParametrosRH() {
       else setNovoDepartamento('');
       carregarCatalogos();
     } catch (e: any) {
-      alert('Erro ao adicionar: ' + e.message);
+      toast('Erro ao adicionar: ' + e.message, 'error');
     } finally {
       setSalvandoCatalogo(false);
     }
@@ -234,7 +236,7 @@ export default function ParametrosRH() {
       if (!res.ok) throw new Error(res.erro);
       carregarCatalogos();
     } catch (e: any) {
-      alert('Erro ao excluir: ' + e.message);
+      toast('Erro ao excluir: ' + e.message, 'error');
     } finally {
       setSalvandoCatalogo(false);
     }
@@ -244,7 +246,7 @@ export default function ParametrosRH() {
     setLoading(true);
     const { data, error } = await supabase.from('folha_parametros').select('*').order('nome_regra');
     if (error) {
-      alert('Erro ao carregar as regras: ' + error.message);
+      toast('Erro ao carregar as regras: ' + error.message, 'error');
     } else if (data) {
       setRegras(data.map(r => ({
         ...r,
@@ -304,7 +306,7 @@ export default function ParametrosRH() {
     delete payload.id;
 
     const erroValidacao = validarRegra(payload);
-    if (erroValidacao) return alert(erroValidacao);
+    if (erroValidacao) return toast(erroValidacao, 'error');
 
     setLoading(true);
     try {
@@ -312,16 +314,16 @@ export default function ParametrosRH() {
       if (!res.ok) throw new Error(res.erro);
 
       if (res.info?.renomeada) {
-        alert(`Regra renomeada de "${res.info.nomeAntigo}" para "${res.info.nomeNovo}". ${res.info.migrados} funcionário(s) migrado(s) junto.`);
+        toast(`Regra renomeada de "${res.info.nomeAntigo}" para "${res.info.nomeNovo}". ${res.info.migrados} funcionário(s) migrado(s) junto.`, 'success');
       } else {
-        alert('Parâmetro salvo com sucesso!');
+        toast('Parâmetro salvo com sucesso!', 'success');
       }
 
       carregarRegras();
       setForm(formPadrao);
       setNomeOriginal(null);
     } catch (e: any) {
-      alert(e.message);
+      toast(e.message, 'error');
     } finally {
       setLoading(false);
     }
@@ -344,7 +346,7 @@ export default function ParametrosRH() {
       }
       carregarRegras();
     } catch (e: any) {
-      alert(e.message);
+      toast(e.message, 'error');
     } finally {
       setDeletando(null);
     }

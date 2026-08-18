@@ -12,6 +12,7 @@ import {
 import type { ItemRescisao, MotivoRescisao } from '../../../../lib/calculoRescisao';
 import { usePageAccess } from '../../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../../components/ui/HubStates';
+import { useToast } from '../../../../components/ui/NotificationProvider';
 
 const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 const fmtMoeda = (v: number | null | undefined) => (v == null ? 'R$ 0,00' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
@@ -79,6 +80,7 @@ interface RescisaoRow {
 
 export default function DetalheRescisaoPage() {
   const router = useRouter();
+  const toast = useToast();
   const params = useParams<{ id: string }>();
   const id = Number(params.id);
 
@@ -100,13 +102,13 @@ export default function DetalheRescisaoPage() {
     setLoading(true);
     try {
       const res = await obterRescisaoAction({ id }, accessToken);
-      if (!res.ok) { alert('Erro ao carregar rescisão: ' + res.erro); return; }
+      if (!res.ok) { toast('Erro ao carregar rescisão: ' + res.erro, 'error'); return; }
       const r: RescisaoRow = res.info.rescisao;
       setRescisao(r);
       setItens(r.dados_calculo?.itens || []);
       setSaldoFgts(Number(r.saldo_fgts_informado ?? 0));
       setPercentualFgts(String(r.fgts_percentual_multa ?? 0));
-    } catch (e: any) { alert('Erro ao carregar rescisão: ' + e.message); }
+    } catch (e: any) { toast('Erro ao carregar rescisão: ' + e.message, 'error'); }
     finally { setLoading(false); }
   };
 
@@ -140,7 +142,7 @@ export default function DetalheRescisaoPage() {
       const res = await atualizarItemCalculoAction({ id, itens }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       await carregar();
-    } catch (e: any) { alert('Erro ao salvar alterações: ' + e.message); }
+    } catch (e: any) { toast('Erro ao salvar alterações: ' + e.message, 'error'); }
     finally { setSalvandoItens(false); }
   };
 
@@ -157,7 +159,7 @@ export default function DetalheRescisaoPage() {
       setItens(res.info.dadosCalculo.itens);
       setRescisao(prev => prev ? { ...prev, dados_calculo: res.info.dadosCalculo, valor_total_liquido: res.info.dadosCalculo.valorLiquido } : prev);
       setSaldoFgts(res.info.saldoFgtsInformado);
-    } catch (e: any) { alert('Erro ao recalcular: ' + e.message); }
+    } catch (e: any) { toast('Erro ao recalcular: ' + e.message, 'error'); }
     finally { setRecalculando(false); }
   };
 
@@ -168,7 +170,7 @@ export default function DetalheRescisaoPage() {
       const res = await atualizarFgtsAction({ id, saldoFgtsInformado: saldoFgts, percentualOverride: Number(percentualFgts) || 0 }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       await carregar();
-    } catch (e: any) { alert('Erro ao salvar FGTS: ' + e.message); }
+    } catch (e: any) { toast('Erro ao salvar FGTS: ' + e.message, 'error'); }
     finally { setSalvandoFgts(false); }
   };
 
@@ -187,7 +189,7 @@ export default function DetalheRescisaoPage() {
       if (!res.ok) throw new Error(res.erro);
       if (arquivoRef.current) arquivoRef.current.value = '';
       await carregar();
-    } catch (e: any) { alert('Erro ao enviar arquivo: ' + e.message); }
+    } catch (e: any) { toast('Erro ao enviar arquivo: ' + e.message, 'error'); }
     finally { setEnviandoArquivo(false); }
   };
 
@@ -196,7 +198,7 @@ export default function DetalheRescisaoPage() {
       const res = await urlTrctRescisaoAction({ id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
-    } catch (e: any) { alert('Erro ao abrir anexo: ' + e.message); }
+    } catch (e: any) { toast('Erro ao abrir anexo: ' + e.message, 'error'); }
   };
 
   // Gera o termo de rescisão em PDF a partir do que foi calculado (mesmo
@@ -213,7 +215,7 @@ export default function DetalheRescisaoPage() {
       const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
       window.open(url, '_blank', 'noopener,noreferrer');
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (e: any) { alert('Erro ao gerar o termo: ' + e.message); }
+    } catch (e: any) { toast('Erro ao gerar o termo: ' + e.message, 'error'); }
     finally { setGerandoPdf(false); }
   };
 
@@ -225,7 +227,7 @@ export default function DetalheRescisaoPage() {
       const res = await homologarRescisaoAction({ id, usuarioNome: usuarioAtual }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       await carregar();
-    } catch (e: any) { alert('Erro ao homologar: ' + e.message); }
+    } catch (e: any) { toast('Erro ao homologar: ' + e.message, 'error'); }
     finally { setHomologando(false); }
   };
 
@@ -236,9 +238,9 @@ export default function DetalheRescisaoPage() {
     try {
       const res = await cancelarRescisaoAction({ id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
-      if (res.info?.avisoManual) alert('Rescisão cancelada. Como já estava homologada, ajuste manualmente a ficha do funcionário (ativo/data de desligamento) se necessário.');
+      if (res.info?.avisoManual) toast('Rescisão cancelada. Como já estava homologada, ajuste manualmente a ficha do funcionário (ativo/data de desligamento) se necessário.', 'info');
       await carregar();
-    } catch (e: any) { alert('Erro ao cancelar: ' + e.message); }
+    } catch (e: any) { toast('Erro ao cancelar: ' + e.message, 'error'); }
     finally { setCancelando(false); }
   };
 
@@ -269,7 +271,7 @@ export default function DetalheRescisaoPage() {
       const res = await enviarRescisaoParaAssinaturaAction({ id, usuarioNome: usuarioAtual, sandbox: sandboxAssinatura }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       await carregarAssinatura();
-    } catch (e: any) { alert('Erro ao enviar para assinatura: ' + e.message); }
+    } catch (e: any) { toast('Erro ao enviar para assinatura: ' + e.message, 'error'); }
     finally { setEnviandoAssinatura(false); }
   };
 
@@ -279,7 +281,7 @@ export default function DetalheRescisaoPage() {
       const res = await atualizarAssinaturaRescisaoAction({ id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       await carregarAssinatura();
-    } catch (e: any) { alert('Erro ao atualizar status: ' + e.message); }
+    } catch (e: any) { toast('Erro ao atualizar status: ' + e.message, 'error'); }
     finally { setAtualizandoAssinatura(false); }
   };
 
@@ -289,7 +291,7 @@ export default function DetalheRescisaoPage() {
       const res = await baixarAssinadoRescisaoAction({ id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
-    } catch (e: any) { alert('Erro ao baixar assinado: ' + e.message); }
+    } catch (e: any) { toast('Erro ao baixar assinado: ' + e.message, 'error'); }
     finally { setBaixandoAssinado(false); }
   };
 

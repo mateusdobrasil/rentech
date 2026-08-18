@@ -9,6 +9,7 @@ import { painelDocumentosAction } from '../actions/actions-documentos-func';
 import { listarAssinaturasAction } from '../actions/actions-assinatura';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 // ============================================================================
 // UTILITÁRIOS (mesmas fórmulas do holerite, para os números baterem)
@@ -271,6 +272,7 @@ const BarrasDuplas = ({ dados, corA, corB, formato }: {
 export default function RelatoriosRH() {
   const router = useRouter();
   const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const toast = useToast();
 
   const [loading, setLoading] = useState(true);
   const [linhas, setLinhas] = useState<LinhaRelatorio[]>([]);
@@ -427,7 +429,7 @@ export default function RelatoriosRH() {
 
       setLinhas(resultado);
     } catch (e: any) {
-      alert('Erro ao montar o relatório: ' + e.message);
+      toast('Erro ao montar o relatório: ' + e.message, 'error');
     } finally {
       setLoading(false);
     }

@@ -15,6 +15,7 @@ import {
 } from '../actions/actions-documentos-empresa';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 const fmtTamanho = (b: number | null) => {
   if (!b) return '—';
@@ -72,6 +73,7 @@ export default function DocumentosPage() {
   const upRef = useRef<HTMLInputElement>(null);
 
   const { usuarioAtual, emailUsuario, permissaoNormalizada, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const toast = useToast();
 
   // Restrição por empresa (multi-empresa, Fase 2): null = sem restrição
   // (setor ADMINISTRADOR); array = só enxerga essas empresas — mesmo
@@ -145,16 +147,16 @@ export default function DocumentosPage() {
       const [docs, cats] = await Promise.all([listarDocumentosEmpresaAction({ empresaIds }, token), listarCategoriasDocEmpresaAction(token)]);
       if (docs.ok) setDocsEmpresa(docs.info.documentos);
       if (cats.ok) setCategoriasEmpresa(cats.info.categorias);
-    } catch (e: any) { alert('Erro ao carregar documentos da empresa: ' + e.message); }
+    } catch (e: any) { toast('Erro ao carregar documentos da empresa: ' + e.message, 'error'); }
     finally { setCarregandoEmpresa(false); }
   };
 
   const catSelecionadaEmpresa = categoriasEmpresa.find(c => String(c.id) === upCategoriaEmpresa);
 
   const enviarUploadEmpresa = async () => {
-    if (!upEmpresaEmpresa) { alert('Escolha a empresa (CNPJ).'); return; }
-    if (!upCategoriaEmpresa) { alert('Escolha a categoria.'); return; }
-    if (!upArquivoEmpresa) { alert('Selecione o arquivo.'); return; }
+    if (!upEmpresaEmpresa) { toast('Escolha a empresa (CNPJ).', 'error'); return; }
+    if (!upCategoriaEmpresa) { toast('Escolha a categoria.', 'error'); return; }
+    if (!upArquivoEmpresa) { toast('Selecione o arquivo.', 'error'); return; }
     if (catSelecionadaEmpresa?.exige_validade && !upValidadeEmpresa) {
       if (!confirm('Esta categoria costuma ter validade e você não preencheu a data. Enviar mesmo assim?')) return;
     }
@@ -171,7 +173,7 @@ export default function DocumentosPage() {
       if (upRefEmpresa.current) upRefEmpresa.current.value = '';
       setMostrarUploadEmpresa(false);
       carregarEmpresa();
-    } catch (e: any) { alert('Erro ao enviar: ' + e.message); }
+    } catch (e: any) { toast('Erro ao enviar: ' + e.message, 'error'); }
     finally { setEnviandoEmpresa(false); }
   };
 
@@ -180,7 +182,7 @@ export default function DocumentosPage() {
       const res = await urlDocumentoEmpresaAction({ id: doc.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setPreviewUrlEmpresa(res.info.url); setPreviewDocEmpresa(doc);
-    } catch (e: any) { alert('Erro ao abrir: ' + e.message); }
+    } catch (e: any) { toast('Erro ao abrir: ' + e.message, 'error'); }
   };
 
   const baixarEmpresa = async (doc: DocumentoEmpresa) => {
@@ -188,7 +190,7 @@ export default function DocumentosPage() {
       const res = await urlDocumentoEmpresaAction({ id: doc.id, download: true }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
-    } catch (e: any) { alert('Erro ao baixar: ' + e.message); }
+    } catch (e: any) { toast('Erro ao baixar: ' + e.message, 'error'); }
   };
 
   const excluirEmpresa = async (doc: DocumentoEmpresa) => {
@@ -197,13 +199,13 @@ export default function DocumentosPage() {
       const res = await excluirDocumentoEmpresaAction({ id: doc.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       carregarEmpresa();
-    } catch (e: any) { alert('Erro ao excluir: ' + e.message); }
+    } catch (e: any) { toast('Erro ao excluir: ' + e.message, 'error'); }
   };
 
   const adicionarCategoriaEmpresa = async () => {
     if (!novaCatEmpresa.trim()) return;
     const res = await criarCategoriaDocEmpresaAction({ nome: novaCatEmpresa, exigeValidade: novaCatValidadeEmpresa }, accessToken);
-    if (!res.ok) { alert(res.erro); return; }
+    if (!res.ok) { toast(res.erro || 'Não foi possível criar a categoria.', 'error'); return; }
     setNovaCatEmpresa(''); setNovaCatValidadeEmpresa(false);
     const cats = await listarCategoriasDocEmpresaAction(accessToken);
     if (cats.ok) setCategoriasEmpresa(cats.info.categorias);
@@ -227,7 +229,7 @@ export default function DocumentosPage() {
       const [painel, cats] = await Promise.all([painelDocumentosAction(empresaIds, token), listarCategoriasDocAction(token)]);
       if (painel.ok) { setLinhas(painel.info.linhas); setTotais(painel.info.totais); }
       if (cats.ok) setCategorias(cats.info.categorias);
-    } catch (e: any) { alert('Erro ao carregar: ' + e.message); }
+    } catch (e: any) { toast('Erro ao carregar: ' + e.message, 'error'); }
     finally { setLoading(false); }
   };
 
@@ -254,8 +256,8 @@ export default function DocumentosPage() {
   });
 
   const enviarUpload = async () => {
-    if (!upCategoria) { alert('Escolha a categoria.'); return; }
-    if (!upArquivo) { alert('Selecione o arquivo.'); return; }
+    if (!upCategoria) { toast('Escolha a categoria.', 'error'); return; }
+    if (!upArquivo) { toast('Selecione o arquivo.', 'error'); return; }
     if (catSelecionada?.exige_validade && !upValidade) {
       if (!confirm('Esta categoria costuma ter validade e você não preencheu a data. Enviar mesmo assim?')) return;
     }
@@ -273,7 +275,7 @@ export default function DocumentosPage() {
       if (upRef.current) upRef.current.value = '';
       setMostrarUpload(false);
       abrirFuncionario(funcSel!); carregar();
-    } catch (e: any) { alert('Erro ao enviar: ' + e.message); }
+    } catch (e: any) { toast('Erro ao enviar: ' + e.message, 'error'); }
     finally { setEnviando(false); }
   };
 
@@ -282,7 +284,7 @@ export default function DocumentosPage() {
       const res = await urlDocumentoAction({ id: doc.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setPreviewUrl(res.info.url); setPreviewDoc(doc);
-    } catch (e: any) { alert('Erro ao abrir: ' + e.message); }
+    } catch (e: any) { toast('Erro ao abrir: ' + e.message, 'error'); }
   };
 
   const baixar = async (doc: Documento) => {
@@ -290,7 +292,7 @@ export default function DocumentosPage() {
       const res = await urlDocumentoAction({ id: doc.id, download: true }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
-    } catch (e: any) { alert('Erro ao baixar: ' + e.message); }
+    } catch (e: any) { toast('Erro ao baixar: ' + e.message, 'error'); }
   };
 
   const alternarVisivelPortal = async (doc: Documento) => {
@@ -299,7 +301,7 @@ export default function DocumentosPage() {
     const res = await alternarVisivelPortalAction({ id: doc.id, visivel: novoValor }, accessToken);
     if (!res.ok) {
       setDocsFunc(prev => prev.map(d => d.id === doc.id ? { ...d, visivel_portal: !novoValor } : d));
-      alert('Erro ao atualizar: ' + res.erro);
+      toast('Erro ao atualizar: ' + res.erro, 'error');
     }
   };
 
@@ -309,13 +311,13 @@ export default function DocumentosPage() {
       const res = await excluirDocumentoAction({ id: doc.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       abrirFuncionario(funcSel!); carregar();
-    } catch (e: any) { alert('Erro ao excluir: ' + e.message); }
+    } catch (e: any) { toast('Erro ao excluir: ' + e.message, 'error'); }
   };
 
   const adicionarCategoria = async () => {
     if (!novaCat.trim()) return;
     const res = await criarCategoriaDocAction({ nome: novaCat, exigeValidade: novaCatValidade }, accessToken);
-    if (!res.ok) { alert(res.erro); return; }
+    if (!res.ok) { toast(res.erro || 'Não foi possível criar a categoria.', 'error'); return; }
     setNovaCat(''); setNovaCatValidade(false);
     const cats = await listarCategoriasDocAction(accessToken);
     if (cats.ok) setCategorias(cats.info.categorias);

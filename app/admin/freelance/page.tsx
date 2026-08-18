@@ -7,6 +7,7 @@ import { registrarLogAuditoria } from '../../actions';
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../components/hooks/usePageAccess';
 import { HubErro } from '../../components/ui/HubStates';
+import { useToast } from '../../components/ui/NotificationProvider';
 
 interface Freelancer {
   id: string;
@@ -60,6 +61,7 @@ const normalizarNivel = (val: string | null | undefined) => {
 export default function GestaoFreelancers() {
   const router = useRouter();
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess({ nomeFallback: 'Usuário' });
+  const toast = useToast();
 
   // Estados de Dados
   const [freelancers, setFreelancers] = useState<Freelancer[]>([]);
@@ -210,7 +212,7 @@ export default function GestaoFreelancers() {
       setIsEditing(false);
       
     } catch (error: any) {
-      alert("Erro ao atualizar dados: " + error.message);
+      toast("Erro ao atualizar dados: " + error.message, 'error');
     } finally {
       setIsSaving(false);
     }

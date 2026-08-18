@@ -7,6 +7,7 @@ import { registrarLogAuditoria } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 // Interface para os dados do site incluindo as URLs das imagens
 interface SiteConfig {
@@ -40,6 +41,7 @@ interface SiteConfig {
 export default function GestaoConteudo() {
   const router = useRouter();
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess({ nomeFallback: 'Gestor' });
+  const toast = useToast();
 
   const [loading, setLoading] = useState(false);
   const [uploadingField, setUploadingField] = useState<string | null>(null);
@@ -93,7 +95,7 @@ export default function GestaoConteudo() {
     
     const file = e.target.files[0];
     if (file.size > 5 * 1024 * 1024) {
-      alert("A imagem é muito grande. O limite máximo é 5MB.");
+      toast("A imagem é muito grande. O limite máximo é 5MB.", 'error');
       return;
     }
 

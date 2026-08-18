@@ -9,6 +9,7 @@ import {
 import type { MotivoRescisao, TipoAvisoPrevio } from '../../../lib/calculoRescisao';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 const fmtMoeda = (v: number | null) => (v == null ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
@@ -49,6 +50,7 @@ interface FuncionarioElegivel { nome: string; cargo: string | null; dataDesligam
 
 export default function RescisaoPage() {
   const router = useRouter();
+  const toast = useToast();
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
 
   const [loading, setLoading] = useState(true);
@@ -62,8 +64,8 @@ export default function RescisaoPage() {
     try {
       const res = await painelRescisoesAction(accessToken);
       if (res.ok) { setLinhas(res.info.linhas); setTotais(res.info.totais); }
-      else alert('Erro ao carregar rescisões: ' + res.erro);
-    } catch (e: any) { alert('Erro ao carregar rescisões: ' + e.message); }
+      else toast('Erro ao carregar rescisões: ' + res.erro, 'error');
+    } catch (e: any) { toast('Erro ao carregar rescisões: ' + e.message, 'error'); }
     finally { setLoading(false); }
   };
 
@@ -100,8 +102,8 @@ export default function RescisaoPage() {
     try {
       const res = await listarFuncionariosElegiveisRescisaoAction(accessToken);
       if (res.ok) setFuncionarios(res.info.linhas);
-      else alert('Erro ao carregar funcionários: ' + res.erro);
-    } catch (e: any) { alert('Erro ao carregar funcionários: ' + e.message); }
+      else toast('Erro ao carregar funcionários: ' + res.erro, 'error');
+    } catch (e: any) { toast('Erro ao carregar funcionários: ' + e.message, 'error'); }
     finally { setCarregandoFuncionarios(false); }
   };
 
@@ -122,7 +124,7 @@ export default function RescisaoPage() {
   const funcionarioSelecionado = funcionarios.find(f => f.nome === nFunc) || null;
 
   const salvarNovaRescisao = async () => {
-    if (!nFunc || !nData || !nMotivo) { alert('Selecione o funcionário, a data e o motivo.'); return; }
+    if (!nFunc || !nData || !nMotivo) { toast('Selecione o funcionário, a data e o motivo.', 'error'); return; }
     setSalvando(true);
     try {
       const res = await criarRescisaoAction({
@@ -130,7 +132,7 @@ export default function RescisaoPage() {
       }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       router.push(`/admin/rh/rescisao/${res.info.id}`);
-    } catch (e: any) { alert('Erro ao criar rescisão: ' + e.message); }
+    } catch (e: any) { toast('Erro ao criar rescisão: ' + e.message, 'error'); }
     finally { setSalvando(false); }
   };
 

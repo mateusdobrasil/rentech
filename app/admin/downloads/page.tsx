@@ -8,6 +8,7 @@ import { registrarLogAuditoria } from '../../actions';
 import PaginationFooter from '../../components/ui/PaginationFooter';
 import { usePageAccess } from '../../components/hooks/usePageAccess';
 import { HubErro } from '../../components/ui/HubStates';
+import { useToast } from '../../components/ui/NotificationProvider';
 
 const TAMANHO_PAGINA = 30;
 
@@ -25,6 +26,7 @@ interface Arquivo {
 export default function GestorDownloads() {
   const router = useRouter();
   const { usuarioAtual: usuarioNome, authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess({ nomeFallback: 'Usuário' });
+  const toast = useToast();
 
   // Estados de Dados
   const [arquivos, setArquivos] = useState<Arquivo[]>([]);
@@ -65,7 +67,7 @@ export default function GestorDownloads() {
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nome) return alert('Por favor, insira o nome do arquivo.');
+    if (!nome) return toast('Por favor, insira o nome do arquivo.', 'error');
 
     setIsUploading(true);
     try {
@@ -76,7 +78,7 @@ export default function GestorDownloads() {
       if (tipoOrigem === 'ARQUIVO') {
         if (!file) {
           setIsUploading(false);
-          return alert('Selecione um arquivo físico para upload.');
+          return toast('Selecione um arquivo físico para upload.', 'error');
         }
 
         // Upload para o Supabase Storage
@@ -98,7 +100,7 @@ export default function GestorDownloads() {
       } else {
         if (!linkExterno) {
           setIsUploading(false);
-          return alert('Insira a URL do link externo.');
+          return toast('Insira a URL do link externo.', 'error');
         }
         
         finalUrl = linkExterno.trim();
@@ -126,7 +128,7 @@ export default function GestorDownloads() {
         equipamento_nome: `Categoria: ${categoria}`
       });
 
-      alert('Item adicionado com sucesso!');
+      toast('Item adicionado com sucesso!', 'success');
       setNome(''); 
       setDescricao(''); 
       setFile(null);
@@ -140,7 +142,7 @@ export default function GestorDownloads() {
       carregarDados();
 
     } catch (error: any) {
-      alert(`Erro ao processar: ${error.message}`);
+      toast(`Erro ao processar: ${error.message}`, 'error');
     } finally {
       setIsUploading(false);
     }
@@ -166,7 +168,7 @@ export default function GestorDownloads() {
       setPagina(0);
       carregarDados();
     } catch (error: any) {
-      alert(`Erro ao deletar: ${error.message}`);
+      toast(`Erro ao deletar: ${error.message}`, 'error');
     }
   };
 

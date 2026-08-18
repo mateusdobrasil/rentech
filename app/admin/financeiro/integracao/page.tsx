@@ -7,6 +7,7 @@ import { consultarPagamentosItauAction, consultarPagamentoItauAction, type Filtr
 import { listarIntegracoesAction, statusItauApiAction } from '../../parametros/integracao/actions';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 const BRL = (v: string | number | null | undefined) => 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtData = (d: string | null | undefined) => {
@@ -125,6 +126,7 @@ interface StatusItauApiAmbiente {
 export default function IntegracaoFinanceiraPage() {
   const router = useRouter();
   const { authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Usuário' });
+  const toast = useToast();
 
   // Abas por instituição bancária — hoje só o Itaú está integrado via API;
   // se outro banco entrar no futuro, basta somar um item aqui e um painel
@@ -164,7 +166,7 @@ export default function IntegracaoFinanceiraPage() {
     setConsultando(true);
     try {
       const res = await consultarPagamentosItauAction(filtros, accessToken);
-      if (!res.ok) { alert(res.erro || 'Não foi possível consultar.'); setResultados([]); setTotalResultado(null); return; }
+      if (!res.ok) { toast(res.erro || 'Não foi possível consultar.', 'error'); setResultados([]); setTotalResultado(null); return; }
       setResultados(res.info.itens || []);
       setTotalResultado(res.info.total ?? null);
       setJaConsultou(true);
@@ -179,7 +181,7 @@ export default function IntegracaoFinanceiraPage() {
     setCarregandoDetalhe(true);
     try {
       const res = await consultarPagamentoItauAction(idPagamento, accessToken);
-      if (!res.ok) { alert(res.erro || 'Não foi possível abrir o detalhe.'); setDetalheId(null); return; }
+      if (!res.ok) { toast(res.erro || 'Não foi possível abrir o detalhe.', 'error'); setDetalheId(null); return; }
       setDetalhe(res.info.pagamento);
     } finally {
       setCarregandoDetalhe(false);

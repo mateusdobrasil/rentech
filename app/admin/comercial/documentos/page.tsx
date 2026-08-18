@@ -6,6 +6,7 @@ import { Analytics } from "@vercel/analytics/next";
 import { listarDocumentosEmpresaAction, urlDocumentoEmpresaAction } from '../../rh/actions/actions-documentos-empresa';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 const fmtTamanho = (b: number | null) => {
   if (!b) return '—';
@@ -25,6 +26,7 @@ interface DocumentoEmpresa {
 export default function ComercialDocumentosPage() {
   const router = useRouter();
   const { authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess();
+  const toast = useToast();
 
   const [loading, setLoading] = useState(true);
   const [docs, setDocs] = useState<DocumentoEmpresa[]>([]);
@@ -44,7 +46,7 @@ export default function ComercialDocumentosPage() {
     try {
       const res = await listarDocumentosEmpresaAction(undefined, accessToken);
       if (res.ok) setDocs(res.info.documentos);
-    } catch (e: any) { alert('Erro ao carregar documentos: ' + e.message); }
+    } catch (e: any) { toast('Erro ao carregar documentos: ' + e.message, 'error'); }
     finally { setLoading(false); }
   };
 
@@ -53,7 +55,7 @@ export default function ComercialDocumentosPage() {
       const res = await urlDocumentoEmpresaAction({ id: doc.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setPreviewUrl(res.info.url); setPreviewDoc(doc);
-    } catch (e: any) { alert('Erro ao abrir: ' + e.message); }
+    } catch (e: any) { toast('Erro ao abrir: ' + e.message, 'error'); }
   };
 
   const baixar = async (doc: DocumentoEmpresa) => {
@@ -61,7 +63,7 @@ export default function ComercialDocumentosPage() {
       const res = await urlDocumentoEmpresaAction({ id: doc.id, download: true }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
-    } catch (e: any) { alert('Erro ao baixar: ' + e.message); }
+    } catch (e: any) { toast('Erro ao baixar: ' + e.message, 'error'); }
   };
 
   const categorias = useMemo(() => Array.from(new Set(docs.map(d => d.categoria))).sort((a, b) => a.localeCompare(b)), [docs]);

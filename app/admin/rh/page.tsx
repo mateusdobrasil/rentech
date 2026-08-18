@@ -8,6 +8,7 @@ import { useModuleAccess } from '../../components/hooks/useModuleAccess';
 import ModuleGrid from '../../components/ui/ModuleGrid';
 import { HubLoading, HubPerfilNaoLocalizado, HubErro } from '../../components/ui/HubStates';
 import HubBackButton from '../../components/ui/HubBackButton';
+import { useToast } from '../../components/ui/NotificationProvider';
 
 interface PainelRh {
   mesAno: string;
@@ -94,6 +95,7 @@ const modulosRh = [
 export default function RhHub() {
   const router = useRouter();
   const { perfil, loading, modulosAutorizados, erro, tentarNovamente, accessToken } = useModuleAccess(modulosRh);
+  const toast = useToast();
   const [painel, setPainel] = useState<PainelRh | null>(null);
   const [painelLoading, setPainelLoading] = useState(true);
   const [mostrarAniversariantes, setMostrarAniversariantes] = useState(false);
@@ -120,7 +122,7 @@ export default function RhHub() {
       setCopiado(true);
       setTimeout(() => setCopiado(false), 2000);
     } catch {
-      alert('Não foi possível copiar automaticamente. Selecione o texto manualmente.');
+      toast('Não foi possível copiar automaticamente. Selecione o texto manualmente.', 'error');
     }
   };
 

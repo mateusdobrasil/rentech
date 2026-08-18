@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { useAcessoRota } from '../useAcessoRota';
+import { useToast } from '../../../components/ui/NotificationProvider';
 import {
   listarAssinaturasOPAction, enviarAssinaturaOPAction, consultarAssinaturaOPAction,
   atualizarTodasAssinaturasOPAction, baixarAssinadoOPAction,
@@ -52,6 +53,7 @@ const dadosCompletos = (op: OPComAssinatura) =>
 export default function AssinaturasOPPage() {
   const router = useRouter();
   const { authLoading, acessoNegado, perfil } = useAcessoRota('/admin/op/assinaturas');
+  const toast = useToast();
 
   const [loading, setLoading] = useState(true);
   const [ops, setOps] = useState<OPComAssinatura[]>([]);
@@ -72,7 +74,7 @@ export default function AssinaturasOPPage() {
       if (!res.ok) throw new Error(res.erro);
       setOps(res.info.ops);
     } catch (e: any) {
-      alert('Erro ao carregar OPs: ' + e.message);
+      toast('Erro ao carregar OPs: ' + e.message, 'error');
     } finally {
       setLoading(false);
     }
@@ -83,7 +85,7 @@ export default function AssinaturasOPPage() {
   const enviar = async (op: OPComAssinatura) => {
     if (!perfil) return;
     if (!dadosCompletos(op)) {
-      alert(`A OP #${op.numero_op} não tem CPF e/ou celular válidos do signatário. Edite a OP em "Minhas OPs" antes de enviar para assinatura.`);
+      toast(`A OP #${op.numero_op} não tem CPF e/ou celular válidos do signatário. Edite a OP em "Minhas OPs" antes de enviar para assinatura.`, 'error');
       return;
     }
     if (!confirm(
@@ -95,10 +97,10 @@ export default function AssinaturasOPPage() {
     try {
       const res = await enviarAssinaturaOPAction({ opId: op.id, sandbox, accessToken: perfil.accessToken });
       if (!res.ok) throw new Error(res.erro);
-      alert(`Recibo enviado para assinatura!${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`);
+      toast(`Recibo enviado para assinatura!${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`, 'success');
       carregar();
     } catch (e: any) {
-      alert('Erro ao enviar: ' + e.message);
+      toast('Erro ao enviar: ' + e.message, 'error');
     } finally {
       setEnviando(null);
     }
@@ -112,7 +114,7 @@ export default function AssinaturasOPPage() {
       if (!res.ok) throw new Error(res.erro);
       carregar();
     } catch (e: any) {
-      alert('Erro ao consultar status: ' + e.message);
+      toast('Erro ao consultar status: ' + e.message, 'error');
     } finally {
       setConsultando(null);
     }
@@ -127,10 +129,10 @@ export default function AssinaturasOPPage() {
       const mudancasMsg = res.info?.mudancas?.length
         ? `\n\nMudanças:\n${res.info.mudancas.join('\n')}`
         : '\n\nNenhuma mudança de status desde a última consulta.';
-      alert(`${res.info?.atualizados || 0} de ${res.info?.total || 0} envio(s) consultado(s).${mudancasMsg}`);
+      toast(`${res.info?.atualizados || 0} de ${res.info?.total || 0} envio(s) consultado(s).${mudancasMsg}`, 'success');
       carregar();
     } catch (e: any) {
-      alert('Erro ao atualizar as assinaturas: ' + e.message);
+      toast('Erro ao atualizar as assinaturas: ' + e.message, 'error');
     } finally {
       setAtualizandoTodas(false);
     }
@@ -145,7 +147,7 @@ export default function AssinaturasOPPage() {
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
     } catch (e: any) {
-      alert('Erro ao abrir o documento assinado: ' + e.message);
+      toast('Erro ao abrir o documento assinado: ' + e.message, 'error');
     } finally {
       setBaixando(null);
     }

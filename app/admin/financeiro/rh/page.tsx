@@ -13,6 +13,7 @@ import { listarIntegracoesAction } from '../../parametros/integracao/actions';
 import SepararHolerites from '../../rh/holerite/SepararHolerites';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 // Contas bancárias no sistema são salvas como "12345-6" (número-DAC). O CNAB
 // exige o dígito verificador em campo separado do número da conta.
@@ -66,6 +67,7 @@ interface Lote {
 export default function FinanceiroPage() {
   const router = useRouter();
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const toast = useToast();
 
   const [integracoes, setIntegracoes] = useState<Integracao[]>([]);
 
@@ -154,7 +156,7 @@ export default function FinanceiroPage() {
   };
 
   const montarLote = async () => {
-    if (fontesSel.length === 0) { alert('Selecione ao menos uma fonte de pagamento.'); return; }
+    if (fontesSel.length === 0) { toast('Selecione ao menos uma fonte de pagamento.', 'error'); return; }
     setMontando(true); setItens([]);
     try {
       const res = await montarLoteSalariosAction({
@@ -173,9 +175,9 @@ export default function FinanceiroPage() {
         totaisPorFonte: res.info.totaisPorFonte
       });
       if (res.info.itens.length === 0 && res.info._debug) {
-        alert(`Nenhum funcionário encontrado no grid.`);
+        toast(`Nenhum funcionário encontrado no grid.`, 'info');
       }
-    } catch (e: any) { alert(e.message); }
+    } catch (e: any) { toast(e.message, 'error'); }
     finally { setMontando(false); }
   };
 
@@ -205,7 +207,7 @@ export default function FinanceiroPage() {
       const cache: { funcionario_nome: string; valor: number }[] = res.info.cache || [];
 
       if (pdfs.length === 0 && cache.length === 0) {
-        alert(`Nenhum PDF de ${rotulo.toLowerCase()} encontrado neste mês.`);
+        toast(`Nenhum PDF de ${rotulo.toLowerCase()} encontrado neste mês.`, 'info');
         return;
       }
 
@@ -266,7 +268,7 @@ export default function FinanceiroPage() {
         });
       }
     } catch (e: any) {
-      alert('Erro na operação de leitura: ' + e.message);
+      toast('Erro na operação de leitura: ' + e.message, 'error');
     } finally {
       setOcrRodando(false);
       setOcrProgresso({ atual: 0, total: 0, nome: '', tipo: '' });
@@ -303,7 +305,7 @@ export default function FinanceiroPage() {
   const totalSelecionado = prontos.reduce((s, i) => s + Number(i.valor || 0), 0);
 
   const gerarLote = async () => {
-    if (prontos.length === 0) { alert('Nenhum pagamento pronto para gerar o lote.'); return; }
+    if (prontos.length === 0) { toast('Nenhum pagamento pronto para gerar o lote.', 'info'); return; }
     const sugestao = `${fontesSel.map(f => ({ FOLHA: 'Folha', ADIANTAMENTO: 'Adiantamento', PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios', DECIMO_TERCEIRO: '13º', FERIAS: 'Férias', RESCISAO: 'Rescisão' }[f])).join(' + ')} ${fmtMesBR(mesReferencia)}`;
     const nome = prompt(`Nome do lote (para identificar no histórico):`, sugestao);
     if (nome === null) return;
@@ -314,14 +316,14 @@ export default function FinanceiroPage() {
         nomeLote: nome || sugestao, dataPagamento, itens, criadoPor: usuarioAtual
       }, accessToken);
       if (!res.ok) throw new Error(res.erro);
-      alert(`Lote "${nome || sugestao}" gerado: ${res.info.qtd} pagamentos, ${BRL(res.info.valorTotal)}.`);
+      toast(`Lote "${nome || sugestao}" gerado: ${res.info.qtd} pagamentos, ${BRL(res.info.valorTotal)}.`, 'success');
       setItens([]); carregar();
-    } catch (e: any) { alert(e.message); }
+    } catch (e: any) { toast(e.message, 'error'); }
     finally { setSalvandoLote(false); }
   };
 
   const exportarLoteCSV = () => {
-    if (prontos.length === 0) { alert('Nenhum pagamento pronto para exportar.'); return; }
+    if (prontos.length === 0) { toast('Nenhum pagamento pronto para exportar.', 'info'); return; }
     const cab = 'Funcionário;CPF;Fonte;Método;Chave PIX / Conta;Valor';
     const linhas = prontos.map(i => {
       const destino = i.metodo === 'PIX' ? `${i.pix_tipo}: ${i.pix_chave}` : `Ag ${i.banco_agencia} C/C ${i.banco_conta} (${i.banco_codigo})`;
@@ -341,9 +343,9 @@ export default function FinanceiroPage() {
     const jaPagosViaApi = candidatosPix.length - pagamentosPix.length;
 
     if (pagamentosPix.length === 0) {
-      alert(jaPagosViaApi > 0
+      toast(jaPagosViaApi > 0
         ? `Todos os ${jaPagosViaApi} pagamento(s) via PIX deste lote já foram enviados com sucesso pela API — nada para exportar (evita pagar em dobro).`
-        : 'Nenhum pagamento via PIX pronto para exportar.');
+        : 'Nenhum pagamento via PIX pronto para exportar.', 'info');
       return;
     }
     if (jaPagosViaApi > 0 && !confirm(`${jaPagosViaApi} pagamento(s) via PIX deste lote já foram enviados com sucesso pela API e serão EXCLUÍDOS deste arquivo (evita pagar em dobro). Continuar exportando os ${pagamentosPix.length} restantes?`)) {
@@ -359,7 +361,7 @@ export default function FinanceiroPage() {
       .filter(campo => !String(cfg[campo] || '').trim());
 
     if (camposFaltando.length > 0) {
-      alert(`Configure primeiro (tela Integrações → ⚙ Configurar Itaú): ${camposFaltando.join(', ')}.`);
+      toast(`Configure primeiro (tela Integrações → ⚙ Configurar Itaú): ${camposFaltando.join(', ')}.`, 'error');
       return;
     }
 
@@ -484,9 +486,9 @@ export default function FinanceiroPage() {
     const jaPagosViaApi = candidatosConta.length - pagamentosConta.length;
 
     if (pagamentosConta.length === 0) {
-      alert(jaPagosViaApi > 0
+      toast(jaPagosViaApi > 0
         ? `Todos os ${jaPagosViaApi} pagamento(s) via conta bancária deste lote já foram enviados com sucesso pela API (Pix por dados bancários) — nada para exportar (evita pagar em dobro).`
-        : 'Nenhum pagamento via conta bancária pronto para exportar.');
+        : 'Nenhum pagamento via conta bancária pronto para exportar.', 'info');
       return;
     }
     if (jaPagosViaApi > 0 && !confirm(`${jaPagosViaApi} pagamento(s) via conta bancária deste lote já foram enviados com sucesso pela API (Pix por dados bancários) e serão EXCLUÍDOS deste arquivo (evita pagar em dobro). Continuar exportando os ${pagamentosConta.length} restantes?`)) {
@@ -499,7 +501,7 @@ export default function FinanceiroPage() {
       .filter(campo => !String(cfg[campo] || '').trim());
 
     if (camposFaltando.length > 0) {
-      alert(`Configure primeiro (tela Integrações → ⚙ Configurar Itaú): ${camposFaltando.join(', ')}.`);
+      toast(`Configure primeiro (tela Integrações → ⚙ Configurar Itaú): ${camposFaltando.join(', ')}.`, 'error');
       return;
     }
 
@@ -620,9 +622,9 @@ export default function FinanceiroPage() {
       const res = await enviarLoteAoBancoAction({ loteId, dataPagamento, usuarioNome: usuarioAtual }, accessToken);
       if (res.info) {
         const { sucesso, rejeitado, comErro, total } = res.info;
-        alert(`Envio concluído: ${sucesso}/${total} pagos, ${rejeitado} rejeitados pelo banco, ${comErro} com erro.` + (res.erro ? `\n\n${res.erro}` : ''));
+        toast(`Envio concluído: ${sucesso}/${total} pagos, ${rejeitado} rejeitados pelo banco, ${comErro} com erro.` + (res.erro ? `\n\n${res.erro}` : ''), 'success');
       } else {
-        alert(res.erro || (res.ok ? 'Enviado.' : 'Não foi possível enviar.'));
+        toast(res.erro || (res.ok ? 'Enviado.' : 'Não foi possível enviar.'), res.ok ? 'success' : 'error');
       }
       carregar();
       if (loteRetornoId === loteId) carregarRetornoLote(loteId);
@@ -639,7 +641,7 @@ export default function FinanceiroPage() {
     if (!confirm(confirmMsg)) return;
 
     const res = await alternarAtivoLoteAction({ loteId: lote.id, ativo: novoAtivo, usuarioNome: usuarioAtual }, accessToken);
-    if (!res.ok) { alert(res.erro || 'Não foi possível atualizar o lote.'); return; }
+    if (!res.ok) { toast(res.erro || 'Não foi possível atualizar o lote.', 'error'); return; }
     setLotes(prev => prev.map(l => l.id === lote.id ? { ...l, ativo: novoAtivo } : l));
   };
 
@@ -649,9 +651,9 @@ export default function FinanceiroPage() {
     setAbrindoLote(lote.id);
     try {
       const res = await buscarLoteAction({ loteId: lote.id }, accessToken);
-      if (!res.ok) { alert(res.erro || 'Não foi possível abrir o lote.'); return; }
+      if (!res.ok) { toast(res.erro || 'Não foi possível abrir o lote.', 'error'); return; }
       const itensSalvos: ItemLote[] = res.info.lote.itens || [];
-      if (itensSalvos.length === 0) { alert('Este lote não tem itens salvos para exportar.'); return; }
+      if (itensSalvos.length === 0) { toast('Este lote não tem itens salvos para exportar.', 'info'); return; }
       setItens(itensSalvos);
       setMesReferencia(res.info.lote.mes_referencia);
       setLoteReaberto({ id: lote.id, nome: lote.nome_lote || lote.tipo_lote });
@@ -674,7 +676,7 @@ export default function FinanceiroPage() {
     setCarregandoRetorno(true);
     try {
       const res = await buscarLoteAction({ loteId }, accessToken);
-      if (!res.ok) { alert(res.erro || 'Não foi possível abrir o lote.'); setItensRetorno([]); return; }
+      if (!res.ok) { toast(res.erro || 'Não foi possível abrir o lote.', 'error'); setItensRetorno([]); return; }
       const itensSalvos: ItemLote[] = res.info.lote.itens || [];
       // 'TED' também é enviado via API hoje (Pix por dados bancários quando
       // não há chave PIX cadastrada — ver enviarLoteAoBancoAction), por isso
@@ -694,7 +696,7 @@ export default function FinanceiroPage() {
     setConsultandoStatusId(item.api_cod_pagamento);
     try {
       const res = await consultarStatusAtualItauAction({ idPagamentoSispag: item.api_cod_pagamento }, accessToken);
-      if (!res.ok) { alert(res.erro || 'Não foi possível consultar o status atual.'); return; }
+      if (!res.ok) { toast(res.erro || 'Não foi possível consultar o status atual.', 'error'); return; }
       setStatusAtual({ item, ambiente: res.info.ambiente, pagamento: res.info.pagamento });
     } finally {
       setConsultandoStatusId(null);

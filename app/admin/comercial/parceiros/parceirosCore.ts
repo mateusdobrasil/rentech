@@ -84,6 +84,21 @@ function textoOuNull(v: unknown): string | null {
   return s || null;
 }
 
+// CPF/CNPJ vazios no PrimeStart não voltam como string vazia — voltam com a
+// máscara em branco (ex: ".   .   -" pra CPF, ".   .   /    -" pra CNPJ),
+// que o textoOuNull normal trata como texto válido por não ser "". Isso
+// causava dois problemas: a tela de Parceiros mostrava esse lixo no lugar do
+// CPF/CNPJ real do lado oposto (ex: pessoa física com CNPJ = máscara em
+// branco "ganhava" do CPF de verdade no fallback `cnpj || cpf`), e o
+// documento nunca virava null de verdade mesmo quando o parceiro não tinha
+// aquele campo preenchido. Um valor só é documento de verdade se sobrar
+// pelo menos um dígito depois de remover a pontuação da máscara.
+function documentoOuNull(v: unknown): string | null {
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+  return /\d/.test(s) ? s : null;
+}
+
 function numOuNull(v: unknown): number | null {
   const n = Number(v);
   return Number.isFinite(n) && v !== '' && v !== null && v !== undefined ? n : null;
@@ -206,8 +221,8 @@ export async function sincronizarParceirosCore(opcoes: SincronizarParceirosOpcoe
         nome_completo: textoOuNull(o.NomeCompleto),
         nome_exibicao: textoOuNull(o.NomeExibicao),
         natureza: textoOuNull(o.Natureza),
-        cpf: textoOuNull(o.CPF),
-        cnpj: textoOuNull(o.CNPJ),
+        cpf: documentoOuNull(o.CPF),
+        cnpj: documentoOuNull(o.CNPJ),
         inscricao_estadual: textoOuNull(o.InscricaoEstadual),
         inscricao_municipal: textoOuNull(o.InscricaoMunicipal),
 
@@ -323,7 +338,7 @@ export async function sincronizarColaboradoresCore(opcoes: SincronizarColaborado
         nome_completo: textoOuNull(o.NomeCompleto),
         nome_exibicao: textoOuNull(o.NomeExibicao),
         natureza: textoOuNull(o.Natureza),
-        cpf: textoOuNull(o.CPF),
+        cpf: documentoOuNull(o.CPF),
         rg: textoOuNull(o.RG), rg_orgao_emissor: textoOuNull(o.RG_OrgaoEmissor), rg_data_expedicao: paraDataISO(o.RG_DataExpedicao),
         pis_num: textoOuNull(o.PIS_Num),
         ctps_num: textoOuNull(o.CTPS_Num), ctps_serie: textoOuNull(o.CTPS_Serie), ctps_estado: textoOuNull(o.CTPS_Estado),

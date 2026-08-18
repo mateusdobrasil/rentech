@@ -14,6 +14,7 @@ import SepararHolerites from './SepararHolerites';
 import logoColorido from '../../../../app/imgs/logo.png';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 // Utilitários
 const formatCurrency = (value: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
@@ -589,6 +590,7 @@ const extrairDadosSalariais = (f: FuncionarioFin | null) => f ? {
 
 export default function HoleritePage() {
   const router = useRouter();
+  const toast = useToast();
 
   const [loading, setLoading] = useState(false);
   const [loadingLote, setLoadingLote] = useState(false);
@@ -749,7 +751,7 @@ export default function HoleritePage() {
     const { data: funcData, error: funcError } = await supabase
       .from('folha_funcionarios').select('*').eq('nome_completo', nome).single();
     if (funcError || !funcData) {
-      alert(`Não foi possível carregar a ficha de ${nome}: ${funcError?.message || 'registro não encontrado'}`);
+      toast(`Não foi possível carregar a ficha de ${nome}: ${funcError?.message || 'registro não encontrado'}`, 'error');
       setLoading(false);
       return;
     }
@@ -806,12 +808,12 @@ export default function HoleritePage() {
       }, accessToken);
       if (!resSalarial.ok) throw new Error(resSalarial.erro);
 
-      alert("Bônus, descontos e dados salariais guardados com sucesso!");
+      toast("Bônus, descontos e dados salariais guardados com sucesso!", 'success');
       setSnapshotBonusDesc(JSON.stringify({ descontosSelecionado, bonusSelecionado, dadosSalariais: extrairDadosSalariais(formSelecionado) }));
       carregarListaFuncionarios();
       carregarLote(mesReferencia);
       return true;
-    } catch (e: any) { alert("Erro ao salvar: " + e.message); return false; }
+    } catch (e: any) { toast("Erro ao salvar: " + e.message, 'error'); return false; }
     finally { setLoading(false); }
   };
 
@@ -906,7 +908,7 @@ export default function HoleritePage() {
         if (erroBons) console.error('Erro ao buscar bônus:', erroBons);
         if (erroFechs) console.error('Erro ao buscar fechamentos:', erroFechs);
         if (erroAssins) console.error('Erro ao buscar assinaturas:', erroAssins);
-        alert('Alguns dados da folha deste mês podem estar incompletos — falha ao carregar. Recarregue a página e tente novamente.');
+        toast('Alguns dados da folha deste mês podem estar incompletos — falha ao carregar. Recarregue a página e tente novamente.', 'error');
       }
 
       const assinPorFunc: Record<string, string> = {};
@@ -951,7 +953,7 @@ export default function HoleritePage() {
 
       setLote(lista);
     } catch (e: any) {
-      alert('Erro ao montar os holerites do mês: ' + e.message);
+      toast('Erro ao montar os holerites do mês: ' + e.message, 'error');
     } finally {
       setLoadingLote(false);
     }
@@ -962,7 +964,7 @@ export default function HoleritePage() {
     const jaFechados = lote.length - abertos.length;
 
     if (abertos.length === 0) {
-      alert('Todos os funcionários deste mês já estão com a folha fechada.');
+      toast('Todos os funcionários deste mês já estão com a folha fechada.', 'info');
       return;
     }
 
@@ -1014,11 +1016,11 @@ export default function HoleritePage() {
             `\nAprove ou rejeite em RH → Ponto → Gestão de Ponto → Ponto via WhatsApp → Solicitações Pendentes.\n`;
         }
         msg += `\nCorrija e tente fechar a folha novamente.`;
-        alert(msg);
+        toast(msg, 'error');
         return;
       }
     } catch (e: any) {
-      alert('Erro ao validar o fechamento: ' + e.message);
+      toast('Erro ao validar o fechamento: ' + e.message, 'error');
       return;
     } finally {
       setLoadingLote(false);
@@ -1038,10 +1040,10 @@ export default function HoleritePage() {
       const res = await fecharFolhaLoteAction({ mesReferencia, linhas, usuarioNome: usuarioAtual }, accessToken);
       if (!res.ok) throw new Error(res.erro);
 
-      alert(`Folha de ${formatarMesAnoBR(mesReferencia)} fechada para ${abertos.length} funcionário(s)!`);
+      toast(`Folha de ${formatarMesAnoBR(mesReferencia)} fechada para ${abertos.length} funcionário(s)!`, 'success');
       carregarLote(mesReferencia);
     } catch (e: any) {
-      alert('Erro ao fechar a folha: ' + e.message);
+      toast('Erro ao fechar a folha: ' + e.message, 'error');
     } finally {
       setLoadingLote(false);
     }
@@ -1062,7 +1064,7 @@ export default function HoleritePage() {
       if (!res.ok) throw new Error(res.erro);
       carregarLote(mesReferencia);
     } catch (e: any) {
-      alert('Erro ao reabrir a folha: ' + e.message);
+      toast('Erro ao reabrir a folha: ' + e.message, 'error');
       setLoadingLote(false);
     }
   };
@@ -1070,7 +1072,7 @@ export default function HoleritePage() {
   const reabrirFolhaTodos = async () => {
     const fechados = lote.filter(l => l.fechamento);
     if (fechados.length === 0) {
-      alert('Nenhuma folha fechada neste mês para reabrir.');
+      toast('Nenhuma folha fechada neste mês para reabrir.', 'info');
       return;
     }
 
@@ -1089,10 +1091,10 @@ export default function HoleritePage() {
       }, accessToken);
       if (!res.ok) throw new Error(res.erro);
 
-      alert(`${fechados.length} folha(s) de ${formatarMesAnoBR(mesReferencia)} reaberta(s).`);
+      toast(`${fechados.length} folha(s) de ${formatarMesAnoBR(mesReferencia)} reaberta(s).`, 'success');
       carregarLote(mesReferencia);
     } catch (e: any) {
-      alert('Erro ao reabrir as folhas: ' + e.message);
+      toast('Erro ao reabrir as folhas: ' + e.message, 'error');
       setLoadingLote(false);
     }
   };
@@ -1114,7 +1116,7 @@ export default function HoleritePage() {
       window.open(url, '_blank', 'noopener,noreferrer');
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (e: any) {
-      alert('Erro ao gerar a prévia: ' + e.message);
+      toast('Erro ao gerar a prévia: ' + e.message, 'error');
     } finally {
       setGerandoPrevia(null);
     }
@@ -1122,11 +1124,11 @@ export default function HoleritePage() {
 
   const enviarAssinatura = async (item: ItemLote) => {
     if (!item.soDocumental && !item.fechamento) {
-      alert('Só é possível enviar para assinatura holerites com a folha FECHADA.');
+      toast('Só é possível enviar para assinatura holerites com a folha FECHADA.', 'error');
       return;
     }
     if (item.statusAssinatura === 'ASSINADO') {
-      alert('Este holerite já foi assinado.');
+      toast('Este holerite já foi assinado.', 'info');
       return;
     }
 
@@ -1152,10 +1154,10 @@ export default function HoleritePage() {
       }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       const anexosMsg = res.info?.anexados?.length ? `\n\nAnexado: ${item.soDocumental ? '' : 'resumo + '}${res.info.anexados.join(' + ')}` : '';
-      alert(`Enviado para assinatura!${anexosMsg}${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`);
+      toast(`Enviado para assinatura!${anexosMsg}${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`, 'success');
       carregarLote(mesReferencia);
     } catch (e: any) {
-      alert('Erro ao enviar para assinatura: ' + e.message);
+      toast('Erro ao enviar para assinatura: ' + e.message, 'error');
     } finally {
       setEnviandoAssinatura(null);
     }
@@ -1164,7 +1166,7 @@ export default function HoleritePage() {
   const enviarAssinaturaTodos = async () => {
     const fechadosNaoAssinados = lote.filter(l => l.fechamento && l.statusAssinatura !== 'ASSINADO' && l.statusAssinatura !== 'ENVIADO' && l.statusAssinatura !== 'VISUALIZADO');
     if (fechadosNaoAssinados.length === 0) {
-      alert('Não há holerites fechados pendentes de envio neste mês.');
+      toast('Não há holerites fechados pendentes de envio neste mês.', 'info');
       return;
     }
     if (!confirm(
@@ -1179,10 +1181,10 @@ export default function HoleritePage() {
       const res = await enviarHoleritesLoteAction({ mesReferencia, enviadoPor: usuarioAtual, sandbox: sandboxAssinatura }, accessToken);
       const falhasMsg = res.info?.falhas?.length ? `\n\nFalhas:\n${res.info.falhas.join('\n')}` : '';
       const docMsg = res.info?.documentais ? `\n(inclui ${res.info.documentais} ficha(s) documental(is))` : '';
-      alert(`${res.info?.enviados || 0} de ${res.info?.total || 0} documento(s) enviado(s).${docMsg}${falhasMsg}`);
+      toast(`${res.info?.enviados || 0} de ${res.info?.total || 0} documento(s) enviado(s).${docMsg}${falhasMsg}`, 'success');
       carregarLote(mesReferencia);
     } catch (e: any) {
-      alert('Erro no envio em lote: ' + e.message);
+      toast('Erro no envio em lote: ' + e.message, 'error');
     } finally {
       setEnviandoAssinatura(null);
     }

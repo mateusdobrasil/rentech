@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { salvarDocumentosContabeisAction, identificarFuncionarioOcrAction } from '../actions/actions-documentos';
+import { useToast } from '../../../components/ui/NotificationProvider';
 
 // pdf-lib e pdfjs são carregados dinamicamente (client-side) para separar e
 // renderizar as páginas. Nada disso depende do servidor/Vercel.
@@ -30,6 +31,7 @@ interface Props {
 }
 
 export default function SepararHolerites({ mesReferencia, usuarioAtual, accessToken, elegiveis, onFechar }: Props) {
+  const toast = useToast();
   const [competencia, setCompetencia] = useState(mesReferencia);
   const [tipo, setTipo] = useState<'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS'>('ADIANTAMENTO');
   const [processando, setProcessando] = useState(false);
@@ -89,7 +91,7 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, accessTo
   const handleArquivo = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.type !== 'application/pdf') { alert('Envie um arquivo PDF.'); return; }
+    if (file.type !== 'application/pdf') { toast('Envie um arquivo PDF.', 'error'); return; }
 
     setProcessando(true);
     setPaginas([]);
@@ -164,7 +166,7 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, accessTo
       setPaginas(novas);
       setProgresso('');
     } catch (err: any) {
-      alert('Erro ao processar o PDF: ' + err.message);
+      toast('Erro ao processar o PDF: ' + err.message, 'error');
     } finally {
       setProcessando(false);
       if (fileRef.current) fileRef.current.value = '';
@@ -188,7 +190,7 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, accessTo
       funcionarioNome: p.funcionarioNome, pdfBase64: p.pdfBase64, paginaOrigem: p.paginaOrigem,
       confiancaMatch: p.confianca
     }));
-    if (itens.length === 0) { alert('Associe pelo menos uma página a um funcionário.'); return; }
+    if (itens.length === 0) { toast('Associe pelo menos uma página a um funcionário.', 'error'); return; }
     if (duplicados.size > 0) {
       if (!confirm(`Há ${duplicados.size} funcionário(s) associados a mais de uma página. O último sobrescreve. Continuar?`)) return;
     }
@@ -216,11 +218,11 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, accessTo
       }
       setProgresso('');
       const falhasMsg = falhas.length ? `\n\nFalhas:\n${falhas.join('\n')}` : '';
-      alert(`${salvos} de ${itens.length} documento(s) salvos.${falhasMsg}`);
+      toast(`${salvos} de ${itens.length} documento(s) salvos.${falhasMsg}`, falhas.length ? 'error' : 'success');
       if (salvos > 0) { setPaginas([]); setNomeArquivo(''); }
     } catch (e: any) {
       setProgresso('');
-      alert('Erro ao salvar: ' + e.message);
+      toast('Erro ao salvar: ' + e.message, 'error');
     } finally {
       setSalvando(false);
     }

@@ -105,6 +105,7 @@ export default function Navbar() {
   const ferramentas = [
     { href: 'https://rentech.dashboard.primestart.net/', label: 'Dashboard P2S', target: '_blank' },
     { href: 'https://webmail.exchangecorp.com.br/', label: 'Webmail', target: '_blank' },
+    { href: 'https://quickconnect.to/rentechserver', label: 'Arquivos Públicos', target: '_blank' },
     { href: '/freelance', label: 'Freelancer' },
     { href: '/downloads', label: 'Downloads' },
     { href: '/rotacionar-video', label: 'Rotacionar Vídeo' },

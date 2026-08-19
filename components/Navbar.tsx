@@ -243,6 +243,11 @@ export default function Navbar() {
             </div>
           </div>
 
+          {/* Link para a Rentech Academy (dicas de instalação para os times técnico e comercial) */}
+          <Link href="/academy" className="hover:text-[#336699] transition-colors">
+            Academy
+          </Link>
+
           {/* Link para a página de Testes (jogos, vídeos e apresentação para TVs, video wall, LED e touchscreen) */}
           <Link href="/testes" className="hover:text-[#336699] transition-colors">
             Testes
@@ -372,6 +377,11 @@ export default function Navbar() {
               ))}
             </div>
           </div>
+
+          {/* Link para a Rentech Academy */}
+          <Link href="/academy" onClick={closeMenu} className="flex items-center justify-between rounded-md px-3 py-3 text-base font-bold hover:bg-[#284B8C]/30 hover:text-white transition-colors">
+            Academy
+          </Link>
 
           {/* Link para a página de Testes */}
           <Link href="/testes" onClick={closeMenu} className="flex items-center justify-between rounded-md px-3 py-3 text-base font-bold hover:bg-[#284B8C]/30 hover:text-white transition-colors">

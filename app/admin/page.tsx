@@ -76,6 +76,14 @@ const MODULOS_SISTEMA = [
     bgIcon: 'bg-cyan-50 text-cyan-600'
   },
   {
+    titulo: 'Rentech Academy',
+    descricao: 'Gerencie os artigos de dicas técnicas de TV, LED, som e luz publicados em /academy.',
+    icone: '🎓',
+    link: '/admin/academy',
+    cor: 'border-indigo-500/50 hover:border-indigo-500',
+    bgIcon: 'bg-indigo-50 text-indigo-600'
+  },
+  {
     titulo: 'Parâmetros',
     descricao: 'Controle de acesso, conteúdo do site, integrações, agendamentos, empresas do grupo e log de auditoria.',
     icone: '⚙️',

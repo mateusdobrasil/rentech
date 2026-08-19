@@ -7,7 +7,7 @@
 // (app/lib/calculoRescisao.ts); os demais só recebem o anexo do TRCT
 // fornecido pela contabilidade — nenhum valor é calculado nesse caso.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
 import { consultarAssinaturaAction, baixarAssinadoAction } from './actions-assinatura';
@@ -186,8 +186,11 @@ export async function listarFuncionariosElegiveisRescisaoAction(accessToken: str
 
   const db = supabaseAdmin();
   try {
-    const { data: funcs, error } = await db.from('folha_funcionarios')
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    let qFuncs = db.from('folha_funcionarios')
       .select('nome_completo, cargo, data_desligamento').eq('ativo', true).order('nome_completo');
+    if (empresasPermitidas) qFuncs = qFuncs.in('empresa_id', empresasPermitidas);
+    const { data: funcs, error } = await qFuncs;
     if (error) throw new Error(error.message);
 
     const nomes = (funcs || []).map(f => f.nome_completo);
@@ -238,6 +241,10 @@ export async function criarRescisaoAction(payload: {
     if (!func) return { ok: false, erro: 'Funcionário não encontrado.' };
     if (func.data_admissao && dataDesligamento < func.data_admissao) {
       return { ok: false, erro: 'A data de desligamento não pode ser antes da admissão.' };
+    }
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, func.empresa_id)) {
+      return { ok: false, erro: 'Você não tem permissão para abrir rescisão para este funcionário.' };
     }
 
     const { data: abertaExistente } = await db.from('folha_rescisoes')
@@ -316,6 +323,8 @@ export async function obterRescisaoAction(payload: { id: number }, accessToken: 
     const { data, error } = await db.from('folha_rescisoes').select('*').eq('id', payload.id).maybeSingle();
     if (error) throw new Error(error.message);
     if (!data) return { ok: false, erro: 'Rescisão não encontrada.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, data.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
     return { ok: true, info: { rescisao: data } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
@@ -335,6 +344,8 @@ export async function recalcularRescisaoAction(payload: { id: number }, accessTo
     const { data: r, error } = await db.from('folha_rescisoes').select('*').eq('id', payload.id).maybeSingle();
     if (error) throw new Error(error.message);
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
     if (r.status === 'HOMOLOGADA') return { ok: false, erro: 'Rescisão já homologada não pode ser recalculada.' };
     if (r.tipo_folha !== 'PROPRIO') return { ok: false, erro: 'Este caso não tem cálculo interno — a folha é administrada pela contabilidade.' };
     if (!r.data_admissao) return { ok: false, erro: 'Esta rescisão não tem data de admissão registrada — não é possível calcular.' };
@@ -378,9 +389,11 @@ export async function atualizarItemCalculoAction(payload: { id: number; itens: I
 
   const db = supabaseAdmin();
   try {
-    const { data: r, error } = await db.from('folha_rescisoes').select('status, tipo_folha, dados_calculo').eq('id', payload.id).maybeSingle();
+    const { data: r, error } = await db.from('folha_rescisoes').select('status, tipo_folha, dados_calculo, empresa_id').eq('id', payload.id).maybeSingle();
     if (error) throw new Error(error.message);
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
     if (r.status === 'HOMOLOGADA') return { ok: false, erro: 'Rescisão já homologada.' };
     if (r.tipo_folha !== 'PROPRIO') return { ok: false, erro: 'Este caso não tem cálculo interno.' };
 
@@ -410,9 +423,11 @@ export async function atualizarFgtsAction(payload: {
 
   const db = supabaseAdmin();
   try {
-    const { data: r, error } = await db.from('folha_rescisoes').select('status, motivo').eq('id', payload.id).maybeSingle();
+    const { data: r, error } = await db.from('folha_rescisoes').select('status, motivo, empresa_id').eq('id', payload.id).maybeSingle();
     if (error) throw new Error(error.message);
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
     if (r.status === 'HOMOLOGADA') return { ok: false, erro: 'Rescisão já homologada.' };
 
     const percentual = payload.percentualOverride ?? calcularPercentualMultaFgts(r.motivo as MotivoRescisao) * 100;
@@ -444,9 +459,11 @@ export async function uploadTrctRescisaoAction(payload: {
   const db = supabaseAdmin();
   try {
     const { data: r, error } = await db.from('folha_rescisoes')
-      .select('funcionario_nome, tipo_folha, status').eq('id', payload.id).maybeSingle();
+      .select('funcionario_nome, tipo_folha, status, empresa_id').eq('id', payload.id).maybeSingle();
     if (error) throw new Error(error.message);
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
 
     const bytes = Buffer.from(payload.arquivoBase64, 'base64');
     const ext = (payload.nomeArquivo.split('.').pop() || 'bin').toLowerCase();
@@ -474,8 +491,10 @@ export async function urlTrctRescisaoAction(payload: { id: number; download?: bo
 
   const db = supabaseAdmin();
   try {
-    const { data: r } = await db.from('folha_rescisoes').select('storage_path, nome_arquivo').eq('id', payload.id).maybeSingle();
+    const { data: r } = await db.from('folha_rescisoes').select('storage_path, nome_arquivo, empresa_id').eq('id', payload.id).maybeSingle();
     if (!r?.storage_path) return { ok: false, erro: 'Esta rescisão não tem anexo.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
 
     const opts = payload.download ? { download: r.nome_arquivo || undefined } : undefined;
     const { data, error } = await db.storage.from(BUCKET).createSignedUrl(r.storage_path, 60 * 10, opts);
@@ -495,9 +514,11 @@ export async function atualizarStatusRescisaoAction(payload: {
 
   const db = supabaseAdmin();
   try {
-    const { data: r, error } = await db.from('folha_rescisoes').select('status, tipo_folha, dados_calculo, storage_path').eq('id', payload.id).maybeSingle();
+    const { data: r, error } = await db.from('folha_rescisoes').select('status, tipo_folha, dados_calculo, storage_path, empresa_id').eq('id', payload.id).maybeSingle();
     if (error) throw new Error(error.message);
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
     if (r.status === 'HOMOLOGADA') return { ok: false, erro: 'Rescisão já homologada não pode mudar de status por aqui.' };
 
     if (payload.status === 'AGUARDANDO_HOMOLOGACAO') {
@@ -528,6 +549,8 @@ export async function homologarRescisaoAction(payload: { id: number; usuarioNome
     const { data: r, error } = await db.from('folha_rescisoes').select('*').eq('id', payload.id).maybeSingle();
     if (error) throw new Error(error.message);
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
     if (r.status === 'HOMOLOGADA') return { ok: true }; // já homologada — idempotente
     if (r.status === 'CANCELADA') return { ok: false, erro: 'Rescisão cancelada não pode ser homologada.' };
     if (r.tipo_folha === 'PROPRIO' && !r.dados_calculo) return { ok: false, erro: 'É necessário calcular a rescisão antes de homologar.' };
@@ -563,9 +586,11 @@ export async function cancelarRescisaoAction(payload: { id: number; motivo?: str
 
   const db = supabaseAdmin();
   try {
-    const { data: r, error } = await db.from('folha_rescisoes').select('status, funcionario_nome').eq('id', payload.id).maybeSingle();
+    const { data: r, error } = await db.from('folha_rescisoes').select('status, funcionario_nome, empresa_id').eq('id', payload.id).maybeSingle();
     if (error) throw new Error(error.message);
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
 
     const jaHomologada = r.status === 'HOMOLOGADA';
     const { error: updErr } = await db.from('folha_rescisoes').update({
@@ -591,16 +616,20 @@ export async function cancelarRescisaoAction(payload: { id: number; motivo?: str
 // painel de pendências do HUB (actions-dashboard.ts).
 // ============================================================================
 export async function painelRescisoesAction(accessToken: string): Promise<Resultado> {
-  const acesso = await validarAcessoRescisao(accessToken);
+  let acesso = await validarAcessoRescisao(accessToken);
   if (!acesso.ok) {
     // Também usada pelo painel de pendências do hub /admin/rh.
     const acessoHub = await validarAcesso(accessToken, '/admin/rh');
     if (!acessoHub.ok) return { ok: false, erro: acesso.message };
+    acesso = acessoHub;
   }
 
   const db = supabaseAdmin();
   try {
-    const { data, error } = await db.from('folha_rescisoes').select('*').order('data_desligamento', { ascending: false });
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    let q = db.from('folha_rescisoes').select('*').order('data_desligamento', { ascending: false });
+    if (empresasPermitidas) q = q.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+    const { data, error } = await q;
     if (error) throw new Error(error.message);
 
     const linhas = data || [];
@@ -642,6 +671,8 @@ export async function enviarRescisaoParaAssinaturaAction(payload: {
     const { data: r, error } = await db.from('folha_rescisoes').select('*').eq('id', payload.id).maybeSingle();
     if (error) throw new Error(error.message);
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
     if (r.status !== 'HOMOLOGADA') return { ok: false, erro: 'Só é possível enviar para assinatura depois da rescisão homologada.' };
 
     // Sem vínculo com a contabilidade (folha própria): o termo é o que o
@@ -685,6 +716,7 @@ export async function enviarRescisaoParaAssinaturaAction(payload: {
 
     const { error: upsertErr } = await db.from('folha_holerite_assinaturas').upsert({
       funcionario_nome: r.funcionario_nome,
+      empresa_id: r.empresa_id,
       mes_referencia: marcadorAssinatura(payload.id),
       cpf: cpfLimpo,
       autentique_doc_id: doc.docId,
@@ -713,8 +745,10 @@ export async function obterAssinaturaRescisaoAction(payload: { id: number }, acc
 
   const db = supabaseAdmin();
   try {
-    const { data: r } = await db.from('folha_rescisoes').select('funcionario_nome').eq('id', payload.id).maybeSingle();
+    const { data: r } = await db.from('folha_rescisoes').select('funcionario_nome, empresa_id').eq('id', payload.id).maybeSingle();
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
 
     const { data: assinatura } = await db.from('folha_holerite_assinaturas')
       .select('status, link_assinatura, sandbox, enviado_em, assinado_em, arquivo_assinado')
@@ -734,8 +768,10 @@ export async function atualizarAssinaturaRescisaoAction(payload: { id: number },
 
   const db = supabaseAdmin();
   try {
-    const { data: r } = await db.from('folha_rescisoes').select('funcionario_nome').eq('id', payload.id).maybeSingle();
+    const { data: r } = await db.from('folha_rescisoes').select('funcionario_nome, empresa_id').eq('id', payload.id).maybeSingle();
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
     return await consultarAssinaturaAction({ funcionarioNome: r.funcionario_nome, mesReferencia: marcadorAssinatura(payload.id) }, accessToken);
   } catch (e: any) {
     return { ok: false, erro: e.message };
@@ -748,8 +784,10 @@ export async function baixarAssinadoRescisaoAction(payload: { id: number }, acce
 
   const db = supabaseAdmin();
   try {
-    const { data: r } = await db.from('folha_rescisoes').select('funcionario_nome').eq('id', payload.id).maybeSingle();
+    const { data: r } = await db.from('folha_rescisoes').select('funcionario_nome, empresa_id').eq('id', payload.id).maybeSingle();
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
     return await baixarAssinadoAction({ funcionarioNome: r.funcionario_nome, mesReferencia: marcadorAssinatura(payload.id) }, accessToken);
   } catch (e: any) {
     return { ok: false, erro: e.message };
@@ -767,8 +805,11 @@ export async function listarAssinaturasRescisaoAction(accessToken: string): Prom
 
   const db = supabaseAdmin();
   try {
-    const { data, error } = await db.from('folha_holerite_assinaturas')
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    let q = db.from('folha_holerite_assinaturas')
       .select('*').like('mes_referencia', 'RESCISAO-%').order('enviado_em', { ascending: false });
+    if (empresasPermitidas) q = q.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+    const { data, error } = await q;
     if (error) throw new Error(error.message);
 
     const linhas = (data || []).map(a => ({
@@ -824,6 +865,8 @@ export async function gerarPdfRescisaoAction(payload: { id: number }, accessToke
     const { data: r, error } = await db.from('folha_rescisoes').select('*').eq('id', payload.id).maybeSingle();
     if (error) throw new Error(error.message);
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
     if (r.tipo_folha !== 'PROPRIO' || !r.dados_calculo) {
       return { ok: false, erro: 'Não há cálculo disponível para gerar o termo — esse caso é administrado pela contabilidade.' };
     }

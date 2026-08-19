@@ -20,7 +20,7 @@
 // rota (validarAcesso) e delegam pro core; assim o cron não precisa de sessão
 // admin, e a UI não passa por uma action sem checagem.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas } from '../../../lib/serverAuth';
 import {
   buscarFuncionariosAtivos, construirLista, agruparPorCpf, isoParaCompetenciaBr,
   persistirConsignacoesEDetectarNovos, listarConsignados,
@@ -38,12 +38,15 @@ export async function listarConsignadosPersistidosAction(accessToken: string): P
 
   try {
     const db = supabaseAdmin();
-    const funcionarios = await buscarFuncionariosAtivos();
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const funcionarios = await buscarFuncionariosAtivos(empresasPermitidas);
 
-    const { data: linhas, error } = await db
+    let q = db
       .from('folha_consignados')
       .select('*')
       .eq('ativo', true);
+    if (empresasPermitidas) q = q.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+    const { data: linhas, error } = await q;
     if (error) throw new Error(error.message);
 
     const porCpf = new Map<string, any[]>();
@@ -93,7 +96,8 @@ export async function listarConsignadosAction(competencia: string /* AAAAMM */, 
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
-  return listarConsignados(competencia);
+  const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+  return listarConsignados(competencia, empresasPermitidas);
 }
 
 // ============================================================================
@@ -111,7 +115,8 @@ export async function importarConsignacoesArquivoAction(payload: { registros: an
 
     const novosDetectados = await persistirConsignacoesEDetectarNovos(registros, 'ARQUIVO');
 
-    const funcionarios = await buscarFuncionariosAtivos();
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const funcionarios = await buscarFuncionariosAtivos(empresasPermitidas);
     const porCpf = agruparPorCpf(registros);
     const lista = construirLista(funcionarios, porCpf, null, new Date().toISOString());
 

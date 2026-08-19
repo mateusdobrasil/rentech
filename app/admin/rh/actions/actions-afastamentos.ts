@@ -5,7 +5,7 @@
 // Reaproveita o bucket de Storage do módulo de Documentos (documentos-funcionarios)
 // para o anexo opcional do atestado/laudo.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -35,9 +35,9 @@ const addDiasIso = (iso: string, dias: number): string => {
 // usada no lançamento manual de ponto).
 // ============================================================================
 async function sincronizarAbonosAfastamento(db: ReturnType<typeof supabaseAdmin>, params: {
-  afastamentoId: number; funcionarioNome: string; dataInicio: string; dataFimEfetivo: string; tipoNome: string;
+  afastamentoId: number; funcionarioNome: string; empresaId: number | null; dataInicio: string; dataFimEfetivo: string; tipoNome: string;
 }) {
-  const { afastamentoId, funcionarioNome, dataInicio, dataFimEfetivo, tipoNome } = params;
+  const { afastamentoId, funcionarioNome, empresaId, dataInicio, dataFimEfetivo, tipoNome } = params;
 
   const dias: string[] = [];
   for (let d = dataInicio; d <= dataFimEfetivo; d = addDiasIso(d, 1)) dias.push(d);
@@ -64,7 +64,7 @@ async function sincronizarAbonosAfastamento(db: ReturnType<typeof supabaseAdmin>
   const ocupados = new Set((ocupadosPorOutros || []).map(o => o.data_abono));
 
   const novos = diasFaltando.filter(d => !ocupados.has(d)).map(d => ({
-    funcionario_nome: funcionarioNome, data_abono: d, dia_todo: true,
+    funcionario_nome: funcionarioNome, empresa_id: empresaId, data_abono: d, dia_todo: true,
     hora_inicio: null, hora_fim: null, minutos_abonados: 480,
     motivo: `Afastamento: ${tipoNome}`, origem: 'AFASTAMENTO', afastamento_id: afastamentoId
   }));
@@ -111,17 +111,20 @@ export async function criarTipoAfastamentoAction(payload: { nome: string }, acce
 // PAINEL: lista todos os afastamentos com tipo/cargo já resolvidos + KPIs.
 // ============================================================================
 export async function painelAfastamentosAction(accessToken: string): Promise<Resultado> {
-  const acesso = await validarAcesso(accessToken, ROTA);
+  let acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) {
     // Também usada pelo painel de pendências do hub /admin/rh.
     const acessoHub = await validarAcesso(accessToken, '/admin/rh');
     if (!acessoHub.ok) return { ok: false, erro: acesso.message };
+    acesso = acessoHub;
   }
 
   const db = supabaseAdmin();
   try {
-    const { data: afastamentos, error } = await db.from('folha_afastamentos')
-      .select('*').order('data_inicio', { ascending: false });
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    let q = db.from('folha_afastamentos').select('*').order('data_inicio', { ascending: false });
+    if (empresasPermitidas) q = q.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+    const { data: afastamentos, error } = await q;
     if (error) throw new Error(error.message);
 
     const { data: tipos } = await db.from('folha_afastamento_tipos').select('id, nome');
@@ -181,6 +184,18 @@ export async function salvarAfastamentoAction(payload: {
   }
 
   try {
+    const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
+      return { ok: false, erro: 'Você não tem permissão para lançar afastamento para este funcionário.' };
+    }
+
+    if (id) {
+      const { data: existente } = await db.from('folha_afastamentos').select('empresa_id').eq('id', id).maybeSingle();
+      if (!existente) return { ok: false, erro: 'Afastamento não encontrado.' };
+      if (!empresaPermitida(empresasPermitidas, existente.empresa_id)) return { ok: false, erro: 'Afastamento não encontrado.' };
+    }
+
     let storagePath: string | null = null;
     let nomeArquivoSalvo: string | null = null;
     if (arquivoBase64 && nomeArquivo) {
@@ -212,7 +227,7 @@ export async function salvarAfastamentoAction(payload: {
       afastamentoId = id;
     } else {
       const { data: novo, error } = await db.from('folha_afastamentos').insert({
-        funcionario_nome: funcionarioNome, tipo_id: tipoId, data_inicio: dataInicio, data_fim: dataFim || null,
+        funcionario_nome: funcionarioNome, empresa_id: func?.empresa_id ?? null, tipo_id: tipoId, data_inicio: dataInicio, data_fim: dataFim || null,
         cid: cid || null, observacao: observacao || null, status,
         storage_path: storagePath, nome_arquivo: nomeArquivoSalvo, criado_por: usuarioNome
       }).select('id').single();
@@ -221,7 +236,7 @@ export async function salvarAfastamentoAction(payload: {
     }
 
     await sincronizarAbonosAfastamento(db, {
-      afastamentoId, funcionarioNome, dataInicio, dataFimEfetivo: dataFim || hojeIso(), tipoNome
+      afastamentoId, funcionarioNome, empresaId: func?.empresa_id ?? null, dataInicio, dataFimEfetivo: dataFim || hojeIso(), tipoNome
     });
 
     return { ok: true, info: { id: afastamentoId } };
@@ -239,8 +254,10 @@ export async function encerrarAfastamentoAction(payload: { id: number; dataFim: 
 
   const db = supabaseAdmin();
   try {
-    const { data: atual } = await db.from('folha_afastamentos').select('funcionario_nome, data_inicio, tipo_id').eq('id', payload.id).maybeSingle();
+    const { data: atual } = await db.from('folha_afastamentos').select('funcionario_nome, data_inicio, tipo_id, empresa_id').eq('id', payload.id).maybeSingle();
     if (!atual) return { ok: false, erro: 'Afastamento não encontrado.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, atual.empresa_id)) return { ok: false, erro: 'Afastamento não encontrado.' };
     if (payload.dataFim < atual.data_inicio) return { ok: false, erro: 'A data de fim não pode ser antes da data de início.' };
 
     const { error } = await db.from('folha_afastamentos').update({
@@ -250,7 +267,7 @@ export async function encerrarAfastamentoAction(payload: { id: number; dataFim: 
 
     const { data: tipoRow } = await db.from('folha_afastamento_tipos').select('nome').eq('id', atual.tipo_id).maybeSingle();
     await sincronizarAbonosAfastamento(db, {
-      afastamentoId: payload.id, funcionarioNome: atual.funcionario_nome, dataInicio: atual.data_inicio,
+      afastamentoId: payload.id, funcionarioNome: atual.funcionario_nome, empresaId: atual.empresa_id, dataInicio: atual.data_inicio,
       dataFimEfetivo: payload.dataFim, tipoNome: tipoRow?.nome || 'AFASTAMENTO'
     });
 
@@ -266,8 +283,11 @@ export async function excluirAfastamentoAction(payload: { id: number }, accessTo
 
   const db = supabaseAdmin();
   try {
-    const { data: af } = await db.from('folha_afastamentos').select('storage_path').eq('id', payload.id).maybeSingle();
-    if (af?.storage_path) await db.storage.from(BUCKET).remove([af.storage_path]);
+    const { data: af } = await db.from('folha_afastamentos').select('storage_path, empresa_id').eq('id', payload.id).maybeSingle();
+    if (!af) return { ok: false, erro: 'Afastamento não encontrado.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, af.empresa_id)) return { ok: false, erro: 'Afastamento não encontrado.' };
+    if (af.storage_path) await db.storage.from(BUCKET).remove([af.storage_path]);
     const { error } = await db.from('folha_afastamentos').delete().eq('id', payload.id);
     if (error) throw new Error(error.message);
     return { ok: true };
@@ -285,8 +305,10 @@ export async function urlAnexoAfastamentoAction(payload: { id: number; download?
 
   const db = supabaseAdmin();
   try {
-    const { data: af } = await db.from('folha_afastamentos').select('storage_path, nome_arquivo').eq('id', payload.id).maybeSingle();
+    const { data: af } = await db.from('folha_afastamentos').select('storage_path, nome_arquivo, empresa_id').eq('id', payload.id).maybeSingle();
     if (!af?.storage_path) return { ok: false, erro: 'Este afastamento não tem anexo.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, af.empresa_id)) return { ok: false, erro: 'Este afastamento não tem anexo.' };
 
     const opts = payload.download ? { download: af.nome_arquivo || undefined } : undefined;
     const { data, error } = await db.storage.from(BUCKET).createSignedUrl(af.storage_path, 60 * 10, opts);

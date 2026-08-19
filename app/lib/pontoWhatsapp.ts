@@ -235,6 +235,15 @@ async function buscarFuncionarioPorCelular(db: Db, telefone: string): Promise<{ 
   return achado ? { nome_completo: achado.nome_completo } : null;
 }
 
+// Resolvida de novo (não carregada junto no fluxo) em cada ponto de grvação
+// pra não precisar acrescentar empresaId a toda assinatura de função da
+// máquina de estados do bot — o custo de mais uma consulta simples é
+// irrelevante no volume de um webhook de chat.
+async function empresaIdDoFuncionario(db: Db, funcionarioNome: string): Promise<number | null> {
+  const { data } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+  return data?.empresa_id ?? null;
+}
+
 // Batidas do dia ainda não registradas (nem no ledger, nem por ajuste
 // aprovado), na ordem E1→S1→E2→S2. Usada tanto para decidir a próxima
 // batida do fluxo PONTO quanto para montar o menu do fluxo JUSTIFICAR.
@@ -268,6 +277,7 @@ async function salvarPendencia(db: Db, celular: string, funcionarioNome: string,
   const { error } = await db.from('folha_ponto_whatsapp_pendencias').upsert({
     celular,
     funcionario_nome: funcionarioNome,
+    empresa_id: await empresaIdDoFuncionario(db, funcionarioNome),
     fluxo,
     etapa,
     contexto,
@@ -386,6 +396,7 @@ export async function consolidarDia(db: Db, funcionarioNome: string, dataReferen
 
   await db.from('folha_ponto_diaria').insert({
     funcionario_nome: funcionarioNome,
+    empresa_id: await empresaIdDoFuncionario(db, funcionarioNome),
     data_registro: dataReferencia,
     entrada_1: e1, saida_1: s1, entrada_2: e2, saida_2: s2,
     minutos_trabalhados: minutosTrabalhados,
@@ -409,6 +420,7 @@ interface DadosConfirmacaoBatida {
 async function confirmarBatida(db: Db, dados: DadosConfirmacaoBatida, messageId: string | null, payloadBruto: unknown): Promise<{ nsr: number; tipo_batida: TipoBatida; data_hora_batida: string }> {
   const { data, error } = await db.from('folha_ponto_whatsapp_registros').insert({
     funcionario_nome: dados.funcionario_nome,
+    empresa_id: await empresaIdDoFuncionario(db, dados.funcionario_nome),
     celular: dados.celular,
     tipo_batida: dados.tipo_batida,
     data_referencia: dados.data_referencia,
@@ -613,6 +625,7 @@ async function avancarJustificar(db: Db, pendencia: PendenciaPonto, texto: strin
     await db.from('folha_ponto_whatsapp_solicitacoes').insert({
       tipo: 'JUSTIFICATIVA_BATIDA',
       funcionario_nome: pendencia.funcionario_nome,
+      empresa_id: await empresaIdDoFuncionario(db, pendencia.funcionario_nome),
       celular: pendencia.celular,
       data_referencia: dataReferencia,
       tipo_batida: tipoBatida,
@@ -728,6 +741,7 @@ async function avancarAbonar(db: Db, pendencia: PendenciaPonto, texto: string, a
     await db.from('folha_ponto_whatsapp_solicitacoes').insert({
       tipo: 'ABONO_DIA',
       funcionario_nome: pendencia.funcionario_nome,
+      empresa_id: await empresaIdDoFuncionario(db, pendencia.funcionario_nome),
       celular: pendencia.celular,
       data_referencia: dataReferencia,
       dia_todo: true,
@@ -800,6 +814,7 @@ async function avancarFolgar(db: Db, pendencia: PendenciaPonto, texto: string, a
     await db.from('folha_ponto_whatsapp_solicitacoes').insert({
       tipo: 'FOLGA_DIA',
       funcionario_nome: pendencia.funcionario_nome,
+      empresa_id: await empresaIdDoFuncionario(db, pendencia.funcionario_nome),
       celular: pendencia.celular,
       data_referencia: dataReferencia,
       data_referencia_fim: dataReferenciaFim,

@@ -4,7 +4,7 @@
 // Server actions para as GRAVAÇÕES sensíveis do módulo de folha.
 // Rodam no servidor com service role — a lógica de escrita sai do browser.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
@@ -36,6 +36,15 @@ export async function salvarColaboradorAction(payload: {
 
   if (!form?.nome_completo) return { ok: false, erro: 'O Nome Completo é obrigatório.' };
   if (!form?.empresa_id) return { ok: false, erro: 'Selecione a Empresa do colaborador.' };
+
+  const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+  if (!empresaPermitida(empresasPermitidas, form.empresa_id)) {
+    return { ok: false, erro: 'Você não tem permissão para gravar funcionários dessa empresa.' };
+  }
+  const { data: existenteFunc } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', String(form.nome_completo).trim().toUpperCase()).maybeSingle();
+  if (existenteFunc && !empresaPermitida(empresasPermitidas, existenteFunc.empresa_id)) {
+    return { ok: false, erro: 'Você não tem permissão para editar este funcionário.' };
+  }
 
   // Nome sempre em MAIÚSCULO no banco (padroniza a chave usada em todas as tabelas)
   form.nome_completo = String(form.nome_completo).trim().toUpperCase();
@@ -111,6 +120,11 @@ export async function atribuirEmpresaEmMassaAction(payload: {
   if (!nomesFuncionarios?.length) return { ok: false, erro: 'Selecione ao menos um funcionário.' };
   if (!empresaId) return { ok: false, erro: 'Selecione a empresa.' };
 
+  const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+  if (!empresaPermitida(empresasPermitidas, empresaId)) {
+    return { ok: false, erro: 'Você não tem permissão para atribuir funcionários a essa empresa.' };
+  }
+
   try {
     const { error } = await db.from('folha_funcionarios')
       .update({ empresa_id: empresaId })
@@ -145,6 +159,12 @@ export async function salvarBonusDescontosAction(payload: {
   const { funcionarioNome, descontos, bonus, usuarioNome } = payload;
 
   if (!funcionarioNome) return { ok: false, erro: 'Funcionário não informado.' };
+
+  const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+  const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+  if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
+    return { ok: false, erro: 'Você não tem permissão para alterar dados deste funcionário.' };
+  }
 
   try {
     const { error: delDesc } = await db.from('folha_descontos').delete().eq('funcionario_nome', funcionarioNome);
@@ -209,6 +229,12 @@ export async function salvarDadosSalariaisAction(payload: {
 
   if (!funcionarioNome) return { ok: false, erro: 'Funcionário não informado.' };
 
+  const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+  const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+  if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
+    return { ok: false, erro: 'Você não tem permissão para alterar dados deste funcionário.' };
+  }
+
   try {
     const { error } = await db
       .from('folha_funcionarios')
@@ -252,9 +278,23 @@ export async function fecharFolhaLoteAction(payload: {
   if (!linhas.length) return { ok: false, erro: 'Nenhum funcionário para fechar.' };
 
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const nomes = linhas.map(l => l.funcionario_nome);
+    const { data: funcs } = await db.from('folha_funcionarios').select('nome_completo, empresa_id').in('nome_completo', nomes);
+    const empresaPorNome: Record<string, number | null> = {};
+    const foraDoEscopo: string[] = [];
+    (funcs || []).forEach(f => {
+      empresaPorNome[f.nome_completo] = f.empresa_id;
+      if (!empresaPermitida(empresasPermitidas, f.empresa_id)) foraDoEscopo.push(f.nome_completo);
+    });
+    if (foraDoEscopo.length > 0) {
+      return { ok: false, erro: `Você não tem permissão para fechar a folha de: ${foraDoEscopo.join(', ')}.` };
+    }
+
     const agora = new Date().toISOString();
     const registros = linhas.map(l => ({
       funcionario_nome: l.funcionario_nome,
+      empresa_id: empresaPorNome[l.funcionario_nome] ?? null,
       mes_referencia: mesReferencia,
       dados: l.dados,
       total_creditos: Number((l.dados.totalCreditos || 0).toFixed(2)),
@@ -299,6 +339,15 @@ export async function reabrirFolhaAction(payload: {
   if (!ids.length) return { ok: false, erro: 'Nenhuma folha para reabrir.' };
 
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (empresasPermitidas) {
+      const { data: linhasAlvo } = await db.from('folha_holerites').select('id, empresa_id').in('id', ids);
+      const foraDoEscopo = (linhasAlvo || []).filter(l => !empresaPermitida(empresasPermitidas, l.empresa_id));
+      if (foraDoEscopo.length > 0) {
+        return { ok: false, erro: 'Você não tem permissão para reabrir uma ou mais dessas folhas.' };
+      }
+    }
+
     const { error } = await db.from('folha_holerites').delete().in('id', ids);
     if (error) throw new Error(error.message);
 

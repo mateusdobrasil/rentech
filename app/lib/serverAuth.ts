@@ -3,7 +3,7 @@
 // botão, mas a Server Action por trás dele aceitava a chamada de qualquer sessão
 // válida. Isso fecha esse buraco no lado que realmente importa: o servidor.
 import { supabaseAdmin } from './supabase';
-import { normalizarPermissao } from './permissoes';
+import { normalizarPermissao, ehAdministradorGlobal } from './permissoes';
 
 export interface PerfilValidado {
   id: string;
@@ -61,4 +61,42 @@ export async function validarAcesso(accessToken: string, rota: string): Promise<
   if (!autorizado) return { ok: false, message: 'Você não tem permissão para executar esta ação.' };
 
   return { ok: true, perfil };
+}
+
+// Empresas que o usuário do perfil pode enxergar: `null` = sem restrição.
+// Sempre resolvido no servidor a partir de perfis_usuarios_empresas — nunca
+// aceitar essa lista vinda do cliente, senão qualquer chamador pode pedir
+// dados de qualquer empresa só informando o ID dela no payload.
+//
+// O balde ADMINISTRADOR (normalizarPermissao) junta Admin/Diretoria/Gerência
+// só pra fins de ACESSO DE ROTA — pra fins de EMPRESA, só quem é
+// literalmente "Administrador" (ehAdministradorGlobal) fica sem restrição.
+// Diretoria/Gerência ficam escopadas como qualquer outro usuário, porque
+// diretorias diferentes tocam empresas diferentes (Rentech × AlfaLight).
+export async function obterEmpresasPermitidas(perfilId: string, permissaoNormalizada: string): Promise<number[] | null> {
+  const admin = supabaseAdmin();
+
+  if (permissaoNormalizada === 'ADMINISTRADOR') {
+    const { data: perfil } = await admin.from('perfis_usuarios').select('permissao').eq('id', perfilId).maybeSingle();
+    if (ehAdministradorGlobal(perfil?.permissao || '')) return null;
+  }
+
+  const { data } = await admin
+    .from('perfis_usuarios_empresas')
+    .select('empresa_id')
+    .eq('perfil_id', perfilId);
+
+  return ((data || []) as { empresa_id: number }[]).map(v => v.empresa_id);
+}
+
+// Confere se uma linha (pelo empresa_id dela) está dentro do que o usuário
+// pode ver: null (ADMINISTRADOR) sempre permite; empresa_id null (linha
+// legada/funcionário sem empresa definida) também passa — mesmo critério
+// usado nas políticas de RLS (sql/multiempresa_isolamento_rls.sql), pra não
+// haver divergência entre o que a Server Action deixa passar e o que o banco
+// deixaria passar num acesso direto.
+export function empresaPermitida(empresasPermitidas: number[] | null, empresaId: number | null | undefined): boolean {
+  if (empresasPermitidas === null) return true;
+  if (empresaId === null || empresaId === undefined) return true;
+  return empresasPermitidas.includes(empresaId);
 }

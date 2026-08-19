@@ -23,6 +23,7 @@ export function usePageAccess(options: UsePageAccessOptions = {}) {
   const [usuarioAtual, setUsuarioAtual] = useState('');
   const [emailUsuario, setEmailUsuario] = useState('');
   const [permissaoNormalizada, setPermissaoNormalizada] = useState('');
+  const [permissaoBruta, setPermissaoBruta] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [authLoading, setAuthLoading] = useState(true);
   const [acessoNegado, setAcessoNegado] = useState(false);
@@ -66,7 +67,8 @@ export function usePageAccess(options: UsePageAccessOptions = {}) {
         return;
       }
 
-      const pn = normalizarPermissao(perfil.permissao || perfil.nivel || '');
+      const pb = perfil.permissao || perfil.nivel || '';
+      const pn = normalizarPermissao(pb);
       const permissoesLiberadas = rotaPermissao?.permissoes_permitidas || [];
 
       if (!permissoesLiberadas.includes(pn)) {
@@ -78,6 +80,7 @@ export function usePageAccess(options: UsePageAccessOptions = {}) {
       setUsuarioAtual(perfil.nome || nomeFallback);
       setEmailUsuario(perfil.email || session.user.email || '');
       setPermissaoNormalizada(pn);
+      setPermissaoBruta(pb);
       setAccessToken(session.access_token);
 
       if (aoAutorizar) await aoAutorizar();
@@ -90,5 +93,5 @@ export function usePageAccess(options: UsePageAccessOptions = {}) {
 
   const tentarNovamente = () => setTentativa(t => t + 1);
 
-  return { usuarioAtual, emailUsuario, permissaoNormalizada, accessToken, authLoading, acessoNegado, erro, tentarNovamente };
+  return { usuarioAtual, emailUsuario, permissaoNormalizada, permissaoBruta, accessToken, authLoading, acessoNegado, erro, tentarNovamente };
 }

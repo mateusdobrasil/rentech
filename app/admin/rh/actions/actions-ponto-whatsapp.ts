@@ -9,7 +9,7 @@
 // de verdade quando aprovadas aqui pelo RH — o funcionário nunca aprova a
 // própria exceção.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { consolidarDia, timestampBR, formatarPeriodoBR } from '../../../lib/pontoWhatsapp';
 import { notificarPontoWhatsApp } from '../../../lib/whatsapp';
 import { registrarLogAuditoria } from '../../../actions';
@@ -42,6 +42,12 @@ export async function estatisticasPontoWhatsappAction(mesAno: string, accessToke
 
   const db = supabaseAdmin();
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const filtroEmpresa = <T,>(q: T): T => {
+      if (!empresasPermitidas) return q;
+      return (q as any).or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+    };
+
     const [ano, mes] = mesAno.split('-');
     const dataInicio = `${ano}-${mes}-01`;
     const ultimoDia = new Date(Number(ano), Number(mes), 0).getDate();
@@ -49,12 +55,12 @@ export async function estatisticasPontoWhatsappAction(mesAno: string, accessToke
     const hojeIso = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 
     const [{ count: habilitados }, { count: hoje }, { count: mesTotal }, { count: pendentes }, { count: folgasPendentes }] = await Promise.all([
-      db.from('folha_funcionarios').select('nome_completo', { count: 'exact', head: true }).eq('ativo', true).eq('ponto_whatsapp_ativo', true),
-      db.from('folha_ponto_whatsapp_registros').select('nsr', { count: 'exact', head: true }).eq('data_referencia', hojeIso),
-      db.from('folha_ponto_whatsapp_registros').select('nsr', { count: 'exact', head: true }).gte('data_referencia', dataInicio).lte('data_referencia', dataFim),
+      filtroEmpresa(db.from('folha_funcionarios').select('nome_completo', { count: 'exact', head: true }).eq('ativo', true).eq('ponto_whatsapp_ativo', true)),
+      filtroEmpresa(db.from('folha_ponto_whatsapp_registros').select('nsr', { count: 'exact', head: true }).eq('data_referencia', hojeIso)),
+      filtroEmpresa(db.from('folha_ponto_whatsapp_registros').select('nsr', { count: 'exact', head: true }).gte('data_referencia', dataInicio).lte('data_referencia', dataFim)),
       // Só Justificativa/Abono — Folga tem contador e aba próprios (ver folgasPendentes).
-      db.from('folha_ponto_whatsapp_solicitacoes').select('id', { count: 'exact', head: true }).eq('status', 'PENDENTE').neq('tipo', 'FOLGA_DIA'),
-      db.from('folha_ponto_whatsapp_solicitacoes').select('id', { count: 'exact', head: true }).eq('status', 'PENDENTE').eq('tipo', 'FOLGA_DIA'),
+      filtroEmpresa(db.from('folha_ponto_whatsapp_solicitacoes').select('id', { count: 'exact', head: true }).eq('status', 'PENDENTE').neq('tipo', 'FOLGA_DIA')),
+      filtroEmpresa(db.from('folha_ponto_whatsapp_solicitacoes').select('id', { count: 'exact', head: true }).eq('status', 'PENDENTE').eq('tipo', 'FOLGA_DIA')),
     ]);
 
     return {
@@ -94,13 +100,16 @@ export async function listarLedgerPontoWhatsappAction(mesAno: string, accessToke
     const ultimoDia = new Date(Number(ano), Number(mes), 0).getDate();
     const dataFim = `${ano}-${mes}-${String(ultimoDia).padStart(2, '0')}`;
 
-    const { data, error } = await db
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    let query = db
       .from('folha_ponto_whatsapp_registros')
       .select('nsr, funcionario_nome, tipo_batida, data_referencia, data_hora_batida, hash_registro')
       .gte('data_referencia', dataInicio)
       .lte('data_referencia', dataFim)
       .order('nsr', { ascending: false });
+    if (empresasPermitidas) query = query.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
 
+    const { data, error } = await query;
     if (error) throw new Error(error.message);
     return { ok: true, info: data || [] };
   } catch (e: any) {
@@ -130,12 +139,15 @@ export async function listarSolicitacoesPendentesAction(accessToken: string): Pr
 
   const db = supabaseAdmin();
   try {
-    const { data, error } = await db
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    let query = db
       .from('folha_ponto_whatsapp_solicitacoes')
       .select('id, tipo, funcionario_nome, data_referencia, data_referencia_fim, tipo_batida, horario_solicitado, motivo, anexo_nome, criado_em')
       .eq('status', 'PENDENTE')
       .neq('tipo', 'FOLGA_DIA')
       .order('criado_em', { ascending: true });
+    if (empresasPermitidas) query = query.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+    const { data, error } = await query;
     if (error) throw new Error(error.message);
     return { ok: true, info: data || [] };
   } catch (e: any) {
@@ -152,11 +164,14 @@ export async function listarSolicitacoesFolgaAction(accessToken: string): Promis
 
   const db = supabaseAdmin();
   try {
-    const { data, error } = await db
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    let query = db
       .from('folha_ponto_whatsapp_solicitacoes')
       .select('id, tipo, funcionario_nome, data_referencia, data_referencia_fim, tipo_batida, horario_solicitado, motivo, anexo_nome, status, resolvido_por, resolvido_em, motivo_rejeicao, criado_em')
       .eq('tipo', 'FOLGA_DIA')
       .order('criado_em', { ascending: false });
+    if (empresasPermitidas) query = query.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+    const { data, error } = await query;
     if (error) throw new Error(error.message);
     return { ok: true, info: data || [] };
   } catch (e: any) {
@@ -190,7 +205,8 @@ export async function listarAbonosPendentesDoMesAction(payload: { mesAno: string
     const ultimoDia = new Date(Number(ano), Number(mes), 0).getDate();
     const dataFim = `${ano}-${mes}-${String(ultimoDia).padStart(2, '0')}`;
 
-    const { data, error } = await db
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    let query = db
       .from('folha_ponto_whatsapp_solicitacoes')
       .select('funcionario_nome, data_referencia, motivo')
       .eq('status', 'PENDENTE')
@@ -198,6 +214,8 @@ export async function listarAbonosPendentesDoMesAction(payload: { mesAno: string
       .gte('data_referencia', dataInicio)
       .lte('data_referencia', dataFim)
       .in('funcionario_nome', payload.nomes);
+    if (empresasPermitidas) query = query.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+    const { data, error } = await query;
     if (error) throw new Error(error.message);
     return { ok: true, info: data || [] };
   } catch (e: any) {
@@ -222,11 +240,13 @@ export async function listarHistoricoSolicitacoesAction(mesAno: string | undefin
 
   const db = supabaseAdmin();
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     let query = db
       .from('folha_ponto_whatsapp_solicitacoes')
       .select('id, tipo, funcionario_nome, data_referencia, data_referencia_fim, tipo_batida, horario_solicitado, motivo, anexo_nome, status, resolvido_por, resolvido_em, motivo_rejeicao, criado_em')
       .neq('tipo', 'FOLGA_DIA')
       .order('criado_em', { ascending: false });
+    if (empresasPermitidas) query = query.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
 
     if (mesAno) {
       const [ano, mes] = mesAno.split('-');
@@ -255,10 +275,12 @@ export async function urlAnexoSolicitacaoAction(payload: { id: number }, accessT
   try {
     const { data: solicitacao } = await db
       .from('folha_ponto_whatsapp_solicitacoes')
-      .select('anexo_path, anexo_nome')
+      .select('anexo_path, anexo_nome, empresa_id')
       .eq('id', payload.id)
       .maybeSingle();
     if (!solicitacao?.anexo_path) return { ok: false, erro: 'Esta solicitação não tem anexo.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, solicitacao.empresa_id)) return { ok: false, erro: 'Esta solicitação não tem anexo.' };
 
     const { data, error } = await db.storage
       .from('documentos-funcionarios')
@@ -297,7 +319,7 @@ function diasEntre(inicioIso: string, fimIso: string): string[] {
 // Grava (ou atualiza, se já existir) uma linha de folha_ponto_abono pra um
 // dia — mesmo padrão de abonarDiaManualAction (actions-ponto.ts), reusado
 // aqui tanto pro Abono de dia único quanto, em loop, pro período de Folga.
-async function gravarAbonoDoDia(db: ReturnType<typeof supabaseAdmin>, funcionarioNome: string, dataAbono: string, motivo: string): Promise<void> {
+async function gravarAbonoDoDia(db: ReturnType<typeof supabaseAdmin>, funcionarioNome: string, empresaId: number | null, dataAbono: string, motivo: string): Promise<void> {
   const { data: existente } = await db.from('folha_ponto_abono')
     .select('id')
     .eq('funcionario_nome', funcionarioNome)
@@ -309,7 +331,7 @@ async function gravarAbonoDoDia(db: ReturnType<typeof supabaseAdmin>, funcionari
     const { error } = await db.from('folha_ponto_abono').update(payload).eq('id', existente.id);
     if (error) throw new Error(`Falha ao gravar o abono de ${dataAbono}: ${error.message}`);
   } else {
-    const { error } = await db.from('folha_ponto_abono').insert({ funcionario_nome: funcionarioNome, data_abono: dataAbono, ...payload });
+    const { error } = await db.from('folha_ponto_abono').insert({ funcionario_nome: funcionarioNome, empresa_id: empresaId, data_abono: dataAbono, ...payload });
     if (error) throw new Error(`Falha ao gravar o abono de ${dataAbono}: ${error.message}`);
   }
 }
@@ -334,11 +356,14 @@ export async function aprovarSolicitacaoAction(payload: { id: number; aprovadorN
       .eq('id', id)
       .single();
     if (buscaErr || !solicitacao) throw new Error('Solicitação não encontrada.');
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, solicitacao.empresa_id)) throw new Error('Solicitação não encontrada.');
     if (solicitacao.status !== 'PENDENTE') throw new Error('Esta solicitação já foi analisada.');
 
     if (solicitacao.tipo === 'JUSTIFICATIVA_BATIDA') {
       const { error: ajusteErr } = await db.from('folha_ponto_whatsapp_ajustes').insert({
         funcionario_nome: solicitacao.funcionario_nome,
+        empresa_id: solicitacao.empresa_id,
         data_referencia: solicitacao.data_referencia,
         tipo_batida: solicitacao.tipo_batida,
         data_hora_ajustada: timestampBR(solicitacao.data_referencia, solicitacao.horario_solicitado),
@@ -350,11 +375,12 @@ export async function aprovarSolicitacaoAction(payload: { id: number; aprovadorN
     } else if (solicitacao.tipo === 'FOLGA_DIA') {
       const dias = diasEntre(solicitacao.data_referencia, solicitacao.data_referencia_fim || solicitacao.data_referencia);
       for (const dia of dias) {
-        await gravarAbonoDoDia(db, solicitacao.funcionario_nome, dia, solicitacao.motivo);
+        await gravarAbonoDoDia(db, solicitacao.funcionario_nome, solicitacao.empresa_id, dia, solicitacao.motivo);
       }
     } else {
       const { error: abonoErr } = await db.from('folha_ponto_abono').insert({
         funcionario_nome: solicitacao.funcionario_nome,
+        empresa_id: solicitacao.empresa_id,
         data_abono: solicitacao.data_referencia,
         dia_todo: true,
         hora_inicio: null,
@@ -406,6 +432,8 @@ export async function rejeitarSolicitacaoAction(payload: { id: number; aprovador
       .eq('id', id)
       .single();
     if (buscaErr || !solicitacao) throw new Error('Solicitação não encontrada.');
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, solicitacao.empresa_id)) throw new Error('Solicitação não encontrada.');
     if (solicitacao.status !== 'PENDENTE') throw new Error('Esta solicitação já foi analisada.');
 
     await db.from('folha_ponto_whatsapp_solicitacoes').update({

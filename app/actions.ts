@@ -265,6 +265,49 @@ export async function criarUsuarioAcesso(payload: {
 }
 
 // ============================================================================
+// 2.1b VINCULAR EMPRESAS A UM USUÁRIO JÁ EXISTENTE (edição em Permissões)
+// ============================================================================
+// Antes essa troca era feita direto do browser (delete+insert em
+// perfis_usuarios_empresas com a chave anon, sem nenhuma checagem de
+// servidor) — qualquer usuário autenticado podia se auto-vincular a
+// qualquer empresa via console. Move a escrita pra cá, atrás de
+// validarAcesso, e sql/multiempresa_isolamento_rls.sql revoga o grant de
+// INSERT/UPDATE/DELETE de authenticated/anon nessa tabela, então essa é a
+// única porta de escrita que sobra.
+export async function vincularEmpresasUsuarioAction(payload: {
+  perfilId: string;
+  empresaIds: number[];
+  usuarioNome: string;
+}, accessToken: string) {
+  const acesso = await validarAcesso(accessToken, '/admin/parametros/permissoes');
+  if (!acesso.ok) return { success: false, message: acesso.message };
+
+  if (!supabaseAdmin) return { success: false, message: 'Credenciais do Supabase ausentes.' };
+
+  const { perfilId, empresaIds, usuarioNome } = payload;
+  if (!perfilId) return { success: false, message: 'Usuário não informado.' };
+
+  const { error: delError } = await supabaseAdmin.from('perfis_usuarios_empresas').delete().eq('perfil_id', perfilId);
+  if (delError) return { success: false, message: delError.message };
+
+  if (empresaIds.length > 0) {
+    const { error: insError } = await supabaseAdmin.from('perfis_usuarios_empresas')
+      .insert(empresaIds.map(empresaId => ({ perfil_id: perfilId, empresa_id: empresaId })));
+    if (insError) return { success: false, message: insError.message };
+  }
+
+  await registrarLogAuditoria({
+    usuario_nome: usuarioNome,
+    acao: 'ALTEROU VÍNCULO DE EMPRESAS DO USUÁRIO',
+    setor: 'PERMISSÕES',
+    equipamento_id: perfilId,
+    equipamento_nome: `empresas: [${empresaIds.join(', ')}]`,
+  });
+
+  return { success: true };
+}
+
+// ============================================================================
 // 2.2 LISTAGEM DE COLABORADORES COM ACESSO AO PORTAL DO FUNCIONÁRIO
 // ============================================================================
 // Lê a tabela portal_funcionarios_auth com a service role: ela guarda a

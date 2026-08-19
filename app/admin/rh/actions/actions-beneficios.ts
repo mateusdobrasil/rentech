@@ -5,7 +5,7 @@
 // O VR/VT NÃO é gravado aqui — é lido do holerite (contrato + ficha) e apenas
 // exibido junto no painel, para não duplicar a fonte da verdade.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -58,7 +58,8 @@ export async function beneficiosDoMesAction(payload: { mesReferencia: string }, 
 
   const db = supabaseAdmin();
   try {
-    const { diasUteisMes, itens } = await calcularBeneficiosMes(db, payload.mesReferencia);
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const { diasUteisMes, itens } = await calcularBeneficiosMes(db, payload.mesReferencia, empresasPermitidas);
 
     // Agrupa por funcionário
     const porFunc: Record<string, any> = {};
@@ -78,7 +79,7 @@ export async function beneficiosDoMesAction(payload: { mesReferencia: string }, 
 // NÚCLEO: calcula os benefícios de um mês, com proporcionalidade por
 // admissão/desligamento. Reutilizado pelo relatório e pelo grid.
 // ============================================================================
-export async function calcularBeneficiosMes(db: ReturnType<typeof supabaseAdmin>, mesAno: string) {
+export async function calcularBeneficiosMes(db: ReturnType<typeof supabaseAdmin>, mesAno: string, empresaIds: number[] | null = null) {
   const [ano, mes] = mesAno.split('-').map(Number);
   const primeiroDoMes = `${ano}-${String(mes).padStart(2, '0')}-01`;
   const ultimoNum = new Date(ano, mes, 0).getDate();
@@ -90,9 +91,14 @@ export async function calcularBeneficiosMes(db: ReturnType<typeof supabaseAdmin>
   // Dias úteis do mês cheio (referência para quem trabalhou o mês todo)
   const diasUteisMes = diasUteisNoPeriodo(ano, mes, feriados);
 
-  // Datas de admissão/desligamento e status de cada funcionário
-  const { data: funcs } = await db.from('folha_funcionarios')
+  // Datas de admissão/desligamento e status de cada funcionário. empresaIds
+  // (null = sem restrição) exclui da fonte quem está fora do escopo do
+  // usuário logado — como diasUteisTrabalhados() só reconhece nomes
+  // presentes aqui, o filtro se propaga naturalmente pros itens calculados.
+  let qFuncs = db.from('folha_funcionarios')
     .select('nome_completo, data_admissao, data_desligamento, ativo');
+  if (empresaIds) qFuncs = qFuncs.in('empresa_id', empresaIds);
+  const { data: funcs } = await qFuncs;
   const dadosFunc: Record<string, { adm: string | null; deslig: string | null; ativo: boolean }> = {};
   (funcs || []).forEach(f => { dadosFunc[f.nome_completo] = { adm: f.data_admissao, deslig: f.data_desligamento, ativo: f.ativo !== false }; });
 
@@ -168,16 +174,31 @@ export async function gerarFlashAction(payload: { mesReferencia: string }, acces
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
-  const CNPJ_RENTECH = '22.618.891/0001-87';
+  const CNPJ_RENTECH_FALLBACK = '22.618.891/0001-87';
 
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     // Reutiliza o núcleo de cálculo do mês (já aplica proporcionalidade)
-    const { itens } = await calcularBeneficiosMes(db, payload.mesReferencia);
+    const { itens } = await calcularBeneficiosMes(db, payload.mesReferencia, empresasPermitidas);
 
-    // CPFs dos funcionários
-    const { data: funcs } = await db.from('folha_funcionarios').select('nome_completo, cpf');
+    // CPF + CNPJ (real da empresa do funcionário, não fixo em Rentech — a
+    // planilha Flash é por CNPJ empregador) de cada funcionário.
+    const { data: funcs } = await db.from('folha_funcionarios').select('nome_completo, cpf, empresa_id');
+    const { data: empresasCad } = await db.from('empresas').select('id, cnpj');
+    // empresas.cnpj é gravado só com dígitos (ver /admin/parametros/empresas) —
+    // formata igual ao padrão usado no restante do sistema (00.000.000/0000-00).
+    const formatarCnpj = (v: string): string => {
+      const d = String(v || '').replace(/\D/g, '');
+      return d.length === 14 ? `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}` : v;
+    };
+    const cnpjPorEmpresaId: Record<number, string> = {};
+    (empresasCad || []).forEach(e => { if (e.cnpj) cnpjPorEmpresaId[e.id] = formatarCnpj(e.cnpj); });
     const cpfPorNome: Record<string, string> = {};
-    (funcs || []).forEach(f => { cpfPorNome[f.nome_completo] = f.cpf || ''; });
+    const cnpjPorNome: Record<string, string> = {};
+    (funcs || []).forEach(f => {
+      cpfPorNome[f.nome_completo] = f.cpf || '';
+      cnpjPorNome[f.nome_completo] = (f.empresa_id && cnpjPorEmpresaId[f.empresa_id]) || CNPJ_RENTECH_FALLBACK;
+    });
 
     const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
 
@@ -202,7 +223,7 @@ export async function gerarFlashAction(payload: { mesReferencia: string }, acces
     const linhas = Object.entries(porFunc)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([nome, v]) => ({
-        cnpj: CNPJ_RENTECH,
+        cnpj: cnpjPorNome[nome] || CNPJ_RENTECH_FALLBACK,
         nome,
         cpf: cpfPorNome[nome] || '',
         mobilidade: v.mobilidade,
@@ -229,7 +250,8 @@ export async function gridBeneficiosAction(payload: { mesReferencia: string; mei
 
   const db = supabaseAdmin();
   try {
-    const { diasUteisMes, itens } = await calcularBeneficiosMes(db, payload.mesReferencia);
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const { diasUteisMes, itens } = await calcularBeneficiosMes(db, payload.mesReferencia, empresasPermitidas);
 
     // Filtro opcional por meio de pagamento
     let filtrados = itens;
@@ -356,6 +378,12 @@ export async function salvarBeneficioAction(payload: {
   const diasField = modalidade === 'DIAS_FIXOS' ? (qtdDias || null) : null;
 
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const { data: funcAlvo } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+    if (!empresaPermitida(empresasPermitidas, funcAlvo?.empresa_id)) {
+      return { ok: false, erro: 'Você não tem permissão para conceder benefício a este funcionário.' };
+    }
+
     // Nomes de meio para o histórico legível
     const { data: meios } = await db.from('folha_beneficio_meios').select('id, nome');
     const nomeMeio = (mid: number) => meios?.find(m => m.id === mid)?.nome || null;
@@ -417,6 +445,12 @@ export async function alternarBeneficioAction(payload: {
 
   const db = supabaseAdmin();
   try {
+    const { data: atual } = await db.from('folha_beneficios').select('funcionario_nome').eq('id', payload.id).maybeSingle();
+    if (!atual) return { ok: false, erro: 'Benefício não encontrado.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const { data: funcAlvo } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', atual.funcionario_nome).maybeSingle();
+    if (!empresaPermitida(empresasPermitidas, funcAlvo?.empresa_id)) return { ok: false, erro: 'Benefício não encontrado.' };
+
     const { error } = await db.from('folha_beneficios').update({
       ativo: payload.ativo, atualizado_em: new Date().toISOString()
     }).eq('id', payload.id);
@@ -437,6 +471,12 @@ export async function historicoBeneficioAction(payload: { beneficioId: number },
 
   const db = supabaseAdmin();
   try {
+    const { data: beneficio } = await db.from('folha_beneficios').select('funcionario_nome').eq('id', payload.beneficioId).maybeSingle();
+    if (!beneficio) return { ok: false, erro: 'Benefício não encontrado.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const { data: funcAlvo } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', beneficio.funcionario_nome).maybeSingle();
+    if (!empresaPermitida(empresasPermitidas, funcAlvo?.empresa_id)) return { ok: false, erro: 'Benefício não encontrado.' };
+
     const { data, error } = await db.from('folha_beneficios_historico')
       .select('*').eq('beneficio_id', payload.beneficioId).order('alterado_em', { ascending: false });
     if (error) throw new Error(error.message);
@@ -455,12 +495,19 @@ export async function painelBeneficiosAction(accessToken: string): Promise<Resul
 
   const db = supabaseAdmin();
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+
     // Funcionários ativos
-    const { data: funcs } = await db.from('folha_funcionarios')
+    let qFuncs = db.from('folha_funcionarios')
       .select('nome_completo, tipo_contrato, cargo')
       .eq('ativo', true).order('nome_completo');
+    if (empresasPermitidas) qFuncs = qFuncs.in('empresa_id', empresasPermitidas);
+    const { data: funcs } = await qFuncs;
 
-    // Benefícios fixos ativos, com nomes de tipo e meio
+    // Benefícios fixos ativos, com nomes de tipo e meio — a linha de cada
+    // funcionário é montada a partir de `funcs` (já escopado acima), então
+    // um `folha_beneficios` de funcionário fora do escopo simplesmente não
+    // acha correspondência abaixo (benefPorFunc só é lido por nome de `funcs`).
     const { data: beneficios } = await db.from('folha_beneficios')
       .select('id, funcionario_nome, valor_mensal, modalidade, qtd_dias, ativo, observacao, tipo_id, meio_id')
       .eq('ativo', true);

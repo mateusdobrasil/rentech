@@ -5,7 +5,7 @@
 // social, etc. Mesmo desenho de actions-documentos-func.ts (funcionários),
 // mas sem a dimensão "por colaborador" — é um único acervo.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -88,6 +88,11 @@ export async function uploadDocumentoEmpresaAction(payload: {
     return { ok: false, erro: 'Selecione a empresa (CNPJ) deste documento.' };
   }
 
+  const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+  if (!empresaPermitida(empresasPermitidas, empresaId)) {
+    return { ok: false, erro: 'Você não tem permissão para enviar documentos para essa empresa.' };
+  }
+
   try {
     const { data: cat } = await db.from('empresa_documento_categorias').select('nome').eq('id', categoriaId).maybeSingle();
     const catSlug = slug(cat?.nome || 'outros');
@@ -130,20 +135,21 @@ export async function uploadDocumentoEmpresaAction(payload: {
 // ============================================================================
 export async function listarDocumentosEmpresaAction(payload: {
   categoriaId?: number | null;
-  empresaIds?: number[] | null;
 } | undefined, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcessoQualquerRota(accessToken);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
   try {
+    // empresasPermitidas resolvida no servidor (nunca a partir de um valor
+    // vindo do cliente) — null/ADMINISTRADOR = sem restrição.
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+
     let q = db.from('empresa_documentos')
       .select('id, categoria_id, empresa_id, titulo, storage_path, nome_arquivo, tipo_mime, tamanho_bytes, data_validade, observacao, criado_em')
       .order('criado_em', { ascending: false });
     if (payload?.categoriaId) q = q.eq('categoria_id', payload.categoriaId);
-    // empresaIds null/undefined = sem restrição (ex: setor ADMINISTRADOR);
-    // array = só documentos dessas empresas (ver /admin/parametros/permissoes).
-    if (payload?.empresaIds) q = q.in('empresa_id', payload.empresaIds);
+    if (empresasPermitidas) q = q.in('empresa_id', empresasPermitidas);
 
     const { data, error } = await q;
     if (error) throw new Error(error.message);
@@ -179,8 +185,10 @@ export async function urlDocumentoEmpresaAction(payload: { id: number; download?
   const db = supabaseAdmin();
   try {
     const { data: doc } = await db.from('empresa_documentos')
-      .select('storage_path, nome_arquivo').eq('id', payload.id).maybeSingle();
+      .select('storage_path, nome_arquivo, empresa_id').eq('id', payload.id).maybeSingle();
     if (!doc?.storage_path) return { ok: false, erro: 'Documento não encontrado.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, doc.empresa_id)) return { ok: false, erro: 'Documento não encontrado.' };
 
     const opts = payload.download ? { download: doc.nome_arquivo } : undefined;
     const { data, error } = await db.storage.from(BUCKET).createSignedUrl(doc.storage_path, 60 * 10, opts);
@@ -201,8 +209,10 @@ export async function excluirDocumentoEmpresaAction(payload: { id: number }, acc
   const db = supabaseAdmin();
   try {
     const { data: doc } = await db.from('empresa_documentos')
-      .select('storage_path').eq('id', payload.id).maybeSingle();
+      .select('storage_path, empresa_id').eq('id', payload.id).maybeSingle();
     if (!doc) return { ok: false, erro: 'Documento não encontrado.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, doc.empresa_id)) return { ok: false, erro: 'Documento não encontrado.' };
 
     await db.storage.from(BUCKET).remove([doc.storage_path]);
     const { error } = await db.from('empresa_documentos').delete().eq('id', payload.id);

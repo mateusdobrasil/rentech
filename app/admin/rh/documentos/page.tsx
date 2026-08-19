@@ -72,38 +72,26 @@ export default function DocumentosPage() {
   const [enviando, setEnviando] = useState(false);
   const upRef = useRef<HTMLInputElement>(null);
 
-  const { usuarioAtual, emailUsuario, permissaoNormalizada, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
   const toast = useToast();
 
-  // Restrição por empresa (multi-empresa, Fase 2): null = sem restrição
-  // (setor ADMINISTRADOR); array = só enxerga essas empresas — mesmo
-  // padrão de /admin/rh/funcionario.
-  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  // Restrição por empresa (multi-empresa): resolvida no servidor a partir de
+  // perfis_usuarios_empresas em cada Server Action chamada abaixo (ver
+  // obterEmpresasPermitidas em app/lib/serverAuth.ts) — o filtro em si não
+  // depende de nada calculado aqui no client.
   const [empresasCatalogo, setEmpresasCatalogo] = useState<EmpresaCatalogo[]>([]);
 
-  // carregar()/carregarEmpresa() só disparam depois que empresasPermitidas
-  // está resolvido — chamar antes buscaria dados sem restrição de empresa.
   useEffect(() => {
     if (authLoading || acessoNegado) return;
     async function inicializar() {
-      let permitidas: number[] | null = null;
-      if (permissaoNormalizada !== 'ADMINISTRADOR') {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) return;
-        const { data: vinculos } = await supabase
-          .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
-        permitidas = (vinculos || []).map(v => v.empresa_id);
-      }
-      setEmpresasPermitidas(permitidas);
-
       const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
       setEmpresasCatalogo(empresasData || []);
 
-      carregar(permitidas, accessToken);
-      carregarEmpresa(permitidas, accessToken);
+      carregar(accessToken);
+      carregarEmpresa(accessToken);
     }
     inicializar();
-  }, [authLoading, acessoNegado, permissaoNormalizada, accessToken]);
+  }, [authLoading, acessoNegado, accessToken]);
 
   // Preview
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -141,10 +129,10 @@ export default function DocumentosPage() {
   const [previewUrlEmpresa, setPreviewUrlEmpresa] = useState<string | null>(null);
   const [previewDocEmpresa, setPreviewDocEmpresa] = useState<DocumentoEmpresa | null>(null);
 
-  const carregarEmpresa = async (empresaIds: number[] | null = empresasPermitidas, token: string = accessToken) => {
+  const carregarEmpresa = async (token: string = accessToken) => {
     setCarregandoEmpresa(true);
     try {
-      const [docs, cats] = await Promise.all([listarDocumentosEmpresaAction({ empresaIds }, token), listarCategoriasDocEmpresaAction(token)]);
+      const [docs, cats] = await Promise.all([listarDocumentosEmpresaAction(undefined, token), listarCategoriasDocEmpresaAction(token)]);
       if (docs.ok) setDocsEmpresa(docs.info.documentos);
       if (cats.ok) setCategoriasEmpresa(cats.info.categorias);
     } catch (e: any) { toast('Erro ao carregar documentos da empresa: ' + e.message, 'error'); }
@@ -223,10 +211,10 @@ export default function DocumentosPage() {
     vencidos: docsEmpresa.filter(d => d.statusValidade === 'VENCIDO').length,
   }), [docsEmpresa]);
 
-  const carregar = async (empresaIds: number[] | null = empresasPermitidas, token: string = accessToken) => {
+  const carregar = async (token: string = accessToken) => {
     setLoading(true);
     try {
-      const [painel, cats] = await Promise.all([painelDocumentosAction(empresaIds, token), listarCategoriasDocAction(token)]);
+      const [painel, cats] = await Promise.all([painelDocumentosAction(token), listarCategoriasDocAction(token)]);
       if (painel.ok) { setLinhas(painel.info.linhas); setTotais(painel.info.totais); }
       if (cats.ok) setCategorias(cats.info.categorias);
     } catch (e: any) { toast('Erro ao carregar: ' + e.message, 'error'); }

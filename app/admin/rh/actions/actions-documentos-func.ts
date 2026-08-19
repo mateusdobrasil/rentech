@@ -4,7 +4,7 @@
 // Gestão de documentos dos funcionários: upload no Storage, metadados no banco,
 // controle de validade e painel de pendências.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -18,6 +18,11 @@ async function validarAcessoQualquerRota(accessToken: string) {
     if (acesso.ok) return acesso;
   }
   return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
+}
+
+async function empresaIdDoFuncionario(db: ReturnType<typeof supabaseAdmin>, funcionarioNome: string): Promise<number | null> {
+  const { data } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+  return data?.empresa_id ?? null;
 }
 
 const slug = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -86,6 +91,12 @@ export async function uploadDocumentoAction(payload: {
   }
 
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const empresaIdFunc = await empresaIdDoFuncionario(db, funcionarioNome);
+    if (!empresaPermitida(empresasPermitidas, empresaIdFunc)) {
+      return { ok: false, erro: 'Você não tem permissão para enviar documentos para este funcionário.' };
+    }
+
     // Nome da categoria para compor o caminho
     const { data: cat } = await db.from('folha_documento_categorias').select('nome').eq('id', categoriaId).maybeSingle();
     const catSlug = slug(cat?.nome || 'outros');
@@ -100,6 +111,7 @@ export async function uploadDocumentoAction(payload: {
 
     const { error: dbErr } = await db.from('folha_documentos').insert({
       funcionario_nome: funcionarioNome,
+      empresa_id: empresaIdFunc,
       categoria_id: categoriaId,
       titulo: titulo || null,
       storage_path: path,
@@ -145,6 +157,12 @@ export async function uploadFotoFuncionarioAction(payload: {
   }
 
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const empresaIdFunc = await empresaIdDoFuncionario(db, funcionarioNome);
+    if (!empresaPermitida(empresasPermitidas, empresaIdFunc)) {
+      return { ok: false, erro: 'Você não tem permissão para alterar a foto deste funcionário.' };
+    }
+
     const bytes = Buffer.from(arquivoBase64, 'base64');
     const ext = (nomeArquivo.split('.').pop() || 'jpg').toLowerCase();
     const path = `${slug(funcionarioNome)}/foto-perfil/foto.${ext}`;
@@ -190,11 +208,14 @@ export async function listarDocumentosAction(payload: {
 
   const db = supabaseAdmin();
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+
     let q = db.from('folha_documentos')
-      .select('id, funcionario_nome, categoria_id, titulo, storage_path, nome_arquivo, tipo_mime, tamanho_bytes, data_validade, observacao, criado_em, visivel_portal')
+      .select('id, funcionario_nome, empresa_id, categoria_id, titulo, storage_path, nome_arquivo, tipo_mime, tamanho_bytes, data_validade, observacao, criado_em, visivel_portal')
       .order('criado_em', { ascending: false });
     if (payload.funcionarioNome) q = q.eq('funcionario_nome', payload.funcionarioNome);
     if (payload.categoriaId) q = q.eq('categoria_id', payload.categoriaId);
+    if (empresasPermitidas) q = q.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
 
     const { data, error } = await q;
     if (error) throw new Error(error.message);
@@ -230,8 +251,13 @@ export async function urlDocumentoAction(payload: { id: number; download?: boole
   const db = supabaseAdmin();
   try {
     const { data: doc } = await db.from('folha_documentos')
-      .select('storage_path, nome_arquivo').eq('id', payload.id).maybeSingle();
+      .select('storage_path, nome_arquivo, empresa_id').eq('id', payload.id).maybeSingle();
     if (!doc?.storage_path) return { ok: false, erro: 'Documento não encontrado.' };
+
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, doc.empresa_id)) {
+      return { ok: false, erro: 'Você não tem permissão para acessar este documento.' };
+    }
 
     const opts = payload.download ? { download: doc.nome_arquivo } : undefined;
     const { data, error } = await db.storage.from(BUCKET).createSignedUrl(doc.storage_path, 60 * 10, opts);
@@ -254,6 +280,14 @@ export async function alternarVisivelPortalAction(payload: { id: number; visivel
 
   const db = supabaseAdmin();
   try {
+    const { data: doc } = await db.from('folha_documentos').select('empresa_id').eq('id', payload.id).maybeSingle();
+    if (!doc) return { ok: false, erro: 'Documento não encontrado.' };
+
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, doc.empresa_id)) {
+      return { ok: false, erro: 'Você não tem permissão para alterar este documento.' };
+    }
+
     const { error } = await db.from('folha_documentos').update({ visivel_portal: payload.visivel }).eq('id', payload.id);
     if (error) throw new Error(error.message);
     return { ok: true };
@@ -272,8 +306,13 @@ export async function excluirDocumentoAction(payload: { id: number }, accessToke
   const db = supabaseAdmin();
   try {
     const { data: doc } = await db.from('folha_documentos')
-      .select('storage_path').eq('id', payload.id).maybeSingle();
+      .select('storage_path, empresa_id').eq('id', payload.id).maybeSingle();
     if (!doc) return { ok: false, erro: 'Documento não encontrado.' };
+
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, doc.empresa_id)) {
+      return { ok: false, erro: 'Você não tem permissão para excluir este documento.' };
+    }
 
     await db.storage.from(BUCKET).remove([doc.storage_path]);
     const { error } = await db.from('folha_documentos').delete().eq('id', payload.id);
@@ -287,23 +326,27 @@ export async function excluirDocumentoAction(payload: { id: number }, accessToke
 // ============================================================================
 // PAINEL: visão geral por funcionário + pendências + vencimentos
 // ============================================================================
-export async function painelDocumentosAction(empresaIds: number[] | null, accessToken: string): Promise<Resultado> {
-  const acesso = await validarAcessoQualquerRota(accessToken);
+export async function painelDocumentosAction(accessToken: string): Promise<Resultado> {
+  let acesso = await validarAcessoQualquerRota(accessToken);
   if (!acesso.ok) {
     // Também usada pelo painel de pendências do hub /admin/rh — quem enxerga
     // o hub mas não tem uma das rotas específicas do módulo ainda assim
     // precisa ver a contagem agregada.
     const acessoHub = await validarAcesso(accessToken, '/admin/rh');
     if (!acessoHub.ok) return { ok: false, erro: acesso.message };
+    acesso = acessoHub;
   }
 
   const db = supabaseAdmin();
   try {
+    // empresasPermitidas resolvida no servidor (nunca a partir de um valor
+    // vindo do cliente) — null/ADMINISTRADOR = sem restrição, array = só
+    // funcionários dessas empresas (ver /admin/parametros/permissoes).
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+
     let qFuncs = db.from('folha_funcionarios')
       .select('nome_completo, cargo').eq('ativo', true).order('nome_completo');
-    // empresaIds null/undefined = sem restrição (ex: setor ADMINISTRADOR);
-    // array = só funcionários dessas empresas (ver /admin/parametros/permissoes).
-    if (empresaIds) qFuncs = qFuncs.in('empresa_id', empresaIds);
+    if (empresasPermitidas) qFuncs = qFuncs.in('empresa_id', empresasPermitidas);
     const { data: funcs } = await qFuncs;
     const { data: docs } = await db.from('folha_documentos')
       .select('funcionario_nome, categoria_id, data_validade');

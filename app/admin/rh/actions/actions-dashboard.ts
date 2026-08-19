@@ -4,7 +4,7 @@
 // Painel de pendências do hub de RH (/admin/rh) — agrega, num só round-trip,
 // os números que hoje só aparecem depois de entrar em cada módulo.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas } from '../../../lib/serverAuth';
 import { painelDocumentosAction } from './actions-documentos-func';
 import { painelFeriasAction } from './actions-ferias';
 import { painelAfastamentosAction } from './actions-afastamentos';
@@ -35,6 +35,13 @@ export async function painelRhAction(accessToken: string): Promise<Resultado> {
 
   const db = supabaseAdmin();
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const filtroEmpresa = <T,>(q: T): T => {
+      if (!empresasPermitidas) return q;
+      // Linha sem empresa (legado) continua visível, igual à política de RLS.
+      return (q as any).or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+    };
+
     const mesAno = competenciaAberta();
     const [ano, mes] = mesAno.split('-');
     const dataInicio = `${ano}-${mes}-01`;
@@ -53,14 +60,14 @@ export async function painelRhAction(accessToken: string): Promise<Resultado> {
       afastamentosRes,
       rescisoesRes
     ] = await Promise.all([
-      painelDocumentosAction(null, accessToken),
-      db.from('folha_funcionarios').select('nome_completo, tipo_contrato, ativo, data_admissao, data_nascimento, departamento').eq('ativo', true),
+      painelDocumentosAction(accessToken),
+      filtroEmpresa(db.from('folha_funcionarios').select('nome_completo, tipo_contrato, ativo, data_admissao, data_nascimento, departamento').eq('ativo', true)),
       db.from('folha_parametros').select('nome_regra, so_documental'),
-      db.from('folha_holerites').select('funcionario_nome').eq('mes_referencia', mesAno),
-      db.from('folha_holerite_assinaturas').select('id, status').not('status', 'in', '("ASSINADO","REJEITADO")'),
-      db.from('folha_ponto_whatsapp_solicitacoes').select('id').eq('status', 'PENDENTE'),
-      db.from('folha_ponto_diaria').select('funcionario_nome, data_registro, entrada_1, saida_1, entrada_2, saida_2')
-        .gte('data_registro', dataInicio).lte('data_registro', dataFim),
+      filtroEmpresa(db.from('folha_holerites').select('funcionario_nome').eq('mes_referencia', mesAno)),
+      filtroEmpresa(db.from('folha_holerite_assinaturas').select('id, status').not('status', 'in', '("ASSINADO","REJEITADO")')),
+      filtroEmpresa(db.from('folha_ponto_whatsapp_solicitacoes').select('id').eq('status', 'PENDENTE')),
+      filtroEmpresa(db.from('folha_ponto_diaria').select('funcionario_nome, data_registro, entrada_1, saida_1, entrada_2, saida_2')
+        .gte('data_registro', dataInicio).lte('data_registro', dataFim)),
       painelFeriasAction(accessToken),
       painelAfastamentosAction(accessToken),
       painelRescisoesAction(accessToken)

@@ -7,7 +7,7 @@
 // Itaú/PIX via API SISPAG hoje — ver app/lib/itauSispag.ts. Cadastro de
 // parceiros/bancos vive em app/admin/integracao/actions.ts (tela Integrações).
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { calcularBeneficiosMes } from './actions-beneficios';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
 import { extrairTextoPdf } from '../../../lib/textract';
@@ -152,10 +152,21 @@ export async function montarLoteSalariosAction(payload: {
 
     // Dados bancários + valor de adiantamento da ficha
     const { data: funcs } = await db.from('folha_funcionarios')
-      .select('nome_completo, cpf, valor_adiantamento, banco_codigo, banco_agencia, banco_conta, banco_tipo, pix_tipo, pix_chave')
+      .select('nome_completo, cpf, empresa_id, valor_adiantamento, banco_codigo, banco_agencia, banco_conta, banco_tipo, pix_tipo, pix_chave')
       .in('nome_completo', Array.from(nomes));
     const bancoPorNome: Record<string, any> = {};
-    (funcs || []).forEach(f => { bancoPorNome[f.nome_completo] = f; });
+    const empresaPorNomeFunc: Record<string, number | null> = {};
+    (funcs || []).forEach(f => { bancoPorNome[f.nome_completo] = f; empresaPorNomeFunc[f.nome_completo] = f.empresa_id; });
+
+    // Filtro de empresa: um lote só pode incluir funcionários das empresas
+    // que o usuário logado enxerga (senão um usuário só-Rentech poderia
+    // montar/pagar um lote com funcionários da AlfaLight).
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (empresasPermitidas) {
+      Array.from(nomes).forEach(nome => {
+        if (!empresaPermitida(empresasPermitidas, empresaPorNomeFunc[nome])) nomes.delete(nome);
+      });
+    }
 
     let fontesResolvidas: Record<string, { recebeFechamento: boolean; recebeHolerite: boolean }> = {};
     try {
@@ -225,6 +236,7 @@ export async function montarLoteSalariosAction(payload: {
       entradas.forEach(e => {
         itens.push({
           funcionario_nome: nome,
+          empresa_id: empresaPorNomeFunc[nome] ?? null,
           fonte: e.fonte,
           fonte_rotulo: rotuloFonte[e.fonte],
           temDoc: e.temDoc || false,
@@ -299,6 +311,11 @@ export async function processarOcrAwsAction(
       // montagem do lote (ou clique em "OCR") não precise reler este PDF.
       if (mesReferencia && funcionarioNome) {
         const db = supabaseAdmin();
+        const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+        const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+        if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
+          return { ok: false, erro: 'Você não tem permissão para processar OCR deste funcionário.' };
+        }
         await db.from('folha_documentos_contabeis')
           .update({ valor_ocr: valor, ocr_processado_em: new Date().toISOString() })
           .eq('funcionario_nome', funcionarioNome)
@@ -342,11 +359,14 @@ export async function listarPdfsContabilidadeAction(payload: {
 
   const db = supabaseAdmin();
   try {
-    const { data: docs } = await db
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    let q = db
       .from('folha_documentos_contabeis')
       .select('funcionario_nome, tipo, storage_path, valor_ocr')
       .eq('mes_referencia', payload.mesReferencia)
       .eq('tipo', payload.tipo);
+    if (empresasPermitidas) q = q.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+    const { data: docs } = await q;
     if (!docs?.length) return { ok: true, info: { pdfs: [], cache: [] } };
 
     const cache: { funcionario_nome: string; valor: number }[] = [];
@@ -390,6 +410,20 @@ export async function salvarLoteAction(payload: {
   try {
     const prontos = payload.itens.filter(i => i.pronto);
     if (prontos.length === 0) return { ok: false, erro: 'Nenhum pagamento pronto (com dados bancários) para incluir no lote.' };
+
+    // Revalida no servidor a empresa de cada item — nunca confia no
+    // empresa_id que possa ter vindo embutido no payload do cliente.
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (empresasPermitidas) {
+      const nomesLote = Array.from(new Set(prontos.map(i => i.funcionario_nome)));
+      const { data: funcsLote } = await db.from('folha_funcionarios').select('nome_completo, empresa_id').in('nome_completo', nomesLote);
+      const empresaPorNome: Record<string, number | null> = {};
+      (funcsLote || []).forEach(f => { empresaPorNome[f.nome_completo] = f.empresa_id; });
+      const foraDoEscopo = nomesLote.filter(n => !empresaPermitida(empresasPermitidas, empresaPorNome[n]));
+      if (foraDoEscopo.length > 0) {
+        return { ok: false, erro: `Você não tem permissão para incluir no lote: ${foraDoEscopo.join(', ')}.` };
+      }
+    }
 
     const valorTotal = prontos.reduce((s, i) => s + Number(i.valor || 0), 0);
     const { data, error } = await db.from('folha_lotes_pagamento').insert({
@@ -444,7 +478,24 @@ export async function buscarLoteAction(payload: { loteId: number }, accessToken:
       .eq('id', payload.loteId).maybeSingle();
     if (error) throw new Error(error.message);
     if (!data) return { ok: false, erro: 'Lote não encontrado.' };
-    return { ok: true, info: { lote: data } };
+
+    // Redige os itens de funcionários fora do escopo do usuário logado — um
+    // lote pode legitimamente misturar empresas (quem o gerou pode ter
+    // acesso a mais de uma), mas quem só enxerga Rentech não pode ver linhas
+    // (nome + dados bancários) de funcionários da AlfaLight e vice-versa.
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    let itensVisiveis = Array.isArray(data.itens) ? data.itens : [];
+    if (empresasPermitidas) {
+      const nomesLote = Array.from(new Set(itensVisiveis.map((i: any) => i.funcionario_nome)));
+      const { data: funcsLote } = await db.from('folha_funcionarios').select('nome_completo, empresa_id').in('nome_completo', nomesLote);
+      const empresaPorNome: Record<string, number | null> = {};
+      (funcsLote || []).forEach(f => { empresaPorNome[f.nome_completo] = f.empresa_id; });
+      itensVisiveis = itensVisiveis.filter((i: any) =>
+        empresaPermitida(empresasPermitidas, i.empresa_id !== undefined ? i.empresa_id : empresaPorNome[i.funcionario_nome])
+      );
+    }
+
+    return { ok: true, info: { lote: { ...data, itens: itensVisiveis } } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
@@ -544,12 +595,28 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
     };
 
     const itens: any[] = Array.isArray(lote.itens) ? lote.itens : [];
+
+    // Nunca envia dinheiro para um funcionário fora das empresas que o
+    // usuário logado enxerga — mesma revalidação de buscarLoteAction, mas
+    // aqui bloqueando o próprio envio, não só a leitura.
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    let itensElegiveis = itens;
+    if (empresasPermitidas) {
+      const nomesLote = Array.from(new Set(itens.map((i: any) => i.funcionario_nome)));
+      const { data: funcsLote } = await db.from('folha_funcionarios').select('nome_completo, empresa_id').in('nome_completo', nomesLote);
+      const empresaPorNome: Record<string, number | null> = {};
+      (funcsLote || []).forEach(f => { empresaPorNome[f.nome_completo] = f.empresa_id; });
+      itensElegiveis = itens.filter((i: any) =>
+        empresaPermitida(empresasPermitidas, i.empresa_id !== undefined ? i.empresa_id : empresaPorNome[i.funcionario_nome])
+      );
+    }
+
     // 'TED' aqui só indica "sem chave PIX cadastrada, mas tem conta" — desde
     // que passamos a suportar Pix por dados bancários (agência+conta+ISPB),
     // esses itens também vão via API, não só pelo CNAB manual.
-    const pendentes = itens.filter(i => i.pronto && (i.metodo === 'PIX' || i.metodo === 'TED') && !STATUS_PIX_SUCESSO.includes(i.api_status));
+    const pendentes = itensElegiveis.filter(i => i.pronto && (i.metodo === 'PIX' || i.metodo === 'TED') && !STATUS_PIX_SUCESSO.includes(i.api_status));
     if (pendentes.length === 0) {
-      return { ok: false, erro: 'Nenhum pagamento pendente de envio neste lote (já enviados com sucesso, ou sem PIX/conta bancária cadastrados).' };
+      return { ok: false, erro: 'Nenhum pagamento pendente de envio neste lote (já enviados com sucesso, sem PIX/conta bancária cadastrados, ou fora das empresas que você tem permissão para pagar).' };
     }
 
     // CORRENTE/POUPANCA (domínio do cadastro do funcionário) -> CC/PP

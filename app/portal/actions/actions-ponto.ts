@@ -20,7 +20,7 @@ async function montarEspelhoDoMes(db: ReturnType<typeof supabaseAdmin>, funciona
   const dataFim = `${ano}-${mes}-${new Date(Number(ano), Number(mes), 0).getDate()}`;
 
   const [{ data: func }, { data: pontoData }, { data: abonoData }, { data: fData }] = await Promise.all([
-    db.from('folha_funcionarios').select('cpf, data_admissao, data_desligamento').eq('nome_completo', funcionarioNome).maybeSingle(),
+    db.from('folha_funcionarios').select('cpf, data_admissao, data_desligamento, empresa_id').eq('nome_completo', funcionarioNome).maybeSingle(),
     db.from('folha_ponto_diaria')
       .select('data_registro, minutos_trabalhados, entrada_1, saida_1, entrada_2, saida_2')
       .eq('funcionario_nome', funcionarioNome)
@@ -51,12 +51,19 @@ async function montarEspelhoDoMes(db: ReturnType<typeof supabaseAdmin>, funciona
     porDia[a.data_abono].motivoAbono = a.motivo || null;
   });
 
+  let empresaNome = 'RENTECH';
+  if (func?.empresa_id) {
+    const { data: empresa } = await db.from('empresas').select('nome').eq('id', func.empresa_id).maybeSingle();
+    empresaNome = empresa?.nome || empresaNome;
+  }
+
   return {
     cpf: func?.cpf || null,
     dataAdmissao: func?.data_admissao || null,
     dataDesligamento: func?.data_desligamento || null,
     registros: Object.values(porDia),
     feriados: (fData || []).map((f: any) => f.data_feriado),
+    empresaNome,
   };
 }
 
@@ -88,7 +95,7 @@ export async function baixarMeuEspelhoPontoPdfAction(accessToken: string, mesRef
       feriados: espelho.feriados,
       dataAdmissao: espelho.dataAdmissao,
       dataDesligamento: espelho.dataDesligamento,
-      empresaNome: 'RENTECH',
+      empresaNome: espelho.empresaNome,
     });
     return { ok: true, info: { pdfBase64: Buffer.from(bytes).toString('base64') } };
   } catch (e: any) {

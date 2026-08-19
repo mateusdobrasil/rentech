@@ -7,7 +7,7 @@
 // - grava o controle em folha_holerite_assinaturas (service role)
 // - chama o cliente da Autentique (lib/autentique)
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { autentiqueCriarDocumento, autentiqueConsultarDocumento } from '../../../lib/autentique';
 import { gerarHoleritePdf } from '../../../lib/gerarHoleritePdf';
 import { gerarEspelhoPontoPdf, RegistroPontoDia } from '../../../lib/gerarEspelhoPontoPdf';
@@ -36,6 +36,16 @@ async function validarAcessoQualquerRota(accessToken: string) {
 const slug = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
 
+// Nome da empresa pra estampar nos PDFs (holerite/espelho/recibo) \u2014 antes
+// fixo em 'RENTECH', agora resolvido pelo empresa_id real do funcion\u00e1rio
+// (necess\u00e1rio pra AlfaLight n\u00e3o sair com documentos dizendo "RENTECH").
+// Funcion\u00e1rio sem empresa definida cai no fallback hist\u00f3rico.
+async function nomeEmpresaDoFuncionario(db: ReturnType<typeof supabaseAdmin>, empresaId: number | null | undefined): Promise<string> {
+  if (!empresaId) return 'RENTECH';
+  const { data } = await db.from('empresas').select('nome').eq('id', empresaId).maybeSingle();
+  return data?.nome || 'RENTECH';
+}
+
 // Lista funcionários ativos (para o seletor do envio avulso)
 export async function listarFuncionariosAtivosAction(accessToken: string): Promise<Resultado> {
   const acesso = await validarAcessoQualquerRota(accessToken);
@@ -43,11 +53,14 @@ export async function listarFuncionariosAtivosAction(accessToken: string): Promi
 
   const db = supabaseAdmin();
   try {
-    const { data, error } = await db
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    let q = db
       .from('folha_funcionarios')
       .select('nome_completo, cpf, celular, email')
       .eq('ativo', true)
       .order('nome_completo');
+    if (empresasPermitidas) q = q.in('empresa_id', empresasPermitidas);
+    const { data, error } = await q;
     if (error) throw new Error(error.message);
     return { ok: true, info: { funcionarios: data || [] } };
   } catch (e: any) {
@@ -87,7 +100,8 @@ async function gerarEspelhoPontoBytes(
   cpf: string | null,
   mesReferencia: string,
   dataAdmissao?: string | null,
-  dataDesligamento?: string | null
+  dataDesligamento?: string | null,
+  empresaNome: string = 'RENTECH'
 ): Promise<Uint8Array | null> {
   const [ano, mes] = mesReferencia.split('-');
   const dataInicio = `${ano}-${mes}-01`;
@@ -134,7 +148,7 @@ async function gerarEspelhoPontoBytes(
     feriados: (fData || []).map((f: any) => f.data_feriado),
     dataAdmissao,
     dataDesligamento,
-    empresaNome: 'RENTECH'
+    empresaNome
   });
 }
 
@@ -252,7 +266,8 @@ async function gerarReciboBytes(
   mesReferencia: string,
   valor: number,
   formaPagamento: string,
-  detalhamento: { descricao: string; valor: number }[]
+  detalhamento: { descricao: string; valor: number }[],
+  empresaNome: string = 'RENTECH'
 ): Promise<Uint8Array> {
   const [{ data: fData }, { itens: beneficios, mesReferenciaBeneficio }] = await Promise.all([
     db.from('folha_feriados').select('data_feriado'),
@@ -265,7 +280,7 @@ async function gerarReciboBytes(
     valor,
     formaPagamento,
     feriados: (fData || []).map((f: any) => f.data_feriado),
-    empresaNome: 'RENTECH',
+    empresaNome,
     detalhamento,
     beneficios,
     mesReferenciaBeneficio
@@ -304,9 +319,14 @@ export async function enviarDocumentoAvulsoAction(payload: {
   try {
     const { data: func } = await db
       .from('folha_funcionarios')
-      .select('cpf, celular, email')
+      .select('cpf, celular, email, empresa_id')
       .eq('nome_completo', funcionarioNome)
       .maybeSingle();
+
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
+      return { ok: false, erro: 'Você não tem permissão para enviar documentos para este funcionário.' };
+    }
 
     const cpfLimpo = (func?.cpf || '').replace(/\D/g, '');
     if (cpfLimpo.length !== 11) {
@@ -335,6 +355,7 @@ export async function enviarDocumentoAvulsoAction(payload: {
     const marcadorAvulso = `AVULSO-${mesReferencia}-${Date.now()}`;
     const { error } = await db.from('folha_holerite_assinaturas').upsert({
       funcionario_nome: funcionarioNome,
+      empresa_id: func?.empresa_id ?? null,
       mes_referencia: marcadorAvulso,
       cpf: cpfLimpo,
       autentique_doc_id: doc.docId,
@@ -388,9 +409,15 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     // 2) Busca dados pessoais (CPF, celular, e-mail) da ficha
     const { data: func } = await db
       .from('folha_funcionarios')
-      .select('cpf, celular, email, data_admissao, data_desligamento, pix_chave, banco_conta')
+      .select('cpf, celular, email, data_admissao, data_desligamento, pix_chave, banco_conta, empresa_id')
       .eq('nome_completo', funcionarioNome)
       .maybeSingle();
+
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
+      return { ok: false, erro: 'Você não tem permissão para enviar documentos para este funcionário.' };
+    }
+    const nomeEmpresa = await nomeEmpresaDoFuncionario(db, func?.empresa_id);
 
     // Contrato paga o salário base à parte (pelo holerite da contabilidade):
     // o recibo precisa do valor real desse pagamento, lido do OCR. Contratos
@@ -446,13 +473,13 @@ export async function enviarHoleriteAssinaturaAction(payload: {
       mesReferencia,
       dados: fechamento.dados,
       fechadoEm: fechamento?.fechado_em,
-      empresaNome: 'RENTECH'
+      empresaNome: nomeEmpresa
     }) : null;
 
     // 4b) Espelho de ponto do mês (batidas + abonos), se houver registro.
     const espelhoBytes = await gerarEspelhoPontoBytes(
       db, funcionarioNome, cpfLimpo || func?.cpf || null, mesReferencia,
-      func?.data_admissao, func?.data_desligamento
+      func?.data_admissao, func?.data_desligamento, nomeEmpresa
     );
 
     // 4c) Anexa os documentos da contabilidade que existirem no Storage.
@@ -468,7 +495,7 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     // 4d) Recibo de pagamento — sempre o ÚLTIMO arquivo do pacote.
     const formaPagamento = deduzirFormaPagamento(func);
     const reciboBytes = await gerarReciboBytes(
-      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento, detalhamentoRecibo
+      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento, detalhamentoRecibo, nomeEmpresa
     );
 
     // Ordem: nosso resumo (se houver) → espelho de ponto → adiantamento → holerite mensal → recibo.
@@ -496,6 +523,7 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     // 6) Grava/atualiza o controle
     const { error } = await db.from('folha_holerite_assinaturas').upsert({
       funcionario_nome: funcionarioNome,
+      empresa_id: func?.empresa_id ?? null,
       mes_referencia: mesReferencia,
       cpf: cpfLimpo,
       autentique_doc_id: doc.docId,
@@ -621,12 +649,15 @@ export async function listarAssinaturasAction(payload: { mesReferencia: string }
 
   const db = supabaseAdmin();
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     // Traz as assinaturas do mês + os avulsos DAQUELE mês (AVULSO-{mes}-...)
-    const { data, error } = await db
+    let q = db
       .from('folha_holerite_assinaturas')
       .select('*')
       .or(`mes_referencia.eq.${payload.mesReferencia},mes_referencia.like.AVULSO-${payload.mesReferencia}-%`)
       .order('funcionario_nome');
+    if (empresasPermitidas) q = q.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+    const { data, error } = await q;
     if (error) throw new Error(error.message);
     return { ok: true, info: { assinaturas: data || [] } };
   } catch (e: any) {
@@ -669,9 +700,15 @@ export async function previaDocumentoAssinaturaAction(payload: {
 
     const { data: func } = await db
       .from('folha_funcionarios')
-      .select('cpf, data_admissao, data_desligamento, pix_chave, banco_conta')
+      .select('cpf, data_admissao, data_desligamento, pix_chave, banco_conta, empresa_id')
       .eq('nome_completo', funcionarioNome)
       .maybeSingle();
+
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
+      return { ok: false, erro: 'Você não tem permissão para gerar prévia para este funcionário.' };
+    }
+    const nomeEmpresa = await nomeEmpresaDoFuncionario(db, func?.empresa_id);
 
     const gatilhoDoisPagamentos = !soDocumental && precisaHoleriteContabilidade(dados);
     const valorOcrPagamento = (gatilhoDoisPagamentos || soDocumental)
@@ -697,12 +734,12 @@ export async function previaDocumentoAssinaturaAction(payload: {
       mesReferencia,
       dados,
       fechadoEm: fechamento?.fechado_em,
-      empresaNome: 'RENTECH'
+      empresaNome: nomeEmpresa
     }) : null;
 
     const espelhoBytes = await gerarEspelhoPontoBytes(
       db, funcionarioNome, func?.cpf || null, mesReferencia,
-      func?.data_admissao, func?.data_desligamento
+      func?.data_admissao, func?.data_desligamento, nomeEmpresa
     );
 
     const adiantamento = await baixarAnexoContabil(db, mesReferencia, 'ADIANTAMENTO', funcionarioNome);
@@ -710,7 +747,7 @@ export async function previaDocumentoAssinaturaAction(payload: {
 
     const formaPagamento = deduzirFormaPagamento(func);
     const reciboBytes = await gerarReciboBytes(
-      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento, detalhamentoRecibo
+      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento, detalhamentoRecibo, nomeEmpresa
     );
 
     const partes = [resumoBytes, espelhoBytes, adiantamento, holeriteMensal, reciboBytes].filter((p): p is Uint8Array => !!p);
@@ -749,11 +786,14 @@ export async function atualizarTodasAssinaturasAction(payload: {
 
   const db = supabaseAdmin();
   try {
-    const { data: pendentes } = await db
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    let qPendentes = db
       .from('folha_holerite_assinaturas')
       .select('funcionario_nome, mes_referencia, status')
       .or(`mes_referencia.eq.${payload.mesReferencia},mes_referencia.like.AVULSO-${payload.mesReferencia}-%`)
       .not('status', 'in', '("ASSINADO","REJEITADO")');
+    if (empresasPermitidas) qPendentes = qPendentes.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+    const { data: pendentes } = await qPendentes;
 
     if (!pendentes?.length) {
       return { ok: true, info: { atualizados: 0, total: 0, mudancas: [] } };
@@ -797,6 +837,13 @@ export async function baixarAssinadoAction(payload: {
   const acesso = await validarAcessoQualquerRota(accessToken);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
+  const db = supabaseAdmin();
+  const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', payload.funcionarioNome).maybeSingle();
+  const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+  if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
+    return { ok: false, erro: 'Você não tem permissão para acessar este documento.' };
+  }
+
   return baixarAssinado(payload);
 }
 
@@ -813,11 +860,13 @@ export async function consultarAssinaturaAction(payload: {
   try {
     const { data: ctrl } = await db
       .from('folha_holerite_assinaturas')
-      .select('autentique_doc_id')
+      .select('autentique_doc_id, empresa_id')
       .eq('funcionario_nome', payload.funcionarioNome)
       .eq('mes_referencia', payload.mesReferencia)
       .maybeSingle();
     if (!ctrl?.autentique_doc_id) return { ok: false, erro: 'Nenhum envio encontrado para este holerite.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, ctrl.empresa_id)) return { ok: false, erro: 'Nenhum envio encontrado para este holerite.' };
 
     const doc = await autentiqueConsultarDocumento(ctrl.autentique_doc_id);
     // A primeira signature é o AUTOR (a Rentech, action: null), que nunca assina.

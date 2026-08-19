@@ -11,6 +11,7 @@ import { uploadFotoFuncionarioAction, urlFotoFuncionarioAction } from '../action
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 // Utilitários
 const formatarMesAnoBR = (mesAnoIso: string) => {
@@ -101,7 +102,7 @@ interface Movimentacao { id?: string; funcionario_nome?: string; motivo: 'ADMISS
 
 export default function FuncionarioPage() {
   const router = useRouter();
-  const { usuarioAtual, emailUsuario, permissaoNormalizada, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const { usuarioAtual, emailUsuario, permissaoBruta, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
   const toast = useToast();
   const confirm = useConfirm();
 
@@ -170,13 +171,15 @@ export default function FuncionarioPage() {
   );
   const temAlteracoesNaoSalvas = snapshotFicha !== '' && fichaAtualSerializada !== snapshotFicha;
 
-  // Restrição por empresa: ADMINISTRADOR vê todas; os demais setores só veem
-  // funcionários das empresas às quais estão vinculados em
-  // perfis_usuarios_empresas (ver /admin/parametros/permissoes → Colaboradores).
+  // Restrição por empresa: só quem é literalmente "Administrador" vê todas
+  // (ehAdministradorGlobal) — Diretoria/Gerência, mesmo com acesso de rota
+  // nível ADMINISTRADOR, só veem funcionários das empresas às quais estão
+  // vinculados em perfis_usuarios_empresas (ver /admin/parametros/permissoes
+  // → Colaboradores), igual a qualquer outro setor.
   useEffect(() => {
     if (authLoading || acessoNegado) return;
     async function carregarEmpresasPermitidas() {
-      if (permissaoNormalizada === 'ADMINISTRADOR') { setEmpresasPermitidas(null); return; }
+      if (ehAdministradorGlobal(permissaoBruta)) { setEmpresasPermitidas(null); return; }
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
       const { data: vinculos } = await supabase
@@ -184,7 +187,7 @@ export default function FuncionarioPage() {
       setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
     }
     carregarEmpresasPermitidas();
-  }, [authLoading, acessoNegado, permissaoNormalizada]);
+  }, [authLoading, acessoNegado, permissaoBruta]);
 
   useEffect(() => {
     if (!authLoading && !acessoNegado) inicializarDados();

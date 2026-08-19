@@ -128,11 +128,14 @@ export async function abrirChecklistAction(accessToken: string, payload: {
       .maybeSingle();
     if (aberto) return { ok: false, erro: 'Você já tem um checklist em andamento. Finalize-o antes de abrir outro.' };
 
+    const { data: funcRow } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', func.funcionarioNome).maybeSingle();
+
     const { data: header, error: erroHeader } = await db
       .from('frota_checklists')
       .insert([{
         veiculo_id: payload.veiculoId,
         motorista_nome: func.funcionarioNome,
+        empresa_id: funcRow?.empresa_id ?? null,
         origem: 'PORTAL',
         status: 'EM_ANDAMENTO',
         destino: payload.destino || null,

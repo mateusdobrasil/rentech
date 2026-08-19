@@ -6,7 +6,7 @@
 // em até 3 períodos — regra CLT que fica para uma próxima versão) e sem
 // integração com o cálculo de holerite (só agendamento e prazos por enquanto).
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -35,7 +35,7 @@ const hojeIso = (): string => {
 async function ensurePeriodos(db: ReturnType<typeof supabaseAdmin>) {
   const hoje = hojeIso();
   const { data: funcs } = await db.from('folha_funcionarios')
-    .select('nome_completo, data_admissao, data_desligamento')
+    .select('nome_completo, data_admissao, data_desligamento, empresa_id')
     .not('data_admissao', 'is', null);
 
   const { data: existentes } = await db.from('folha_ferias').select('funcionario_nome, periodo_aquisitivo_inicio');
@@ -53,6 +53,7 @@ async function ensurePeriodos(db: ReturnType<typeof supabaseAdmin>) {
       if (!jaExiste.has(chave)) {
         novos.push({
           funcionario_nome: f.nome_completo,
+          empresa_id: f.empresa_id,
           periodo_aquisitivo_inicio: inicioCiclo,
           periodo_aquisitivo_fim: fimCiclo,
           periodo_concessivo_fim: addAnos(fimCiclo, 1),
@@ -72,21 +73,28 @@ async function ensurePeriodos(db: ReturnType<typeof supabaseAdmin>) {
 // AGENDADA ficam gravadas) e alerta de vencimento do período concessivo.
 // ============================================================================
 export async function painelFeriasAction(accessToken: string): Promise<Resultado> {
-  const acesso = await validarAcesso(accessToken, ROTA);
+  let acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) {
     // Também usada pelo painel de pendências do hub /admin/rh.
     const acessoHub = await validarAcesso(accessToken, '/admin/rh');
     if (!acessoHub.ok) return { ok: false, erro: acesso.message };
+    acesso = acessoHub;
   }
 
   const db = supabaseAdmin();
   try {
     await ensurePeriodos(db);
 
-    const { data: funcs } = await db.from('folha_funcionarios')
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    let qFuncs = db.from('folha_funcionarios')
       .select('nome_completo, cargo, departamento, ativo').order('nome_completo');
-    const { data: periodos } = await db.from('folha_ferias').select('*')
+    if (empresasPermitidas) qFuncs = qFuncs.in('empresa_id', empresasPermitidas);
+    const { data: funcs } = await qFuncs;
+
+    let qPeriodos = db.from('folha_ferias').select('*')
       .order('periodo_aquisitivo_inicio', { ascending: true });
+    if (empresasPermitidas) qPeriodos = qPeriodos.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+    const { data: periodos } = await qPeriodos;
 
     const hoje = hojeIso();
     const em60 = addDias(hoje, 60);
@@ -153,6 +161,11 @@ export async function agendarFeriasAction(payload: {
   if (diasGozo + diasAbono > 30) return { ok: false, erro: 'Gozo + abono não pode passar de 30 dias.' };
 
   try {
+    const { data: periodo } = await db.from('folha_ferias').select('empresa_id').eq('id', id).maybeSingle();
+    if (!periodo) return { ok: false, erro: 'Período de férias não encontrado.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, periodo.empresa_id)) return { ok: false, erro: 'Período de férias não encontrado.' };
+
     const dataFimGozo = addDias(dataInicioGozo, diasGozo - 1);
     const { error } = await db.from('folha_ferias').update({
       status: 'AGENDADA', data_inicio_gozo: dataInicioGozo, data_fim_gozo: dataFimGozo,
@@ -172,6 +185,11 @@ export async function cancelarAgendamentoFeriasAction(payload: { id: number }, a
 
   const db = supabaseAdmin();
   try {
+    const { data: periodo } = await db.from('folha_ferias').select('empresa_id').eq('id', payload.id).maybeSingle();
+    if (!periodo) return { ok: false, erro: 'Período de férias não encontrado.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, periodo.empresa_id)) return { ok: false, erro: 'Período de férias não encontrado.' };
+
     const { error } = await db.from('folha_ferias').update({
       status: 'DISPONIVEL', data_inicio_gozo: null, data_fim_gozo: null,
       dias_gozo: null, dias_abono: 0, atualizado_em: new Date().toISOString()

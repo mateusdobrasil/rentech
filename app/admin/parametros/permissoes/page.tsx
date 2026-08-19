@@ -4,13 +4,13 @@ import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation'; // <-- CORRIGIDO: Import adicionado
 import { supabase } from '../../../lib/supabase';
-import { registrarLogAuditoria, criarUsuarioAcesso, listarAcessosPortalAction } from '../../../actions';
+import { registrarLogAuditoria, criarUsuarioAcesso, listarAcessosPortalAction, vincularEmpresasUsuarioAction } from '../../../actions';
 import { formatarCpf } from '../../../portal/lib/cpf';
 import { Analytics } from "@vercel/analytics/next"; // <-- CORRIGIDO: Barra adicionada
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
-import { normalizarPermissao } from '../../../lib/permissoes';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 // Setores de permissão: antes era uma lista fixa aqui no código, agora vem
 // do banco (tabela setores_permissao) e pode ser gerida na aba "Setores".
@@ -88,6 +88,7 @@ export default function GestaoPermissoes() {
   const formPaginaPadrao: PaginaPermissao = { nome_pagina: '', endereco_route: '', permissoes_permitidas: [] };
   const [formPagina, setFormPagina] = useState<PaginaPermissao>(formPaginaPadrao);
   const [editandoPaginaId, setEditandoPaginaId] = useState<number | null>(null);
+  const [filtroSetorPagina, setFiltroSetorPagina] = useState('');
 
   // Estados da aba de Setores
   const [setores, setSetores] = useState<Setor[]>([]);
@@ -157,13 +158,8 @@ export default function GestaoPermissoes() {
   };
 
   const sincronizarVinculoEmpresas = async (perfilId: string, empresaIds: number[]) => {
-    const { error: delError } = await supabase.from('perfis_usuarios_empresas').delete().eq('perfil_id', perfilId);
-    if (delError) throw delError;
-    if (empresaIds.length > 0) {
-      const { error: insError } = await supabase.from('perfis_usuarios_empresas')
-        .insert(empresaIds.map(empresa_id => ({ perfil_id: perfilId, empresa_id })));
-      if (insError) throw insError;
-    }
+    const resultado = await vincularEmpresasUsuarioAction({ perfilId, empresaIds, usuarioNome: usuarioAtual }, accessToken);
+    if (!resultado.success) throw new Error(resultado.message || 'Falha ao vincular empresas.');
     setVinculosPorUsuario(prev => ({ ...prev, [perfilId]: empresaIds }));
   };
 
@@ -472,11 +468,17 @@ export default function GestaoPermissoes() {
   }, [usuarios, busca]);
 
   const paginasFiltradas = useMemo(() => {
-    return paginas.filter(p =>
-      p.nome_pagina.toLowerCase().includes(buscaPagina.toLowerCase()) ||
-      p.endereco_route.toLowerCase().includes(buscaPagina.toLowerCase())
-    );
-  }, [paginas, buscaPagina]);
+    return paginas
+      .filter(p =>
+        p.nome_pagina.toLowerCase().includes(buscaPagina.toLowerCase()) ||
+        p.endereco_route.toLowerCase().includes(buscaPagina.toLowerCase())
+      )
+      .filter(p => {
+        if (!filtroSetorPagina) return true;
+        if (filtroSetorPagina === '__SEM_ACESSO__') return p.permissoes_permitidas.length === 0;
+        return p.permissoes_permitidas.includes(filtroSetorPagina);
+      });
+  }, [paginas, buscaPagina, filtroSetorPagina]);
 
   const paginasFiltradasSeguranca = useMemo(() => {
     return paginas.filter(p =>
@@ -505,10 +507,12 @@ export default function GestaoPermissoes() {
     }
   };
 
-  // ADMINISTRADOR enxerga todas as empresas por padrão (ver /admin/rh/funcionario),
-  // então o vínculo explícito só importa pros demais setores.
+  // Só quem é literalmente "Administrador" enxerga todas as empresas por
+  // padrão (ver app/lib/permissoes.ts: ehAdministradorGlobal) — Diretoria e
+  // Gerência, mesmo caindo no balde ADMINISTRADOR de acesso de rota, ficam
+  // com vínculo explícito igual a qualquer outro usuário.
   const descricaoEmpresasDe = (user: UsuarioAuth): string => {
-    if (normalizarPermissao(user.permissao) === 'ADMINISTRADOR') return 'Todas (Administrador)';
+    if (ehAdministradorGlobal(user.permissao)) return 'Todas (Administrador)';
     const ids = vinculosPorUsuario[user.id] || [];
     if (ids.length === 0) return 'Nenhuma empresa vinculada';
     return ids.map(id => empresasPerm.find(e => e.id === id)?.nome || '?').join(', ');
@@ -758,13 +762,24 @@ export default function GestaoPermissoes() {
 
           {/* Grid/Tabela de visualização das rotas protegidas */}
           <div className="flex-grow bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col h-full">
-            <div className="p-4 border-b border-[#E2E8F0] bg-[#F8FAFC]">
-              <input 
-                type="text" 
-                placeholder="🔍 Filtrar rotas por endereço ou nome da página..." 
+            <div className="p-4 border-b border-[#E2E8F0] bg-[#F8FAFC] flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                placeholder="🔍 Filtrar rotas por endereço ou nome da página..."
                 value={buscaPagina} onChange={e => setBuscaPagina(e.target.value)}
-                className="w-full max-w-md p-2 border border-gray-300 rounded-lg text-xs font-semibold outline-none focus:border-[#336699]" 
+                className="w-full max-w-md p-2 border border-gray-300 rounded-lg text-xs font-semibold outline-none focus:border-[#336699]"
               />
+              <select
+                value={filtroSetorPagina}
+                onChange={e => setFiltroSetorPagina(e.target.value)}
+                className="w-full sm:w-56 p-2 border border-gray-300 rounded-lg text-xs font-bold uppercase tracking-wider text-[#0C1D4D] bg-white outline-none focus:border-[#336699]"
+              >
+                <option value="">🏷️ Todos os setores</option>
+                {setores.map(s => (
+                  <option key={s.id} value={s.nome}>{s.nome}</option>
+                ))}
+                <option value="__SEM_ACESSO__">⛔ Sem acesso configurado</option>
+              </select>
             </div>
             
             <div className="overflow-auto flex-grow">
@@ -1197,7 +1212,7 @@ export default function GestaoPermissoes() {
                 </select>
               </div>
 
-              {normalizarPermissao(novoUsuario.permissao) !== 'ADMINISTRADOR' && (
+              {!ehAdministradorGlobal(novoUsuario.permissao) && (
                 <div>
                   <label className="block text-[10px] font-black text-[#64748B] uppercase tracking-widest mb-2">Empresas com Acesso Permitido</label>
                   <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2 max-h-[160px] overflow-y-auto shadow-inner">
@@ -1259,7 +1274,7 @@ export default function GestaoPermissoes() {
                 <p className="text-[10px] text-[#94A3B8] font-bold uppercase mt-2 leading-tight">Este papel definirá quais painéis, simuladores e botões o usuário poderá visualizar.</p>
               </div>
 
-              {normalizarPermissao(modalEdicao.user.permissao) !== 'ADMINISTRADOR' && (
+              {!ehAdministradorGlobal(modalEdicao.user.permissao) && (
                 <div>
                   <label className="block text-[10px] font-black text-[#64748B] uppercase tracking-widest mb-2">Empresas com Acesso Permitido</label>
                   <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2 max-h-[160px] overflow-y-auto shadow-inner">

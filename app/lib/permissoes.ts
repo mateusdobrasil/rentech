@@ -37,3 +37,16 @@ export const ehAltaGestaoOP = (permissaoBruta: string): boolean => {
   const normalizada = normalizarPermissao(permissaoBruta);
   return normalizada === 'ADMINISTRADOR' || normalizada === 'FINANCEIRO';
 };
+
+// Dentro do balde ADMINISTRADOR (que junta Admin/Diretoria/Gerência pra fins
+// de ACESSO DE ROTA), só quem é literalmente "Administrador" enxerga dados
+// de TODAS as empresas sem restrição. Diretoria e Gerência continuam com o
+// mesmo acesso de tela, mas ficam escopadas por perfis_usuarios_empresas
+// igual a qualquer outro usuário — diretorias diferentes cuidam de empresas
+// diferentes (Rentech e AlfaLight têm diretorias próprias).
+export const ehAdministradorGlobal = (permissaoBruta: string): boolean => {
+  const p = (permissaoBruta || '').toUpperCase().trim();
+  if (p.includes('ADMINISTRATIVO') || p === 'ADM') return false;
+  if (p.includes('DIR') || p.includes('GEREN')) return false;
+  return p.includes('ADMIN');
+};

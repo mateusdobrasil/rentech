@@ -320,7 +320,7 @@ export default function RelatoriosRH() {
       const [{ data: funcsData }, { data: movsData }, docsRes] = await Promise.all([
         supabase.from('folha_funcionarios').select('nome_completo, cargo, ativo, data_admissao, data_desligamento'),
         supabase.from('folha_movimentacoes').select('funcionario_nome, motivo, cargo, data_movimentacao').order('data_movimentacao', { ascending: false }),
-        painelDocumentosAction(null, accessToken),
+        painelDocumentosAction(accessToken),
       ]);
       if (!vivo) return;
       setTodosFuncionarios(funcsData || []);

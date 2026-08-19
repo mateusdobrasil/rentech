@@ -6,7 +6,7 @@
 // A separação por página é feita no CLIENTE (pdf-lib); aqui recebemos cada
 // pedaço já em base64 e persistimos.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { extrairTextoPdf, identificarFuncionarioNoTexto } from '../../../lib/textract';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
@@ -50,7 +50,18 @@ export async function salvarDocumentosContabeisAction(payload: {
   const falhas: string[] = [];
 
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const nomesLote = Array.from(new Set(itens.map(i => i.funcionarioNome)));
+    const { data: funcsLote } = await db.from('folha_funcionarios').select('nome_completo, empresa_id').in('nome_completo', nomesLote);
+    const empresaPorNome: Record<string, number | null> = {};
+    (funcsLote || []).forEach(f => { empresaPorNome[f.nome_completo] = f.empresa_id; });
+
     for (const item of itens) {
+      if (!empresaPermitida(empresasPermitidas, empresaPorNome[item.funcionarioNome])) {
+        falhas.push(`${item.funcionarioNome}: sem permissão para gravar documentos deste funcionário.`);
+        continue;
+      }
+
       const bytes = Buffer.from(item.pdfBase64, 'base64');
       const path = `${mesReferencia}/${tipo.toLowerCase()}/${slug(item.funcionarioNome)}.pdf`;
 
@@ -63,6 +74,7 @@ export async function salvarDocumentosContabeisAction(payload: {
       // Registra o ponteiro (upsert por funcionário+mês+tipo)
       const { error: dbErr } = await db.from('folha_documentos_contabeis').upsert({
         funcionario_nome: item.funcionarioNome,
+        empresa_id: empresaPorNome[item.funcionarioNome] ?? null,
         mes_referencia: mesReferencia,
         tipo,
         storage_path: path,
@@ -122,11 +134,14 @@ export async function listarDocumentosContabeisAction(payload: {
 
   const db = supabaseAdmin();
   try {
-    const { data, error } = await db
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    let q = db
       .from('folha_documentos_contabeis')
       .select('funcionario_nome, tipo, storage_path, pagina_origem, importado_em')
       .eq('mes_referencia', payload.mesReferencia)
       .order('funcionario_nome');
+    if (empresasPermitidas) q = q.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+    const { data, error } = await q;
     if (error) throw new Error(error.message);
     return { ok: true, info: { documentos: data || [] } };
   } catch (e: any) {
@@ -145,6 +160,12 @@ export async function urlDocumentoContabilAction(payload: {
 
   const db = supabaseAdmin();
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', payload.funcionarioNome).maybeSingle();
+    if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
+      return { ok: false, erro: 'Você não tem permissão para acessar este documento.' };
+    }
+
     const path = `${payload.mesReferencia}/${payload.tipo.toLowerCase()}/${slug(payload.funcionarioNome)}.pdf`;
     const { data, error } = await db.storage.from(BUCKET).createSignedUrl(path, 60 * 10);
     if (error) throw new Error(error.message);

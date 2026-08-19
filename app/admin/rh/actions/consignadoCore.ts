@@ -130,13 +130,15 @@ export function construirLista(
   });
 }
 
-export async function buscarFuncionariosAtivos(): Promise<Funcionario[]> {
+export async function buscarFuncionariosAtivos(empresaIds: number[] | null = null): Promise<Funcionario[]> {
   const db = supabaseAdmin();
-  const { data, error } = await db
+  let q = db
     .from('folha_funcionarios')
     .select('nome_completo, cpf')
     .eq('ativo', true)
     .order('nome_completo');
+  if (empresaIds) q = q.in('empresa_id', empresaIds);
+  const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data || [];
 }
@@ -161,6 +163,7 @@ export function isoParaCompetenciaBr(iso: string | null | undefined): string {
 interface LinhaConsignadoDB {
   cpf: string;
   funcionario_nome: string;
+  empresa_id: number | null;
   matricula: string | null;
   instituicao_codigo: string;
   instituicao_nome: string;
@@ -200,9 +203,20 @@ export async function persistirConsignacoesEDetectarNovos(registros: any[], orig
   const competenciaIso = competenciaBrParaIso(campo(registros[0], 'competencia')) || '';
   const agora = new Date().toISOString();
 
-  const linhas: LinhaConsignadoDB[] = registros.map((r) => ({
-    cpf: String(campo(r, 'cpf') || '').replace(/\D/g, ''),
+  // empresa_id vem do funcionário casado por CPF (mais confiável que nome
+  // aqui, já que o registro do GOV.BR/arquivo traz CPF sempre) — cai em null
+  // se o CPF não bater com ninguém cadastrado (ex.: ex-funcionário).
+  const { data: todosFuncs } = await db.from('folha_funcionarios').select('nome_completo, cpf, empresa_id');
+  const empresaPorCpf = new Map<string, number | null>(
+    (todosFuncs || []).filter(f => f.cpf).map(f => [String(f.cpf).replace(/\D/g, ''), f.empresa_id])
+  );
+
+  const linhas: LinhaConsignadoDB[] = registros.map((r) => {
+    const cpfLimpo = String(campo(r, 'cpf') || '').replace(/\D/g, '');
+    return {
+    cpf: cpfLimpo,
     funcionario_nome: String(campo(r, 'nomeTrabalhador') || ''),
+    empresa_id: empresaPorCpf.get(cpfLimpo) ?? null,
     matricula: campo(r, 'matricula') ? String(campo(r, 'matricula')) : null,
     instituicao_codigo: String(campo(r, 'ifConcessora.codigo', 'ifConcessora', 'codigo') ?? ''),
     instituicao_nome: String(campo(r, 'ifConcessora.descricao', 'ifConcessora', 'descricao') ?? ''),
@@ -219,7 +233,8 @@ export async function persistirConsignacoesEDetectarNovos(registros: any[], orig
     origem,
     ativo: true,
     importado_em: agora,
-  })).filter(l => l.cpf && l.contrato);
+    };
+  }).filter(l => l.cpf && l.contrato);
 
   if (linhas.length === 0) return 0;
 
@@ -337,9 +352,9 @@ async function consultarConsignacoesEmpregadorGovBr(competencia: string): Promis
 // em app/api/cron/consignado/route.ts (protegida por CRON_SECRET). Ficar aqui,
 // fora do arquivo "use server", é o que impede que ela vire um endpoint de
 // Server Action alcançável direto por RPC sem nenhuma das duas proteções.
-export async function listarConsignados(competencia: string /* AAAAMM */): Promise<ResultadoConsignado> {
+export async function listarConsignados(competencia: string /* AAAAMM */, empresaIds: number[] | null = null): Promise<ResultadoConsignado> {
   try {
-    const funcionarios = await buscarFuncionariosAtivos();
+    const funcionarios = await buscarFuncionariosAtivos(empresaIds);
     const consulta = await consultarConsignacoesEmpregadorGovBr(competencia);
 
     if (!consulta.ok) {

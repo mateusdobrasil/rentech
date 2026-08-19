@@ -3,12 +3,28 @@
 // app/reunioes/.../actions-ponto.ts  (ajuste o caminho de import conforme a localização real)
 // Server actions para a importação de PONTO (batidas e abonos), com service role.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
 const ROTA = '/admin/rh/ponto';
+
+// Mapa nome→empresa_id pra um lote de funcionários, e checagem de que todos
+// pertencem a empresas que o usuário logado pode enxergar (senão um usuário
+// só-Rentech poderia importar CSV de ponto embutindo nomes da AlfaLight).
+async function mapaEmpresasELimite(db: ReturnType<typeof supabaseAdmin>, nomes: string[], empresasPermitidas: number[] | null): Promise<{ mapa: Record<string, number | null>; foraDoEscopo: string[] }> {
+  const { data } = nomes.length
+    ? await db.from('folha_funcionarios').select('nome_completo, empresa_id').in('nome_completo', nomes)
+    : { data: [] as { nome_completo: string; empresa_id: number | null }[] };
+  const mapa: Record<string, number | null> = {};
+  const foraDoEscopo: string[] = [];
+  (data || []).forEach(f => {
+    mapa[f.nome_completo] = f.empresa_id;
+    if (!empresaPermitida(empresasPermitidas, f.empresa_id)) foraDoEscopo.push(f.nome_completo);
+  });
+  return { mapa, foraDoEscopo };
+}
 
 // Verifica se há folha fechada no mês (trava de reimportação)
 async function nomesComFolhaFechada(db: ReturnType<typeof supabaseAdmin>, mesAno: string): Promise<string[]> {
@@ -40,6 +56,12 @@ export async function importarPontoAction(payload: {
   const { registros, nomes, anoRef, mesRef, usuarioNome, nomeArquivo } = payload;
 
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const { mapa: empresaPorNome, foraDoEscopo } = await mapaEmpresasELimite(db, nomes, empresasPermitidas);
+    if (foraDoEscopo.length > 0) {
+      return { ok: false, erro: `Você não tem permissão para importar ponto de: ${foraDoEscopo.join(', ')}.` };
+    }
+
     const mesAno = `${anoRef}-${mesRef}`;
     const fechados = await nomesComFolhaFechada(db, mesAno);
     if (fechados.length > 0) {
@@ -74,7 +96,7 @@ export async function importarPontoAction(payload: {
 
     if (registrosFiltrados.length > 0) {
       const { error: insErr } = await db.from('folha_ponto_diaria').insert(
-        registrosFiltrados.map((r) => ({ ...r, origem: 'CSV_PONTOMAIS' }))
+        registrosFiltrados.map((r) => ({ ...r, empresa_id: empresaPorNome[r.funcionario_nome] ?? null, origem: 'CSV_PONTOMAIS' }))
       );
       if (insErr) throw new Error(`Falha ao gravar ponto: ${insErr.message}`);
     }
@@ -113,6 +135,12 @@ export async function importarAbonosAction(payload: {
   const { abonos, nomes, anoRef, mesRef, usuarioNome, nomeArquivo } = payload;
 
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const { mapa: empresaPorNome, foraDoEscopo } = await mapaEmpresasELimite(db, nomes, empresasPermitidas);
+    if (foraDoEscopo.length > 0) {
+      return { ok: false, erro: `Você não tem permissão para importar abonos de: ${foraDoEscopo.join(', ')}.` };
+    }
+
     const mesAno = `${anoRef}-${mesRef}`;
     const fechados = await nomesComFolhaFechada(db, mesAno);
     if (fechados.length > 0) {
@@ -148,7 +176,7 @@ export async function importarAbonosAction(payload: {
     let gravados = 0;
     if (abonosFiltrados.length > 0) {
       const { data: inseridos, error: insErr } = await db.from('folha_ponto_abono').insert(
-        abonosFiltrados.map((a) => ({ ...a, origem: 'CSV_PONTOMAIS' }))
+        abonosFiltrados.map((a) => ({ ...a, empresa_id: empresaPorNome[a.funcionario_nome] ?? null, origem: 'CSV_PONTOMAIS' }))
       ).select('id');
       if (insErr) throw new Error(`Falha ao gravar no banco: ${insErr.message}`);
       if (!inseridos || inseridos.length === 0) {
@@ -200,6 +228,12 @@ export async function lancarPontoManualAction(payload: {
   const { funcionarioNome, dataRegistro, entrada1, saida1, entrada2, saida2, usuarioNome, confirmarSobreposicaoWhatsapp, confirmarViradaNoite } = payload;
 
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+    if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
+      return { ok: false, erro: 'Você não tem permissão para lançar ponto para este funcionário.' };
+    }
+
     const mesAno = dataRegistro.slice(0, 7);
     const fechados = await nomesComFolhaFechada(db, mesAno);
     if (fechados.includes(funcionarioNome)) {
@@ -268,7 +302,7 @@ export async function lancarPontoManualAction(payload: {
       if (error) throw new Error(error.message);
     } else {
       const { error } = await db.from('folha_ponto_diaria').insert({
-        funcionario_nome: funcionarioNome, data_registro: dataRegistro,
+        funcionario_nome: funcionarioNome, empresa_id: func?.empresa_id ?? null, data_registro: dataRegistro,
         entrada_1: entrada1, saida_1: saida1, entrada_2: entrada2, saida_2: saida2,
         minutos_trabalhados: minutosTrabalhados, origem: 'MANUAL_RH'
       });
@@ -309,6 +343,12 @@ export async function descartarPontoManualAction(payload: {
   const { funcionarioNome, dataRegistro, usuarioNome, confirmarSobreposicaoWhatsapp } = payload;
 
   try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+    if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
+      return { ok: false, erro: 'Você não tem permissão para alterar o ponto deste funcionário.' };
+    }
+
     const mesAno = dataRegistro.slice(0, 7);
     const fechados = await nomesComFolhaFechada(db, mesAno);
     if (fechados.includes(funcionarioNome)) {
@@ -375,6 +415,12 @@ export async function abonarDiaManualAction(payload: {
   try {
     if (!motivo?.trim()) return { ok: false, erro: 'Informe o motivo do abono.' };
 
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+    if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
+      return { ok: false, erro: 'Você não tem permissão para abonar dia para este funcionário.' };
+    }
+
     const mesAno = dataAbono.slice(0, 7);
     const fechados = await nomesComFolhaFechada(db, mesAno);
     if (fechados.includes(funcionarioNome)) {
@@ -402,7 +448,7 @@ export async function abonarDiaManualAction(payload: {
       if (error) throw new Error(error.message);
     } else {
       const { error } = await db.from('folha_ponto_abono').insert({
-        funcionario_nome: funcionarioNome, data_abono: dataAbono,
+        funcionario_nome: funcionarioNome, empresa_id: func?.empresa_id ?? null, data_abono: dataAbono,
         dia_todo: true, hora_inicio: null, hora_fim: null,
         minutos_abonados: 480, motivo, origem: 'MANUAL_RH'
       });

@@ -7,8 +7,14 @@ export const normalizarPermissao = (permissaoBruta: string): string => {
   // 1. ADMINISTRATIVO deve vir ANTES de ADMIN para evitar a colisão de texto
   if (p.includes('ADMINISTRATIVO') || p === 'ADM') return 'ADMINISTRATIVO';
 
-  // 2. ALTA GESTÃO (Acesso Total)
-  if (p.includes('ADMIN') || p.includes('DIR') || p.includes('GEREN')) return 'ADMINISTRADOR';
+  // 2. ALTA GESTÃO — Diretoria e Gerência são categorias PRÓPRIAS pra fins de
+  // acesso de rota (cada uma controlável por página em Parâmetros →
+  // Permissões → Páginas), não mais o mesmo balde de "Administrador".
+  // Diretorias/gerências diferentes tocam empresas diferentes, e nem toda
+  // página de administrador é pra elas verem (ex.: /admin/academy).
+  if (p.includes('DIR')) return 'DIRETORIA';
+  if (p.includes('GEREN')) return 'GERENCIA';
+  if (p.includes('ADMIN')) return 'ADMINISTRADOR';
 
   // 3. DEMAIS DEPARTAMENTOS
   if (p.includes('FINAN')) return 'FINANCEIRO';
@@ -35,15 +41,20 @@ export const normalizarPermissao = (permissaoBruta: string): string => {
 // Reaproveitar normalizarPermissao() garante que as duas checagens concordem.
 export const ehAltaGestaoOP = (permissaoBruta: string): boolean => {
   const normalizada = normalizarPermissao(permissaoBruta);
-  return normalizada === 'ADMINISTRADOR' || normalizada === 'FINANCEIRO';
+  // Diretoria/Gerência aqui listadas explicitamente pra preservar o
+  // comportamento de antes da separação de DIRETORIA/GERENCIA do balde
+  // ADMINISTRADOR (ver normalizarPermissao acima) — este módulo (Ordem de
+  // Pagamento) não faz parte do pedido de restringir Diretoria por página.
+  return normalizada === 'ADMINISTRADOR' || normalizada === 'DIRETORIA' || normalizada === 'GERENCIA' || normalizada === 'FINANCEIRO';
 };
 
-// Dentro do balde ADMINISTRADOR (que junta Admin/Diretoria/Gerência pra fins
-// de ACESSO DE ROTA), só quem é literalmente "Administrador" enxerga dados
-// de TODAS as empresas sem restrição. Diretoria e Gerência continuam com o
-// mesmo acesso de tela, mas ficam escopadas por perfis_usuarios_empresas
-// igual a qualquer outro usuário — diretorias diferentes cuidam de empresas
-// diferentes (Rentech e AlfaLight têm diretorias próprias).
+// Só quem é literalmente "Administrador" enxerga dados de TODAS as empresas
+// sem restrição — Diretoria e Gerência (categorias próprias desde a
+// separação em normalizarPermissao acima) ficam escopadas por
+// perfis_usuarios_empresas igual a qualquer outro usuário, porque diretorias
+// diferentes cuidam de empresas diferentes (Rentech e AlfaLight têm
+// diretorias próprias). Independente de normalizarPermissao — checagem
+// própria no texto bruto, pra não depender do balde de rota.
 export const ehAdministradorGlobal = (permissaoBruta: string): boolean => {
   const p = (permissaoBruta || '').toUpperCase().trim();
   if (p.includes('ADMINISTRATIVO') || p === 'ADM') return false;

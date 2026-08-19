@@ -9,7 +9,7 @@ import { supabaseAdmin } from '../../../lib/supabase';
 import { enviarComProvedor, type ProvedorWhatsApp } from '../../../lib/whatsapp';
 import { enviarWhatsAppMetaTemplate } from '../../../lib/metaWhatsapp';
 import { statusCredenciaisP2s, testarConexao as testarConexaoP2s, type AmbienteP2s } from '../../../lib/p2s';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -23,7 +23,16 @@ export async function listarIntegracoesAction(accessToken: string): Promise<Resu
   try {
     const { data, error } = await db.from('folha_integracoes').select('*').order('tipo');
     if (error) throw new Error(error.message);
-    return { ok: true, info: { integracoes: data || [] } };
+
+    // Integração sem empresa (null) é compartilhada por todo o grupo (ex.:
+    // WhatsApp Meta) — continua visível pra qualquer um. Presa a uma empresa
+    // (ex.: Banco Itaú — só Rentech) só aparece pra quem tem acesso a ela.
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const visiveis = empresasPermitidas === null
+      ? (data || [])
+      : (data || []).filter(i => empresaPermitida(empresasPermitidas, i.empresa_id));
+
+    return { ok: true, info: { integracoes: visiveis } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
@@ -304,14 +313,23 @@ export async function estatisticasZapiAction(accessToken: string): Promise<Resul
 // Salva metadados de configuração (NÃO segredos) e status de uma integração
 export async function salvarIntegracaoAction(payload: {
   parceiro: string; ativo: boolean; ambiente: 'SANDBOX' | 'PRODUCAO'; config: any;
+  empresaId?: number | null;
 }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  // A empresa escolhida na tela precisa estar entre as que o usuário
+  // realmente pode ver — nunca confiar cegamente no que o cliente mandou.
+  const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+  if (!empresaPermitida(empresasPermitidas, payload.empresaId)) {
+    return { ok: false, erro: 'Você não tem permissão para prender esta integração a esta empresa.' };
+  }
 
   const db = supabaseAdmin();
   try {
     const { error } = await db.from('folha_integracoes').update({
       ativo: payload.ativo, ambiente: payload.ambiente, config: payload.config || {},
+      empresa_id: payload.empresaId ?? null,
       atualizado_em: new Date().toISOString()
     }).eq('parceiro', payload.parceiro);
     if (error) throw new Error(error.message);

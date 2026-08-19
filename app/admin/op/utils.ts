@@ -53,6 +53,7 @@ export function validarItensOP(itens: any[]): string | null {
 
 interface DadosOPValidaveis {
   empresa_recebedora?: string;
+  empresa_id?: number | null;
   tipo_pagamento?: string;
   data_vencimento?: string;
   itens?: any[];
@@ -68,6 +69,9 @@ interface DadosOPValidaveis {
 export function validarNovaOP(data: DadosOPValidaveis): string | null {
   if (!data.empresa_recebedora || !data.empresa_recebedora.trim()) {
     return 'Informe o nome do favorecido.';
+  }
+  if (!data.empresa_id) {
+    return 'Selecione a empresa (Rentech/AlfaLight) desta OP.';
   }
   if (!data.tipo_pagamento || !data.tipo_pagamento.trim()) {
     return 'Selecione a forma de pagamento.';

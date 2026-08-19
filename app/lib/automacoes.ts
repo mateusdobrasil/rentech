@@ -26,17 +26,22 @@ function hojeNoBrasil(): Date {
 
 // Funcionários ativos, com celular, cujo mês/dia de nascimento batem com hoje
 // (o ano de nascimento é ignorado). Usado pelo público 'ANIVERSARIANTES_FUNCIONARIOS'.
-async function listarAniversariantesFuncionarios(db: ReturnType<typeof supabaseAdmin>): Promise<{ nome_completo: string; celular: string }[]> {
+// empresaId (opcional): quando a automação está presa a uma empresa, restringe
+// os aniversariantes a ela — funcionário sem empresa definida (histórico)
+// continua entrando, mesmo critério usado no resto do sistema.
+async function listarAniversariantesFuncionarios(db: ReturnType<typeof supabaseAdmin>, empresaId: number | null): Promise<{ nome_completo: string; celular: string }[]> {
   const hoje = hojeNoBrasil();
   const mes = hoje.getMonth();
   const dia = hoje.getDate();
 
-  const { data } = await db
+  let query = db
     .from('folha_funcionarios')
     .select('nome_completo, celular, data_nascimento')
     .eq('ativo', true)
     .not('celular', 'is', null)
     .not('data_nascimento', 'is', null);
+  if (empresaId) query = query.or(`empresa_id.is.null,empresa_id.eq.${empresaId}`);
+  const { data } = await query;
 
   return ((data || []) as { nome_completo: string; celular: string; data_nascimento: string }[])
     .filter(f => {
@@ -54,7 +59,7 @@ export async function dispararAutomacaoWhatsApp(chave: string, contexto: Record<
 
   const { data: automacao } = await db
     .from('folha_automacoes')
-    .select('ativo, canais, destinatarios, mensagem, provedor_whatsapp, meta_template_nome, meta_template_idioma, meta_template_variaveis, publico_dinamico')
+    .select('ativo, canais, destinatarios, mensagem, provedor_whatsapp, meta_template_nome, meta_template_idioma, meta_template_variaveis, publico_dinamico, empresa_id')
     .eq('chave', chave)
     .maybeSingle();
 
@@ -68,7 +73,7 @@ export async function dispararAutomacaoWhatsApp(chave: string, contexto: Record<
   let funcionarios: { nome_completo: string; celular: string }[];
   if (automacao.publico_dinamico === 'ANIVERSARIANTES_FUNCIONARIOS') {
     // Destinatários calculados a cada execução — `destinatarios` não se aplica aqui.
-    funcionarios = await listarAniversariantesFuncionarios(db);
+    funcionarios = await listarAniversariantesFuncionarios(db, automacao.empresa_id);
   } else {
     const destinatarios: string[] = automacao.destinatarios || [];
     let query = db
@@ -78,7 +83,13 @@ export async function dispararAutomacaoWhatsApp(chave: string, contexto: Record<
       .not('celular', 'is', null);
 
     if (destinatarios.length > 0) {
+      // Lista explícita de nomes — respeita a escolha manual do admin, não
+      // filtra por empresa de novo (ela já reflete quem foi selecionado).
       query = query.in('nome_completo', destinatarios);
+    } else if (automacao.empresa_id) {
+      // "Todos os funcionários ativos" — sem isso, disparava pra Rentech E
+      // AlfaLight juntas. Funcionário sem empresa definida ainda entra.
+      query = query.or(`empresa_id.is.null,empresa_id.eq.${automacao.empresa_id}`);
     }
 
     const { data } = await query;
@@ -136,7 +147,7 @@ export async function dispararAutomacaoEmail(chave: string, contexto: Record<str
 
   const { data: automacao } = await db
     .from('folha_automacoes')
-    .select('ativo, canais, destinatarios, mensagem, publico_dinamico')
+    .select('ativo, canais, destinatarios, mensagem, publico_dinamico, empresa_id')
     .eq('chave', chave)
     .maybeSingle();
 
@@ -152,7 +163,11 @@ export async function dispararAutomacaoEmail(chave: string, contexto: Record<str
 
   const destinatarios: string[] = automacao.destinatarios || [];
   let query = db.from('folha_funcionarios').select('nome_completo, email').eq('ativo', true).not('email', 'is', null);
-  if (destinatarios.length > 0) query = query.in('nome_completo', destinatarios);
+  if (destinatarios.length > 0) {
+    query = query.in('nome_completo', destinatarios);
+  } else if (automacao.empresa_id) {
+    query = query.or(`empresa_id.is.null,empresa_id.eq.${automacao.empresa_id}`);
+  }
   const { data } = await query;
   const funcionarios = (data || []) as { nome_completo: string; email: string }[];
 

@@ -33,6 +33,7 @@ export type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 
 export async function montarLoteSalariosAction(payload: {
   mesReferencia: string;
   fontes: FonteLote[];                              // fontes selecionadas
+  empresaId?: number | null;                        // empresa escolhida na tela ANTES de montar
   valoresAdiantamento?: Record<string, number>;     // OCR do ADIANTAMENTO
   valoresPagamento?: Record<string, number>;        // OCR do HOLERITE_MENSAL
   valoresDecimoTerceiro?: Record<string, number>;   // OCR do DECIMO_TERCEIRO
@@ -165,6 +166,18 @@ export async function montarLoteSalariosAction(payload: {
     if (empresasPermitidas) {
       Array.from(nomes).forEach(nome => {
         if (!empresaPermitida(empresasPermitidas, empresaPorNomeFunc[nome])) nomes.delete(nome);
+      });
+    }
+
+    // Empresa escolhida na tela ANTES de montar o lote — não é um filtro de
+    // exibição, restringe de fato quem entra. Revalidada aqui contra o que o
+    // usuário realmente pode ver, nunca confiando cegamente no valor do payload.
+    if (payload.empresaId) {
+      if (!empresaPermitida(empresasPermitidas, payload.empresaId)) {
+        return { ok: false, erro: 'Você não tem permissão para montar um lote para esta empresa.' };
+      }
+      Array.from(nomes).forEach(nome => {
+        if (empresaPorNomeFunc[nome] != null && empresaPorNomeFunc[nome] !== payload.empresaId) nomes.delete(nome);
       });
     }
 
@@ -426,12 +439,23 @@ export async function salvarLoteAction(payload: {
     }
 
     const valorTotal = prontos.reduce((s, i) => s + Number(i.valor || 0), 0);
+
+    // empresa_id do lote é derivado aqui, dos itens já validados acima — nunca
+    // de um valor vindo do cliente. Só grava quando os itens são de UMA única
+    // empresa (o normal, já que a tela exige escolher a empresa antes de
+    // montar); se misturar empresas (ex.: admin com acesso a mais de uma) ou
+    // não tiver empresa_id em nenhum item, fica NULL — mesmo critério de
+    // "sem empresa definida" já usado no resto do sistema.
+    const empresasDoLote = new Set(prontos.map(i => i.empresa_id).filter((v): v is number => v != null));
+    const empresaIdLote = empresasDoLote.size === 1 ? [...empresasDoLote][0] : null;
+
     const { data, error } = await db.from('folha_lotes_pagamento').insert({
       parceiro: payload.parceiro,
       mes_referencia: payload.mesReferencia,
       tipo_lote: payload.tipoLote,
       nome_lote: payload.nomeLote || null,
       data_pagamento: payload.dataPagamento || null,
+      empresa_id: empresaIdLote,
       qtd_pagamentos: prontos.length,
       valor_total: valorTotal,
       status: 'GERADO',
@@ -451,13 +475,33 @@ export async function listarLotesAction(payload: { mesReferencia?: string }, acc
 
   const db = supabaseAdmin();
   try {
+    // Inclui "itens" só pra filtrar por empresa quando o lote não tem
+    // empresa_id próprio (histórico anterior à coluna, ou lote misto) — nunca
+    // vai pro cliente (removido no map final); a tela só usa as colunas de resumo.
     let q = db.from('folha_lotes_pagamento')
-      .select('id, parceiro, mes_referencia, tipo_lote, nome_lote, data_pagamento, qtd_pagamentos, valor_total, status, ativo, criado_por, criado_em')
+      .select('id, parceiro, mes_referencia, tipo_lote, nome_lote, data_pagamento, empresa_id, qtd_pagamentos, valor_total, status, ativo, criado_por, criado_em, itens')
       .order('criado_em', { ascending: false });
     if (payload.mesReferencia) q = q.eq('mes_referencia', payload.mesReferencia);
     const { data, error } = await q;
     if (error) throw new Error(error.message);
-    return { ok: true, info: { lotes: (data || []).map(l => ({ ...l, ativo: l.ativo ?? true })) } };
+
+    // Caminho rápido: lote com empresa_id próprio (todo lote novo, desde que
+    // a montagem passou a exigir escolher a empresa antes) usa direto essa
+    // coluna. Lotes antigos sem ela (empresa_id NULL) caem no fallback:
+    // legitimamente podem misturar empresas (ver buscarLoteAction), então só
+    // ficam de fora se NENHUM item pertencer a uma empresa permitida —
+    // itens sem empresa_id (histórico) contam como visíveis.
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const visiveis = empresasPermitidas === null
+      ? (data || [])
+      : (data || []).filter(l => {
+          if (l.empresa_id != null) return empresaPermitida(empresasPermitidas, l.empresa_id);
+          const itens = Array.isArray(l.itens) ? l.itens : [];
+          if (itens.length === 0) return true;
+          return itens.some((i: any) => empresaPermitida(empresasPermitidas, i?.empresa_id));
+        });
+
+    return { ok: true, info: { lotes: visiveis.map(l => ({ ...l, itens: undefined, ativo: l.ativo ?? true })) } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
@@ -515,9 +559,21 @@ export async function alternarAtivoLoteAction(payload: {
   const db = supabaseAdmin();
   try {
     const { data: lote, error: buscaErr } = await db.from('folha_lotes_pagamento')
-      .select('nome_lote, tipo_lote, mes_referencia').eq('id', payload.loteId).maybeSingle();
+      .select('nome_lote, tipo_lote, mes_referencia, itens').eq('id', payload.loteId).maybeSingle();
     if (buscaErr) throw new Error(buscaErr.message);
     if (!lote) return { ok: false, erro: 'Lote não encontrado.' };
+
+    // Diferente de abrir/listar (que só redigem as linhas fora do escopo),
+    // inativar/reativar afeta o lote inteiro — exige acesso a TODAS as
+    // empresas presentes nele, mesmo critério usado ao criar (salvarLoteAction).
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (empresasPermitidas !== null) {
+      const itens = Array.isArray(lote.itens) ? lote.itens : [];
+      const foraDoEscopo = itens.some((i: any) => !empresaPermitida(empresasPermitidas, i?.empresa_id));
+      if (foraDoEscopo) {
+        return { ok: false, erro: 'Você não tem permissão para alterar este lote — ele inclui funcionário(s) de outra empresa.' };
+      }
+    }
 
     const { error } = await db.from('folha_lotes_pagamento').update({ ativo: payload.ativo }).eq('id', payload.loteId);
     if (error) throw new Error(error.message);

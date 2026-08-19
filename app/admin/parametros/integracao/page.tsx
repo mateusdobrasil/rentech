@@ -16,12 +16,15 @@ import {
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
+import { supabase } from '../../../lib/supabase';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 const fmtDataHora = (d: string) => new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 interface Integracao {
   id: number; parceiro: string; nome_exibicao: string; tipo: string;
   ativo: boolean; ambiente: string; config: any;
+  empresa_id: number | null;
 }
 interface EstatisticasAutentique {
   total: number; assinados: number; rejeitados: number; pendentes: number;
@@ -58,11 +61,48 @@ const ROTULO_PROVEDOR: Record<'ZAPI' | 'META', string> = { ZAPI: 'Z-API', META: 
 
 export default function IntegracaoPage() {
   const router = useRouter();
-  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
   const toast = useToast();
 
   const [integracoes, setIntegracoes] = useState<Integracao[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Empresa(s) que o usuário pode enxergar (Rentech × AlfaLight) — só quem é
+  // literalmente "Administrador" (ehAdministradorGlobal) vê/edita integrações
+  // de todas; os demais ficam restritos ao vínculo em perfis_usuarios_empresas,
+  // igual ao resto do sistema.
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(empresasData || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) {
+        setEmpresasPermitidas(null);
+        return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = empresasPermitidas === null
+    ? empresasCatalogo
+    : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id));
+
+  // Filtro de exibição dos cards por empresa — trava sozinho se só há uma
+  // empresa disponível.
+  const [filtroEmpresa, setFiltroEmpresa] = useState<number | null>(null);
+  useEffect(() => {
+    if (empresasCatalogoVisivel.length === 1) setFiltroEmpresa(empresasCatalogoVisivel[0].id);
+  }, [empresasCatalogoVisivel]);
 
   const [tokenAutentiqueOk, setTokenAutentiqueOk] = useState<boolean | null>(null);
   const [statsAutentique, setStatsAutentique] = useState<EstatisticasAutentique | null>(null);
@@ -79,6 +119,7 @@ export default function IntegracaoPage() {
   const [testeP2sResultado, setTesteP2sResultado] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const [editParceiro, setEditParceiro] = useState<Integracao | null>(null);
+  const [edEmpresaId, setEdEmpresaId] = useState<number | null>(null);
   const [edAtivo, setEdAtivo] = useState(false);
   const [edAmbiente, setEdAmbiente] = useState<'SANDBOX' | 'PRODUCAO'>('SANDBOX');
   const [edAgencia, setEdAgencia] = useState('');
@@ -106,6 +147,10 @@ export default function IntegracaoPage() {
     if (!authLoading && !acessoNegado) carregar();
   }, [authLoading, acessoNegado]);
 
+  // Integração sem empresa (null) é "de todas" — continua aparecendo
+  // independente do filtro, mesmo critério usado no resto do sistema.
+  const integracoesVisiveis = !filtroEmpresa ? integracoes : integracoes.filter(i => i.empresa_id == null || i.empresa_id === filtroEmpresa);
+
   const carregar = async () => {
     setLoading(true);
     try {
@@ -131,7 +176,7 @@ export default function IntegracaoPage() {
   };
 
   const abrirConfig = (i: Integracao) => {
-    setEditParceiro(i); setEdAtivo(i.ativo); setEdAmbiente(i.ambiente as any);
+    setEditParceiro(i); setEdEmpresaId(i.empresa_id); setEdAtivo(i.ativo); setEdAmbiente(i.ambiente as any);
     setEdAgencia(i.config?.agencia_debito || ''); setEdConta(i.config?.conta_debito || '');
     setEdCnpj(i.config?.cnpj || ''); setEdRazaoSocial(i.config?.razao_social || '');
     setTesteCelular(''); setTesteResultado(null);
@@ -147,6 +192,7 @@ export default function IntegracaoPage() {
     if (!editParceiro) return;
     const res = await salvarIntegracaoAction({
       parceiro: editParceiro.parceiro, ativo: edAtivo, ambiente: edAmbiente,
+      empresaId: edEmpresaId,
       config: {
         ...editParceiro.config, agencia_debito: edAgencia, conta_debito: edConta,
         cnpj: edCnpj, razao_social: edRazaoSocial
@@ -240,8 +286,24 @@ export default function IntegracaoPage() {
       </div>
 
       <div className="p-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full">
+        <div className="flex items-center gap-2 mb-4">
+          <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider">🏭 Empresa</label>
+          <select
+            value={filtroEmpresa ?? ''}
+            onChange={(e) => setFiltroEmpresa(e.target.value ? Number(e.target.value) : null)}
+            disabled={empresasCatalogoVisivel.length <= 1}
+            className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0A2A4A] bg-white disabled:opacity-70 disabled:cursor-not-allowed"
+          >
+            {empresasCatalogoVisivel.length !== 1 && <option value="">Todas as empresas</option>}
+            {empresasCatalogoVisivel.map((e) => (
+              <option key={e.id} value={e.id}>{e.nome}</option>
+            ))}
+          </select>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-          {loading ? <p className="text-gray-400 font-bold uppercase p-8">Carregando...</p> : integracoes.map(i => (
+          {loading ? <p className="text-gray-400 font-bold uppercase p-8">Carregando...</p> : integracoesVisiveis.length === 0 ? (
+            <p className="text-gray-400 font-bold uppercase p-8 col-span-full text-center">Nenhuma integração para esta empresa.</p>
+          ) : integracoesVisiveis.map(i => (
             <div key={i.id} className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-5">
               <div className="flex justify-between items-start mb-3">
                 <div className="flex items-center gap-3">
@@ -251,11 +313,16 @@ export default function IntegracaoPage() {
                     <p className="text-[10px] text-gray-400 font-bold uppercase">{i.tipo}</p>
                   </div>
                 </div>
-                {i.parceiro !== 'WHATSAPP_ROTEAMENTO' && (
-                  <span className={`text-[9px] font-black px-2 py-1 rounded-full uppercase ${i.ativo ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-400'}`}>
-                    {i.ativo ? '● Ativo' : '○ Inativo'}
+                <div className="flex flex-col items-end gap-1.5 shrink-0">
+                  {i.parceiro !== 'WHATSAPP_ROTEAMENTO' && (
+                    <span className={`text-[9px] font-black px-2 py-1 rounded-full uppercase ${i.ativo ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-400'}`}>
+                      {i.ativo ? '● Ativo' : '○ Inativo'}
+                    </span>
+                  )}
+                  <span className="text-[9px] font-black px-2 py-1 rounded-full uppercase bg-blue-50 text-blue-700 whitespace-nowrap">
+                    🏭 {i.empresa_id ? (empresasCatalogo.find(e => e.id === i.empresa_id)?.nome || 'Empresa removida') : 'Todas as empresas'}
                   </span>
-                )}
+                </div>
               </div>
 
               {i.parceiro === 'AUTENTIQUE' && (
@@ -421,6 +488,22 @@ export default function IntegracaoPage() {
             <p className="text-[11px] text-gray-400 font-bold uppercase mb-4">{editParceiro.tipo}</p>
 
             <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Empresa</label>
+                <select
+                  className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed"
+                  value={edEmpresaId ?? ''}
+                  onChange={e => setEdEmpresaId(e.target.value ? Number(e.target.value) : null)}
+                  disabled={empresasCatalogoVisivel.length <= 1}
+                >
+                  <option value="">Todas as empresas</option>
+                  {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                </select>
+                <p className="text-[10px] text-[#94A3B8] mt-1">
+                  "Todas as empresas" = compartilhada (ex.: WhatsApp Meta). Presa a uma empresa = exclusiva dela (ex.: Banco Itaú, só Rentech) — só quem tem acesso a essa empresa vê/edita.
+                </p>
+              </div>
+
               {editParceiro.parceiro !== 'WHATSAPP_ROTEAMENTO' && (
                 <>
                   <label className="flex items-center justify-between p-3 bg-[#F8FAFC] rounded-xl cursor-pointer">

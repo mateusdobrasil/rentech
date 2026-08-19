@@ -7,7 +7,7 @@
 // Pagamento (folha_lotes_pagamento) e Crédito Consignado (folha_consignados).
 // Todo o cálculo acontece aqui (server-side) para a página só desenhar.
 import { supabaseAdmin } from '../../lib/supabase';
-import { validarAcesso } from '../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -46,12 +46,27 @@ function topN(entradas: [string, ValorQtd][], n: number): { label: string; valor
   return cabeca;
 }
 
-export async function buscarRelatorioFinanceiroAction(payload: { mesReferencia: string }, accessToken: string): Promise<Resultado> {
+export async function buscarRelatorioFinanceiroAction(payload: { mesReferencia: string; empresaId?: number | null }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
   const { mesReferencia } = payload;
+
+  // Empresa(s) que o usuário pode ver — só quem é literalmente
+  // "Administrador" (ehAdministradorGlobal, dentro de obterEmpresasPermitidas)
+  // enxerga tudo sem restrição; os demais ficam escopados a
+  // perfis_usuarios_empresas, igual ao resto do sistema. payload.empresaId é
+  // o filtro opcional da tela (revalidado abaixo — nunca confiar cego nele).
+  const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+  if (payload.empresaId && !empresaPermitida(empresasPermitidas, payload.empresaId)) {
+    return { ok: false, erro: 'Você não tem permissão para ver o relatório desta empresa.' };
+  }
+  // Linha (empresa_id) passa se: dentro do que o usuário pode ver E (sem
+  // filtro de tela OU sem empresa própria OU bate com o filtro escolhido).
+  const dentroDoEscopo = (empresaIdLinha: number | null | undefined) =>
+    empresaPermitida(empresasPermitidas, empresaIdLinha) &&
+    (!payload.empresaId || empresaIdLinha == null || empresaIdLinha === payload.empresaId);
 
   try {
     const meses6 = ultimosMeses(mesReferencia, 6);
@@ -62,10 +77,10 @@ export async function buscarRelatorioFinanceiroAction(payload: { mesReferencia: 
     // ============================================================
     const { data: opsRaw, error: opsErr } = await db
       .from('op_ordens_pagamento')
-      .select('id, os_numero, empresa_recebedora, natureza_pagamento, total_geral, status, data_criacao, data_vencimento, responsavel_nome')
+      .select('id, empresa_id, os_numero, empresa_recebedora, natureza_pagamento, total_geral, status, data_criacao, data_vencimento, responsavel_nome')
       .order('data_criacao', { ascending: false });
     if (opsErr) throw new Error(opsErr.message);
-    const ops = opsRaw || [];
+    const ops = (opsRaw || []).filter(o => dentroDoEscopo(o.empresa_id));
 
     const ehPago = (status: string) => (status || '').toUpperCase().includes('PAGO');
     const hojeIso = new Date().toISOString().slice(0, 10);
@@ -128,10 +143,34 @@ export async function buscarRelatorioFinanceiroAction(payload: { mesReferencia: 
     // ============================================================
     const { data: lotesRaw, error: lotesErr } = await db
       .from('folha_lotes_pagamento')
-      .select('mes_referencia, status, valor_total, qtd_pagamentos, criado_em, tipo_lote, nome_lote')
+      .select('mes_referencia, status, valor_total, qtd_pagamentos, criado_em, tipo_lote, nome_lote, empresa_id, itens')
       .order('criado_em', { ascending: false });
     if (lotesErr) throw new Error(lotesErr.message);
-    const lotes = lotesRaw || [];
+
+    // Caminho rápido: lote com empresa_id própria (todo lote novo, já que a
+    // montagem exige escolher a empresa antes) passa inteiro ou fica de fora
+    // inteiro, sem inspecionar itens. Sem ela (histórico anterior à coluna, ou
+    // lote misto gerado por quem tem acesso a mais de uma empresa), recalcula
+    // valor/qtd só com os itens dentro do escopo — não inclui/exclui o lote
+    // inteiro. Lotes sem "itens" registrados (formato bem antigo) mantêm os
+    // totais originais, sem quebra por empresa.
+    const lotes = (lotesRaw || [])
+      .map(l => {
+        if (l.empresa_id != null) {
+          return dentroDoEscopo(l.empresa_id)
+            ? { ...l, valor_total: Number(l.valor_total) || 0, qtd_pagamentos: l.qtd_pagamentos || 0 }
+            : { ...l, valor_total: 0, qtd_pagamentos: 0 };
+        }
+        const itens = Array.isArray(l.itens) ? l.itens : [];
+        if (itens.length === 0) return { ...l, valor_total: Number(l.valor_total) || 0, qtd_pagamentos: l.qtd_pagamentos || 0 };
+        const itensEscopo = itens.filter((i: any) => dentroDoEscopo(i?.empresa_id));
+        return {
+          ...l,
+          valor_total: itensEscopo.reduce((s: number, i: any) => s + (Number(i.valor) || 0), 0),
+          qtd_pagamentos: itensEscopo.length
+        };
+      })
+      .filter(l => l.qtd_pagamentos > 0 || !Array.isArray(l.itens) || l.itens.length === 0);
 
     const lotesDoMes = lotes.filter(l => l.mes_referencia === mesReferencia);
     const lotesStatusMapa: Record<string, { valor: number; qtd: number }> = {};
@@ -159,12 +198,21 @@ export async function buscarRelatorioFinanceiroAction(payload: { mesReferencia: 
     // CRÉDITO CONSIGNADO — situação atual (a tabela não guarda histórico
     // mensal: cada contrato é uma linha viva, atualizada a cada importação).
     // ============================================================
-    const [{ data: consignadosRaw, error: consErr }, { count: funcionariosAtivos }] = await Promise.all([
+    const [{ data: consignadosRaw, error: consErr }, { data: funcionariosRaw, error: funcErr }] = await Promise.all([
       db.from('folha_consignados').select('cpf, instituicao_nome, valor_parcela, importado_em').eq('ativo', true),
-      db.from('folha_funcionarios').select('id', { count: 'exact', head: true }).eq('ativo', true)
+      db.from('folha_funcionarios').select('cpf, empresa_id, ativo')
     ]);
     if (consErr) throw new Error(consErr.message);
-    const consignados = consignadosRaw || [];
+    if (funcErr) throw new Error(funcErr.message);
+
+    // Consignado não tem empresa_id próprio — casa por CPF com a ficha do
+    // funcionário (mesmo padrão usado em actions-financeiro.ts).
+    const empresaPorCpf: Record<string, number | null> = {};
+    (funcionariosRaw || []).forEach(f => { empresaPorCpf[f.cpf] = f.empresa_id; });
+    const funcionariosEscopo = (funcionariosRaw || []).filter(f => dentroDoEscopo(f.empresa_id));
+    const funcionariosAtivos = funcionariosEscopo.filter(f => f.ativo).length;
+
+    const consignados = (consignadosRaw || []).filter(c => dentroDoEscopo(empresaPorCpf[c.cpf]));
 
     const instituicaoMapa: Record<string, { valor: number; qtd: number }> = {};
     let ultimaAtualizacaoConsignado: string | null = null;

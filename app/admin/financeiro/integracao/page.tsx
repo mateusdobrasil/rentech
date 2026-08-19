@@ -8,6 +8,7 @@ import { listarIntegracoesAction, statusItauApiAction } from '../../parametros/i
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
+import { supabase } from '../../../lib/supabase';
 
 const BRL = (v: string | number | null | undefined) => 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtData = (d: string | null | undefined) => {
@@ -117,6 +118,7 @@ interface ItemPagamentoItau {
 interface Integracao {
   id: number; parceiro: string; nome_exibicao: string; tipo: string;
   ativo: boolean; ambiente: string; config: any;
+  empresa_id: number | null;
 }
 interface StatusItauApiAmbiente {
   clientIdConfigurado: boolean; clientSecretConfigurado: boolean;
@@ -136,6 +138,10 @@ export default function IntegracaoFinanceiraPage() {
 
   const [integracaoItau, setIntegracaoItau] = useState<Integracao | null>(null);
   const [statusItauApi, setStatusItauApi] = useState<{ sandbox: StatusItauApiAmbiente; producao: StatusItauApiAmbiente } | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+  useEffect(() => {
+    supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome').then(({ data }) => setEmpresasCatalogo(data || []));
+  }, []);
 
   const hoje = () => new Date().toISOString().slice(0, 10);
   const trintaDiasAtras = () => new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -247,6 +253,9 @@ export default function IntegracaoFinanceiraPage() {
               <p className="text-[11px] text-gray-500">Consulta de pagamentos já lançados no SISPAG — via API ou arquivo CNAB manual.</p>
             </div>
             <div className="flex items-center gap-2 ml-auto">
+              <span className="text-[9px] font-black px-2.5 py-1 rounded-full uppercase bg-gray-100 text-gray-600">
+                🏭 {integracaoItau?.empresa_id ? (empresasCatalogo.find(e => e.id === integracaoItau.empresa_id)?.nome || 'Empresa removida') : 'Todas as empresas'}
+              </span>
               <span className={`text-[9px] font-black px-2.5 py-1 rounded-full uppercase ${ambienteAtual === 'PRODUCAO' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-700'}`}>
                 Ambiente: {ambienteAtual === 'PRODUCAO' ? 'Produção' : 'Sandbox'}
               </span>

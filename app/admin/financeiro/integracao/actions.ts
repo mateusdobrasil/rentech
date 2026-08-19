@@ -7,7 +7,7 @@
 // SISPAG (via API ou via arquivo CNAB manual), não só os enviados por aqui —
 // serve para conciliação/auditoria. Cliente HTTP real em app/lib/itauSispag.ts.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import {
   consultarPagamentosSispag, consultarPagamentoSispag, credenciaisItauConfiguradas,
   type AmbienteItau,
@@ -19,15 +19,23 @@ const ROTA = '/admin/financeiro/integracao';
 // Lê ambiente + conta configurados em Integrações (não expostos no formulário
 // — a consulta é sempre sobre a própria conta da empresa, não uma escolhida
 // pelo usuário) e confere que as credenciais do ambiente ativo estão prontas.
-async function resolverContextoItau(): Promise<
+// perfilId/permissaoNormalizada: confere se o usuário tem acesso à empresa
+// dona da integração (ex.: Itaú é só da Rentech) — quem só tem acesso à
+// AlfaLight nem consegue consultar/ver os pagamentos.
+async function resolverContextoItau(perfilId: string, permissaoNormalizada: string): Promise<
   { ok: true; ambiente: AmbienteItau; agenciaOperacao: string; contaOperacao: string; cnpjEmpresa: string }
   | { ok: false; erro: string }
 > {
   const db = supabaseAdmin();
   const { data: integ } = await db.from('folha_integracoes')
-    .select('ativo, ambiente, config').eq('parceiro', 'ITAU').maybeSingle();
+    .select('ativo, ambiente, config, empresa_id').eq('parceiro', 'ITAU').maybeSingle();
   if (!integ) return { ok: false, erro: 'Integração com o Itaú não encontrada (ver Integrações).' };
   if (!integ.ativo) return { ok: false, erro: 'A integração com o Itaú ainda não está ativa (ver Integrações → ⚙ Configurar).' };
+
+  const empresasPermitidas = await obterEmpresasPermitidas(perfilId, permissaoNormalizada);
+  if (!empresaPermitida(empresasPermitidas, integ.empresa_id)) {
+    return { ok: false, erro: 'Você não tem permissão para consultar os pagamentos desta empresa.' };
+  }
 
   const ambiente: AmbienteItau = integ.ambiente === 'PRODUCAO' ? 'PRODUCAO' : 'SANDBOX';
   if (!credenciaisItauConfiguradas(ambiente)) {
@@ -68,7 +76,7 @@ export async function consultarPagamentosItauAction(filtros: FiltrosConsultaItau
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   try {
-    const ctx = await resolverContextoItau();
+    const ctx = await resolverContextoItau(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     if (!ctx.ok) return { ok: false, erro: ctx.erro };
 
     const { status, ok, data } = await consultarPagamentosSispag({
@@ -102,7 +110,7 @@ export async function consultarPagamentoItauAction(idPagamentoSispag: string, ac
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   try {
-    const ctx = await resolverContextoItau();
+    const ctx = await resolverContextoItau(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     if (!ctx.ok) return { ok: false, erro: ctx.erro };
 
     const { status, ok, data } = await consultarPagamentoSispag(ctx.ambiente, idPagamentoSispag);

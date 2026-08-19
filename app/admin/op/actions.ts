@@ -6,6 +6,7 @@ import { revalidatePath } from 'next/cache';
 import nodemailer from 'nodemailer';
 import { dispararAutomacaoWhatsApp } from '../../lib/automacoes';
 import { normalizarPermissao, ehAltaGestaoOP } from '../../lib/permissoes';
+import { obterEmpresasPermitidas, empresaPermitida } from '../../lib/serverAuth';
 import { gerarHtmlEmailOP } from './emailTemplate';
 import { ItemOPNormalizado, validarNovaOP, validarItensOP } from './utils';
 import { criarContaPagarParaOP } from '../financeiro/ops/enviarOpP2sCore';
@@ -28,6 +29,10 @@ export interface NovaOPData {
   os_cliente: string;
   os_evento: string;
   os_periodo: string;
+  // Rentech × AlfaLight — a quem esta OP pertence. Escolhida na tela (trava
+  // sozinha se o usuário só tiver acesso a uma empresa), mas revalidada aqui
+  // no servidor contra perfis_usuarios_empresas antes de gravar.
+  empresa_id: number | null;
   empresa_recebedora: string;
   cnpj_cpf_recebedora: string;
   endereco_recebedora: string;
@@ -134,6 +139,16 @@ export async function criarOP(data: NovaOPData, accessToken: string) {
   // valores inválidos ou sem data de vencimento.
   const erroValidacao = validarNovaOP(data);
   if (erroValidacao) return { success: false, message: erroValidacao };
+
+  // A empresa escolhida na tela precisa estar entre as que o usuário
+  // realmente pode enxergar (resolvido aqui no servidor via
+  // perfis_usuarios_empresas) — nunca confiar cegamente no que o cliente
+  // mandou, senão um usuário só-Rentech poderia gravar uma OP como AlfaLight
+  // manipulando a chamada direta.
+  const empresasPermitidas = await obterEmpresasPermitidas(perfil.id, perfil.permissaoNormalizada);
+  if (!empresaPermitida(empresasPermitidas, data.empresa_id)) {
+    return { success: false, message: 'Você não tem permissão para criar uma OP para esta empresa.' };
+  }
 
   try {
     // O solicitante vem sempre do perfil validado no servidor — nunca do que o

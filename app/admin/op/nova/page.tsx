@@ -1,14 +1,13 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
-import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import logoColorido from '../../../../app/imgs/logo.png';
 import { criarOP, NovaOPData } from '../actions';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { useAcessoRota } from '../useAcessoRota';
 import { useToast } from '../../../components/ui/NotificationProvider';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 interface ItemOP {
   id: number;
@@ -55,6 +54,13 @@ export default function NovaOrdemPagamento() {
   const [responsavelEmail, setResponsavelEmail] = useState('');
   const [carregandoUsuario, setCarregandoUsuario] = useState(true);
   const [natureza, setNatureza] = useState('SUBLOCAÇÃO');
+
+  // Empresa (Rentech × AlfaLight) da OP. null = ainda não sabemos o que o
+  // usuário pode ver; [] catálogo ainda carregando. Trava sozinho quando o
+  // usuário só tem acesso a uma empresa (empresasCatalogoVisivel.length === 1).
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+  const [empresaId, setEmpresaId] = useState<number | null>(null);
   const [osNum, setOsNum] = useState('');
   const [osCliente, setOsCliente] = useState('');
   const [osEvento, setOsEvento] = useState('');
@@ -116,7 +122,39 @@ export default function NovaOrdemPagamento() {
     setCarregandoUsuario(false);
   }, [perfil]);
 
+  // Carrega o catálogo de empresas e a que(is) o usuário logado pode ver —
+  // só quem é literalmente "Administrador" (ehAdministradorGlobal) enxerga
+  // todas; Diretoria/Gerência/demais ficam restritos ao vínculo deles em
+  // perfis_usuarios_empresas, igual ao resto do sistema.
+  useEffect(() => {
+    if (!perfil) return;
+    async function carregarEmpresas() {
+      const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(empresasData || []);
 
+      if (ehAdministradorGlobal(perfil!.permissaoBruta)) {
+        setEmpresasPermitidas(null);
+        return;
+      }
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', perfil!.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [perfil]);
+
+  const empresasCatalogoVisivel = useMemo(() =>
+    empresasPermitidas === null
+      ? empresasCatalogo
+      : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id)),
+    [empresasCatalogo, empresasPermitidas]);
+
+  // Se só existe uma empresa visível, trava nela automaticamente.
+  useEffect(() => {
+    if (empresasCatalogoVisivel.length === 1) {
+      setEmpresaId(empresasCatalogoVisivel[0].id);
+    }
+  }, [empresasCatalogoVisivel]);
 
   const formatarMoeda = (valor: number) => {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor || 0);
@@ -269,12 +307,20 @@ export default function NovaOrdemPagamento() {
   // FUNÇÕES DE BUSCA DE FUNCIONÁRIO (MODAL — REEMBOLSO)
   // ============================================================================
   const abrirModalFuncionario = async () => {
+    if (!empresaId) {
+      toast("Selecione a empresa da OP antes de buscar no Banco de Funcionários.", 'error');
+      return;
+    }
     setModalFuncionarioAberto(true);
     setLoadingFunc(true);
+    // Reembolso é sempre de um funcionário — filtra pela mesma empresa
+    // escolhida no topo do formulário, pra não misturar funcionário
+    // Rentech numa OP marcada como AlfaLight (ou vice-versa).
     const { data, error } = await supabase
       .from('folha_funcionarios')
       .select('id, nome_completo, cpf, celular, pix_chave, pix_tipo, endereco')
       .eq('ativo', true)
+      .eq('empresa_id', empresaId)
       .order('nome_completo', { ascending: true });
     if (!error && data) {
       setListaFuncionarios(data);
@@ -321,7 +367,13 @@ export default function NovaOrdemPagamento() {
   const handleSubmeterFormulario = async () => {
     setLoading(true);
     setUploadStatus('');
-    
+
+    if (!empresaId) {
+      setModal({ open: true, success: false, title: 'Atenção', msg: 'Selecione a empresa (Rentech/AlfaLight) desta OP.' });
+      setLoading(false);
+      return;
+    }
+
     const itensValidos = itens
       .filter(i => i.descricao.trim() !== '' && i.qtd > 0)
       .map(i => ({ descricao: i.descricao.toUpperCase(), qtd: i.qtd, valor_unitario: i.valorUnitario, total: i.qtd * i.valorUnitario }));
@@ -369,6 +421,7 @@ export default function NovaOrdemPagamento() {
       responsavel_nome: responsavelNome.toUpperCase() || 'USUÁRIO DO SISTEMA',
       responsavel_email: responsavelEmail,
       natureza_pagamento: natureza,
+      empresa_id: empresaId,
       os_numero: osNum.toUpperCase(),
       os_cliente: osCliente.toUpperCase(),
       os_evento: osEvento.toUpperCase(),
@@ -544,20 +597,18 @@ export default function NovaOrdemPagamento() {
 
       <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-lg border border-[#E2E8F0] overflow-hidden print:border-none print:shadow-none">
         
-        {/* Cabeçalho */}
-        <div className="bg-[#0C1D4D] p-6 lg:p-8 flex flex-col sm:flex-row justify-between items-center gap-4 print:bg-transparent print:border-b-2 print:border-black">
-          <Image src={logoColorido} alt="Rentech Logo" width={180} height={55} className="print:grayscale" />
-          <div className="text-center sm:text-right">
+        {/* Cabeçalho — sem logo fixa: a tela é usada por qualquer empresa do grupo (Rentech, AlfaLight, ...) */}
+        <div className="bg-[#0C1D4D] p-6 lg:p-8 flex flex-col items-end gap-3 print:bg-transparent print:border-b-2 print:border-black">
+          <div className="text-right">
             <h2 className="text-2xl font-black text-white uppercase tracking-wider print:text-black">Ordem de Pagamento</h2>
             <p className="text-[#999999] text-sm font-bold print:text-gray-500">Solicitação Financeira Administrativa</p>
-            <br/>
-            <button
-              onClick={() => router.push('/admin/op')}
-              className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase"
-            >
-              ⬅ VOLTAR AO OP
-            </button>
           </div>
+          <button
+            onClick={() => router.push('/admin/op')}
+            className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase"
+          >
+            ⬅ VOLTAR AO OP
+          </button>
         </div>
 
         <div className="p-6 lg:p-8 space-y-8">
@@ -587,6 +638,16 @@ export default function NovaOrdemPagamento() {
               )}
             </div>
             <div>
+              <label className="block text-xs font-bold text-[#64748B] uppercase tracking-wider mb-2">Empresa</label>
+              <select
+                className="w-full p-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg text-sm text-[#0A2A4A] focus:border-[#00A8E8] outline-none font-semibold cursor-pointer mb-4 disabled:opacity-70 disabled:cursor-not-allowed"
+                value={empresaId ?? ''}
+                onChange={(e) => setEmpresaId(e.target.value ? Number(e.target.value) : null)}
+                disabled={empresasCatalogoVisivel.length <= 1}
+              >
+                {empresasCatalogoVisivel.length !== 1 && <option value="">Selecione a empresa...</option>}
+                {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+              </select>
               <label className="block text-xs font-bold text-[#64748B] uppercase tracking-wider mb-2">Natureza do Pagamento</label>
               <select className="w-full p-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg text-sm text-[#0A2A4A] focus:border-[#00A8E8] outline-none font-semibold cursor-pointer" value={natureza} onChange={(e) => setNatureza(e.target.value)}>
                 <option value="SUBLOCAÇÃO">SUBLOCAÇÃO</option>

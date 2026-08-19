@@ -12,6 +12,7 @@ import { normalizarPermissao, ehAltaGestaoOP } from '../../lib/permissoes';
 // consulta ao Supabase mais de uma vez. Este hook centraliza essa lógica numa
 // única fonte, buscando perfil e permissão da rota em paralelo.
 export interface PerfilAcesso {
+  id: string;
   nome: string;
   email: string;
   permissaoBruta: string;
@@ -73,6 +74,7 @@ export function useAcessoRota(rota: string): AcessoRota {
       }
 
       setPerfil({
+        id: session.user.id,
         nome: perfilDb.nome || '',
         email: perfilDb.email || session.user.email || '',
         permissaoBruta,

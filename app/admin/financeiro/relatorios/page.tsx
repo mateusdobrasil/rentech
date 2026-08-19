@@ -6,6 +6,8 @@ import { Analytics } from "@vercel/analytics/next";
 import { buscarRelatorioFinanceiroAction } from '../actions';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { supabase } from '../../../lib/supabase';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 // ============================================================================
 // FORMATADORES
@@ -160,7 +162,7 @@ function GraficoMensal({
 
 export default function RelatoriosFinanceiroPage() {
   const router = useRouter();
-  const { authLoading, acessoNegado, erro: erroAcesso, tentarNovamente, accessToken } = usePageAccess();
+  const { authLoading, acessoNegado, erro: erroAcesso, tentarNovamente, accessToken, permissaoBruta } = usePageAccess();
 
   const [mesReferencia, setMesReferencia] = useState(() => {
     const h = new Date();
@@ -170,10 +172,18 @@ export default function RelatoriosFinanceiroPage() {
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
+  // Empresa (Rentech × AlfaLight) escolhida pra filtrar o relatório — só quem
+  // é literalmente "Administrador" (ehAdministradorGlobal) vê todas; os
+  // demais ficam restritos ao vínculo em perfis_usuarios_empresas, igual ao
+  // resto do sistema. Revalidado no servidor em buscarRelatorioFinanceiroAction.
+  const [empresaSelecionada, setEmpresaSelecionada] = useState<number | null>(null);
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+
   const carregar = async () => {
     setLoading(true);
     setErro(null);
-    const res = await buscarRelatorioFinanceiroAction({ mesReferencia }, accessToken);
+    const res = await buscarRelatorioFinanceiroAction({ mesReferencia, empresaId: empresaSelecionada }, accessToken);
     if (res.ok) setDados(res.info);
     else setErro(res.erro || 'Não foi possível carregar o relatório.');
     setLoading(false);
@@ -181,7 +191,38 @@ export default function RelatoriosFinanceiroPage() {
 
   useEffect(() => {
     if (!authLoading && !acessoNegado) carregar();
-  }, [mesReferencia, authLoading, acessoNegado]);
+  }, [mesReferencia, authLoading, acessoNegado, empresaSelecionada]);
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(empresasData || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) {
+        setEmpresasPermitidas(null);
+        return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = empresasPermitidas === null
+    ? empresasCatalogo
+    : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id));
+
+  // Se só existe uma empresa visível, trava a escolha nela.
+  useEffect(() => {
+    if (empresasCatalogoVisivel.length === 1) {
+      setEmpresaSelecionada(empresasCatalogoVisivel[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [empresasCatalogo, empresasPermitidas]);
 
   if (authLoading) {
     return (
@@ -231,6 +272,18 @@ export default function RelatoriosFinanceiroPage() {
       <div className="p-4 md:px-8 pt-6 pb-12 max-w-[1400px] mx-auto w-full">
         {/* Seletor de mês */}
         <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] mb-6 flex flex-wrap items-center gap-3">
+          <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider">Empresa</label>
+          <select
+            value={empresaSelecionada ?? ''}
+            onChange={(e) => setEmpresaSelecionada(e.target.value ? Number(e.target.value) : null)}
+            disabled={empresasCatalogoVisivel.length <= 1}
+            className="p-2 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC] disabled:opacity-70 disabled:cursor-not-allowed"
+          >
+            {empresasCatalogoVisivel.length !== 1 && <option value="">Todas as empresas</option>}
+            {empresasCatalogoVisivel.map((e) => (
+              <option key={e.id} value={e.id}>{e.nome}</option>
+            ))}
+          </select>
           <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider">Competência</label>
           <button onClick={() => mudarMes(-1)} className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-300 text-gray-500 hover:bg-gray-50 font-black">‹</button>
           <input type="month" value={mesReferencia} onChange={e => setMesReferencia(e.target.value)} className="p-2 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />

@@ -13,6 +13,8 @@ import logoColorido from '../../../../app/imgs/logo.png';
 import { useAcessoRota } from '../../op/useAcessoRota';
 import { normalizarItensOP, ItemOPNormalizado } from '../../op/utils';
 import { DialogOP, DialogOPState, BotaoLinkAssinatura } from '../../op/DialogOP';
+import { supabase } from '../../../lib/supabase';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 // Os itens em memória já chegam normalizados (ver normalizarItensOP) — não há
 // mais motivo para este tipo carregar os campos legados (description/quantity)
@@ -29,6 +31,7 @@ interface OP {
   os_cliente: string;
   os_evento: string;
   os_periodo: string;
+  empresa_id: number | null;
   empresa_recebedora: string;
   cnpj_cpf_recebedora?: string;
   tipo_pagamento: string;
@@ -60,6 +63,14 @@ export default function PainelFinanceiro() {
   const [filtroResponsavel, setFiltroResponsavel] = useState('');
   const [filtroFavorecido, setFiltroFavorecido] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('');
+  const [filtroEmpresa, setFiltroEmpresa] = useState<number | null>(null);
+
+  // Empresa(s) que o usuário pode enxergar (Rentech × AlfaLight): só quem é
+  // literalmente "Administrador" (ehAdministradorGlobal) vê todas — Diretoria/
+  // Gerência/demais ficam restritos ao vínculo em perfis_usuarios_empresas,
+  // igual ao resto do sistema (mesmo padrão de /admin/op/responsavel).
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
 
   // Estados de UI (Modais)
   const [modalDetalhes, setModalDetalhes] = useState<{ open: boolean; op: OP | null }>({ open: false, op: null });
@@ -90,6 +101,36 @@ export default function PainelFinanceiro() {
   useEffect(() => {
     if (!authLoading && perfil) carregarDados(perfil.accessToken);
   }, [authLoading, perfil]);
+
+  useEffect(() => {
+    if (!perfil) return;
+    async function carregarEmpresas() {
+      const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(empresasData || []);
+
+      if (ehAdministradorGlobal(perfil!.permissaoBruta)) {
+        setEmpresasPermitidas(null);
+        return;
+      }
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', perfil!.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [perfil]);
+
+  const empresasCatalogoVisivel = useMemo(() =>
+    empresasPermitidas === null
+      ? empresasCatalogo
+      : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id)),
+    [empresasCatalogo, empresasPermitidas]);
+
+  // Se só existe uma empresa visível, trava o filtro nela.
+  useEffect(() => {
+    if (empresasCatalogoVisivel.length === 1) {
+      setFiltroEmpresa(empresasCatalogoVisivel[0].id);
+    }
+  }, [empresasCatalogoVisivel]);
 
   const responsaveisUnicos = useMemo(() => {
     const nomes = ops.map(op => (op.responsavel_nome || '').toUpperCase().trim()).filter(Boolean);
@@ -145,9 +186,14 @@ export default function PainelFinanceiro() {
         matchData = opDate.startsWith(filtroData);
       }
 
-      return matchBusca && matchResponsavel && matchFavorecido && matchStatus && matchData;
+      // OPs antigas (anteriores à coluna empresa_id) ficam com empresa_id
+      // nulo — tratadas como visíveis independente do filtro, mesmo critério
+      // já usado no resto do sistema (empresaPermitida em app/lib/serverAuth.ts).
+      const matchEmpresa = !filtroEmpresa || op.empresa_id == null || op.empresa_id === filtroEmpresa;
+
+      return matchBusca && matchResponsavel && matchFavorecido && matchStatus && matchData && matchEmpresa;
     });
-  }, [ops, busca, filtroResponsavel, filtroFavorecido, filtroStatus, filtroData]);
+  }, [ops, busca, filtroResponsavel, filtroFavorecido, filtroStatus, filtroData, filtroEmpresa]);
 
   const limparFiltros = () => {
     setBusca('');
@@ -155,9 +201,12 @@ export default function PainelFinanceiro() {
     setFiltroResponsavel('');
     setFiltroFavorecido('');
     setFiltroStatus('');
+    // Só libera "Todas" se o usuário de fato tem mais de uma empresa — senão
+    // o filtro fica travado e não é uma opção pra limpar.
+    if (empresasCatalogoVisivel.length > 1) setFiltroEmpresa(null);
   };
 
-  const temFiltroAtivo = busca || filtroData || filtroResponsavel || filtroFavorecido || filtroStatus;
+  const temFiltroAtivo = busca || filtroData || filtroResponsavel || filtroFavorecido || filtroStatus || (empresasCatalogoVisivel.length > 1 && filtroEmpresa);
 
   const metricas = useMemo(() => {
     let tGeral = 0, tPendente = 0, tPago = 0;
@@ -515,6 +564,20 @@ export default function PainelFinanceiro() {
                   {anosDisponiveis.map(ano => <option key={ano} value={ano}>{ano}</option>)}
                 </select>
               )}
+            </div>
+
+            <div className="w-full lg:w-48">
+              <select
+                className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#64748B] disabled:opacity-70 disabled:cursor-not-allowed"
+                value={filtroEmpresa ?? ''}
+                onChange={(e) => setFiltroEmpresa(e.target.value ? Number(e.target.value) : null)}
+                disabled={empresasCatalogoVisivel.length <= 1}
+              >
+                {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 Todas as empresas</option>}
+                {empresasCatalogoVisivel.map((e) => (
+                  <option key={e.id} value={e.id}>{e.nome}</option>
+                ))}
+              </select>
             </div>
 
             <div className="w-full lg:w-48">

@@ -6,7 +6,7 @@
 // o envio sem precisar mexer em código ou na Vercel.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { verificarConexaoZapi } from '../../../lib/zapi';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 
 export interface RotinaAutomacaoDB {
   id: number;
@@ -17,6 +17,9 @@ export interface RotinaAutomacaoDB {
   gatilho: string | null;
   canais: string[];
   publico_alvo: string | null;
+  // Empresa (Rentech × AlfaLight) pra quem esta automação dispara — null =
+  // todas (comportamento de antes da coluna existir).
+  empresa_id: number | null;
   ativo: boolean;
   ultima_execucao: string | null;
   destinatarios: string[];
@@ -37,6 +40,7 @@ export interface FormAutomacao {
   gatilho: string;
   canais: string[];
   publico_alvo: string;
+  empresaId: number | null;
   destinatarios: string[]; // nome_completo dos funcionários; vazio = todos os ativos
   mensagem: string;
   horario: string;
@@ -78,7 +82,16 @@ export async function listarAutomacoesAction(accessToken: string): Promise<Resul
       .select('*')
       .order('id', { ascending: true });
     if (error) throw new Error(error.message);
-    return { ok: true, data: data || [] };
+
+    // Diretoria/Gerência de uma empresa só não precisa ver (nem poder editar)
+    // automações presas à outra — automação sem empresa (null) é "de todas",
+    // continua visível pra qualquer um, mesmo critério do resto do sistema.
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const visiveis = empresasPermitidas === null
+      ? (data || [])
+      : (data || []).filter(a => empresaPermitida(empresasPermitidas, a.empresa_id));
+
+    return { ok: true, data: visiveis };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
@@ -86,18 +99,23 @@ export async function listarAutomacoesAction(accessToken: string): Promise<Resul
 
 // Lista os funcionários ativos disponíveis para seleção como destinatários,
 // agrupáveis por cargo (não há uma coluna de "departamento" na tabela).
-export async function listarFuncionariosParaAutomacaoAction(accessToken: string): Promise<Resultado<FuncionarioParaAutomacao[]>> {
+// empresaId (opcional): quando a automação já tem uma empresa escolhida na
+// tela, restringe a lista a ela — sem isso, um administrador editando uma
+// automação da AlfaLight veria (e poderia marcar) gente da Rentech também.
+export async function listarFuncionariosParaAutomacaoAction(empresaId: number | null | undefined, accessToken: string): Promise<Resultado<FuncionarioParaAutomacao[]>> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
   try {
-    const { data, error } = await db
+    let query = db
       .from('folha_funcionarios')
       .select('nome_completo, cargo')
       .eq('ativo', true)
       .order('cargo', { ascending: true })
       .order('nome_completo', { ascending: true });
+    if (empresaId) query = query.or(`empresa_id.is.null,empresa_id.eq.${empresaId}`);
+    const { data, error } = await query;
     if (error) throw new Error(error.message);
     return { ok: true, data: data || [] };
   } catch (e: any) {
@@ -162,6 +180,13 @@ export async function criarAutomacaoAction(payload: FormAutomacao, accessToken: 
   if (payload.tipo === 'CRON' && !payload.horario) return { ok: false, erro: 'Informe o horário do disparo.' };
   if (payload.tipo === 'CRON' && (!payload.dias_semana || payload.dias_semana.length === 0)) return { ok: false, erro: 'Selecione ao menos um dia da semana.' };
 
+  // A empresa escolhida na tela precisa estar entre as que o usuário
+  // realmente pode ver — nunca confiar cegamente no que o cliente mandou.
+  const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+  if (!empresaPermitida(empresasPermitidas, payload.empresaId)) {
+    return { ok: false, erro: 'Você não tem permissão para criar uma automação para esta empresa.' };
+  }
+
   try {
     const chave = await gerarChaveUnica(db, nome);
     const gatilho = payload.tipo === 'CRON' ? formatarGatilhoCron(payload.horario, payload.dias_semana) : (payload.gatilho?.trim() || null);
@@ -173,6 +198,7 @@ export async function criarAutomacaoAction(payload: FormAutomacao, accessToken: 
       gatilho,
       canais: payload.canais,
       publico_alvo: payload.publico_alvo?.trim() || null,
+      empresa_id: payload.empresaId ?? null,
       destinatarios: payload.destinatarios || [],
       mensagem: payload.mensagem?.trim() || null,
       horario: payload.tipo === 'CRON' ? payload.horario : null,
@@ -205,6 +231,11 @@ export async function atualizarAutomacaoAction(id: number, payload: FormAutomaca
   if (payload.tipo === 'CRON' && !payload.horario) return { ok: false, erro: 'Informe o horário do disparo.' };
   if (payload.tipo === 'CRON' && (!payload.dias_semana || payload.dias_semana.length === 0)) return { ok: false, erro: 'Selecione ao menos um dia da semana.' };
 
+  const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+  if (!empresaPermitida(empresasPermitidas, payload.empresaId)) {
+    return { ok: false, erro: 'Você não tem permissão para definir esta empresa na automação.' };
+  }
+
   try {
     const gatilho = payload.tipo === 'CRON' ? formatarGatilhoCron(payload.horario, payload.dias_semana) : (payload.gatilho?.trim() || null);
     const { error } = await db.from('folha_automacoes').update({
@@ -214,6 +245,7 @@ export async function atualizarAutomacaoAction(id: number, payload: FormAutomaca
       gatilho,
       canais: payload.canais,
       publico_alvo: payload.publico_alvo?.trim() || null,
+      empresa_id: payload.empresaId ?? null,
       destinatarios: payload.destinatarios || [],
       mensagem: payload.mensagem?.trim() || null,
       horario: payload.tipo === 'CRON' ? payload.horario : null,

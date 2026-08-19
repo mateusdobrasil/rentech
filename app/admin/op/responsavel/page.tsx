@@ -8,6 +8,8 @@ import { Analytics } from "@vercel/analytics/next"
 import { useAcessoRota } from '../useAcessoRota';
 import { normalizarItensOP, ItemOPNormalizado } from '../utils';
 import { DialogOP, DialogOPState, BotaoLinkAssinatura } from '../DialogOP';
+import { supabase } from '../../../lib/supabase';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 // Os itens em memória já chegam normalizados (ver normalizarItensOP) — não há
 // mais motivo para este tipo carregar os campos legados (description/quantity)
@@ -24,6 +26,7 @@ interface OP {
   os_cliente: string;
   os_evento: string;
   os_periodo: string;
+  empresa_id: number | null;
   empresa_recebedora: string;
   cpf_signatario?: string;
   telefone_recebedora?: string;
@@ -52,6 +55,14 @@ export default function PainelResponsavel() {
   const [busca, setBusca] = useState('');
   const [filtroResponsavel, setFiltroResponsavel] = useState('');
   const [filtroCliente, setFiltroCliente] = useState('');
+  const [filtroEmpresa, setFiltroEmpresa] = useState<number | null>(null);
+
+  // Empresa(s) que o usuário pode enxergar (Rentech × AlfaLight): só quem é
+  // literalmente "Administrador" (ehAdministradorGlobal) vê todas — Diretoria/
+  // Gerência/demais ficam restritos ao vínculo em perfis_usuarios_empresas,
+  // igual ao resto do sistema.
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
 
   // Estados de Modais
   const [modalDetalhes, setModalDetalhes] = useState<{ open: boolean; op: OP | null }>({ open: false, op: null });
@@ -79,6 +90,36 @@ export default function PainelResponsavel() {
   useEffect(() => {
     if (!authLoading && perfil) carregarDados(perfil.accessToken);
   }, [authLoading, perfil]);
+
+  useEffect(() => {
+    if (!perfil) return;
+    async function carregarEmpresas() {
+      const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(empresasData || []);
+
+      if (ehAdministradorGlobal(perfil!.permissaoBruta)) {
+        setEmpresasPermitidas(null);
+        return;
+      }
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', perfil!.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [perfil]);
+
+  const empresasCatalogoVisivel = useMemo(() =>
+    empresasPermitidas === null
+      ? empresasCatalogo
+      : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id)),
+    [empresasCatalogo, empresasPermitidas]);
+
+  // Se só existe uma empresa visível, trava o filtro nela.
+  useEffect(() => {
+    if (empresasCatalogoVisivel.length === 1) {
+      setFiltroEmpresa(empresasCatalogoVisivel[0].id);
+    }
+  }, [empresasCatalogoVisivel]);
 
   // Listas únicas para dropdowns
   const responsaveisUnicos = useMemo(() => {
@@ -108,17 +149,25 @@ export default function PainelResponsavel() {
       const nomeClienteLimpo = (op.os_cliente || '').toUpperCase().trim();
       const matchCliente = !filtroCliente || nomeClienteLimpo === filtroCliente;
 
-      return matchBusca && matchResponsavel && matchCliente;
+      // OPs antigas (anteriores à coluna empresa_id) ficam com empresa_id
+      // nulo — tratadas como visíveis independente do filtro, mesmo critério
+      // já usado no resto do sistema (empresaPermitida em app/lib/serverAuth.ts).
+      const matchEmpresa = !filtroEmpresa || op.empresa_id == null || op.empresa_id === filtroEmpresa;
+
+      return matchBusca && matchResponsavel && matchCliente && matchEmpresa;
     });
-  }, [ops, busca, filtroResponsavel, filtroCliente]);
+  }, [ops, busca, filtroResponsavel, filtroCliente, filtroEmpresa]);
 
   const limparFiltros = () => {
     setBusca('');
     setFiltroResponsavel('');
     setFiltroCliente('');
+    // Só libera "Todas" se o usuário de fato tem mais de uma empresa — senão
+    // o filtro fica travado e não é uma opção pra limpar.
+    if (empresasCatalogoVisivel.length > 1) setFiltroEmpresa(null);
   };
 
-  const filtrosAtivos = busca || filtroResponsavel || filtroCliente;
+  const filtrosAtivos = busca || filtroResponsavel || filtroCliente || (empresasCatalogoVisivel.length > 1 && filtroEmpresa);
 
   // Utilitários
   const formatarMoeda = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
@@ -277,6 +326,18 @@ export default function PainelResponsavel() {
               className="w-full pl-9 pr-4 py-2.5 border border-[#CBD5E1] rounded-lg text-sm outline-none focus:border-[#336699] focus:ring-1 focus:ring-[#336699]/30 transition-all placeholder:text-[#94A3B8]"
             />
           </div>
+
+          <select
+            value={filtroEmpresa ?? ''}
+            onChange={(e) => setFiltroEmpresa(e.target.value ? Number(e.target.value) : null)}
+            disabled={empresasCatalogoVisivel.length <= 1}
+            className="py-2.5 px-3 border border-[#CBD5E1] rounded-lg text-sm outline-none focus:border-[#336699] focus:ring-1 focus:ring-[#336699]/30 transition-all text-[#0A2A4A] bg-white md:w-52 shrink-0 disabled:opacity-70 disabled:cursor-not-allowed"
+          >
+            {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 Todas as empresas</option>}
+            {empresasCatalogoVisivel.map((e) => (
+              <option key={e.id} value={e.id}>{e.nome}</option>
+            ))}
+          </select>
 
           <select
             value={filtroResponsavel}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../../lib/supabase';
@@ -14,6 +14,7 @@ import SepararHolerites from '../../rh/holerite/SepararHolerites';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 // Contas bancárias no sistema são salvas como "12345-6" (número-DAC). O CNAB
 // exige o dígito verificador em campo separado do número da conta.
@@ -39,7 +40,7 @@ interface Integracao {
 type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO';
 
 interface ItemLote {
-  funcionario_nome: string; cpf: string; valor: number; metodo: string;
+  funcionario_nome: string; cpf: string; empresa_id: number | null; valor: number; metodo: string;
   fonte: FonteLote; fonte_rotulo: string;
   temDoc: boolean;
   origem: string | null;
@@ -61,15 +62,24 @@ interface Lote {
   id: number; parceiro: string; mes_referencia: string; tipo_lote: string;
   nome_lote: string | null;
   data_pagamento: string | null;
+  empresa_id: number | null;
   qtd_pagamentos: number; valor_total: number; status: string; ativo: boolean; criado_por: string | null; criado_em: string;
 }
 
 export default function FinanceiroPage() {
   const router = useRouter();
-  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
   const toast = useToast();
 
   const [integracoes, setIntegracoes] = useState<Integracao[]>([]);
+
+  // Empresa (Rentech × AlfaLight) escolhida ANTES de montar o lote — igual ao
+  // padrão de /admin/op/nova: trava sozinha se o usuário só tem acesso a uma;
+  // se tem a mais de uma, precisa escolher antes de montar. Revalidada no
+  // servidor em montarLoteSalariosAction, nunca só filtro de exibição.
+  const [empresaSelecionada, setEmpresaSelecionada] = useState<number | null>(null);
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
 
   // Data em que o lote deve ser efetivamente pago (usada no CNAB, separada da
   // data de geração do arquivo — permite gerar o arquivo com antecedência).
@@ -124,6 +134,45 @@ export default function FinanceiroPage() {
     if (!authLoading && !acessoNegado) carregar();
   }, [authLoading, acessoNegado]);
 
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(empresasData || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) {
+        setEmpresasPermitidas(null);
+        return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = useMemo(() =>
+    empresasPermitidas === null
+      ? empresasCatalogo
+      : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id)),
+    [empresasCatalogo, empresasPermitidas]);
+
+  // Se só existe uma empresa visível, trava a escolha nela.
+  useEffect(() => {
+    if (empresasCatalogoVisivel.length === 1) {
+      setEmpresaSelecionada(empresasCatalogoVisivel[0].id);
+    }
+  }, [empresasCatalogoVisivel]);
+
+  // Histórico de lotes só mostra a empresa escolhida no topo — lotes sem
+  // empresa_id própria (anteriores à coluna, ou mistos) continuam visíveis
+  // independente do filtro, mesmo critério usado em todo o resto do sistema.
+  const lotesVisiveis = useMemo(() =>
+    !empresaSelecionada ? lotes : lotes.filter(l => l.empresa_id == null || l.empresa_id === empresaSelecionada),
+    [lotes, empresaSelecionada]);
+
   const carregar = async () => {
     const [lotesRes, integRes] = await Promise.all([
       listarLotesAction({}, accessToken),
@@ -157,10 +206,11 @@ export default function FinanceiroPage() {
 
   const montarLote = async () => {
     if (fontesSel.length === 0) { toast('Selecione ao menos uma fonte de pagamento.', 'error'); return; }
+    if (!empresaSelecionada) { toast('Selecione a empresa (Rentech/AlfaLight) antes de montar o lote.', 'error'); return; }
     setMontando(true); setItens([]);
     try {
       const res = await montarLoteSalariosAction({
-        mesReferencia, fontes: fontesSel,
+        mesReferencia, fontes: fontesSel, empresaId: empresaSelecionada,
         valoresAdiantamento: valoresAdiant,
         valoresPagamento: valoresPagto,
         valoresDecimoTerceiro, valoresFerias
@@ -253,7 +303,7 @@ export default function FinanceiroPage() {
 
       // Remonta a tabela com os novos valores
       const res2 = await montarLoteSalariosAction({
-        mesReferencia, fontes: fontesSel,
+        mesReferencia, fontes: fontesSel, empresaId: empresaSelecionada,
         valoresAdiantamento: tipo === 'ADIANTAMENTO' ? novos : valoresAdiant,
         valoresPagamento: tipo === 'HOLERITE_MENSAL' ? novos : valoresPagto,
         valoresDecimoTerceiro: tipo === 'DECIMO_TERCEIRO' ? novos : valoresDecimoTerceiro,
@@ -716,13 +766,13 @@ export default function FinanceiroPage() {
   // mais recente (lotes já vem ordenado por criado_em desc de listarLotesAction).
   useEffect(() => {
     if (abaAtiva !== 'retorno_itau' || loteRetornoId !== null) return;
-    const maisRecente = lotes.find(l => l.parceiro === 'ITAU');
+    const maisRecente = lotesVisiveis.find(l => l.parceiro === 'ITAU');
     if (maisRecente) {
       setLoteRetornoId(maisRecente.id);
       carregarRetornoLote(maisRecente.id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [abaAtiva, lotes]);
+  }, [abaAtiva, lotesVisiveis]);
 
   const badgeApiStatus = (item: ItemLote) => {
     if (!item.api_status) {
@@ -838,9 +888,25 @@ export default function FinanceiroPage() {
 
           {!loteReaberto && (
             <div className="flex flex-wrap items-end gap-4 mb-4">
-              <div>
-                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Competência</label>
-                <input type="month" value={mesReferencia} onChange={e => setMesReferencia(e.target.value)} className="p-2 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Empresa</label>
+                  <select
+                    value={empresaSelecionada ?? ''}
+                    onChange={(e) => setEmpresaSelecionada(e.target.value ? Number(e.target.value) : null)}
+                    disabled={empresasCatalogoVisivel.length <= 1}
+                    className="p-2 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC] disabled:opacity-70 disabled:cursor-not-allowed"
+                  >
+                    {empresasCatalogoVisivel.length !== 1 && <option value="">Selecione...</option>}
+                    {empresasCatalogoVisivel.map((e) => (
+                      <option key={e.id} value={e.id}>{e.nome}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Competência</label>
+                  <input type="month" value={mesReferencia} onChange={e => setMesReferencia(e.target.value)} className="p-2 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+                </div>
               </div>
               <div className="flex-1">
                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Fontes a incluir no lote</label>
@@ -861,7 +927,7 @@ export default function FinanceiroPage() {
                   ))}
                 </div>
               </div>
-              <button onClick={montarLote} disabled={montando || fontesSel.length === 0} className="text-xs font-black bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-5 py-2.5 rounded-lg uppercase tracking-wider disabled:opacity-50">
+              <button onClick={montarLote} disabled={montando || fontesSel.length === 0 || !empresaSelecionada} title={!empresaSelecionada ? 'Selecione a empresa antes de montar o lote' : ''} className="text-xs font-black bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-5 py-2.5 rounded-lg uppercase tracking-wider disabled:opacity-50">
                 {montando ? '⏳ Montando...' : '📥 Montar lote'}
               </button>
             </div>
@@ -1072,7 +1138,7 @@ export default function FinanceiroPage() {
 
         <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider mb-3">Histórico de lotes</h3>
         <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden">
-          {lotes.length === 0 ? (
+          {lotesVisiveis.length === 0 ? (
             <div className="p-12 text-center text-gray-400 font-bold uppercase tracking-wider">Nenhum lote gerado ainda.</div>
           ) : (
             <div className="overflow-x-auto">
@@ -1090,7 +1156,7 @@ export default function FinanceiroPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {lotes.map((l, idx) => (
+                  {lotesVisiveis.map((l, idx) => (
                     <tr key={l.id} className={`${l.ativo === false ? 'opacity-50' : ''} ${idx % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white'} border-b border-[#E2E8F0]`}>
                       <td className="p-3 text-[11px] text-gray-500">{fmtDataHora(l.criado_em)}</td>
                       <td className="p-3 text-[11px] font-bold text-gray-700">{fmtData(l.data_pagamento)}</td>
@@ -1152,7 +1218,7 @@ export default function FinanceiroPage() {
                   className="w-full p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]"
                 >
                   <option value="">Selecione um lote</option>
-                  {lotes.filter(l => l.parceiro === 'ITAU').map(l => (
+                  {lotesVisiveis.filter(l => l.parceiro === 'ITAU').map(l => (
                     <option key={l.id} value={l.id}>
                       {(l.nome_lote || l.tipo_lote)} · {fmtMesBR(l.mes_referencia)} · {l.status}
                     </option>
@@ -1160,7 +1226,7 @@ export default function FinanceiroPage() {
                 </select>
               </div>
               {loteRetornoId && (() => {
-                const loteSelecionado = lotes.find(l => l.id === loteRetornoId);
+                const loteSelecionado = lotesVisiveis.find(l => l.id === loteRetornoId);
                 return loteSelecionado ? (
                   <div className="pb-2.5">
                     <span className="block text-[10px] font-black text-gray-500 uppercase mb-1">Status do lote</span>

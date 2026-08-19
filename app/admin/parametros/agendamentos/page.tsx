@@ -12,13 +12,52 @@ import {
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
+import { supabase } from '../../../lib/supabase';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 // Tipos de Automação (RotinaAutomacaoDB vem de ./actions, refletindo a tabela folha_automacoes)
 
 export default function GestaoAgendamentos() {
   const router = useRouter();
-  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Gestor' });
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Gestor' });
   const toast = useToast();
+
+  // Empresa(s) que o usuário pode enxergar (Rentech × AlfaLight) — só quem é
+  // literalmente "Administrador" (ehAdministradorGlobal) vê/edita automações
+  // de todas; os demais ficam restritos ao vínculo em perfis_usuarios_empresas,
+  // igual ao resto do sistema.
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(empresasData || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) {
+        setEmpresasPermitidas(null);
+        return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = empresasPermitidas === null
+    ? empresasCatalogo
+    : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id));
+
+  // Filtro de exibição dos cards por empresa — trava sozinho se só há uma
+  // empresa disponível.
+  const [filtroEmpresa, setFiltroEmpresa] = useState<number | null>(null);
+  useEffect(() => {
+    if (empresasCatalogoVisivel.length === 1) setFiltroEmpresa(empresasCatalogoVisivel[0].id);
+  }, [empresasCatalogoVisivel]);
 
   const [rotinas, setRotinas] = useState<RotinaAutomacaoDB[]>([]);
   const [rotinasLoading, setRotinasLoading] = useState(true);
@@ -38,6 +77,10 @@ export default function GestaoAgendamentos() {
     if (accessToken) carregarRotinas();
   }, [accessToken]);
 
+  // Automação sem empresa (null) é "de todas" — continua aparecendo
+  // independente do filtro, mesmo critério usado no resto do sistema.
+  const rotinasVisiveis = !filtroEmpresa ? rotinas : rotinas.filter(r => r.empresa_id == null || r.empresa_id === filtroEmpresa);
+
   // Contadores reais de envio (mês corrente) e status ao vivo da Z-API —
   // antes eram números/badge fixos no código.
   const [enviosMes, setEnviosMes] = useState<{ whatsapp: number; email: number } | null>(null);
@@ -54,15 +97,8 @@ export default function GestaoAgendamentos() {
   }, [accessToken]);
 
   // Funcionários ativos disponíveis para seleção como destinatários (agrupados por cargo,
-  // já que não existe uma coluna de "departamento" na tabela de funcionários)
+  // já que não existe uma coluna de "departamento" na tabela de funcionários).
   const [funcionarios, setFuncionarios] = useState<FuncionarioParaAutomacao[]>([]);
-  useEffect(() => {
-    if (!accessToken) return;
-    listarFuncionariosParaAutomacaoAction(accessToken).then(res => {
-      if (res.ok) setFuncionarios(res.data || []);
-    });
-  }, [accessToken]);
-
   const gruposCargo = funcionarios.reduce<Record<string, FuncionarioParaAutomacao[]>>((acc, f) => {
     const cargo = f.cargo || 'Sem Cargo';
     (acc[cargo] ||= []).push(f);
@@ -71,14 +107,26 @@ export default function GestaoAgendamentos() {
 
   // Modal de criação/edição de automação
   const formVazio: FormAutomacao = {
-    nome: '', descricao: '', tipo: 'CRON', gatilho: '', canais: [], publico_alvo: '', destinatarios: [], mensagem: '', horario: '08:00', dias_semana: [1, 2, 3, 4, 5],
+    nome: '', descricao: '', tipo: 'CRON', gatilho: '', canais: [], publico_alvo: '', empresaId: null, destinatarios: [], mensagem: '', horario: '08:00', dias_semana: [1, 2, 3, 4, 5],
     provedor_whatsapp: 'PADRAO', meta_template_nome: '', meta_template_idioma: 'pt_BR', meta_template_variaveis: 'primeiro_nome',
     publico_dinamico: 'PADRAO',
   };
   const [modalAutomacao, setModalAutomacao] = useState<{ open: boolean; isNew: boolean; id: number | null; chave?: string; modoTodos: boolean; form: FormAutomacao } | null>(null);
   const [salvandoAutomacao, setSalvandoAutomacao] = useState(false);
 
-  const abrirModalCriar = () => setModalAutomacao({ open: true, isNew: true, id: null, modoTodos: true, form: { ...formVazio } });
+  // Recarrega os funcionários disponíveis toda vez que a empresa escolhida no
+  // modal muda, pra não deixar marcar gente de outra empresa como destinatário.
+  useEffect(() => {
+    if (!accessToken || !modalAutomacao?.open) return;
+    listarFuncionariosParaAutomacaoAction(modalAutomacao.form.empresaId, accessToken).then(res => {
+      if (res.ok) setFuncionarios(res.data || []);
+    });
+  }, [accessToken, modalAutomacao?.open, modalAutomacao?.form.empresaId]);
+
+  const abrirModalCriar = () => setModalAutomacao({
+    open: true, isNew: true, id: null, modoTodos: true,
+    form: { ...formVazio, empresaId: empresasCatalogoVisivel.length === 1 ? empresasCatalogoVisivel[0].id : null },
+  });
 
   const abrirModalEditar = (rotina: RotinaAutomacaoDB) => setModalAutomacao({
     open: true,
@@ -93,6 +141,7 @@ export default function GestaoAgendamentos() {
       gatilho: rotina.gatilho || '',
       canais: rotina.canais || [],
       publico_alvo: rotina.publico_alvo || '',
+      empresaId: rotina.empresa_id,
       destinatarios: rotina.destinatarios || [],
       mensagem: rotina.mensagem || '',
       horario: rotina.horario || '08:00',
@@ -239,16 +288,29 @@ export default function GestaoAgendamentos() {
               Gerencie lembretes via Z-API (WhatsApp) e e-mails disparados automaticamente.
             </p>
           </div>
-          <button onClick={abrirModalCriar} className="w-full md:w-auto bg-[#336699] hover:bg-[#284B8C] text-white px-6 py-3.5 rounded-xl font-black text-xs uppercase tracking-widest transition-colors shadow-md">
-            ➕ Criar Nova Automação
-          </button>
+          <div className="flex items-center gap-2 w-full md:w-auto">
+            <select
+              value={filtroEmpresa ?? ''}
+              onChange={(e) => setFiltroEmpresa(e.target.value ? Number(e.target.value) : null)}
+              disabled={empresasCatalogoVisivel.length <= 1}
+              className="p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0A2A4A] bg-white disabled:opacity-70 disabled:cursor-not-allowed"
+            >
+              {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 Todas as empresas</option>}
+              {empresasCatalogoVisivel.map((e) => (
+                <option key={e.id} value={e.id}>{e.nome}</option>
+              ))}
+            </select>
+            <button onClick={abrirModalCriar} className="flex-1 md:flex-initial bg-[#336699] hover:bg-[#284B8C] text-white px-6 py-3.5 rounded-xl font-black text-xs uppercase tracking-widest transition-colors shadow-md">
+              ➕ Criar Nova Automação
+            </button>
+          </div>
         </div>
 
         {/* MÉTRICAS RÁPIDAS */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0] border-l-4 border-l-[#0C1D4D]">
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Rotinas Ativas</p>
-            <p className="text-2xl font-black text-[#0C1D4D]">{rotinas.filter(r => r.ativo).length}</p>
+            <p className="text-2xl font-black text-[#0C1D4D]">{rotinasVisiveis.filter(r => r.ativo).length}</p>
           </div>
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0] border-l-4 border-l-[#16A34A]">
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">WhatsApp Enviados</p>
@@ -275,13 +337,15 @@ export default function GestaoAgendamentos() {
           <div className="flex justify-center py-16">
             <div className="w-8 h-8 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin"></div>
           </div>
-        ) : rotinas.length === 0 ? (
+        ) : rotinasVisiveis.length === 0 ? (
           <div className="text-center py-16 text-sm text-gray-400 font-medium">
-            Nenhuma automação cadastrada em <code>folha_automacoes</code> ainda.
+            {rotinas.length === 0
+              ? <>Nenhuma automação cadastrada em <code>folha_automacoes</code> ainda.</>
+              : 'Nenhuma automação para esta empresa.'}
           </div>
         ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 pt-4">
-          {rotinas.map((rotina) => (
+          {rotinasVisiveis.map((rotina) => (
             <div key={rotina.id} className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col transition-all hover:shadow-md">
               <div className="p-5 flex-grow">
                 <div className="flex justify-between items-start mb-4">
@@ -311,6 +375,12 @@ export default function GestaoAgendamentos() {
                   <div className="flex items-center gap-2">
                     <span className="text-gray-400 text-sm">🔄</span>
                     <span className="text-xs font-bold text-[#336699] bg-blue-50 px-2 py-0.5 rounded border border-blue-100">{rotina.gatilho}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-400 text-sm">🏭</span>
+                    <span className="text-xs font-bold text-[#0A2A4A] uppercase tracking-wider">
+                      {rotina.empresa_id ? (empresasCatalogo.find(e => e.id === rotina.empresa_id)?.nome || 'Empresa removida') : 'Todas as empresas'}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -368,6 +438,22 @@ export default function GestaoAgendamentos() {
                   onChange={e => setModalAutomacao({ ...modalAutomacao, form: { ...modalAutomacao.form, nome: e.target.value } })}
                   placeholder="Ex: Cobrança Preventiva (Locação)"
                 />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Empresa</label>
+                <select
+                  className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed"
+                  value={modalAutomacao.form.empresaId ?? ''}
+                  onChange={e => setModalAutomacao({ ...modalAutomacao, form: { ...modalAutomacao.form, empresaId: e.target.value ? Number(e.target.value) : null } })}
+                  disabled={empresasCatalogoVisivel.length <= 1}
+                >
+                  {empresasCatalogoVisivel.length !== 1 && <option value="">Todas as empresas</option>}
+                  {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                </select>
+                <p className="text-[10px] text-[#94A3B8] mt-1">
+                  Restringe quem recebe (funcionários dessa empresa) e quem pode configurar esta automação. "Todas as empresas" mantém o comportamento de sempre.
+                </p>
               </div>
 
               <div>

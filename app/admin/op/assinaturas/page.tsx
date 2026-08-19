@@ -9,6 +9,8 @@ import {
   listarAssinaturasOPAction, enviarAssinaturaOPAction, consultarAssinaturaOPAction,
   atualizarTodasAssinaturasOPAction, baixarAssinadoOPAction,
 } from '../actions-assinatura';
+import { supabase } from '../../../lib/supabase';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 interface ControleAssinatura {
   status: string;
@@ -24,6 +26,7 @@ interface OPComAssinatura {
   numero_op: number;
   os_numero: string;
   os_cliente: string;
+  empresa_id: number | null;
   empresa_recebedora: string;
   cpf_signatario: string | null;
   telefone_recebedora: string | null;
@@ -60,6 +63,14 @@ export default function AssinaturasOPPage() {
   const [filtro, setFiltro] = useState<'TODOS' | StatusAssinatura>('TODOS');
   const [busca, setBusca] = useState('');
   const [sandbox, setSandbox] = useState(true);
+  const [filtroEmpresa, setFiltroEmpresa] = useState<number | null>(null);
+
+  // Empresa(s) que o usuário pode enxergar (Rentech × AlfaLight): só quem é
+  // literalmente "Administrador" (ehAdministradorGlobal) vê todas — Diretoria/
+  // Gerência/demais ficam restritos ao vínculo em perfis_usuarios_empresas,
+  // igual ao resto do sistema (mesmo padrão de /admin/op/responsavel).
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
 
   const [enviando, setEnviando] = useState<string | null>(null);
   const [consultando, setConsultando] = useState<string | null>(null);
@@ -81,6 +92,36 @@ export default function AssinaturasOPPage() {
   };
 
   useEffect(() => { if (!authLoading && perfil) carregar(); }, [authLoading, perfil]);
+
+  useEffect(() => {
+    if (!perfil) return;
+    async function carregarEmpresas() {
+      const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(empresasData || []);
+
+      if (ehAdministradorGlobal(perfil!.permissaoBruta)) {
+        setEmpresasPermitidas(null);
+        return;
+      }
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', perfil!.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [perfil]);
+
+  const empresasCatalogoVisivel = useMemo(() =>
+    empresasPermitidas === null
+      ? empresasCatalogo
+      : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id)),
+    [empresasCatalogo, empresasPermitidas]);
+
+  // Se só existe uma empresa visível, trava o filtro nela.
+  useEffect(() => {
+    if (empresasCatalogoVisivel.length === 1) {
+      setFiltroEmpresa(empresasCatalogoVisivel[0].id);
+    }
+  }, [empresasCatalogoVisivel]);
 
   const enviar = async (op: OPComAssinatura) => {
     if (!perfil) return;
@@ -153,20 +194,29 @@ export default function AssinaturasOPPage() {
     }
   };
 
+  // OPs antigas (anteriores à coluna empresa_id) ficam com empresa_id nulo —
+  // tratadas como visíveis independente do filtro, mesmo critério já usado
+  // no resto do sistema (empresaPermitida em app/lib/serverAuth.ts).
+  const opsDaEmpresa = useMemo(() =>
+    !filtroEmpresa ? ops : ops.filter(op => op.empresa_id == null || op.empresa_id === filtroEmpresa),
+    [ops, filtroEmpresa]);
+
   const filtradas = useMemo(() => {
-    const porStatus = filtro === 'TODOS' ? ops : ops.filter(op => statusDe(op) === filtro);
+    const porStatus = filtro === 'TODOS' ? opsDaEmpresa : opsDaEmpresa.filter(op => statusDe(op) === filtro);
     const termo = busca.toLowerCase().trim();
     if (!termo) return porStatus;
     return porStatus.filter(op => [
       String(op.numero_op), op.os_numero, op.os_cliente, op.empresa_recebedora,
     ].some(campo => (campo || '').toLowerCase().includes(termo)));
-  }, [ops, filtro, busca]);
+  }, [opsDaEmpresa, filtro, busca]);
 
+  // Os cartões de contagem seguem a mesma empresa selecionada — senão o
+  // "Total de OPs" mostraria um número maior que as linhas da tabela abaixo.
   const contagem = useMemo(() => {
-    const c = { total: ops.length, NAO_ENVIADO: 0, ENVIADO: 0, VISUALIZADO: 0, ASSINADO: 0, REJEITADO: 0 };
-    ops.forEach(op => { c[statusDe(op)]++; });
+    const c = { total: opsDaEmpresa.length, NAO_ENVIADO: 0, ENVIADO: 0, VISUALIZADO: 0, ASSINADO: 0, REJEITADO: 0 };
+    opsDaEmpresa.forEach(op => { c[statusDe(op)]++; });
     return c;
-  }, [ops]);
+  }, [opsDaEmpresa]);
 
   const pctAssinado = contagem.total > 0 ? Math.round((contagem.ASSINADO / contagem.total) * 100) : 0;
 
@@ -247,6 +297,17 @@ export default function AssinaturasOPPage() {
             onChange={(e) => setBusca(e.target.value)}
             className="w-full md:w-80 p-2.5 border border-[#CBD5E1] rounded-xl text-sm font-semibold text-[#0A2A4A] bg-white focus:border-[#336699] outline-none transition-all shadow-sm"
           />
+          <select
+            value={filtroEmpresa ?? ''}
+            onChange={(e) => setFiltroEmpresa(e.target.value ? Number(e.target.value) : null)}
+            disabled={empresasCatalogoVisivel.length <= 1}
+            className="p-2.5 border border-[#CBD5E1] rounded-xl text-sm font-semibold text-[#0A2A4A] bg-white focus:border-[#336699] outline-none transition-all shadow-sm md:w-52 shrink-0 disabled:opacity-70 disabled:cursor-not-allowed"
+          >
+            {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 Todas as empresas</option>}
+            {empresasCatalogoVisivel.map((e) => (
+              <option key={e.id} value={e.id}>{e.nome}</option>
+            ))}
+          </select>
           <div className="flex bg-white p-1 rounded-xl border border-[#E2E8F0] w-fit shadow-sm gap-1 flex-wrap">
             {(['TODOS', 'NAO_ENVIADO', 'ENVIADO', 'VISUALIZADO', 'ASSINADO', 'REJEITADO'] as const).map(f => (
               <button key={f} onClick={() => setFiltro(f)} className={`px-4 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${filtro === f ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D] hover:bg-gray-50'}`}>

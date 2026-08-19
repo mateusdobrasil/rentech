@@ -1,7 +1,7 @@
 // Categorias da Rentech Academy — fixas no código (diferente dos artigos,
 // que agora vêm da tabela academy_artigos e são geridos em /admin/academy).
 
-export type CategoriaId = 'tv' | 'led' | 'som' | 'luz';
+export type CategoriaId = 'tv' | 'led' | 'som' | 'luz' | 'estrutura' | 'monitor-touch';
 
 export interface Categoria {
   id: CategoriaId;
@@ -15,6 +15,8 @@ export const CATEGORIAS: Categoria[] = [
   { id: 'led', label: 'Painéis de LED', icone: '🟦', descricao: 'Video wall, pitch e montagem' },
   { id: 'som', label: 'Som', icone: '🔊', descricao: 'Sonorização, cabeamento e cobertura' },
   { id: 'luz', label: 'Luz', icone: '💡', descricao: 'Iluminação cênica e DMX' },
+  { id: 'estrutura', label: 'Estrutura', icone: '🏗️', descricao: 'Truss, rigging e fixação' },
+  { id: 'monitor-touch', label: 'Monitor Touch', icone: '👆', descricao: 'Instalação e calibração de telas touch' },
 ];
 
 export const NIVEIS = ['Básico', 'Intermediário', 'Avançado'] as const;

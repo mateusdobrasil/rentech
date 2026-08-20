@@ -18,24 +18,40 @@ export default function CadastroFreelance() {
 
   // Empresa do grupo (Rentech × AlfaLight) para a qual o freelancer está se
   // cadastrando — escolhida por ele mesmo, já que o formulário é público e
-  // não tem como saber sozinho.
+  // não tem como saber sozinho. Os setores/níveis abaixo dependem dela: cada
+  // empresa loca equipamento diferente, então tem sua própria lista.
   const [empresas, setEmpresas] = useState<{ id: number; nome: string }[]>([]);
   useEffect(() => {
     supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome')
       .then(({ data }) => setEmpresas(data || []));
   }, []);
 
+  const [setores, setSetores] = useState<{ id: string; nome: string }[]>([]);
+  const [niveis, setNiveis] = useState<{ id: string; nome: string }[]>([]);
+  // setor_id -> nivel_id ('' = "Não trabalho com o Item")
+  const [niveisEscolhidos, setNiveisEscolhidos] = useState<Record<string, string>>({});
+
   const [formData, setFormData] = useState({
     empresa_id: '',
     nome: '', cpf: '', data_nascimento: '', email: '', telefone: '', endereco: '',
     pix_chave: '', pix_tipo: 'CPF', valor_diaria: '', // NOVO CAMPO AQUI
-    nivel_led: 'Não trabalho com o Item',
-    nivel_videowall: 'Não trabalho com o Item',
-    nivel_tv: 'Não trabalho com o Item',
-    nivel_audio: 'Não trabalho com o Item',
-    nivel_luz: 'Não trabalho com o Item',
     comentarios: ''
   });
+
+  // Recarrega o catálogo de setores/níveis toda vez que a empresa escolhida
+  // muda — e limpa as respostas já dadas, já que a lista de setores muda.
+  useEffect(() => {
+    setNiveisEscolhidos({});
+    if (!formData.empresa_id) { setSetores([]); setNiveis([]); return; }
+    const empresaId = Number(formData.empresa_id);
+    Promise.all([
+      supabase.from('freelancers_setores').select('id, nome').eq('empresa_id', empresaId).eq('ativo', true).order('ordem'),
+      supabase.from('freelancers_niveis').select('id, nome').eq('empresa_id', empresaId).eq('ativo', true).order('ordem'),
+    ]).then(([resSetores, resNiveis]) => {
+      setSetores(resSetores.data || []);
+      setNiveis(resNiveis.data || []);
+    });
+  }, [formData.empresa_id]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -54,9 +70,22 @@ export default function CadastroFreelance() {
       lgpd_aceite: true,
     };
 
-    const { error } = await supabase.from('freelancers').insert([payloadFinal]);
+    const { data: freelancerCriado, error } = await supabase.from('freelancers').insert([payloadFinal]).select('id').single();
 
     if (!error) {
+      // Um insert em lote com os setores respondidos (setor sem resposta =
+      // "Não trabalho com o Item", não vira linha nenhuma). Se isso falhar,
+      // o cadastro em si já foi feito — só avisa no console, mesma
+      // tolerância já usada ao copiar o modelo padrão de itens do Checklist
+      // de Carga (app/admin/estoque/expedicao/page.tsx).
+      const linhasSetorNivel = Object.entries(niveisEscolhidos)
+        .filter(([, nivelId]) => nivelId)
+        .map(([setorId, nivelId]) => ({ freelancer_id: freelancerCriado.id, setor_id: setorId, nivel_id: nivelId }));
+      if (linhasSetorNivel.length > 0) {
+        const { error: erroSetores } = await supabase.from('freelancers_setor_nivel').insert(linhasSetorNivel);
+        if (erroSetores) console.error('Falha ao gravar setores/níveis do freelancer:', erroSetores.message);
+      }
+
       registrarLogAuditoria({
         usuario_nome: formData.nome,
         acao: 'AUTO-CADASTRO FREELANCER',
@@ -267,29 +296,35 @@ export default function CadastroFreelance() {
             {/* Conhecimento Técnico */}
             <div>
               <h2 className="text-[#0C1D4D] font-black uppercase tracking-widest text-sm mb-4 border-b border-[#E2E8F0] pb-2">⚙️ Nível de Conhecimento Técnico</h2>
-              <p className="text-xs text-[#64748B] mb-4">Seja sincero na sua avaliação para que o possamos escalar para os eventos corretos.</p>
-              
-              <div className="space-y-4">
-                {[
-                  { name: 'nivel_led', label: 'Painel de LED' },
-                  { name: 'nivel_videowall', label: 'Video Wall' },
-                  { name: 'nivel_tv', label: 'Televisores' },
-                  { name: 'nivel_audio', label: 'Sonorização' },
-                  { name: 'nivel_luz', label: 'Iluminação' },
-                ].map((item) => (
-                  <div key={item.name} className="flex flex-col md:flex-row md:items-center justify-between bg-[#F8FAFC] p-3 rounded-xl border border-[#E2E8F0]">
-                    <label className="text-sm font-bold text-[#0C1D4D] uppercase tracking-wider mb-2 md:mb-0">{item.label}</label>
-                    <select name={item.name} value={(formData as any)[item.name]} onChange={handleChange} className="w-full md:w-64 p-2 bg-white border border-[#CBD5E1] rounded-lg text-xs font-semibold text-[#0C1D4D] focus:border-[#336699] outline-none cursor-pointer">
-                      <option value="Não trabalho com o Item">Não trabalho com o Item</option>
-                      <option value="Ajudante">Ajudante / Carregador</option>
-                      <option value="Instalador">Instalador Estrutural</option>
-                      <option value="Instala e Configura">Instala e Configura</option>
-                      <option value="Instalador, Configura e Opera">Instala, Configura e Opera</option>
-                      <option value="Coordenador">Coordenador de Equipe</option>
-                    </select>
+
+              {!formData.empresa_id ? (
+                <p className="text-xs text-[#94A3B8] font-semibold bg-[#F8FAFC] border border-dashed border-[#CBD5E1] rounded-xl p-4 text-center">
+                  Selecione a Empresa de Cadastro no início do formulário para ver os setores.
+                </p>
+              ) : setores.length === 0 ? (
+                <p className="text-xs text-[#94A3B8] font-semibold bg-[#F8FAFC] border border-dashed border-[#CBD5E1] rounded-xl p-4 text-center">
+                  Nenhum setor cadastrado ainda para esta empresa.
+                </p>
+              ) : (
+                <>
+                  <p className="text-xs text-[#64748B] mb-4">Seja sincero na sua avaliação para que o possamos escalar para os eventos corretos.</p>
+                  <div className="space-y-4">
+                    {setores.map((setor) => (
+                      <div key={setor.id} className="flex flex-col md:flex-row md:items-center justify-between bg-[#F8FAFC] p-3 rounded-xl border border-[#E2E8F0]">
+                        <label className="text-sm font-bold text-[#0C1D4D] uppercase tracking-wider mb-2 md:mb-0">{setor.nome}</label>
+                        <select
+                          value={niveisEscolhidos[setor.id] || ''}
+                          onChange={e => setNiveisEscolhidos(prev => ({ ...prev, [setor.id]: e.target.value }))}
+                          className="w-full md:w-64 p-2 bg-white border border-[#CBD5E1] rounded-lg text-xs font-semibold text-[#0C1D4D] focus:border-[#336699] outline-none cursor-pointer"
+                        >
+                          <option value="">Não trabalho com o Item</option>
+                          {niveis.map(n => <option key={n.id} value={n.id}>{n.nome}</option>)}
+                        </select>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </>
+              )}
             </div>
 
             {/* Experiência / Comentários */}

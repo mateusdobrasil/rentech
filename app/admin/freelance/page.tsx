@@ -8,9 +8,11 @@ import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../components/hooks/usePageAccess';
 import { HubErro } from '../../components/ui/HubStates';
 import { useToast } from '../../components/ui/NotificationProvider';
+import { ehAdministradorGlobal } from '../../lib/permissoes';
 
 interface Freelancer {
   id: string;
+  empresa_id: number | null;
   nome: string;
   cpf: string;
   data_nascimento: string;
@@ -60,17 +62,50 @@ const normalizarNivel = (val: string | null | undefined) => {
 
 export default function GestaoFreelancers() {
   const router = useRouter();
-  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess({ nomeFallback: 'Usuário' });
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, permissaoBruta } = usePageAccess({ nomeFallback: 'Usuário' });
   const toast = useToast();
 
   // Estados de Dados
   const [freelancers, setFreelancers] = useState<Freelancer[]>([]);
   const [loading, setLoading] = useState(true);
-  
+
+  // Empresa(s) que o usuário pode enxergar (Rentech × AlfaLight) — mesmo
+  // padrão usado em /admin/operacional/relatorios.
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+  const [filtroEmpresaId, setFiltroEmpresaId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(empresasData || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) {
+        setEmpresasPermitidas(null);
+        return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = empresasPermitidas === null
+    ? empresasCatalogo
+    : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id));
+
+  useEffect(() => {
+    if (empresasCatalogoVisivel.length === 1) setFiltroEmpresaId(empresasCatalogoVisivel[0].id);
+  }, [empresasCatalogoVisivel]);
+
   // Filtros
   const [busca, setBusca] = useState('');
   const [filtroEspecialidade, setFiltroEspecialidade] = useState('');
-  const [filtroNivel, setFiltroNivel] = useState(''); 
+  const [filtroNivel, setFiltroNivel] = useState('');
 
   // Modal e Edição
   const [modalOpen, setModalOpen] = useState<{ open: boolean; free: Freelancer | null }>({ open: false, free: null });
@@ -81,15 +116,17 @@ export default function GestaoFreelancers() {
   // 2. Carregar dados da tabela
   useEffect(() => {
     if (!authLoading && !acessoNegado) carregarDados();
-  }, [authLoading, acessoNegado]);
+  }, [authLoading, acessoNegado, filtroEmpresaId]);
 
   const carregarDados = async () => {
     setLoading(true);
-    const { data, error } = await supabase
+    let query = supabase
       .from('freelancers')
       .select('*')
       .order('nome', { ascending: true });
-    
+    if (filtroEmpresaId) query = query.eq('empresa_id', filtroEmpresaId);
+    const { data, error } = await query;
+
     if (data) {
       setFreelancers(data as Freelancer[]);
     } else if (error) {
@@ -102,6 +139,9 @@ export default function GestaoFreelancers() {
   const formatarMoeda = (valor: number) => {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor || 0);
   };
+
+  const nomeEmpresa = (empresaId: number | null) =>
+    empresasCatalogo.find(e => e.id === empresaId)?.nome || '—';
 
   const filtrados = useMemo(() => {
     let lista = freelancers;
@@ -334,6 +374,17 @@ export default function GestaoFreelancers() {
               <option value="Coordena">Coordenador / Líder</option>
             </select>
           </div>
+          <div className="w-full lg:w-56 shadow-sm">
+            <select
+              className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0C1D4D] outline-none transition-all cursor-pointer focus:border-[#336699] bg-[#F8FAFC] disabled:opacity-70 disabled:cursor-not-allowed"
+              value={filtroEmpresaId ?? ''}
+              onChange={(e) => setFiltroEmpresaId(e.target.value ? Number(e.target.value) : null)}
+              disabled={empresasCatalogoVisivel.length <= 1}
+            >
+              {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 Todas as Empresas</option>}
+              {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -360,6 +411,7 @@ export default function GestaoFreelancers() {
                     <td className="p-4">
                       <strong className="block text-sm text-[#0C1D4D] font-black">{free.nome}</strong>
                       <span className="text-[#64748B] font-semibold">📱 {free.telefone}</span>
+                      <span className="block text-[9px] text-[#94A3B8] font-black uppercase tracking-wider mt-0.5">🏭 {nomeEmpresa(free.empresa_id)}</span>
                     </td>
                     <td className="p-4">
                       <div className="flex gap-2 flex-wrap max-w-[350px]">
@@ -440,6 +492,10 @@ export default function GestaoFreelancers() {
                   <div>
                     <h4 className="text-[10px] font-black uppercase text-[#64748B] tracking-widest mb-3">Dados Pessoais e Endereço</h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      <div className="bg-[#F8FAFC] p-3 border border-[#E2E8F0] rounded-lg">
+                        <span className="block text-[9px] font-bold uppercase tracking-wider text-[#94A3B8]">Empresa de Cadastro</span>
+                        <strong className="text-xs text-[#0C1D4D]">{nomeEmpresa(modalOpen.free.empresa_id)}</strong>
+                      </div>
                       <div className="bg-[#F8FAFC] p-3 border border-[#E2E8F0] rounded-lg">
                         <span className="block text-[9px] font-bold uppercase tracking-wider text-[#94A3B8]">CPF</span>
                         <strong className="text-xs text-[#0C1D4D]">{modalOpen.free.cpf || '---'}</strong>

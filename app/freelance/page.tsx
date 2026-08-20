@@ -1,22 +1,32 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabase';
 import { registrarLogAuditoria } from '../actions';
 import { Analytics } from "@vercel/analytics/next";
 
 export default function CadastroFreelance() {
-  const router = useRouter(); 
-  
+  const router = useRouter();
+
   const [loading, setLoading] = useState(false);
   const [sucesso, setSucesso] = useState(false);
   const [erroMsg, setErroMsg] = useState('');
-  
+
   const [lgpdAceita, setLgpdAceita] = useState(false);
-  const [mostrarRecusa, setMostrarRecusa] = useState(false); 
-  
+  const [mostrarRecusa, setMostrarRecusa] = useState(false);
+
+  // Empresa do grupo (Rentech × AlfaLight) para a qual o freelancer está se
+  // cadastrando — escolhida por ele mesmo, já que o formulário é público e
+  // não tem como saber sozinho.
+  const [empresas, setEmpresas] = useState<{ id: number; nome: string }[]>([]);
+  useEffect(() => {
+    supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome')
+      .then(({ data }) => setEmpresas(data || []));
+  }, []);
+
   const [formData, setFormData] = useState({
+    empresa_id: '',
     nome: '', cpf: '', data_nascimento: '', email: '', telefone: '', endereco: '',
     pix_chave: '', pix_tipo: 'CPF', valor_diaria: '', // NOVO CAMPO AQUI
     nivel_led: 'Não trabalho com o Item',
@@ -38,9 +48,10 @@ export default function CadastroFreelance() {
 
     const payloadFinal = {
       ...formData,
+      empresa_id: formData.empresa_id ? Number(formData.empresa_id) : null,
       // Garante que o valor da diária seja salvo como número no banco, mesmo se o usuário digitar vírgula
       valor_diaria: formData.valor_diaria ? parseFloat(formData.valor_diaria.replace(',', '.')) : null,
-      lgpd_aceite: true, 
+      lgpd_aceite: true,
     };
 
     const { error } = await supabase.from('freelancers').insert([payloadFinal]);
@@ -170,6 +181,13 @@ export default function CadastroFreelance() {
             <div>
               <h2 className="text-[#0C1D4D] font-black uppercase tracking-widest text-sm mb-4 border-b border-[#E2E8F0] pb-2">👤 Dados Pessoais</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-[10px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Empresa de Cadastro</label>
+                  <select required name="empresa_id" value={formData.empresa_id} onChange={handleChange} className="w-full p-3 bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl text-sm font-bold text-[#0C1D4D] focus:border-[#336699] outline-none cursor-pointer">
+                    <option value="">-- Selecione --</option>
+                    {empresas.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                  </select>
+                </div>
                 <div className="md:col-span-2">
                   <label className="block text-[10px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Nome Completo</label>
                   <input required type="text" name="nome" value={formData.nome} onChange={handleChange} className="w-full p-3 bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl text-sm font-semibold focus:border-[#336699] outline-none" />

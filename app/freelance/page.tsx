@@ -17,14 +17,27 @@ export default function CadastroFreelance() {
   const [mostrarRecusa, setMostrarRecusa] = useState(false);
 
   // Empresa do grupo (Rentech × AlfaLight) para a qual o freelancer está se
-  // cadastrando — escolhida por ele mesmo, já que o formulário é público e
-  // não tem como saber sozinho. Os setores/níveis abaixo dependem dela: cada
-  // empresa loca equipamento diferente, então tem sua própria lista.
+  // cadastrando. Não é mais escolhida por ele — vem do domínio de onde ele
+  // acessou (portal.alfalight.com.br = AlfaLight; qualquer outro domínio,
+  // inclusive localhost em teste, = Rentech), mesma técnica usada na troca
+  // de logo de app/login/page.tsx. Os setores/níveis abaixo dependem dela:
+  // cada empresa loca equipamento diferente, então tem sua própria lista.
   const [empresas, setEmpresas] = useState<{ id: number; nome: string }[]>([]);
+  const [empresaTravada, setEmpresaTravada] = useState<{ id: number; nome: string } | null>(null);
+
   useEffect(() => {
     supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome')
       .then(({ data }) => setEmpresas(data || []));
   }, []);
+
+  useEffect(() => {
+    if (empresas.length === 0) return;
+    const ehAlfaLight = window.location.hostname === 'portal.alfalight.com.br';
+    const alvo = empresas.find(e => e.nome.toLowerCase().includes(ehAlfaLight ? 'alfa' : 'rentech'));
+    if (!alvo) return;
+    setEmpresaTravada(alvo);
+    setFormData(prev => ({ ...prev, empresa_id: String(alvo.id) }));
+  }, [empresas]);
 
   const [setores, setSetores] = useState<{ id: string; nome: string }[]>([]);
   const [niveis, setNiveis] = useState<{ id: string; nome: string }[]>([]);
@@ -212,10 +225,10 @@ export default function CadastroFreelance() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="md:col-span-2">
                   <label className="block text-[10px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Empresa de Cadastro</label>
-                  <select required name="empresa_id" value={formData.empresa_id} onChange={handleChange} className="w-full p-3 bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl text-sm font-bold text-[#0C1D4D] focus:border-[#336699] outline-none cursor-pointer">
-                    <option value="">-- Selecione --</option>
-                    {empresas.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
-                  </select>
+                  <div className="w-full p-3 bg-[#F0F4F8] border border-[#CBD5E1] rounded-xl text-sm font-bold text-[#0C1D4D]">
+                    {empresaTravada ? empresaTravada.nome : 'Carregando...'}
+                  </div>
+                  <p className="mt-1 text-[10px] text-[#94A3B8] font-semibold">Definida automaticamente pelo endereço deste formulário.</p>
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-[10px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Nome Completo</label>
@@ -366,7 +379,7 @@ export default function CadastroFreelance() {
               </div>
             )}
 
-            <button type="submit" disabled={loading || !lgpdAceita} className="w-full bg-[#336699] hover:bg-[#284B8C] text-white p-4 rounded-xl font-black text-sm uppercase tracking-widest transition-all shadow-md disabled:opacity-50 mt-6">
+            <button type="submit" disabled={loading || !lgpdAceita || !formData.empresa_id} className="w-full bg-[#336699] hover:bg-[#284B8C] text-white p-4 rounded-xl font-black text-sm uppercase tracking-widest transition-all shadow-md disabled:opacity-50 mt-6">
               {loading ? 'A Enviar Cadastro...' : 'Enviar Cadastro Rentech'}
             </button>
 

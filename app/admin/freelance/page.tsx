@@ -55,7 +55,7 @@ const COLUNAS_KPI: Record<number, string> = {
 // duas vezes na aba Parâmetros. Fica fora do componente principal por ser
 // puramente apresentacional (só recebe dados + callbacks).
 function PainelCatalogo({
-  titulo, itens, novoNome, setNovoNome, onAdicionar, onRenomear, onAlternarAtivo, onMover, onExcluir,
+  titulo, itens, novoNome, setNovoNome, onAdicionar, onRenomear, onAlternarAtivo, onMover,
 }: {
   titulo: string;
   itens: ItemCatalogo[];
@@ -65,7 +65,6 @@ function PainelCatalogo({
   onRenomear: (item: ItemCatalogo, novoNome: string) => void;
   onAlternarAtivo: (item: ItemCatalogo) => void;
   onMover: (item: ItemCatalogo, direcao: -1 | 1) => void;
-  onExcluir: (item: ItemCatalogo) => void;
 }) {
   const [editandoId, setEditandoId] = useState<string | null>(null);
   const [nomeEdicao, setNomeEdicao] = useState('');
@@ -78,10 +77,10 @@ function PainelCatalogo({
         <input
           type="text"
           value={novoNome}
-          onChange={(e) => setNovoNome(e.target.value)}
+          onChange={(e) => setNovoNome(e.target.value.toUpperCase())}
           onKeyDown={(e) => { if (e.key === 'Enter') onAdicionar(); }}
           placeholder={`Novo item...`}
-          className="flex-1 p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold focus:border-[#336699] outline-none"
+          className="flex-1 p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold uppercase focus:border-[#336699] outline-none"
         />
         <button onClick={onAdicionar} className="bg-[#336699] hover:bg-[#284B8C] text-white font-bold text-xs uppercase px-4 py-2 rounded-lg transition-colors shrink-0">
           Adicionar
@@ -101,10 +100,10 @@ function PainelCatalogo({
                 <input
                   autoFocus
                   value={nomeEdicao}
-                  onChange={(e) => setNomeEdicao(e.target.value)}
+                  onChange={(e) => setNomeEdicao(e.target.value.toUpperCase())}
                   onBlur={() => { onRenomear(item, nomeEdicao); setEditandoId(null); }}
                   onKeyDown={(e) => { if (e.key === 'Enter') { onRenomear(item, nomeEdicao); setEditandoId(null); } }}
-                  className="flex-1 p-1.5 border border-[#336699] rounded text-sm font-semibold outline-none min-w-0"
+                  className="flex-1 p-1.5 border border-[#336699] rounded text-sm font-semibold uppercase outline-none min-w-0"
                 />
               ) : (
                 <span onClick={() => { setEditandoId(item.id); setNomeEdicao(item.nome); }} className="flex-1 min-w-0 truncate text-sm font-semibold text-[#0C1D4D] cursor-pointer hover:underline" title="Clique para renomear">
@@ -114,7 +113,6 @@ function PainelCatalogo({
               <button onClick={() => onAlternarAtivo(item)} className={`shrink-0 text-[9px] font-black uppercase px-2 py-1 rounded-full border ${item.ativo ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-100 text-gray-500 border-gray-300'}`}>
                 {item.ativo ? 'Ativo' : 'Inativo'}
               </button>
-              <button onClick={() => onExcluir(item)} className="shrink-0 text-red-400 hover:text-red-600 text-sm px-1" title="Excluir definitivamente (só se ninguém usar ainda)">🗑️</button>
             </div>
           ))
         )}
@@ -380,7 +378,7 @@ export default function GestaoFreelancers() {
     tabela: 'freelancers_setores' | 'freelancers_niveis', empresaId: number, nome: string,
     catalogo: ItemCatalogo[], setCatalogo: (fn: (prev: ItemCatalogo[]) => ItemCatalogo[]) => void, setNome: (v: string) => void
   ) => {
-    const nomeTrim = nome.trim();
+    const nomeTrim = nome.trim().toUpperCase();
     if (!nomeTrim) return;
     const { data, error } = await supabase.from(tabela)
       .insert([{ empresa_id: empresaId, nome: nomeTrim, ordem: proximaOrdem(catalogo, empresaId) }])
@@ -394,7 +392,7 @@ export default function GestaoFreelancers() {
     tabela: 'freelancers_setores' | 'freelancers_niveis', item: ItemCatalogo, novoNome: string,
     setCatalogo: (fn: (prev: ItemCatalogo[]) => ItemCatalogo[]) => void
   ) => {
-    const nome = novoNome.trim();
+    const nome = novoNome.trim().toUpperCase();
     if (!nome || nome === item.nome) return;
     const { error } = await supabase.from(tabela).update({ nome }).eq('id', item.id);
     if (error) { toast('Erro ao renomear: ' + error.message, 'error'); return; }
@@ -428,18 +426,6 @@ export default function GestaoFreelancers() {
       if (c.id === vizinho.id) return { ...c, ordem: item.ordem };
       return c;
     }));
-  };
-
-  const excluirItemCatalogo = async (
-    tabela: 'freelancers_setores' | 'freelancers_niveis', colunaJuncao: 'setor_id' | 'nivel_id', item: ItemCatalogo,
-    setCatalogo: (fn: (prev: ItemCatalogo[]) => ItemCatalogo[]) => void
-  ) => {
-    const { count } = await supabase.from('freelancers_setor_nivel').select('id', { count: 'exact', head: true }).eq(colunaJuncao, item.id);
-    if ((count || 0) > 0) { toast('Já está no perfil de algum freelancer — desative em vez de excluir.', 'error'); return; }
-    if (!confirm(`Excluir definitivamente "${item.nome}"?`)) return;
-    const { error } = await supabase.from(tabela).delete().eq('id', item.id);
-    if (error) { toast('Erro ao excluir: ' + error.message, 'error'); return; }
-    setCatalogo(prev => prev.filter(c => c.id !== item.id));
   };
 
   // ============================================================================
@@ -671,7 +657,6 @@ export default function GestaoFreelancers() {
                 onRenomear={(item, nome) => renomearItemCatalogo('freelancers_setores', item, nome, setSetoresCatalogo)}
                 onAlternarAtivo={(item) => alternarAtivoItemCatalogo('freelancers_setores', item, setSetoresCatalogo)}
                 onMover={(item, dir) => moverItemCatalogo('freelancers_setores', item, dir, setoresCatalogo, setSetoresCatalogo)}
-                onExcluir={(item) => excluirItemCatalogo('freelancers_setores', 'setor_id', item, setSetoresCatalogo)}
               />
               <PainelCatalogo
                 titulo="Níveis de Experiência"
@@ -682,7 +667,6 @@ export default function GestaoFreelancers() {
                 onRenomear={(item, nome) => renomearItemCatalogo('freelancers_niveis', item, nome, setNiveisCatalogo)}
                 onAlternarAtivo={(item) => alternarAtivoItemCatalogo('freelancers_niveis', item, setNiveisCatalogo)}
                 onMover={(item, dir) => moverItemCatalogo('freelancers_niveis', item, dir, niveisCatalogo, setNiveisCatalogo)}
-                onExcluir={(item) => excluirItemCatalogo('freelancers_niveis', 'nivel_id', item, setNiveisCatalogo)}
               />
             </div>
           )}

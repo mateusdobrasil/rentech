@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '../lib/supabase';
@@ -20,7 +20,16 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const empresa = searchParams.get('empresa');
-  const isAlfaLight = empresa === 'alfalight';
+
+  // O rewrite do proxy.ts (host -> ?empresa=alfalight) roda no servidor e não
+  // chega ao cliente porque /login é estático/cacheado na CDN — por isso o
+  // hostname real do navegador é checado direto aqui também. Calculado só
+  // depois do mount (não durante o render) pra não conflitar com o HTML que
+  // o servidor gerou sem saber o host (evita mismatch de hidratação).
+  const [isAlfaLight, setIsAlfaLight] = useState(false);
+  useEffect(() => {
+    setIsAlfaLight(empresa === 'alfalight' || window.location.hostname === 'portal.alfalight.com.br');
+  }, [empresa]);
 
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');

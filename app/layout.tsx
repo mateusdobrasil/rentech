@@ -1,4 +1,3 @@
-import Script from 'next/script';
 import './globals.css';
 import Navbar from '../components/Navbar'; // Importando o componente
 
@@ -29,9 +28,11 @@ export default function RootLayout({
 
       {/* O fundo preto padrão do ecossistema já pode ficar no body */}
       <body className="bg-[#000000] text-slate-50 font-sans antialiased">
-        <Script id="hide-navbar-white-label" strategy="beforeInteractive">
-          {HIDE_NAVBAR_SCRIPT}
-        </Script>
+        {/* Script clássico (não next/script) de propósito: precisa ser
+            parser-blocking, primeiro filho do body, pra rodar antes da
+            Navbar pintar na tela — next/script beforeInteractive enfileira
+            e roda tarde demais pra evitar o flash. */}
+        <script suppressHydrationWarning dangerouslySetInnerHTML={{ __html: HIDE_NAVBAR_SCRIPT }} />
 
         {/* O Navbar agora aparece em TODAS as páginas automaticamente */}
         <Navbar />

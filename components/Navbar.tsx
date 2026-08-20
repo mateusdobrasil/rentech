@@ -120,7 +120,7 @@ export default function Navbar() {
   ];
 
   return (
-    <nav className="fixed top-0 left-0 w-full border-b border-[#284B8C]/40 bg-[#0C1D4D]/95 backdrop-blur z-50 print:hidden">
+    <nav data-site-navbar className="fixed top-0 left-0 w-full border-b border-[#284B8C]/40 bg-[#0C1D4D]/95 backdrop-blur z-50 print:hidden">
       <div className="container mx-auto px-4 sm:px-6 py-4 flex justify-between items-center">
 
         {/* Aplicação do Logo Monocromático */}

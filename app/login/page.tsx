@@ -1,16 +1,27 @@
 "use client";
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import Image from 'next/image';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '../lib/supabase';
 import { registrarLogAuditoria } from '../actions';
 import logoPB from '../imgs/logo_pb.png';
 import { Analytics } from "@vercel/analytics/next"
 
 export default function Login() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
-  
+  const searchParams = useSearchParams();
+  const empresa = searchParams.get('empresa');
+  const isAlfaLight = empresa === 'alfalight';
+
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [erro, setErro] = useState('');
@@ -79,11 +90,11 @@ export default function Login() {
         
         {/* Cabeçalho */}
         <div className="flex flex-col items-center mb-8">
-          <Image 
-            src={logoPB} 
-            alt="Rentech Locadora" 
-            width={180} 
-            height={60} 
+          <Image
+            src={isAlfaLight ? '/logo-alfalight.png' : logoPB}
+            alt={isAlfaLight ? 'AlfaLight' : 'Rentech Locadora'}
+            width={180}
+            height={60}
             priority
             className="mb-6 hover:scale-105 transition-transform duration-500"
           />

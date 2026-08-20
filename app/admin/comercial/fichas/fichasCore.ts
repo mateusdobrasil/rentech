@@ -94,6 +94,20 @@ export interface SincronizarFichasReservaOpcoes {
   diasRetroativos?: number;
 }
 
+// Cada ficha pertence a um "Centro" no P2S (um por CNPJ do grupo) — o nome já
+// resolvido (mapaNomes) é comparado, nos dois sentidos, com o nome cadastrado
+// da empresa. Sem correspondência, fica null (tratado como "de todas" no
+// resto do sistema) — nunca assume uma empresa que não bateu por nome.
+function empresaIdPorCentro(nomeCentro: string | null, empresas: { id: number; nome: string }[]): number | null {
+  if (!nomeCentro) return null;
+  const upperCentro = nomeCentro.toUpperCase();
+  const match = empresas.find(e => {
+    const upperNome = e.nome.toUpperCase();
+    return upperCentro.includes(upperNome) || upperNome.includes(upperCentro);
+  });
+  return match?.id ?? null;
+}
+
 // Puxa as Fichas de Reserva de Locação emitidas nos últimos N dias direto do
 // PrimeStart e grava (upsert por "numero") na mesma tabela fichas_reserva
 // usada pelo upload manual — sem exigir a exportação/upload de planilha.
@@ -128,19 +142,25 @@ export async function sincronizarFichasReservaCore(opcoes: SincronizarFichasRese
       return { ok: true, info: { processados: 0, totalEncontradas: 0 } };
     }
 
+    const db = supabaseAdmin();
     const oidsItensEstoque = resultado.objectlist.flatMap(o =>
       (Array.isArray(o.Itens) ? o.Itens : []).map((item: any) => refOuNull(item?.ItemEstoque))
     );
-    const mapaNomes = await resolverNomes(ambiente, [
-      ...resultado.objectlist.flatMap(o => [refOuNull(o.Parceiro), refOuNull(o.Evento), refOuNull(o.VendedorRep), refOuNull(o.Centro)]),
-      ...oidsItensEstoque,
+    const [mapaNomes, { data: empresasData }] = await Promise.all([
+      resolverNomes(ambiente, [
+        ...resultado.objectlist.flatMap(o => [refOuNull(o.Parceiro), refOuNull(o.Evento), refOuNull(o.VendedorRep), refOuNull(o.Centro)]),
+        ...oidsItensEstoque,
+      ]),
+      db.from('empresas').select('id, nome').eq('ativo', true),
     ]);
+    const empresas = empresasData || [];
 
     const registros = resultado.objectlist.map(o => {
       const parceiroOid = refOuNull(o.Parceiro);
       const eventoOid = refOuNull(o.Evento);
       const vendedorOid = refOuNull(o.VendedorRep);
       const centroOid = refOuNull(o.Centro);
+      const nomeCentro = centroOid ? (mapaNomes.get(centroOid) || null) : null;
       return {
         numero: String(o.Numero || o.oid),
         status: String(o.Status || '') || null,
@@ -155,7 +175,8 @@ export async function sincronizarFichasReservaCore(opcoes: SincronizarFichasRese
         valor_final: Number(o.ValorFinal) || null,
         valor_itens: Number(o.ValorTotalItens) || null,
         vendedor: vendedorOid ? (mapaNomes.get(vendedorOid) || null) : null,
-        centro: centroOid ? (mapaNomes.get(centroOid) || null) : null,
+        centro: nomeCentro,
+        empresa_id: empresaIdPorCentro(nomeCentro, empresas),
         observacoes: String(o.Observacoes || '') || null,
         status_faturamento: String(o.StatusUltimoFaturamento || '') || null,
         faturamento_suspenso: String(o.FaturamentoSuspenso) === 'true',
@@ -166,7 +187,6 @@ export async function sincronizarFichasReservaCore(opcoes: SincronizarFichasRese
       };
     });
 
-    const db = supabaseAdmin();
     const TAMANHO_LOTE = 500;
     let processados = 0;
     for (let i = 0; i < registros.length; i += TAMANHO_LOTE) {

@@ -235,6 +235,13 @@ export default function VisualizacaoFrota() {
     if (empresasCatalogoVisivel.length === 1) setFiltroEmpresaId(empresasCatalogoVisivel[0].id);
   }, [empresasCatalogoVisivel]);
 
+  // Veículos dentro do escopo de empresa do usuário — base de tudo abaixo
+  // (lista, alerta, dropdown de manutenção, checklists), pra nenhum cálculo
+  // "vazar" um veículo de outra empresa mesmo quando outros filtros não filtram.
+  const veiculosEscopo = useMemo(() =>
+    !filtroEmpresaId ? veiculos : veiculos.filter(v => v.empresa_id == null || v.empresa_id === filtroEmpresaId),
+    [veiculos, filtroEmpresaId]);
+
   // Veículo selecionado na aba Veículos (ficha lateral)
   const [veiculoSelecionadoId, setVeiculoSelecionadoId] = useState('');
 
@@ -313,6 +320,17 @@ export default function VisualizacaoFrota() {
   useEffect(() => {
     if (authLoading || acessoNegado || abaAtiva !== 'checklists') return;
 
+    // frota_checklists não tem empresa_id próprio — filtra pelos veículos que
+    // já estão no escopo da empresa escolhida (mesma lista da aba Veículos).
+    // Empresa escolhida sem nenhum veículo em escopo = zero checklists, sem
+    // nem chamar a API (.in() com array vazio o Postgrest ignoraria o filtro).
+    if (filtroEmpresaId && veiculosEscopo.length === 0) {
+      setChecklistsVeiculo([]);
+      setChecklistTotal(0);
+      setChecklistLoading(false);
+      return;
+    }
+
     const handle = setTimeout(async () => {
       setChecklistLoading(true);
 
@@ -327,6 +345,7 @@ export default function VisualizacaoFrota() {
         const termo = `%${checklistBusca.trim()}%`;
         query = query.or(`motorista_nome.ilike.${termo},destino.ilike.${termo}`);
       }
+      if (filtroEmpresaId) query = query.in('veiculo_id', veiculosEscopo.map(v => v.id));
 
       const { data, error, count } = await query;
       if (!error) {
@@ -337,16 +356,19 @@ export default function VisualizacaoFrota() {
     }, 300);
 
     return () => clearTimeout(handle);
-  }, [authLoading, acessoNegado, abaAtiva, checklistPagina, checklistFiltroStatus, checklistBusca]);
+  }, [authLoading, acessoNegado, abaAtiva, checklistPagina, checklistFiltroStatus, checklistBusca, filtroEmpresaId, veiculosEscopo]);
 
   // 3b. Contagem de checklists em andamento, para o badge da aba
   useEffect(() => {
     if (authLoading || acessoNegado) return;
+    if (filtroEmpresaId && veiculosEscopo.length === 0) { setChecklistEmAndamentoCount(0); return; }
     (async () => {
-      const { count } = await supabase.from('frota_checklists').select('id', { count: 'exact', head: true }).eq('status', 'EM_ANDAMENTO');
+      let query = supabase.from('frota_checklists').select('id', { count: 'exact', head: true }).eq('status', 'EM_ANDAMENTO');
+      if (filtroEmpresaId) query = query.in('veiculo_id', veiculosEscopo.map(v => v.id));
+      const { count } = await query;
       setChecklistEmAndamentoCount(count || 0);
     })();
-  }, [authLoading, acessoNegado, checklistsVeiculo]);
+  }, [authLoading, acessoNegado, checklistsVeiculo, filtroEmpresaId, veiculosEscopo]);
 
   const abrirPreviewChecklist = async (c: ChecklistVeiculoRow) => {
     setPreviewChecklist(c);
@@ -389,13 +411,6 @@ export default function VisualizacaoFrota() {
     setTiposManutencao(prev => prev.filter(t => t.id !== tipo.id));
   };
 
-  // Veículos dentro do escopo de empresa do usuário — base de tudo abaixo
-  // (lista, alerta, dropdown de manutenção), pra nenhum cálculo "vazar" um
-  // veículo de outra empresa mesmo quando status/propriedade/busca não filtram.
-  const veiculosEscopo = useMemo(() =>
-    !filtroEmpresaId ? veiculos : veiculos.filter(v => v.empresa_id == null || v.empresa_id === filtroEmpresaId),
-    [veiculos, filtroEmpresaId]);
-
   // Filtro Dinâmico da aba Veículos
   const veiculosFiltrados = useMemo(() => {
     return veiculosEscopo.filter(v => {
@@ -412,11 +427,20 @@ export default function VisualizacaoFrota() {
     return veiculosEscopo.filter(v => getUrgenciaVeiculo(v) !== null);
   }, [veiculosEscopo]);
 
-  // Todas as manutenções (já vêm ordenadas por data desc.), filtradas pelo veículo quando um for selecionado
+  // Manutenções dentro do escopo de empresa (mesma lógica de veiculosEscopo) —
+  // sem isso, escolher uma empresa só filtrava o dropdown de veículo, mas
+  // "TODOS OS VEÍCULOS" continuava misturando manutenção de outra empresa.
+  const manutencoesEscopo = useMemo(() => {
+    if (!filtroEmpresaId) return manutencoes;
+    const idsEscopo = new Set(veiculosEscopo.map(v => v.id));
+    return manutencoes.filter(m => idsEscopo.has(m.veiculo_id));
+  }, [manutencoes, veiculosEscopo, filtroEmpresaId]);
+
+  // Já vêm ordenadas por data desc.; filtradas pelo veículo quando um for selecionado
   const manutencoesExibidas = useMemo(() => {
-    if (!filtroManutencaoVeiculoId) return manutencoes;
-    return manutencoes.filter(m => m.veiculo_id === filtroManutencaoVeiculoId);
-  }, [manutencoes, filtroManutencaoVeiculoId]);
+    if (!filtroManutencaoVeiculoId) return manutencoesEscopo;
+    return manutencoesEscopo.filter(m => m.veiculo_id === filtroManutencaoVeiculoId);
+  }, [manutencoesEscopo, filtroManutencaoVeiculoId]);
 
   // Mantém sempre um veículo selecionado para a ficha lateral, acompanhando os filtros
   useEffect(() => {
@@ -692,14 +716,25 @@ export default function VisualizacaoFrota() {
       {abaAtiva === 'manutencao' && (
         <div className="px-4 md:px-8 py-6 flex-grow flex flex-col">
           <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col md:flex-row gap-4 justify-between items-center mb-6">
-            <select
-              className="w-full md:w-96 p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-bold text-[#0C1D4D] focus:border-[#336699] outline-none cursor-pointer"
-              value={filtroManutencaoVeiculoId}
-              onChange={(e) => setFiltroManutencaoVeiculoId(e.target.value)}
-            >
-              <option value="">TODOS OS VEÍCULOS</option>
-              {veiculosFiltrados.map(v => <option key={v.id} value={v.id}>{v.apelido} ({v.placa})</option>)}
-            </select>
+            <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+              <select
+                className="w-full md:w-96 p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-bold text-[#0C1D4D] focus:border-[#336699] outline-none cursor-pointer"
+                value={filtroManutencaoVeiculoId}
+                onChange={(e) => setFiltroManutencaoVeiculoId(e.target.value)}
+              >
+                <option value="">TODOS OS VEÍCULOS</option>
+                {veiculosFiltrados.map(v => <option key={v.id} value={v.id}>{v.apelido} ({v.placa})</option>)}
+              </select>
+              <select
+                className="p-3 border-2 border-[#E2E8F0] rounded-lg text-[11px] font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer bg-white disabled:opacity-70 disabled:cursor-not-allowed"
+                value={filtroEmpresaId ?? ''}
+                onChange={(e) => setFiltroEmpresaId(e.target.value ? Number(e.target.value) : null)}
+                disabled={empresasCatalogoVisivel.length <= 1}
+              >
+                {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 TODAS AS EMPRESAS</option>}
+                {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+              </select>
+            </div>
 
             <div className="flex gap-2 w-full md:w-auto">
               <button
@@ -801,6 +836,15 @@ export default function VisualizacaoFrota() {
               <option value="">TODOS OS STATUS</option>
               <option value="EM_ANDAMENTO">Em Andamento</option>
               <option value="FINALIZADO">Finalizado</option>
+            </select>
+            <select
+              value={filtroEmpresaId ?? ''}
+              onChange={(e) => { setFiltroEmpresaId(e.target.value ? Number(e.target.value) : null); setChecklistPagina(0); }}
+              disabled={empresasCatalogoVisivel.length <= 1}
+              className="w-full md:w-56 p-2.5 border-2 border-[#E2E8F0] rounded-lg text-[11px] font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer bg-white disabled:opacity-70 disabled:cursor-not-allowed"
+            >
+              {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 TODAS AS EMPRESAS</option>}
+              {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
             </select>
           </div>
 

@@ -8,6 +8,7 @@ import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 // Interfaces do Banco de Dados
 interface Categoria {
@@ -18,6 +19,7 @@ interface Categoria {
 interface Equipamento {
   id: string;
   categoria_id: string;
+  empresa_id: number | null;
   nome: string;
   peso: number;
   consumo_watts: number;
@@ -54,7 +56,7 @@ const ESTOQUE_VAZIO: EstoqueItem = { equipamento_id: '', qtd_total: 0, qtd_manut
 
 export default function PainelEstoque() {
   const router = useRouter();
-  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Usuário' });
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Usuário' });
   const toast = useToast();
 
   // Estados de Dados
@@ -62,13 +64,47 @@ export default function PainelEstoque() {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [estoqueMap, setEstoqueMap] = useState<Record<string, EstoqueItem>>({});
   const [loading, setLoading] = useState(true);
-  
+
   // Estado de Navegação por Abas
   const [abaAtiva, setAbaAtiva] = useState<'equipamentos' | 'estoque'>('equipamentos');
+
+  // Empresa(s) que o usuário pode enxergar (Rentech × AlfaLight) — cada uma
+  // tem o próprio patrimônio de equipamentos. A proteção de verdade é a RLS
+  // no banco (esta tela lê/grava direto pelo cliente anon, sem Server
+  // Action); isso aqui só alimenta os seletores da tela.
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(empresasData || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) {
+        setEmpresasPermitidas(null);
+        return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = empresasPermitidas === null
+    ? empresasCatalogo
+    : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id));
 
   // Estados de Filtro
   const [busca, setBusca] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState('TODOS');
+  const [filtroEmpresaId, setFiltroEmpresaId] = useState<number | null>(null);
+  useEffect(() => {
+    if (empresasCatalogoVisivel.length === 1) setFiltroEmpresaId(empresasCatalogoVisivel[0].id);
+  }, [empresasCatalogoVisivel]);
 
   // Estados de UI (Modais)
   const [dialog, setDialog] = useState<{ open: boolean; type: 'loading' | 'success' | 'error'; title: string; msg: string }>({ open: false, type: 'loading', title: '', msg: '' });
@@ -136,9 +172,10 @@ export default function PainelEstoque() {
     return equipamentos.filter(eq => {
       const matchBusca = eq.nome.toLowerCase().includes(busca.toLowerCase()) || (eq.detalhes || '').toLowerCase().includes(busca.toLowerCase());
       const matchCat = filtroCategoria === 'TODOS' || eq.categoria_id === filtroCategoria;
-      return matchBusca && matchCat;
+      const matchEmpresa = !filtroEmpresaId || eq.empresa_id == null || eq.empresa_id === filtroEmpresaId;
+      return matchBusca && matchCat && matchEmpresa;
     });
-  }, [equipamentos, busca, filtroCategoria]);
+  }, [equipamentos, busca, filtroCategoria, filtroEmpresaId]);
 
   const listaAcessorios = useMemo(() => {
     return equipamentos.filter(eq =>
@@ -193,7 +230,10 @@ export default function PainelEstoque() {
     setModalEdit({
       open: true,
       isNew: true,
-      eq: { nome: '', categoria_id: '', peso: 0, consumo_watts: 0, largura: 0, altura: 0, profundidade: 0, resolucao: '', dmx: '', detalhes: '', ativo: true, visivel_simulador: false }
+      eq: {
+        nome: '', categoria_id: '', peso: 0, consumo_watts: 0, largura: 0, altura: 0, profundidade: 0, resolucao: '', dmx: '', detalhes: '', ativo: true, visivel_simulador: false,
+        empresa_id: empresasCatalogoVisivel.length === 1 ? empresasCatalogoVisivel[0].id : null,
+      }
     });
   };
 
@@ -204,6 +244,10 @@ export default function PainelEstoque() {
   const salvarEquipamento = async () => {
     if (!modalEdit.eq?.nome || !modalEdit.eq?.categoria_id) {
       setDialog({ open: true, type: 'error', title: 'Atenção', msg: 'O Nome e a Categoria são obrigatórios.' });
+      return;
+    }
+    if (!modalEdit.eq?.empresa_id) {
+      setDialog({ open: true, type: 'error', title: 'Atenção', msg: 'Selecione a empresa (Rentech/AlfaLight) deste equipamento.' });
       return;
     }
 
@@ -615,6 +659,15 @@ export default function PainelEstoque() {
               <option value="TODOS">TODAS CATEGORIAS</option>
               {categorias.map(cat => <option key={cat.id} value={cat.id}>{cat.nome}</option>)}
             </select>
+            <select
+              className="p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer w-48 disabled:opacity-70 disabled:cursor-not-allowed"
+              value={filtroEmpresaId ?? ''}
+              onChange={(e) => setFiltroEmpresaId(e.target.value ? Number(e.target.value) : null)}
+              disabled={empresasCatalogoVisivel.length <= 1}
+            >
+              {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 TODAS AS EMPRESAS</option>}
+              {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+            </select>
           </div>
 
           {abaAtiva === 'equipamentos' && (
@@ -679,8 +732,11 @@ export default function PainelEstoque() {
                       </button>
                     </td>
                     <td className="p-4">
-                      <span className="bg-[#E2E8F0] text-[#475569] font-black px-2 py-1 rounded text-[9px] uppercase tracking-widest block truncate" title={getNomeCategoria(eq.categoria_id)}>
+                      <span className="bg-[#E2E8F0] text-[#475569] font-black px-2 py-1 rounded text-[9px] uppercase tracking-widest block truncate mb-1" title={getNomeCategoria(eq.categoria_id)}>
                         {getNomeCategoria(eq.categoria_id)}
+                      </span>
+                      <span className="bg-blue-50 text-blue-700 font-black px-2 py-0.5 rounded text-[9px] uppercase tracking-widest block truncate">
+                        🏭 {eq.empresa_id ? (empresasCatalogo.find(e => e.id === eq.empresa_id)?.nome || '?') : 'Sem empresa'}
                       </span>
                     </td>
                     <td className="p-4">
@@ -786,7 +842,7 @@ export default function PainelEstoque() {
             </div>
             
             <div className="p-6 overflow-y-auto space-y-5">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="md:col-span-2">
                   <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Nome Comercial</label>
                   <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-bold text-[#0C1D4D]" value={modalEdit.eq.nome || ''} onChange={e => setModalEdit({ ...modalEdit, eq: { ...modalEdit.eq, nome: e.target.value }})} />
@@ -800,6 +856,18 @@ export default function PainelEstoque() {
                   >
                     <option value="" disabled>-- Escolha --</option>
                     {categorias.map(cat => <option key={cat.id} value={cat.id}>{cat.nome}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Empresa</label>
+                  <select
+                    className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed"
+                    value={modalEdit.eq.empresa_id ?? ''}
+                    onChange={e => setModalEdit({ ...modalEdit, eq: { ...modalEdit.eq, empresa_id: e.target.value ? Number(e.target.value) : null }})}
+                    disabled={empresasCatalogoVisivel.length <= 1}
+                  >
+                    {empresasCatalogoVisivel.length !== 1 && <option value="">-- Escolha --</option>}
+                    {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
                   </select>
                 </div>
               </div>

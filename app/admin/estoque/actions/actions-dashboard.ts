@@ -8,7 +8,7 @@
 // painelOperacionalAction (como "checklistsCargaAbertos") antes do Checklist
 // de Carga virar Expedição e se mudar pra este hub.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -18,7 +18,13 @@ export async function painelEstoqueAction(accessToken: string): Promise<Resultad
 
   const db = supabaseAdmin();
   try {
-    const { count } = await db.from('checklists').select('id', { count: 'exact', head: true }).neq('status', 'FINALIZADO');
+    // supabaseAdmin() ignora RLS — sem este filtro, o número contava
+    // expedições em aberto de qualquer empresa, mesmo pra quem só tem
+    // acesso a uma (ver checklists_expedicao_empresa_id.sql).
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    let query = db.from('checklists').select('id', { count: 'exact', head: true }).neq('status', 'FINALIZADO');
+    if (empresasPermitidas) query = query.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+    const { count } = await query;
 
     return {
       ok: true,

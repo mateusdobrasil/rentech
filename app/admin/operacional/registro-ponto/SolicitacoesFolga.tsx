@@ -111,7 +111,7 @@ function CalendarioFolgas({ solicitacoes }: { solicitacoes: SolicitacaoHistorico
   );
 }
 
-export default function SolicitacoesFolga({ usuarioAtual, accessToken, onCountChange, mostrarCalendario }: { usuarioAtual: string; accessToken: string; onCountChange?: (pendentes: number) => void; mostrarCalendario?: boolean }) {
+export default function SolicitacoesFolga({ usuarioAtual, accessToken, onCountChange, mostrarCalendario, filtroEmpresaId = null }: { usuarioAtual: string; accessToken: string; onCountChange?: (pendentes: number) => void; mostrarCalendario?: boolean; filtroEmpresaId?: number | null }) {
   const toast = useToast();
   const [solicitacoes, setSolicitacoes] = useState<SolicitacaoHistorico[]>([]);
   const [carregando, setCarregando] = useState(true);
@@ -127,13 +127,22 @@ export default function SolicitacoesFolga({ usuarioAtual, accessToken, onCountCh
   const carregar = useCallback(async () => {
     setCarregando(true);
     const res = await listarSolicitacoesFolgaAction(accessToken);
-    const lista = res.ok ? (res.info || []) : [];
-    setSolicitacoes(lista);
-    onCountChangeRef.current?.(lista.filter(s => s.status === 'PENDENTE').length);
+    setSolicitacoes(res.ok ? (res.info || []) : []);
     setCarregando(false);
   }, [accessToken]);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  // Empresa (Rentech × AlfaLight) escolhida na tela — mesma regra usada em
+  // RegistroPontoConsulta: solicitação sem empresa definida sempre aparece.
+  const solicitacoesFiltradas = useMemo(
+    () => !filtroEmpresaId ? solicitacoes : solicitacoes.filter(s => s.empresa_id == null || s.empresa_id === filtroEmpresaId),
+    [solicitacoes, filtroEmpresaId]
+  );
+
+  useEffect(() => {
+    onCountChangeRef.current?.(solicitacoesFiltradas.filter(s => s.status === 'PENDENTE').length);
+  }, [solicitacoesFiltradas]);
 
   const aprovar = async (id: number) => {
     if (!confirm('Aprovar esta folga? Isso abona os dias úteis do período em folha_ponto_abono e avisa o funcionário pelo WhatsApp.')) return;
@@ -156,7 +165,7 @@ export default function SolicitacoesFolga({ usuarioAtual, accessToken, onCountCh
 
   return (
     <div className="flex flex-col gap-4">
-      {mostrarCalendario && <CalendarioFolgas solicitacoes={solicitacoes} />}
+      {mostrarCalendario && <CalendarioFolgas solicitacoes={solicitacoesFiltradas} />}
 
       <main className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden flex flex-col">
         <div className="p-6 border-b border-[#E2E8F0] bg-[#F8FAFC]">
@@ -179,10 +188,10 @@ export default function SolicitacoesFolga({ usuarioAtual, accessToken, onCountCh
             <tbody className="divide-y divide-[#E2E8F0]">
               {carregando ? (
                 <tr><td colSpan={6} className="p-8 text-center text-[#94A3B8] font-bold">Carregando solicitações...</td></tr>
-              ) : solicitacoes.length === 0 ? (
+              ) : solicitacoesFiltradas.length === 0 ? (
                 <tr><td colSpan={6} className="p-8 text-center text-[#94A3B8] font-bold">Nenhuma solicitação de folga registrada ainda.</td></tr>
               ) : (
-                solicitacoes.map((s) => (
+                solicitacoesFiltradas.map((s) => (
                   <tr key={s.id} className="hover:bg-[#F8FAFC] transition-colors">
                     <td className="p-4 font-black text-[#0C1D4D]">{s.funcionario_nome}</td>
                     <td className="p-4 font-bold">{formatarPeriodo(s)}</td>

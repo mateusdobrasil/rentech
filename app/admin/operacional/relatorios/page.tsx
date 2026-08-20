@@ -43,7 +43,7 @@ interface Manutencao {
 interface Categoria { id: string; nome: string; }
 
 interface Equipamento {
-  id: string; categoria_id: string; nome: string; peso: number; consumo_watts: number; ativo: boolean;
+  id: string; categoria_id: string; empresa_id: number | null; nome: string; peso: number; consumo_watts: number; ativo: boolean;
 }
 
 // ============================================================================
@@ -61,6 +61,7 @@ interface FichaCalendario {
   cliente: string;
   evento_feira: string | null;
   status: string;
+  empresa_id: number | null;
   data_inicial: string | null;
   data_final: string | null;
   data_entrega_agenda: string | null;
@@ -356,7 +357,7 @@ export default function RelatoriosOperacional() {
       const limiteBuscaFim = somarDiasISO(toISO(calDataFim), DIAS_ANTECEDENCIA_MONTAGEM_PADRAO);
       const { data, error } = await supabase
         .from('fichas_reserva')
-        .select('id, numero, cliente, evento_feira, status, data_inicial, data_final, data_entrega_agenda')
+        .select('id, numero, cliente, evento_feira, status, empresa_id, data_inicial, data_final, data_entrega_agenda')
         .lte('data_inicial', limiteBuscaFim)
         .gte('data_final', toISO(calSemanaInicio))
         .order('data_inicial', { ascending: true });
@@ -369,10 +370,17 @@ export default function RelatoriosOperacional() {
     })();
   }, [aba, calSemanaInicio, calDataFim]);
 
+  // Cada empresa tem as próprias fichas de reserva — mesmo filtro de empresa
+  // usado nas abas Frota/Estoque (filtroEmpresaId), pra manter uma única
+  // escolha de empresa em toda a página.
+  const fichasCalendarioEscopo = useMemo(() =>
+    !filtroEmpresaId ? fichasCalendario : fichasCalendario.filter(f => f.empresa_id == null || f.empresa_id === filtroEmpresaId),
+    [fichasCalendario, filtroEmpresaId]);
+
   // Busca o local cadastrado em eventos_feiras para os eventos/feiras que aparecem no calendário.
   useEffect(() => {
     const nomes = Array.from(new Set(
-      fichasCalendario.map(f => f.evento_feira).filter((v): v is string => !!v)
+      fichasCalendarioEscopo.map(f => f.evento_feira).filter((v): v is string => !!v)
     ));
 
     (async () => {
@@ -393,7 +401,7 @@ export default function RelatoriosOperacional() {
         setMapaLocaisEventos(mapa);
       }
     })();
-  }, [fichasCalendario]);
+  }, [fichasCalendarioEscopo]);
 
   // Categorias de eventos manuais efetivamente em uso na janela visível — só aparecem
   // na legenda quando existe pelo menos um evento manual daquela categoria no período.
@@ -555,35 +563,42 @@ export default function RelatoriosOperacional() {
   // ==========================================================================
   // AGREGAÇÕES — ESTOQUE
   // ==========================================================================
+  // Cada empresa tem o próprio patrimônio de equipamentos — mesmo filtro de
+  // empresa usado na aba Frota (filtroEmpresaId), pra manter uma única
+  // escolha de empresa em toda a página.
+  const equipamentosEscopo = useMemo(() =>
+    !filtroEmpresaId ? equipamentos : equipamentos.filter(eq => eq.empresa_id == null || eq.empresa_id === filtroEmpresaId),
+    [equipamentos, filtroEmpresaId]);
+
   const categoriasOrdenadas = useMemo(() => [...categorias].sort((a, b) => a.nome.localeCompare(b.nome)).map(c => c.id), [categorias]);
   const getNomeCategoria = (catId: string) => categorias.find(c => c.id === catId)?.nome || catId.toUpperCase();
 
   const equipamentosPorCategoria = useMemo(() => {
     const contagem: Record<string, number> = {};
-    equipamentos.forEach(eq => { contagem[eq.categoria_id] = (contagem[eq.categoria_id] || 0) + 1; });
+    equipamentosEscopo.forEach(eq => { contagem[eq.categoria_id] = (contagem[eq.categoria_id] || 0) + 1; });
     return categoriasOrdenadas
       .filter(catId => contagem[catId] > 0)
       .map(catId => ({ label: getNomeCategoria(catId), valor: contagem[catId], cor: corPorCategoria(catId, categoriasOrdenadas) }));
-  }, [equipamentos, categoriasOrdenadas, categorias]);
+  }, [equipamentosEscopo, categoriasOrdenadas, categorias]);
 
   const consumoPorCategoria = useMemo(() => {
     const soma: Record<string, number> = {};
-    equipamentos.forEach(eq => { soma[eq.categoria_id] = (soma[eq.categoria_id] || 0) + (eq.consumo_watts || 0); });
+    equipamentosEscopo.forEach(eq => { soma[eq.categoria_id] = (soma[eq.categoria_id] || 0) + (eq.consumo_watts || 0); });
     return categoriasOrdenadas
       .filter(catId => soma[catId] > 0)
       .map(catId => ({ label: getNomeCategoria(catId), valor: soma[catId], cor: corPorCategoria(catId, categoriasOrdenadas) }));
-  }, [equipamentos, categoriasOrdenadas, categorias]);
+  }, [equipamentosEscopo, categoriasOrdenadas, categorias]);
 
   const kpisEstoque = useMemo(() => {
-    const ativos = equipamentos.filter(e => e.ativo).length;
-    const pesoTotal = equipamentos.reduce((s, e) => s + (e.peso || 0), 0);
-    const consumoTotal = equipamentos.reduce((s, e) => s + (e.consumo_watts || 0), 0);
-    return { total: equipamentos.length, ativos, inativos: equipamentos.length - ativos, categorias: categorias.length, pesoTotal, consumoTotal };
-  }, [equipamentos, categorias]);
+    const ativos = equipamentosEscopo.filter(e => e.ativo).length;
+    const pesoTotal = equipamentosEscopo.reduce((s, e) => s + (e.peso || 0), 0);
+    const consumoTotal = equipamentosEscopo.reduce((s, e) => s + (e.consumo_watts || 0), 0);
+    return { total: equipamentosEscopo.length, ativos, inativos: equipamentosEscopo.length - ativos, categorias: categorias.length, pesoTotal, consumoTotal };
+  }, [equipamentosEscopo, categorias]);
 
   const estoqueDetalhado = useMemo(() => {
     const porCategoria: Record<string, { itens: number; ativos: number; peso: number; consumo: number }> = {};
-    equipamentos.forEach(eq => {
+    equipamentosEscopo.forEach(eq => {
       const c = (porCategoria[eq.categoria_id] ||= { itens: 0, ativos: 0, peso: 0, consumo: 0 });
       c.itens += 1;
       if (eq.ativo) c.ativos += 1;
@@ -593,7 +608,7 @@ export default function RelatoriosOperacional() {
     return categoriasOrdenadas
       .filter(catId => porCategoria[catId])
       .map(catId => ({ catId, nome: getNomeCategoria(catId), ...porCategoria[catId] }));
-  }, [equipamentos, categoriasOrdenadas, categorias]);
+  }, [equipamentosEscopo, categoriasOrdenadas, categorias]);
 
   // ==========================================================================
   // RENDERIZAÇÃO
@@ -811,9 +826,20 @@ export default function RelatoriosOperacional() {
                     <h1 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Controle de Estoque</h1>
                     <p className="text-sm text-[#64748B]">{kpisEstoque.total} equipamento(s) cadastrado(s) em {kpisEstoque.categorias} categoria(s)</p>
                   </div>
-                  <button onClick={() => window.print()} disabled={equipamentos.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
-                    🖨️ Imprimir / PDF
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={filtroEmpresaId ?? ''}
+                      onChange={(e) => setFiltroEmpresaId(e.target.value ? Number(e.target.value) : null)}
+                      disabled={empresasCatalogoVisivel.length <= 1}
+                      className="p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer bg-white disabled:opacity-70 disabled:cursor-not-allowed"
+                    >
+                      {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 TODAS AS EMPRESAS</option>}
+                      {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                    </select>
+                    <button onClick={() => window.print()} disabled={equipamentosEscopo.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
+                      🖨️ Imprimir / PDF
+                    </button>
+                  </div>
                 </div>
 
                 <div className="hidden print:block mb-4 border-b-2 border-black pb-2">
@@ -821,7 +847,7 @@ export default function RelatoriosOperacional() {
                   <p className="text-sm">Emitido em {new Date().toLocaleDateString('pt-BR')} • {kpisEstoque.total} equipamento(s)</p>
                 </div>
 
-                {equipamentos.length === 0 ? (
+                {equipamentosEscopo.length === 0 ? (
                   <div className="bg-white border-2 border-dashed border-gray-300 rounded-2xl p-16 text-center text-gray-400 font-bold uppercase tracking-wider">
                     Nenhum equipamento cadastrado no estoque.
                   </div>
@@ -915,6 +941,15 @@ export default function RelatoriosOperacional() {
                   </div>
                   <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                     <select
+                      value={filtroEmpresaId ?? ''}
+                      onChange={(e) => setFiltroEmpresaId(e.target.value ? Number(e.target.value) : null)}
+                      disabled={empresasCatalogoVisivel.length <= 1}
+                      className="border border-[#E2E8F0] rounded-lg px-3 py-2.5 text-xs font-bold text-[#0C1D4D] focus:outline-none focus:ring-2 focus:ring-[#336699] bg-white disabled:opacity-70 disabled:cursor-not-allowed"
+                    >
+                      {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 TODAS AS EMPRESAS</option>}
+                      {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                    </select>
+                    <select
                       value={calVisualizacao === 'dia' ? 'dia' : String(calNumSemanas)}
                       onChange={(e) => {
                         const v = e.target.value;
@@ -996,7 +1031,7 @@ export default function RelatoriosOperacional() {
 
                 {calVisualizacao === 'dia' ? (() => {
                   const iso = toISO(calSemanaInicio);
-                  const ops = operacoesDoDia(fichasCalendario, iso, mapaLocaisEventos).filter(op => filtroOperacoes[op.tipo]);
+                  const ops = operacoesDoDia(fichasCalendarioEscopo, iso, mapaLocaisEventos).filter(op => filtroOperacoes[op.tipo]);
                   const eventosManuais = agendaManual.filter(e => e.data === iso && (filtroCategoriasManual[e.categoria_id] ?? true));
                   const ehHoje = iso === hojeISO;
                   return (
@@ -1068,7 +1103,7 @@ export default function RelatoriosOperacional() {
                     <div key={wi} className="calendario-semana-print grid grid-cols-7 border-t border-[#E2E8F0]">
                       {semana.map((dia) => {
                         const iso = toISO(dia);
-                        const ops = operacoesDoDia(fichasCalendario, iso, mapaLocaisEventos).filter(op => filtroOperacoes[op.tipo]);
+                        const ops = operacoesDoDia(fichasCalendarioEscopo, iso, mapaLocaisEventos).filter(op => filtroOperacoes[op.tipo]);
                         const eventosManuais = agendaManual.filter(e => e.data === iso && (filtroCategoriasManual[e.categoria_id] ?? true));
                         const ehHoje = iso === hojeISO;
                         return (

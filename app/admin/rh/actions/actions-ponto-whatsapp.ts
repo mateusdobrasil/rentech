@@ -128,6 +128,9 @@ export interface SolicitacaoPendente {
   motivo: string;
   anexo_nome: string | null;
   criado_em: string;
+  // Só preenchido em listarSolicitacoesFolgaAction (usado pelo filtro de
+  // empresa da tela) — as demais listagens não selecionam esta coluna.
+  empresa_id?: number | null;
 }
 
 // Fila de solicitações de JUSTIFICAR/ABONAR feitas pelo funcionário via
@@ -167,7 +170,7 @@ export async function listarSolicitacoesFolgaAction(accessToken: string): Promis
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     let query = db
       .from('folha_ponto_whatsapp_solicitacoes')
-      .select('id, tipo, funcionario_nome, data_referencia, data_referencia_fim, tipo_batida, horario_solicitado, motivo, anexo_nome, status, resolvido_por, resolvido_em, motivo_rejeicao, criado_em')
+      .select('id, tipo, funcionario_nome, data_referencia, data_referencia_fim, tipo_batida, horario_solicitado, motivo, anexo_nome, status, resolvido_por, resolvido_em, motivo_rejeicao, criado_em, empresa_id')
       .eq('tipo', 'FOLGA_DIA')
       .order('criado_em', { ascending: false });
     if (empresasPermitidas) query = query.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);

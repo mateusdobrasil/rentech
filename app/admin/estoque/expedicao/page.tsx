@@ -11,6 +11,7 @@ import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 // ============================================================================
 // TIPOS
@@ -243,10 +244,45 @@ const cabecalhoVazio: ChecklistHeader = {
 // ============================================================================
 export default function ChecklistCargaRetorno() {
   const router = useRouter();
-  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Usuário' });
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Usuário' });
   const toast = useToast();
 
   const [dialog, setDialog] = useState<{ open: boolean; type: 'loading' | 'success' | 'error'; title: string; msg: string }>({ open: false, type: 'loading', title: '', msg: '' });
+
+  // Empresa(s) que o usuário pode enxergar (Rentech × AlfaLight) — mesmo
+  // padrão usado em /admin/operacional/relatorios e /admin/operacional/frota.
+  // Filtra a Lista e Divergências; também define/trava a empresa de um
+  // checklist novo quando o usuário só tem acesso a uma.
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+  const [filtroEmpresaId, setFiltroEmpresaId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(empresasData || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) {
+        setEmpresasPermitidas(null);
+        return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = empresasPermitidas === null
+    ? empresasCatalogo
+    : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id));
+
+  useEffect(() => {
+    if (empresasCatalogoVisivel.length === 1) setFiltroEmpresaId(empresasCatalogoVisivel[0].id);
+  }, [empresasCatalogoVisivel]);
 
   const [view, setView] = useState<'lista' | 'editor' | 'divergencias'>('lista');
   const [abrindoAutomatico, setAbrindoAutomatico] = useState(false);
@@ -289,6 +325,11 @@ export default function ChecklistCargaRetorno() {
   const [modalNovo, setModalNovo] = useState(false);
   const [camposManuais, setCamposManuais] = useState({ evento_feira: '', cliente: '', local: '', periodo_inicio: '', periodo_fim: '', data_entrega: '' });
   const [criando, setCriando] = useState(false);
+
+  // Empresa do checklist sendo criado — derivada automaticamente da Ficha de
+  // Reserva do evento vinculado (ver selecionarEvento), ou escolhida na mão
+  // quando não há evento (sempre obrigatória, ver criarChecklist).
+  const [checklistEmpresaId, setChecklistEmpresaId] = useState<number | null>(null);
 
   // Busca de evento/feira cadastrado (tabela eventos_feiras, única fonte de dados
   // usada para vincular um checklist a um evento — sem relação com fichas de locação).
@@ -369,6 +410,7 @@ export default function ChecklistCargaRetorno() {
         .order('created_at', { ascending: false });
 
       if (filtroStatus) query = query.eq('status', filtroStatus);
+      if (filtroEmpresaId) query = query.eq('empresa_id', filtroEmpresaId);
       if (busca.trim()) {
         const termo = `%${busca.trim()}%`;
         query = query.or(`cliente.ilike.${termo},evento_feira.ilike.${termo},local.ilike.${termo}`);
@@ -405,7 +447,15 @@ export default function ChecklistCargaRetorno() {
     }, 300);
 
     return () => clearTimeout(handle);
-  }, [authLoading, acessoNegado, view, pagina, filtroStatus, busca, refreshLista]);
+  }, [authLoading, acessoNegado, view, pagina, filtroStatus, filtroEmpresaId, busca, refreshLista]);
+
+  // checklist_divergencias não tem empresa_id própria — resolve os ids de
+  // checklists da empresa escolhida e filtra por checklist_id (mesma ideia
+  // usada pros checklists de veículo em /admin/operacional/frota).
+  const idsChecklistsDaEmpresa = async (empresaId: number): Promise<string[]> => {
+    const { data } = await supabase.from('checklists').select('id').eq('empresa_id', empresaId);
+    return (data || []).map(c => c.id);
+  };
 
   // 2b. Carregar Lista de Divergências
   useEffect(() => {
@@ -414,6 +464,17 @@ export default function ChecklistCargaRetorno() {
     (async () => {
       setDivergenciasLoading(true);
 
+      let idsEscopo: string[] | null = null;
+      if (filtroEmpresaId) {
+        idsEscopo = await idsChecklistsDaEmpresa(filtroEmpresaId);
+        if (idsEscopo.length === 0) {
+          setDivergencias([]);
+          setTotalDivergencias(0);
+          setDivergenciasLoading(false);
+          return;
+        }
+      }
+
       let query = supabase
         .from('checklist_divergencias')
         .select('*', { count: 'exact' })
@@ -421,6 +482,7 @@ export default function ChecklistCargaRetorno() {
         .range(paginaDivergencias * TAMANHO_PAGINA, paginaDivergencias * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
 
       if (filtroTipoDivergencia) query = query.eq('tipo', filtroTipoDivergencia);
+      if (idsEscopo) query = query.in('checklist_id', idsEscopo);
 
       const { data, error, count } = await query;
       if (!error) {
@@ -429,16 +491,22 @@ export default function ChecklistCargaRetorno() {
       }
       setDivergenciasLoading(false);
     })();
-  }, [authLoading, acessoNegado, view, paginaDivergencias, filtroTipoDivergencia]);
+  }, [authLoading, acessoNegado, view, paginaDivergencias, filtroTipoDivergencia, filtroEmpresaId]);
 
   // 2c. Contagem de divergências para o badge do botão "⚠️ Divergências" na lista
   useEffect(() => {
     if (authLoading || acessoNegado || view !== 'lista') return;
     (async () => {
-      const { count } = await supabase.from('checklist_divergencias').select('id', { count: 'exact', head: true });
+      let query = supabase.from('checklist_divergencias').select('id', { count: 'exact', head: true });
+      if (filtroEmpresaId) {
+        const ids = await idsChecklistsDaEmpresa(filtroEmpresaId);
+        if (ids.length === 0) { setTotalDivergenciasAbertas(0); return; }
+        query = query.in('checklist_id', ids);
+      }
+      const { count } = await query;
       setTotalDivergenciasAbertas(count || 0);
     })();
-  }, [authLoading, acessoNegado, view, refreshLista]);
+  }, [authLoading, acessoNegado, view, refreshLista, filtroEmpresaId]);
 
   // ------------------------------------------------------------------------
   // Catálogo agrupado por categoria (para os selects de "Do catálogo")
@@ -524,6 +592,10 @@ export default function ChecklistCargaRetorno() {
     setResultadosEvento([]);
     setNonceEvento(v => v + 1);
     setCamposManuais({ evento_feira: '', cliente: '', local: '', periodo_inicio: '', periodo_fim: '', data_entrega: '' });
+    // Só uma empresa disponível pro usuário: já nasce travado nela. Senão,
+    // fica em branco até vincular um evento (deriva sozinho) ou o usuário
+    // escolher na mão.
+    setChecklistEmpresaId(empresasCatalogoVisivel.length === 1 ? empresasCatalogoVisivel[0].id : null);
   };
 
   const selecionarEvento = (ev: EventoFeiraBusca) => {
@@ -548,7 +620,7 @@ export default function ChecklistCargaRetorno() {
       const hojeISO = new Date().toISOString().slice(0, 10);
       const { data } = await supabase
         .from('fichas_reserva')
-        .select('endereco_entrega, endereco_estande, data_entrega, data_inicial, data_final')
+        .select('endereco_entrega, endereco_estande, data_entrega, data_inicial, data_final, empresa_id')
         .ilike('evento_feira', ev.nome)
         .gte('data_inicial', hojeISO)
         .order('data_inicial', { ascending: true })
@@ -567,6 +639,11 @@ export default function ChecklistCargaRetorno() {
         periodo_inicio: primeira.data_inicial || prev.periodo_inicio,
         periodo_fim: primeira.data_final || prev.periodo_fim,
       }));
+
+      // Empresa do checklist = empresa (centro) da Ficha de Reserva do evento —
+      // mesma lógica do backfill em sql/checklists_expedicao_empresa_id.sql.
+      const empresaDetectada = data.map(f => f.empresa_id).find(v => v != null);
+      if (empresaDetectada != null) setChecklistEmpresaId(empresaDetectada);
     })();
   };
 
@@ -576,6 +653,10 @@ export default function ChecklistCargaRetorno() {
   const criarChecklist = async () => {
     if (!camposManuais.cliente.trim() && !camposManuais.evento_feira.trim()) {
       setDialog({ open: true, type: 'error', title: 'Atenção', msg: 'Informe ao menos o Local do Evento ou o Evento/Feira.' });
+      return;
+    }
+    if (!checklistEmpresaId) {
+      setDialog({ open: true, type: 'error', title: 'Atenção', msg: 'Selecione a empresa (Rentech/AlfaLight) deste checklist.' });
       return;
     }
 
@@ -591,6 +672,7 @@ export default function ChecklistCargaRetorno() {
       status: 'RASCUNHO',
       created_by: usuarioAtual,
       evento_p2s_oid: eventoSelecionado?.p2s_oid || null,
+      empresa_id: checklistEmpresaId,
     };
 
     const { data: header, error: erroHeader } = await supabase.from('checklists').insert([payloadHeader]).select().single();
@@ -691,8 +773,19 @@ export default function ChecklistCargaRetorno() {
   const imprimirDivergencias = async () => {
     setImprimindoDivergencias(true);
 
+    let idsEscopoImpressao: string[] | null = null;
+    if (filtroEmpresaId) {
+      idsEscopoImpressao = await idsChecklistsDaEmpresa(filtroEmpresaId);
+      if (idsEscopoImpressao.length === 0) {
+        setImprimindoDivergencias(false);
+        setDialog({ open: true, type: 'error', title: 'Nada para imprimir', msg: 'Não há divergências para exportar.' });
+        return;
+      }
+    }
+
     let query = supabase.from('checklist_divergencias').select('*').order('created_at', { ascending: false });
     if (filtroTipoDivergencia) query = query.eq('tipo', filtroTipoDivergencia);
+    if (idsEscopoImpressao) query = query.in('checklist_id', idsEscopoImpressao);
     const { data, error } = await query;
 
     setImprimindoDivergencias(false);
@@ -1635,6 +1728,15 @@ export default function ChecklistCargaRetorno() {
                   <option value="">Todos os status</option>
                   {STATUS_CHECKLIST.map(s => <option key={s} value={s}>{LABEL_STATUS[s]}</option>)}
                 </select>
+                <select
+                  value={filtroEmpresaId ?? ''}
+                  onChange={(e) => { setFiltroEmpresaId(e.target.value ? Number(e.target.value) : null); setPagina(0); }}
+                  disabled={empresasCatalogoVisivel.length <= 1}
+                  className="border border-[#E2E8F0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#336699] disabled:opacity-70 disabled:cursor-not-allowed"
+                >
+                  {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 Todas as empresas</option>}
+                  {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                </select>
               </div>
 
               <div className="overflow-x-auto border border-[#E2E8F0] rounded-xl relative min-h-[120px]">
@@ -1721,6 +1823,15 @@ export default function ChecklistCargaRetorno() {
                     <option value="">Todos os tipos</option>
                     <option value="SAIDA">Saída</option>
                     <option value="RETORNO">Retorno</option>
+                  </select>
+                  <select
+                    value={filtroEmpresaId ?? ''}
+                    onChange={(e) => { setFiltroEmpresaId(e.target.value ? Number(e.target.value) : null); setPaginaDivergencias(0); }}
+                    disabled={empresasCatalogoVisivel.length <= 1}
+                    className="border border-[#E2E8F0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#336699] disabled:opacity-70 disabled:cursor-not-allowed"
+                  >
+                    {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 Todas as empresas</option>}
+                    {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
                   </select>
                   <button onClick={imprimirDivergencias} disabled={imprimindoDivergencias} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-5 py-2.5 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
                     {imprimindoDivergencias ? '⏳ Gerando...' : '🖨️ Imprimir / PDF'}
@@ -2123,6 +2234,22 @@ export default function ChecklistCargaRetorno() {
               </div>
 
               <div>
+                <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Empresa</label>
+                <select
+                  className="w-full p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-sm disabled:opacity-70 disabled:cursor-not-allowed"
+                  value={checklistEmpresaId ?? ''}
+                  onChange={e => setChecklistEmpresaId(e.target.value ? Number(e.target.value) : null)}
+                  disabled={empresasCatalogoVisivel.length <= 1}
+                >
+                  <option value="">-- Selecione --</option>
+                  {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                </select>
+                {eventoSelecionado && checklistEmpresaId && (
+                  <p className="mt-1 text-[10px] text-[#94A3B8]">Detectada automaticamente pela Ficha de Reserva do evento — pode trocar se estiver errada.</p>
+                )}
+              </div>
+
+              <div>
                 <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Local do Evento</label>
                 <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm uppercase" value={camposManuais.cliente} onChange={e => setCamposManuais(prev => ({ ...prev, cliente: up(e.target.value) }))} />
               </div>
@@ -2148,7 +2275,7 @@ export default function ChecklistCargaRetorno() {
             </div>
 
             <div className="p-5 border-t border-[#E2E8F0] bg-white flex-shrink-0">
-              <button onClick={criarChecklist} disabled={criando} className="w-full bg-[#16A34A] hover:bg-[#15803D] text-white font-black text-sm uppercase tracking-widest py-4 rounded-xl shadow-lg transition-colors disabled:opacity-50">
+              <button onClick={criarChecklist} disabled={criando || !checklistEmpresaId} className="w-full bg-[#16A34A] hover:bg-[#15803D] text-white font-black text-sm uppercase tracking-widest py-4 rounded-xl shadow-lg transition-colors disabled:opacity-50">
                 {criando ? '⏳ Criando...' : '💾 Criar Checklist'}
               </button>
             </div>

@@ -14,6 +14,7 @@ interface Funcionario {
   nome_completo: string;
   cargo: string | null;
   ponto_whatsapp_ativo: boolean;
+  empresa_id: number | null;
 }
 
 interface RegistroDiario {
@@ -64,9 +65,13 @@ interface RegistroPontoConsultaProps {
   // (que gerencia a habilitação); no Operacional some, mas os desabilitados
   // continuam fora da tabela/filtro principal.
   mostrarPainelDesabilitados?: boolean;
+  // Empresa (Rentech × AlfaLight) escolhida pela tela que usa este
+  // componente — null = todas. Funcionário sem empresa definida sempre
+  // aparece (mesma regra usada em /admin/operacional/relatorios).
+  filtroEmpresaId?: number | null;
 }
 
-export default function RegistroPontoConsulta({ mostrarPainelDesabilitados = true }: RegistroPontoConsultaProps) {
+export default function RegistroPontoConsulta({ mostrarPainelDesabilitados = true, filtroEmpresaId = null }: RegistroPontoConsultaProps) {
   const [dataSelecionada, setDataSelecionada] = useState(hojeSaoPaulo);
   const [busca, setBusca] = useState('');
   const [funcionarios, setFuncionarios] = useState<Funcionario[]>([]);
@@ -76,7 +81,7 @@ export default function RegistroPontoConsulta({ mostrarPainelDesabilitados = tru
 
   useEffect(() => {
     supabase.from('folha_funcionarios')
-      .select('nome_completo, cargo, ponto_whatsapp_ativo')
+      .select('nome_completo, cargo, ponto_whatsapp_ativo, empresa_id')
       .eq('ativo', true)
       .order('nome_completo')
       .then(({ data }) => setFuncionarios(data || []));
@@ -101,6 +106,7 @@ export default function RegistroPontoConsulta({ mostrarPainelDesabilitados = tru
   const todasAsLinhas = useMemo(() => {
     return funcionarios
       .filter(f => f.nome_completo.toLowerCase().includes(busca.trim().toLowerCase()))
+      .filter(f => !filtroEmpresaId || f.empresa_id == null || f.empresa_id === filtroEmpresaId)
       .map(f => {
         const registro = registrosDoDia.find(r => r.funcionario_nome === f.nome_completo) || null;
         const abono = abonosDoDia.find(a => a.funcionario_nome === f.nome_completo) || null;
@@ -124,7 +130,7 @@ export default function RegistroPontoConsulta({ mostrarPainelDesabilitados = tru
 
         return { funcionario: f, e1, s1, e2, s2, origem: registro?.origem || null, abono, status };
       });
-  }, [funcionarios, registrosDoDia, abonosDoDia, busca]);
+  }, [funcionarios, registrosDoDia, abonosDoDia, busca, filtroEmpresaId]);
 
   const linhas = useMemo(
     () => todasAsLinhas.filter(l => l.funcionario.ponto_whatsapp_ativo),

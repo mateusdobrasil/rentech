@@ -7,6 +7,8 @@ import { listarDocumentosEmpresaAction, urlDocumentoEmpresaAction } from '../../
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
+import { supabase } from '../../../lib/supabase';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 const fmtTamanho = (b: number | null) => {
   if (!b) return '—';
@@ -17,7 +19,7 @@ const fmtTamanho = (b: number | null) => {
 const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 
 interface DocumentoEmpresa {
-  id: number; categoria_id: number; categoria: string;
+  id: number; categoria_id: number; categoria: string; empresa_id: number | null;
   titulo: string | null; nome_arquivo: string; tipo_mime: string | null;
   tamanho_bytes: number | null; data_validade: string | null; observacao: string | null;
   criado_em: string; statusValidade: 'SEM' | 'OK' | 'VENCENDO' | 'VENCIDO';
@@ -25,7 +27,7 @@ interface DocumentoEmpresa {
 
 export default function ComercialDocumentosPage() {
   const router = useRouter();
-  const { authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess();
+  const { authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess();
   const toast = useToast();
 
   const [loading, setLoading] = useState(true);
@@ -33,6 +35,40 @@ export default function ComercialDocumentosPage() {
   const [busca, setBusca] = useState('');
   const [filtroStatus, setFiltroStatus] = useState<'TODOS' | 'PENDENCIAS'>('TODOS');
   const [filtroCategoria, setFiltroCategoria] = useState('TODAS');
+
+  // Empresa(s) que o usuário pode enxergar (Rentech × AlfaLight) — a listagem
+  // já é filtrada no servidor (listarDocumentosEmpresaAction usa
+  // obterEmpresasPermitidas); isso aqui é só pra alimentar o seletor da tela.
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+  const [filtroEmpresaId, setFiltroEmpresaId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(empresasData || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) {
+        setEmpresasPermitidas(null);
+        return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = empresasPermitidas === null
+    ? empresasCatalogo
+    : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id));
+
+  useEffect(() => {
+    if (empresasCatalogoVisivel.length === 1) setFiltroEmpresaId(empresasCatalogoVisivel[0].id);
+  }, [empresasCatalogoVisivel]);
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewDoc, setPreviewDoc] = useState<DocumentoEmpresa | null>(null);
@@ -71,8 +107,9 @@ export default function ComercialDocumentosPage() {
   const docsFiltrados = useMemo(() => docs
     .filter(d => `${d.categoria} ${d.titulo || ''} ${d.nome_arquivo}`.toLowerCase().includes(busca.toLowerCase()))
     .filter(d => filtroCategoria === 'TODAS' || d.categoria === filtroCategoria)
-    .filter(d => filtroStatus === 'TODOS' || d.statusValidade === 'VENCENDO' || d.statusValidade === 'VENCIDO'),
-    [docs, busca, filtroCategoria, filtroStatus]);
+    .filter(d => filtroStatus === 'TODOS' || d.statusValidade === 'VENCENDO' || d.statusValidade === 'VENCIDO')
+    .filter(d => !filtroEmpresaId || d.empresa_id == null || d.empresa_id === filtroEmpresaId),
+    [docs, busca, filtroCategoria, filtroStatus, filtroEmpresaId]);
 
   const totais = useMemo(() => ({
     total: docs.length,
@@ -150,6 +187,15 @@ export default function ComercialDocumentosPage() {
         <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-3 mb-4">
           <div className="flex items-center gap-3 flex-wrap">
             <input type="text" placeholder="Buscar documento..." value={busca} onChange={e => setBusca(e.target.value)} className="p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+            <select
+              value={filtroEmpresaId ?? ''}
+              onChange={e => setFiltroEmpresaId(e.target.value ? Number(e.target.value) : null)}
+              disabled={empresasCatalogoVisivel.length <= 1}
+              className="p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC] cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed"
+            >
+              {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 Todas as empresas</option>}
+              {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+            </select>
             <select value={filtroCategoria} onChange={e => setFiltroCategoria(e.target.value)} className="p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC] cursor-pointer">
               <option value="TODAS">Todas as categorias</option>
               {categorias.map(c => <option key={c} value={c}>{c}</option>)}
@@ -177,6 +223,13 @@ export default function ComercialDocumentosPage() {
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-black text-[#0C1D4D] text-[13px] uppercase">{doc.categoria}</span>
                   {badgeValidade(doc.statusValidade)}
+                  {doc.empresa_id ? (
+                    <span className="text-[9px] font-black bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full uppercase">
+                      🏢 {empresasCatalogo.find(e => e.id === doc.empresa_id)?.nome || '?'}
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-black bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full uppercase">⚠ Sem empresa</span>
+                  )}
                 </div>
                 {doc.titulo && <p className="text-[11px] text-gray-600">{doc.titulo}</p>}
                 <p className="text-[10px] text-gray-400">

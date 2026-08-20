@@ -6,6 +6,7 @@ import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 // ============================================================================
 // PALETA (ordem fixa — identidade nunca depende de rank/valor)
@@ -30,7 +31,7 @@ function corPorCategoria(nome: string, listaOrdenada: string[]): string {
 // ============================================================================
 interface Veiculo {
   id: string; apelido: string; tipo: string; placa: string; status: string; propriedade: string;
-  km_atual?: number | null; exibir_na_frota: boolean;
+  km_atual?: number | null; exibir_na_frota: boolean; empresa_id: number | null;
   seguro_vigencia_fim?: string | null; crlv_vencimento?: string | null; ipva_vencimento?: string | null;
   locacao_vigencia_fim?: string | null;
 }
@@ -225,10 +226,44 @@ const BarrasHorizontais = ({ dados, formato }: {
 // ============================================================================
 export default function RelatoriosOperacional() {
   const router = useRouter();
-  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess({ nomeFallback: 'Usuário' });
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, permissaoBruta } = usePageAccess({ nomeFallback: 'Usuário' });
 
   const [aba, setAba] = useState<'frota' | 'estoque' | 'calendario'>('frota');
   const [loading, setLoading] = useState(true);
+
+  // Empresa(s) que o usuário pode enxergar (Rentech × AlfaLight) — só afeta a
+  // aba Frota (Estoque e Calendário não têm essa dimensão ainda). A proteção
+  // de verdade é a RLS no banco (esta tela lê direto pelo cliente anon).
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+  const [filtroEmpresaId, setFiltroEmpresaId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(empresasData || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) {
+        setEmpresasPermitidas(null);
+        return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = empresasPermitidas === null
+    ? empresasCatalogo
+    : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id));
+
+  useEffect(() => {
+    if (empresasCatalogoVisivel.length === 1) setFiltroEmpresaId(empresasCatalogoVisivel[0].id);
+  }, [empresasCatalogoVisivel]);
 
   const [veiculos, setVeiculos] = useState<Veiculo[]>([]);
   const [manutencoes, setManutencoes] = useState<Manutencao[]>([]);
@@ -439,29 +474,40 @@ export default function RelatoriosOperacional() {
   // ==========================================================================
   // AGREGAÇÕES — FROTA
   // ==========================================================================
-  const tiposOrdenados = useMemo(() => Array.from(new Set(veiculos.map(v => v.tipo))).sort(), [veiculos]);
+  // Base de tudo abaixo: veículos (e manutenções deles) dentro do escopo de
+  // empresa do usuário — nenhum gráfico/KPI pode "vazar" outra empresa.
+  const veiculosEscopo = useMemo(() =>
+    !filtroEmpresaId ? veiculos : veiculos.filter(v => v.empresa_id == null || v.empresa_id === filtroEmpresaId),
+    [veiculos, filtroEmpresaId]);
+
+  const manutencoesEscopo = useMemo(() => {
+    const idsPermitidos = new Set(veiculosEscopo.map(v => v.id));
+    return manutencoes.filter(m => idsPermitidos.has(m.veiculo_id));
+  }, [manutencoes, veiculosEscopo]);
+
+  const tiposOrdenados = useMemo(() => Array.from(new Set(veiculosEscopo.map(v => v.tipo))).sort(), [veiculosEscopo]);
 
   const veiculosPorTipo = useMemo(() => {
     const contagem: Record<string, number> = {};
-    veiculos.forEach(v => { contagem[v.tipo] = (contagem[v.tipo] || 0) + 1; });
+    veiculosEscopo.forEach(v => { contagem[v.tipo] = (contagem[v.tipo] || 0) + 1; });
     return tiposOrdenados.map(tipo => ({ label: `${ICONE_TIPO[tipo] || '🚙'} ${tipo}`, valor: contagem[tipo], cor: corPorCategoria(tipo, tiposOrdenados) }));
-  }, [veiculos, tiposOrdenados]);
+  }, [veiculosEscopo, tiposOrdenados]);
 
   const veiculosPorStatus = useMemo(() => {
     const contagem: Record<string, number> = { 'ATIVO': 0, 'EM MANUTENÇÃO': 0, 'INATIVO': 0 };
-    veiculos.forEach(v => { contagem[v.status] = (contagem[v.status] || 0) + 1; });
+    veiculosEscopo.forEach(v => { contagem[v.status] = (contagem[v.status] || 0) + 1; });
     return Object.entries(contagem).filter(([, v]) => v > 0).map(([status, valor]) => ({ label: status, valor, cor: COR_STATUS_VEICULO[status] || '#94A3B8' }));
-  }, [veiculos]);
+  }, [veiculosEscopo]);
 
   const custoPorVeiculo = useMemo(() => {
     const custos: Record<string, number> = {};
-    manutencoes.forEach(m => { custos[m.veiculo_id] = (custos[m.veiculo_id] || 0) + (m.custo || 0); });
-    return veiculos
+    manutencoesEscopo.forEach(m => { custos[m.veiculo_id] = (custos[m.veiculo_id] || 0) + (m.custo || 0); });
+    return veiculosEscopo
       .map(v => ({ label: v.apelido, valor: custos[v.id] || 0, cor: COR_SEQUENCIAL }))
       .filter(d => d.valor > 0)
       .sort((a, b) => b.valor - a.valor)
       .slice(0, 8);
-  }, [veiculos, manutencoes]);
+  }, [veiculosEscopo, manutencoesEscopo]);
 
   // Custo de manutenção nos últimos 6 meses (competência mês/ano)
   const custoPorMes = useMemo(() => {
@@ -472,39 +518,39 @@ export default function RelatoriosOperacional() {
       meses.push({ chave: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }) });
     }
     const somaPorMes: Record<string, number> = {};
-    manutencoes.forEach(m => {
+    manutencoesEscopo.forEach(m => {
       const chave = (m.data || '').slice(0, 7);
       somaPorMes[chave] = (somaPorMes[chave] || 0) + (m.custo || 0);
     });
     return meses.map(m => ({ label: m.label, valor: somaPorMes[m.chave] || 0, cor: COR_SEQUENCIAL }));
-  }, [manutencoes]);
+  }, [manutencoesEscopo]);
 
-  const veiculosComAlerta = useMemo(() => veiculos.filter(v => {
+  const veiculosComAlerta = useMemo(() => veiculosEscopo.filter(v => {
     const u = getUrgenciaVeiculo(v).urgencia;
     return u === 'vencido' || u === 'proximo';
-  }), [veiculos]);
+  }), [veiculosEscopo]);
 
   const kpisFrota = useMemo(() => {
-    const ativos = veiculos.filter(v => v.status === 'ATIVO').length;
-    const emManutencao = veiculos.filter(v => v.status === 'EM MANUTENÇÃO').length;
-    const inativos = veiculos.filter(v => v.status === 'INATIVO').length;
-    const proprios = veiculos.filter(v => v.propriedade === 'PRÓPRIO').length;
-    const alugados = veiculos.filter(v => v.propriedade === 'ALUGADO').length;
-    const custoTotal = manutencoes.reduce((s, m) => s + (m.custo || 0), 0);
-    return { total: veiculos.length, ativos, emManutencao, inativos, proprios, alugados, custoTotal, custoMedio: custoTotal / (veiculos.length || 1) };
-  }, [veiculos, manutencoes]);
+    const ativos = veiculosEscopo.filter(v => v.status === 'ATIVO').length;
+    const emManutencao = veiculosEscopo.filter(v => v.status === 'EM MANUTENÇÃO').length;
+    const inativos = veiculosEscopo.filter(v => v.status === 'INATIVO').length;
+    const proprios = veiculosEscopo.filter(v => v.propriedade === 'PRÓPRIO').length;
+    const alugados = veiculosEscopo.filter(v => v.propriedade === 'ALUGADO').length;
+    const custoTotal = manutencoesEscopo.reduce((s, m) => s + (m.custo || 0), 0);
+    return { total: veiculosEscopo.length, ativos, emManutencao, inativos, proprios, alugados, custoTotal, custoMedio: custoTotal / (veiculosEscopo.length || 1) };
+  }, [veiculosEscopo, manutencoesEscopo]);
 
   const veiculosDetalhados = useMemo(() => {
     const numManutencoes: Record<string, number> = {};
     const custos: Record<string, number> = {};
-    manutencoes.forEach(m => {
+    manutencoesEscopo.forEach(m => {
       numManutencoes[m.veiculo_id] = (numManutencoes[m.veiculo_id] || 0) + 1;
       custos[m.veiculo_id] = (custos[m.veiculo_id] || 0) + (m.custo || 0);
     });
-    return [...veiculos].sort((a, b) => a.apelido.localeCompare(b.apelido)).map(v => ({
+    return [...veiculosEscopo].sort((a, b) => a.apelido.localeCompare(b.apelido)).map(v => ({
       ...v, numManutencoes: numManutencoes[v.id] || 0, custoManutencao: custos[v.id] || 0, situacao: getUrgenciaVeiculo(v),
     }));
-  }, [veiculos, manutencoes]);
+  }, [veiculosEscopo, manutencoesEscopo]);
 
   // ==========================================================================
   // AGREGAÇÕES — ESTOQUE
@@ -634,9 +680,20 @@ export default function RelatoriosOperacional() {
                     <h1 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Relatório de Frota</h1>
                     <p className="text-sm text-[#64748B]">{kpisFrota.total} veículo(s) liberado(s) para exibição • {veiculosComAlerta.length} com alerta de vencimento</p>
                   </div>
-                  <button onClick={() => window.print()} disabled={veiculos.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
-                    🖨️ Imprimir / PDF
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={filtroEmpresaId ?? ''}
+                      onChange={(e) => setFiltroEmpresaId(e.target.value ? Number(e.target.value) : null)}
+                      disabled={empresasCatalogoVisivel.length <= 1}
+                      className="p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer bg-white disabled:opacity-70 disabled:cursor-not-allowed"
+                    >
+                      {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 TODAS AS EMPRESAS</option>}
+                      {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                    </select>
+                    <button onClick={() => window.print()} disabled={veiculosEscopo.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
+                      🖨️ Imprimir / PDF
+                    </button>
+                  </div>
                 </div>
 
                 <div className="hidden print:block mb-4 border-b-2 border-black pb-2">
@@ -644,7 +701,7 @@ export default function RelatoriosOperacional() {
                   <p className="text-sm">Emitido em {new Date().toLocaleDateString('pt-BR')} • {kpisFrota.total} veículo(s)</p>
                 </div>
 
-                {veiculos.length === 0 ? (
+                {veiculosEscopo.length === 0 ? (
                   <div className="bg-white border-2 border-dashed border-gray-300 rounded-2xl p-16 text-center text-gray-400 font-bold uppercase tracking-wider">
                     Nenhum veículo liberado para exibição no momento.
                   </div>
@@ -664,7 +721,7 @@ export default function RelatoriosOperacional() {
                       <CardKPI titulo="Inativos" valor={String(kpisFrota.inativos)} cor="#64748B" />
                     </div>
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6 print-break">
-                      <CardKPI titulo="Custo Total de Manutenção" valor={formatCurrency(kpisFrota.custoTotal)} cor="#DC2626" sub={`${manutencoes.length} manutenção(ões) registrada(s)`} />
+                      <CardKPI titulo="Custo Total de Manutenção" valor={formatCurrency(kpisFrota.custoTotal)} cor="#DC2626" sub={`${manutencoesEscopo.length} manutenção(ões) registrada(s)`} />
                       <CardKPI titulo="Custo Médio por Veículo" valor={formatCurrency(kpisFrota.custoMedio)} cor="#336699" />
                       <CardKPI titulo="Com Alerta de Vencimento" valor={String(veiculosComAlerta.length)} cor="#D97706" sub="Seguro, CRLV, IPVA ou Locação" />
                       <CardKPI titulo="Documentação em Dia" valor={String(kpisFrota.total - veiculosComAlerta.length)} cor="#16A34A" />
@@ -733,7 +790,7 @@ export default function RelatoriosOperacional() {
                           <tfoot>
                             <tr className="border-t-2 border-[#0C1D4D] bg-[#F8FAFC] font-black text-[#0C1D4D]">
                               <td className="p-3 uppercase text-xs tracking-wider" colSpan={5}>Total Geral ({kpisFrota.total} veículos)</td>
-                              <td className="p-3 text-center">{manutencoes.length}</td>
+                              <td className="p-3 text-center">{manutencoesEscopo.length}</td>
                               <td className="p-3 text-right">{formatCurrency(kpisFrota.custoTotal)}</td>
                               <td className="p-3"></td>
                             </tr>

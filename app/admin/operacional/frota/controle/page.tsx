@@ -7,6 +7,7 @@ import { registrarLogAuditoria } from '../../../../actions';
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../../components/ui/HubStates';
+import { ehAdministradorGlobal } from '../../../../lib/permissoes';
 
 // Listas fixas de apoio
 const TIPOS_VEICULO = ['CAMINHÃO', 'VAN', 'CARRO', 'UTILITÁRIO', 'CARRETA', 'MOTO', 'ÔNIBUS', 'OUTRO'];
@@ -35,6 +36,7 @@ interface Veiculo {
   id: string;
   apelido: string;
   tipo: string;
+  empresa_id: number | null;
   marca?: string;
   modelo?: string;
   ano_fabricacao?: number | null;
@@ -98,7 +100,7 @@ const up = (v: string) => v.toUpperCase();
 const dataOuNulo = (v?: string | null) => (v && v.trim() !== '' ? v : null);
 
 const veiculoVazio: Partial<Veiculo> = {
-  apelido: '', tipo: 'CAMINHÃO', marca: '', modelo: '', ano_fabricacao: undefined, ano_modelo: undefined,
+  apelido: '', tipo: 'CAMINHÃO', empresa_id: null, marca: '', modelo: '', ano_fabricacao: undefined, ano_modelo: undefined,
   placa: '', renavam: '', chassi: '', cor: '', combustivel: '', km_atual: undefined, status: 'ATIVO',
   propriedade: 'PRÓPRIO', exibir_na_frota: false, locacao_locadora: '', locacao_vigencia_inicio: '', locacao_vigencia_fim: '',
   locacao_apolice: '', locacao_contato_nome: '', locacao_contato_telefone: '',
@@ -108,16 +110,49 @@ const veiculoVazio: Partial<Veiculo> = {
 
 export default function PainelControleFrota() {
   const router = useRouter();
-  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess({ nomeFallback: 'Usuário' });
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, permissaoBruta } = usePageAccess({ nomeFallback: 'Usuário' });
 
   // Estados de Dados
   const [veiculos, setVeiculos] = useState<Veiculo[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Empresa(s) que o usuário pode enxergar (Rentech × AlfaLight) — a
+  // proteção de verdade é a RLS no banco (esta tela lê/grava direto pelo
+  // cliente anon, sem Server Action); isso aqui só alimenta os seletores.
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(empresasData || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) {
+        setEmpresasPermitidas(null);
+        return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = empresasPermitidas === null
+    ? empresasCatalogo
+    : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id));
+
   // Filtros
   const [busca, setBusca] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('TODOS');
   const [filtroPropriedade, setFiltroPropriedade] = useState('TODOS');
+  const [filtroEmpresaId, setFiltroEmpresaId] = useState<number | null>(null);
+  useEffect(() => {
+    if (empresasCatalogoVisivel.length === 1) setFiltroEmpresaId(empresasCatalogoVisivel[0].id);
+  }, [empresasCatalogoVisivel]);
 
   // Estados de UI (Modal)
   const [dialog, setDialog] = useState<{ open: boolean; type: 'loading' | 'success' | 'error'; title: string; msg: string }>({ open: false, type: 'loading', title: '', msg: '' });
@@ -146,20 +181,27 @@ export default function PainelControleFrota() {
     setLoading(false);
   };
 
+  // Veículos dentro do escopo de empresa do usuário — base de tudo abaixo
+  // (lista, alerta), pra nenhum cálculo "vazar" um veículo de outra empresa
+  // mesmo quando os filtros de status/propriedade/busca estão de lado.
+  const veiculosEscopo = useMemo(() =>
+    !filtroEmpresaId ? veiculos : veiculos.filter(v => v.empresa_id == null || v.empresa_id === filtroEmpresaId),
+    [veiculos, filtroEmpresaId]);
+
   // Filtro Dinâmico
   const veiculosFiltrados = useMemo(() => {
-    return veiculos.filter(v => {
+    return veiculosEscopo.filter(v => {
       const termo = busca.toLowerCase();
       const matchBusca = v.apelido.toLowerCase().includes(termo) || (v.placa || '').toLowerCase().includes(termo) || (v.modelo || '').toLowerCase().includes(termo);
       const matchStatus = filtroStatus === 'TODOS' || v.status === filtroStatus;
       const matchPropriedade = filtroPropriedade === 'TODOS' || v.propriedade === filtroPropriedade;
       return matchBusca && matchStatus && matchPropriedade;
     });
-  }, [veiculos, busca, filtroStatus, filtroPropriedade]);
+  }, [veiculosEscopo, busca, filtroStatus, filtroPropriedade]);
 
   // Veículos com documentação vencida ou a vencer em até 30 dias
   const veiculosComAlerta = useMemo(() => {
-    return veiculos.filter(v => {
+    return veiculosEscopo.filter(v => {
       const crlv = getStatusVencimento(v.crlv_vencimento);
       const ipva = getStatusVencimento(v.ipva_vencimento);
       const alertaCrlvIpva = crlv.cor.includes('red') || crlv.cor.includes('amber') || ipva.cor.includes('red') || ipva.cor.includes('amber');
@@ -170,7 +212,7 @@ export default function PainelControleFrota() {
       const seguro = getStatusVencimento(v.seguro_vigencia_fim);
       return alertaCrlvIpva || seguro.cor.includes('red') || seguro.cor.includes('amber');
     });
-  }, [veiculos]);
+  }, [veiculosEscopo]);
 
   // ============================================================================
   // UPLOAD DE ARQUIVOS (Storage bucket "frota")
@@ -194,7 +236,10 @@ export default function PainelControleFrota() {
   // AÇÕES DE CRUD - VEÍCULOS
   // ============================================================================
   const abrirModalNovoVeiculo = () => {
-    setModalVeiculo({ open: true, isNew: true, v: { ...veiculoVazio } });
+    setModalVeiculo({
+      open: true, isNew: true,
+      v: { ...veiculoVazio, empresa_id: empresasCatalogoVisivel.length === 1 ? empresasCatalogoVisivel[0].id : null },
+    });
   };
 
   const abrirModalEditarVeiculo = (v: Veiculo) => {
@@ -204,6 +249,10 @@ export default function PainelControleFrota() {
   const salvarVeiculo = async () => {
     if (!modalVeiculo.v?.apelido || !modalVeiculo.v?.placa) {
       setDialog({ open: true, type: 'error', title: 'Atenção', msg: 'O Apelido e a Placa são obrigatórios.' });
+      return;
+    }
+    if (!modalVeiculo.v?.empresa_id) {
+      setDialog({ open: true, type: 'error', title: 'Atenção', msg: 'Selecione a empresa (Rentech/AlfaLight) deste veículo.' });
       return;
     }
 
@@ -415,6 +464,15 @@ export default function PainelControleFrota() {
               <option value="TODOS">PRÓPRIO / ALUGADO</option>
               {PROPRIEDADE_VEICULO.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
+            <select
+              className="p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer w-full md:w-48 disabled:opacity-70 disabled:cursor-not-allowed"
+              value={filtroEmpresaId ?? ''}
+              onChange={(e) => setFiltroEmpresaId(e.target.value ? Number(e.target.value) : null)}
+              disabled={empresasCatalogoVisivel.length <= 1}
+            >
+              {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 TODAS AS EMPRESAS</option>}
+              {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+            </select>
           </div>
 
           <button onClick={abrirModalNovoVeiculo} className="w-full md:w-auto bg-[#336699] hover:bg-[#284B8C] text-white px-6 py-3 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-md hover:shadow-lg">
@@ -448,6 +506,9 @@ export default function PainelControleFrota() {
                     <div className="flex flex-col gap-1 items-end">
                       <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-full border ${COR_STATUS[v.status] || COR_STATUS['INATIVO']}`}>{v.status}</span>
                       <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full border ${COR_PROPRIEDADE[v.propriedade] || COR_PROPRIEDADE['PRÓPRIO']}`}>{v.propriedade || 'PRÓPRIO'}</span>
+                      <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full border bg-blue-50 text-blue-700 border-blue-200">
+                        🏭 {v.empresa_id ? (empresasCatalogo.find(e => e.id === v.empresa_id)?.nome || '?') : 'Sem empresa'}
+                      </span>
                       {!v.exibir_na_frota && (
                         <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full border bg-gray-100 text-gray-400 border-gray-300" title="Este veículo não aparece na página de visualização da Frota">🙈 Oculto</span>
                       )}
@@ -528,6 +589,18 @@ export default function PainelControleFrota() {
                   <div>
                     <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Placa</label>
                     <input type="text" placeholder="Ex: KLY0182" className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-bold uppercase text-[#0C1D4D]" value={modalVeiculo.v.placa || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, placa: e.target.value.toUpperCase() } })} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Empresa</label>
+                    <select
+                      className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed"
+                      value={modalVeiculo.v.empresa_id ?? ''}
+                      onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, empresa_id: e.target.value ? Number(e.target.value) : null } })}
+                      disabled={empresasCatalogoVisivel.length <= 1}
+                    >
+                      {empresasCatalogoVisivel.length !== 1 && <option value="">Selecione...</option>}
+                      {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                    </select>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">

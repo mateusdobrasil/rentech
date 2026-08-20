@@ -7,6 +7,7 @@ import { registrarLogAuditoria } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 const ROTA_CONTROLE = '/admin/operacional/frota/controle';
 
@@ -86,6 +87,7 @@ interface Veiculo {
   id: string;
   apelido: string;
   tipo: string;
+  empresa_id: number | null;
   marca?: string;
   modelo?: string;
   ano_fabricacao?: number | null;
@@ -182,8 +184,37 @@ const manutencaoVazia: Partial<Manutencao> = {
 
 export default function VisualizacaoFrota() {
   const router = useRouter();
-  const { usuarioAtual, permissaoNormalizada, authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess({ nomeFallback: 'Usuário' });
+  const { usuarioAtual, permissaoNormalizada, permissaoBruta, authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess({ nomeFallback: 'Usuário' });
   const [podeGerenciar, setPodeGerenciar] = useState(false);
+
+  // Empresa(s) que o usuário pode enxergar (Rentech × AlfaLight) — a
+  // proteção de verdade é a RLS no banco (esta tela lê direto pelo cliente
+  // anon, sem Server Action); isso aqui só alimenta o seletor da tela.
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(empresasData || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) {
+        setEmpresasPermitidas(null);
+        return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = empresasPermitidas === null
+    ? empresasCatalogo
+    : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id));
 
   // Aba ativa
   const [abaAtiva, setAbaAtiva] = useState<'veiculos' | 'manutencao' | 'checklists'>('veiculos');
@@ -199,6 +230,10 @@ export default function VisualizacaoFrota() {
   const [busca, setBusca] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('TODOS');
   const [filtroPropriedade, setFiltroPropriedade] = useState('TODOS');
+  const [filtroEmpresaId, setFiltroEmpresaId] = useState<number | null>(null);
+  useEffect(() => {
+    if (empresasCatalogoVisivel.length === 1) setFiltroEmpresaId(empresasCatalogoVisivel[0].id);
+  }, [empresasCatalogoVisivel]);
 
   // Veículo selecionado na aba Veículos (ficha lateral)
   const [veiculoSelecionadoId, setVeiculoSelecionadoId] = useState('');
@@ -354,21 +389,28 @@ export default function VisualizacaoFrota() {
     setTiposManutencao(prev => prev.filter(t => t.id !== tipo.id));
   };
 
+  // Veículos dentro do escopo de empresa do usuário — base de tudo abaixo
+  // (lista, alerta, dropdown de manutenção), pra nenhum cálculo "vazar" um
+  // veículo de outra empresa mesmo quando status/propriedade/busca não filtram.
+  const veiculosEscopo = useMemo(() =>
+    !filtroEmpresaId ? veiculos : veiculos.filter(v => v.empresa_id == null || v.empresa_id === filtroEmpresaId),
+    [veiculos, filtroEmpresaId]);
+
   // Filtro Dinâmico da aba Veículos
   const veiculosFiltrados = useMemo(() => {
-    return veiculos.filter(v => {
+    return veiculosEscopo.filter(v => {
       const termo = busca.toLowerCase();
       const matchBusca = v.apelido.toLowerCase().includes(termo) || (v.placa || '').toLowerCase().includes(termo) || (v.modelo || '').toLowerCase().includes(termo);
       const matchStatus = filtroStatus === 'TODOS' || v.status === filtroStatus;
       const matchPropriedade = filtroPropriedade === 'TODOS' || v.propriedade === filtroPropriedade;
       return matchBusca && matchStatus && matchPropriedade;
     });
-  }, [veiculos, busca, filtroStatus, filtroPropriedade]);
+  }, [veiculosEscopo, busca, filtroStatus, filtroPropriedade]);
 
   // Veículos com documentação vencida ou a vencer em até 30 dias
   const veiculosComAlerta = useMemo(() => {
-    return veiculos.filter(v => getUrgenciaVeiculo(v) !== null);
-  }, [veiculos]);
+    return veiculosEscopo.filter(v => getUrgenciaVeiculo(v) !== null);
+  }, [veiculosEscopo]);
 
   // Todas as manutenções (já vêm ordenadas por data desc.), filtradas pelo veículo quando um for selecionado
   const manutencoesExibidas = useMemo(() => {
@@ -378,15 +420,20 @@ export default function VisualizacaoFrota() {
 
   // Mantém sempre um veículo selecionado para a ficha lateral, acompanhando os filtros
   useEffect(() => {
-    if (veiculosFiltrados.length === 0) return;
+    if (veiculosFiltrados.length === 0) {
+      if (veiculoSelecionadoId) setVeiculoSelecionadoId('');
+      return;
+    }
     if (!veiculosFiltrados.some(v => v.id === veiculoSelecionadoId)) {
       setVeiculoSelecionadoId(veiculosFiltrados[0].id);
     }
   }, [veiculosFiltrados, veiculoSelecionadoId]);
 
+  // Busca em veiculosFiltrados (não no array bruto "veiculos") — a ficha
+  // nunca pode mostrar um veículo que o filtro de empresa já excluiu.
   const veiculoDetalhe = useMemo(() => {
-    return veiculos.find(v => v.id === veiculoSelecionadoId) || null;
-  }, [veiculos, veiculoSelecionadoId]);
+    return veiculosFiltrados.find(v => v.id === veiculoSelecionadoId) || null;
+  }, [veiculosFiltrados, veiculoSelecionadoId]);
 
   const getVeiculoNome = (id: string) => {
     const v = veiculos.find(x => x.id === id);
@@ -582,6 +629,15 @@ export default function VisualizacaoFrota() {
                     {PROPRIEDADE_VEICULO.map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </div>
+                <select
+                  className="p-2 border-2 border-[#E2E8F0] rounded-lg text-[11px] font-bold text-[#64748B] focus:border-[#336699] outline-none cursor-pointer bg-white disabled:opacity-70 disabled:cursor-not-allowed"
+                  value={filtroEmpresaId ?? ''}
+                  onChange={(e) => setFiltroEmpresaId(e.target.value ? Number(e.target.value) : null)}
+                  disabled={empresasCatalogoVisivel.length <= 1}
+                >
+                  {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 TODAS AS EMPRESAS</option>}
+                  {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                </select>
 
                 <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm overflow-y-auto flex-grow max-h-[70vh] md:max-h-none divide-y divide-[#F1F5F9]">
                   {veiculosFiltrados.length === 0 ? (
@@ -622,7 +678,7 @@ export default function VisualizacaoFrota() {
                 {!veiculoDetalhe ? (
                   <div className="h-full flex items-center justify-center text-[#94A3B8] text-sm font-bold p-12 text-center">Selecione um veículo na lista ao lado para ver a ficha completa.</div>
                 ) : (
-                  <FichaVeiculo veiculo={veiculoDetalhe} documentos={documentos.filter(d => d.veiculo_id === veiculoDetalhe.id)} onVerManutencoes={() => { setFiltroManutencaoVeiculoId(veiculoDetalhe.id); setAbaAtiva('manutencao'); }} />
+                  <FichaVeiculo veiculo={veiculoDetalhe} documentos={documentos.filter(d => d.veiculo_id === veiculoDetalhe.id)} empresasCatalogo={empresasCatalogo} onVerManutencoes={() => { setFiltroManutencaoVeiculoId(veiculoDetalhe.id); setAbaAtiva('manutencao'); }} />
                 )}
               </div>
             </div>
@@ -642,7 +698,7 @@ export default function VisualizacaoFrota() {
               onChange={(e) => setFiltroManutencaoVeiculoId(e.target.value)}
             >
               <option value="">TODOS OS VEÍCULOS</option>
-              {veiculos.map(v => <option key={v.id} value={v.id}>{v.apelido} ({v.placa})</option>)}
+              {veiculosFiltrados.map(v => <option key={v.id} value={v.id}>{v.apelido} ({v.placa})</option>)}
             </select>
 
             <div className="flex gap-2 w-full md:w-auto">
@@ -1125,7 +1181,7 @@ function Campo({ label, valor }: { label: string; valor?: string | number | null
   );
 }
 
-function FichaVeiculo({ veiculo, documentos, onVerManutencoes }: { veiculo: Veiculo; documentos: Documento[]; onVerManutencoes: () => void }) {
+function FichaVeiculo({ veiculo, documentos, empresasCatalogo, onVerManutencoes }: { veiculo: Veiculo; documentos: Documento[]; empresasCatalogo: { id: number; nome: string }[]; onVerManutencoes: () => void }) {
   const seguro = getStatusVencimento(veiculo.seguro_vigencia_fim);
   const crlv = getStatusVencimento(veiculo.crlv_vencimento);
   const ipva = getStatusVencimento(veiculo.ipva_vencimento);
@@ -1144,6 +1200,9 @@ function FichaVeiculo({ veiculo, documentos, onVerManutencoes }: { veiculo: Veic
         <div className="flex gap-2">
           <span className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-full border ${COR_STATUS[veiculo.status] || COR_STATUS['INATIVO']}`}>{veiculo.status}</span>
           <span className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-full border ${COR_PROPRIEDADE[veiculo.propriedade] || COR_PROPRIEDADE['PRÓPRIO']}`}>{veiculo.propriedade || 'PRÓPRIO'}</span>
+          <span className="text-[10px] font-black uppercase px-3 py-1.5 rounded-full border bg-blue-50 text-blue-700 border-blue-200">
+            🏭 {veiculo.empresa_id ? (empresasCatalogo.find(e => e.id === veiculo.empresa_id)?.nome || '?') : 'Sem empresa'}
+          </span>
         </div>
       </div>
 

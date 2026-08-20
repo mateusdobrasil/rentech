@@ -6,6 +6,7 @@ import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 interface LogEntry {
   id: string;
@@ -49,7 +50,7 @@ function formatarDataHora(iso: string) {
 
 export default function PainelAuditoria() {
   const router = useRouter();
-  const { authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess();
+  const { authLoading, acessoNegado, erro, tentarNovamente, permissaoBruta } = usePageAccess();
 
   // Estados dos Dados
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -61,6 +62,56 @@ export default function PainelAuditoria() {
   const [buscaAplicada, setBuscaAplicada] = useState('');
   const [filtroSetor, setFiltroSetor] = useState('');
   const [filtroData, setFiltroData] = useState('');
+  const [filtroEmpresa, setFiltroEmpresa] = useState<number | null>(null);
+
+  // logs_auditoria não guarda empresa_id (é um trilho de auditoria que cobre
+  // ações sem uma empresa clara, ex.: alterar permissão de outro usuário) —
+  // o filtro aproxima pela empresa do AUTOR da ação (usuario_nome), via
+  // perfis_usuarios_empresas. Não reflete a empresa do registro afetado: um
+  // admin com acesso às duas empresas continua aparecendo nas duas.
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+  const [nomesPorEmpresa, setNomesPorEmpresa] = useState<Record<number, string[]>>({});
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const [{ data: empresasData }, { data: perfisData }, { data: vinculosData }] = await Promise.all([
+        supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome'),
+        supabase.from('perfis_usuarios').select('id, nome'),
+        supabase.from('perfis_usuarios_empresas').select('perfil_id, empresa_id'),
+      ]);
+      setEmpresasCatalogo(empresasData || []);
+
+      const nomePorPerfilId: Record<string, string> = {};
+      (perfisData || []).forEach(p => { nomePorPerfilId[p.id] = p.nome; });
+      const mapa: Record<number, string[]> = {};
+      (vinculosData || []).forEach(v => {
+        const nome = nomePorPerfilId[v.perfil_id];
+        if (nome) (mapa[v.empresa_id] ||= []).push(nome);
+      });
+      setNomesPorEmpresa(mapa);
+
+      if (ehAdministradorGlobal(permissaoBruta)) {
+        setEmpresasPermitidas(null);
+        return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = empresasPermitidas === null
+    ? empresasCatalogo
+    : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id));
+
+  useEffect(() => {
+    if (empresasCatalogoVisivel.length === 1) setFiltroEmpresa(empresasCatalogoVisivel[0].id);
+  }, [empresasCatalogoVisivel]);
 
   const carregarLogs = useCallback(async (reset: boolean, currentLogs: LogEntry[]) => {
     setLoading(true);
@@ -86,6 +137,8 @@ export default function PainelAuditoria() {
       );
     }
 
+    if (filtroEmpresa) query = query.in('usuario_nome', nomesPorEmpresa[filtroEmpresa] || ['']);
+
     const { data, count, error } = await query;
 
     if (!error && data) {
@@ -94,23 +147,24 @@ export default function PainelAuditoria() {
       setHasMore(data.length === PAGE_SIZE);
     }
     setLoading(false);
-  }, [filtroSetor, filtroData, buscaAplicada]);
+  }, [filtroSetor, filtroData, buscaAplicada, filtroEmpresa, nomesPorEmpresa]);
 
   useEffect(() => {
     // Só carrega os logs se a autenticação estiver concluída e aprovada
     if (!authLoading && !acessoNegado) {
       carregarLogs(true, []);
     }
-  }, [authLoading, acessoNegado, filtroSetor, filtroData, buscaAplicada]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [authLoading, acessoNegado, filtroSetor, filtroData, buscaAplicada, filtroEmpresa, nomesPorEmpresa]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const limparFiltros = () => {
     setBusca('');
     setBuscaAplicada('');
     setFiltroSetor('');
     setFiltroData('');
+    if (empresasCatalogoVisivel.length > 1) setFiltroEmpresa(null);
   };
 
-  const temFiltro = filtroSetor || filtroData || buscaAplicada;
+  const temFiltro = filtroSetor || filtroData || buscaAplicada || (empresasCatalogoVisivel.length > 1 && filtroEmpresa);
 
   // ============================================================================
   // BARREIRAS DE ACESSO VISUAIS
@@ -177,6 +231,7 @@ export default function PainelAuditoria() {
                     filtroSetor && `Setor: ${filtroSetor}`,
                     filtroData && `Data: ${filtroData}`,
                     buscaAplicada && `Busca: "${buscaAplicada}"`,
+                    (empresasCatalogoVisivel.length > 1 && filtroEmpresa) && `Empresa: ${empresasCatalogo.find(e => e.id === filtroEmpresa)?.nome}`,
                   ].filter(Boolean).join(' | ')
                 : 'Nenhum — exibindo todos os registos'}
             </p>
@@ -219,6 +274,19 @@ export default function PainelAuditoria() {
             onChange={e => setFiltroData(e.target.value)}
             className="p-2.5 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] outline-none focus:border-[#336699] lg:w-44 shrink-0"
           />
+
+          <select
+            value={filtroEmpresa ?? ''}
+            onChange={e => setFiltroEmpresa(e.target.value ? Number(e.target.value) : null)}
+            disabled={empresasCatalogoVisivel.length <= 1}
+            className="p-2.5 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] outline-none focus:border-[#336699] bg-white lg:w-44 shrink-0 disabled:opacity-70 disabled:cursor-not-allowed"
+            title="Aproxima pela empresa do usuário que fez a ação — não reflete necessariamente a empresa do registro afetado"
+          >
+            {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 Todas as empresas</option>}
+            {empresasCatalogoVisivel.map(e => (
+              <option key={e.id} value={e.id}>{e.nome}</option>
+            ))}
+          </select>
 
           {temFiltro && (
             <button

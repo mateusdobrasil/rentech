@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
 import { WebView, type WebViewNavigation } from 'react-native-webview';
 import { useFocusEffect } from 'expo-router';
@@ -34,6 +34,32 @@ export function WebViewScreen({ path }: Props) {
       return () => sub.remove();
     }, [canGoBack])
   );
+
+  // A WebView é um contexto de storage isolado do AsyncStorage do app RN — não
+  // enxerga a sessão do app. /mobile-bridge (web/) recebe os tokens pelo
+  // fragment da URL (nunca vai pro servidor), estabelece a sessão do lado do
+  // navegador via supabase.auth.setSession(), e só então navega pro destino —
+  // ver app/mobile-bridge/page.tsx no repo web/.
+  //
+  // useMemo (e não recalcular direto no corpo do componente) é essencial
+  // aqui: react-native-webview trata `source={{uri}}` como uma navegação nova
+  // sempre que o OBJETO muda de referência — mesmo com a mesma string de uri.
+  // Sem isso, qualquer re-render do componente (frequente: AuthContext,
+  // navegação, etc.) recarregava a ponte do zero, cancelando o
+  // setSession()+redirect ainda em andamento antes de completar — a WebView
+  // ficava presa recarregando /mobile-bridge sem nunca chegar no destino.
+  const bridgeUri = useMemo(() => {
+    if (!SITE_URL || !session) return null;
+    return (
+      `${SITE_URL}/mobile-bridge` +
+      `#access_token=${encodeURIComponent(session.access_token)}` +
+      `&refresh_token=${encodeURIComponent(session.refresh_token)}` +
+      `&redirect=${encodeURIComponent(path)}`
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.access_token, session?.refresh_token, path]);
+
+  const source = useMemo(() => (bridgeUri ? { uri: bridgeUri } : undefined), [bridgeUri]);
 
   if (!SITE_URL) {
     return (
@@ -73,23 +99,12 @@ export function WebViewScreen({ path }: Props) {
     );
   }
 
-  // A WebView é um contexto de storage isolado do AsyncStorage do app RN — não
-  // enxerga a sessão do app. /mobile-bridge (web/) recebe os tokens pelo
-  // fragment da URL (nunca vai pro servidor), estabelece a sessão do lado do
-  // navegador via supabase.auth.setSession(), e só então navega pro destino —
-  // ver app/mobile-bridge/page.tsx no repo web/.
-  const bridgeUri =
-    `${SITE_URL}/mobile-bridge` +
-    `#access_token=${encodeURIComponent(session.access_token)}` +
-    `&refresh_token=${encodeURIComponent(session.refresh_token)}` +
-    `&redirect=${encodeURIComponent(path)}`;
-
   return (
     <View style={styles.container}>
       <WebView
         key={reloadKey}
         ref={webviewRef}
-        source={{ uri: bridgeUri }}
+        source={source}
         onLoadEnd={() => setLoading(false)}
         onError={() => setErro(true)}
         onHttpError={() => setErro(true)}

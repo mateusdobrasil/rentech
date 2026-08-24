@@ -50,8 +50,13 @@ export function WebViewScreen({ path }: Props) {
   // ficava presa recarregando /mobile-bridge sem nunca chegar no destino.
   const bridgeUri = useMemo(() => {
     if (!SITE_URL || !session) return null;
+    // "?t=" força a WebView a buscar a página de novo em vez de reaproveitar
+    // uma versão em cache — o fragmento (#...) não entra na chave de cache
+    // HTTP, então sem isso toda chamada reusava o primeiro carregamento de
+    // /mobile-bridge já feito nesta sessão, ignorando qualquer sessão/token
+    // novo (e qualquer atualização de código, em dev).
     return (
-      `${SITE_URL}/mobile-bridge` +
+      `${SITE_URL}/mobile-bridge?t=${Date.now()}` +
       `#access_token=${encodeURIComponent(session.access_token)}` +
       `&refresh_token=${encodeURIComponent(session.refresh_token)}` +
       `&redirect=${encodeURIComponent(path)}`
@@ -105,6 +110,7 @@ export function WebViewScreen({ path }: Props) {
         key={reloadKey}
         ref={webviewRef}
         source={source}
+        cacheEnabled={false}
         onLoadEnd={() => setLoading(false)}
         onError={() => setErro(true)}
         onHttpError={() => setErro(true)}

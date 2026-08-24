@@ -33,8 +33,14 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // suppressHydrationWarning no <html> abaixo: HIDE_NAVBAR_SCRIPT muda a
+  // className dele antes da hidratação de propósito (não dá pra saber no
+  // servidor se é white-label/app mobile) — é o padrão recomendado pra esse
+  // caso (ver https://react.dev/link/hydration-mismatch), não indica bug.
+  // Sem isso, o Next mostra um overlay de erro em dev cobrindo a página
+  // inteira, embora não afete build de produção.
   return (
-    <html lang="pt-BR" className="scroll-smooth">
+    <html lang="pt-BR" className="scroll-smooth" suppressHydrationWarning>
 
       {/* O fundo preto padrão do ecossistema já pode ficar no body */}
       <body className="bg-[#000000] text-slate-50 font-sans antialiased">

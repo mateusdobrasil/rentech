@@ -23,21 +23,36 @@ export default function MobileBridgePage() {
       const refreshToken = params.get('refresh_token');
       const redirect = params.get('redirect') || '/';
 
-      if (!accessToken || !refreshToken) {
-        setErro('Link de acesso inválido: faltam credenciais de sessão.');
-        return;
-      }
-
       // Só aceita destino relativo — nunca redireciona pra fora do próprio site.
       if (!redirect.startsWith('/') || redirect.startsWith('//')) {
         setErro('Destino de redirecionamento inválido.');
         return;
       }
 
-      const { error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
-      if (error) {
-        setErro('Não foi possível validar sua sessão: ' + error.message);
-        return;
+      // A WebView já pode ter uma sessão válida guardada de uma visita
+      // anterior à ponte (o storage é compartilhado entre instâncias de
+      // WebView do app, e o client daqui já cuida de renová-la sozinho via
+      // autoRefreshToken). Chamar setSession() de novo com o refresh_token
+      // que o app mandou nesse caso é o que quebra: refresh token do
+      // Supabase é de uso único (rotaciona a cada renovação) — o token que o
+      // app mobile guarda pode já ter sido consumido pela própria WebView, e
+      // reenviá-lo dá "Auth session missing!". Só chama setSession() quando
+      // ainda NÃO há sessão utilizável aqui.
+      const { data: existente } = await supabase.auth.getSession();
+      const expiraEm = existente.session?.expires_at;
+      const jaTemSessaoValida = !!existente.session && !!expiraEm && expiraEm * 1000 > Date.now();
+
+      if (!jaTemSessaoValida) {
+        if (!accessToken || !refreshToken) {
+          setErro('Link de acesso inválido: faltam credenciais de sessão.');
+          return;
+        }
+
+        const { error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+        if (error) {
+          setErro('Não foi possível validar sua sessão: ' + error.message);
+          return;
+        }
       }
 
       // Marca que este navegador é a WebView do app mobile — app/layout.tsx lê

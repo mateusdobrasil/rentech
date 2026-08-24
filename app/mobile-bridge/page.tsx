@@ -40,6 +40,17 @@ export default function MobileBridgePage() {
         return;
       }
 
+      // Marca que este navegador é a WebView do app mobile — app/layout.tsx lê
+      // isso (mesmo mecanismo já usado pro white-label da AlfaLight) pra
+      // esconder a Navbar do site, já que a navegação é toda controlada pelo
+      // app nativo, não faz sentido abrir outras páginas do site por aqui.
+      try {
+        localStorage.setItem('rentech_app_mobile', '1');
+      } catch {
+        // localStorage indisponível (raro numa WebView) — segue sem a flag,
+        // só não esconde a Navbar
+      }
+
       // Hard navigation (não router.push): garante que a página de destino monte
       // do zero e leia a sessão recém-persistida via getSession().
       window.location.replace(redirect);

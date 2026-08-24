@@ -13,7 +13,7 @@ import { supabaseAdmin } from '../../lib/supabase';
 import { resolverFuncionarioPortal } from './actions-acesso';
 import { buscarCrachaDados } from './actions-cracha';
 import { carregarDocumentosPorNome, carregarHoleritesPorNome } from './actions-documentos';
-import { exigirPermissaoDirigir } from './actions-checklist-veiculo';
+import { exigirPermissaoDirigir } from '../lib/checklistVeiculo';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 

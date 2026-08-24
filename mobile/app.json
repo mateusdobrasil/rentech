@@ -33,6 +33,20 @@
         {
           "faceIDPermission": "Use Face ID para desbloquear sua sessão do app Rentech."
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "O app Rentech usa a câmera para fotografar avarias no checklist de veículo.",
+          "photosPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "O app Rentech usa sua localização para registrar o local de saída e retorno do checklist de veículo."
+        }
       ]
     ]
   }

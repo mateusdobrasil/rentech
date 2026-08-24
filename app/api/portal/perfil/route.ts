@@ -22,7 +22,7 @@ export async function GET(request: Request) {
   const db = supabaseAdmin();
   const { data: folha } = await db
     .from('folha_funcionarios')
-    .select('cargo, matricula_esocial')
+    .select('cargo, matricula_esocial, pode_dirigir')
     .eq('nome_completo', func.funcionarioNome)
     .maybeSingle();
 
@@ -32,6 +32,10 @@ export async function GET(request: Request) {
       funcionarioNome: func.funcionarioNome,
       cargo: folha?.cargo || null,
       matriculaEsocial: folha?.matricula_esocial || null,
+      // Mesma flag que já libera o Checklist de Veículo no Portal web
+      // (ver exigirPermissaoDirigir em app/portal/lib/checklistVeiculo.ts) —
+      // libera a aba Frota no app pra quem tem isso marcado na ficha.
+      podeDirigir: !!folha?.pode_dirigir,
     },
   });
 }

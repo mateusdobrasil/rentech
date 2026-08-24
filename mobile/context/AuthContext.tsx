@@ -28,6 +28,10 @@ export interface PerfilUsuario {
   cargoExibicao: string | null;
   funcionarioNome: string | null;
   matriculaEsocial: string | null;
+  // Só PORTAL: folha_funcionarios.pode_dirigir — mesma flag que já libera o
+  // Checklist de Veículo no Portal web, agora também libera a aba Frota no
+  // app pra colaborador comum marcado como motorista.
+  podeDirigir: boolean;
 }
 
 interface AuthContextValue {
@@ -69,6 +73,7 @@ async function buscarPerfilStaff(userId: string, emailFallback: string): Promise
     cargoExibicao: permissaoBruta || null,
     funcionarioNome: null,
     matriculaEsocial: null,
+    podeDirigir: false,
   };
 }
 
@@ -94,6 +99,7 @@ async function buscarPerfilPortal(accessToken: string): Promise<PerfilUsuario | 
       cargoExibicao: json.info.cargo || null,
       funcionarioNome: json.info.funcionarioNome || null,
       matriculaEsocial: json.info.matriculaEsocial || null,
+      podeDirigir: !!json.info.podeDirigir,
     };
   } catch {
     return null;

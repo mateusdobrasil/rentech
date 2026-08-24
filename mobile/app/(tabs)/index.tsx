@@ -129,6 +129,16 @@ export default function Inicio() {
     // autoatendimento no /admin ainda — ver conta plano de implementação.
     if (perfil?.tipo === 'PORTAL') {
       return [
+        // Só aparece pra colaborador marcado como motorista na ficha
+        // (folha_funcionarios.pode_dirigir) — mesma flag que já libera o
+        // Checklist de Veículo no Portal web.
+        ...(perfil.podeDirigir ? [{
+          key: 'checklist-veiculo',
+          icone: <TruckIcon size={21} color={colors.accent} weight="regular" />,
+          titulo: 'Checklist de veículo',
+          nota: 'saída e retorno com avaria',
+          onPress: () => router.push('/frota'),
+        }] : []),
         {
           key: 'holerite',
           icone: <FileTextIcon size={21} color={colors.accent} weight="regular" />,

@@ -6,13 +6,23 @@ export const metadata = {
   description: 'Engenharia Audiovisual para Grandes Eventos'
 };
 
-// Acesso white-label pelo subdomínio da AlfaLight (portal.alfalight.com.br/login):
-// esconde a Navbar da Rentech antes da primeira pintura, sem servidor precisar
-// saber o host (isso manteria o site inteiro em SSR dinâmico). Script roda
-// antes da hidratação, então não há flash da Navbar aparecendo e sumindo.
+// Esconde a Navbar da Rentech antes da primeira pintura, sem servidor
+// precisar saber o host/origem (isso manteria o site inteiro em SSR
+// dinâmico). Script roda antes da hidratação, então não há flash da Navbar
+// aparecendo e sumindo. Dois casos, mesma classe:
+// 1. Acesso white-label pelo subdomínio da AlfaLight (portal.alfalight.com.br/login).
+// 2. WebView do app mobile (mobile/components/WebViewScreen.tsx) — a navegação
+//    já é toda controlada pelo app nativo, então a Navbar do site (que levaria
+//    pra outras páginas fora do que o app abriu de propósito) fica escondida.
+//    A flag é marcada em localStorage por app/mobile-bridge/page.tsx, no
+//    mesmo navegador/origem da WebView, antes de qualquer página do site
+//    carregar.
 const HIDE_NAVBAR_SCRIPT = `
   try {
     if (location.hostname === 'portal.alfalight.com.br' && location.pathname === '/login') {
+      document.documentElement.classList.add('white-label-hide-navbar');
+    }
+    if (localStorage.getItem('rentech_app_mobile') === '1') {
       document.documentElement.classList.add('white-label-hide-navbar');
     }
   } catch (e) {}

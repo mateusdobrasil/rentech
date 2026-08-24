@@ -1,0 +1,1302 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/nocturne-3b602ac7-f785-4520-82a0-1141dce2df1f/styles.css">
+<script src="_ds/nocturne-3b602ac7-f785-4520-82a0-1141dce2df1f/_ds_bundle.js"></script>
+<style>
+body{margin:0;background:#1d1f29;color:var(--color-text);font-family:var(--font-body)}
+a{color:var(--color-accent);text-decoration:none}
+a:hover{color:var(--color-accent-300)}
+.scr{-ms-overflow-style:none;scrollbar-width:none}
+.scr::-webkit-scrollbar{display:none}
+@keyframes pop{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+</style>
+</helmet>
+
+<div style="min-height:100vh;padding:36px 40px 64px">
+
+  <div style="max-width:1180px;margin:0 auto 32px">
+    <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent);margin-bottom:8px">Rentech · app do ecossistema</div>
+    <h2 style="margin:0 0 10px;font-size:34px">Um app híbrido para colaborador, campo, comercial e RH</h2>
+    <p style="max-width:660px;font-size:14px;opacity:.75;text-wrap:pretty;margin:0">Protótipo navegável das telas nativas. Os módulos pesados do <code>/admin</code> continuam no sistema web, abertos em WebView autenticada dentro do app.</p>
+  </div>
+
+  <div style="max-width:1180px;margin:0 auto 36px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px">
+    <div class="card elev-sm">
+      <div class="card-kicker">O que assumi</div>
+      <p class="card-body">Login é o mesmo Supabase Auth do web, com biometria guardando a sessão no aparelho. As abas aparecem por cargo, seguindo <code>normalizarPermissao</code> e <code>REGRAS_ACESSO</code> que já existem no scaffold Expo.</p>
+    </div>
+    <div class="card elev-sm">
+      <div class="card-kicker">Nativo vs WebView</div>
+      <p class="card-body">Nativo só onde o celular ganha do navegador: checklist com câmera e GPS, fila de aprovação em qualquer lugar, simulador em frente ao cliente, push. RH completo, estoque, holerite e OP em lote seguem no WebView.</p>
+    </div>
+    <div class="card elev-sm">
+      <div class="card-kicker">Campo primeiro</div>
+      <p class="card-body">As telas de checklist seguem o schema que já existe: <code>frota_checklists</code> com etapa SAÍDA/RETORNO, itens booleanos e avarias com foto, e <code>checklist_itens</code> da expedição com quantidade prevista, conferida e divergência. Veículo pode ser criado offline; carga não, porque importa as OS's da base.</p>
+    </div>
+  </div>
+
+  <div style="max-width:1180px;margin:0 auto;display:flex;gap:36px;align-items:flex-start;flex-wrap:wrap">
+
+    <div style="flex:none;width:230px;display:flex;flex-direction:column;gap:20px;position:sticky;top:24px">
+      <div>
+        <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.5;margin-bottom:8px">Aparelho</div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-secondary" style="{{ btnIos }}" onClick="{{ setIos }}">iPhone</button>
+          <button class="btn btn-secondary" style="{{ btnAnd }}" onClick="{{ setAnd }}">Android</button>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.5;margin-bottom:8px">Perfil de acesso</div>
+        <div style="display:flex;flex-direction:column;gap:5px">
+          <sc-for list="{{ perfis }}" as="p" hint-placeholder-count="4">
+            <button class="btn btn-secondary" style="{{ p.estilo }}" onClick="{{ p.selecionar }}">{{ p.nome }}</button>
+          </sc-for>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.5;margin-bottom:8px">Rede</div>
+        <button class="btn btn-secondary" style="{{ btnRede }}" onClick="{{ toggleOffline }}">{{ redeLabel }}</button>
+      </div>
+      <div>
+        <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.5;margin-bottom:8px">Telas</div>
+        <div style="display:flex;flex-direction:column;gap:2px">
+          <sc-for list="{{ mapaTelas }}" as="t" hint-placeholder-count="12">
+            <button style="{{ t.estilo }}" onClick="{{ t.ir }}">{{ t.nome }}</button>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+
+    <div style="flex:none">
+      <x-import component-from-global-scope="RentechFrame" from="./ios-frame.jsx ./android-frame.jsx ./frame.jsx" platform="{{ plataforma }}" hint-size="412px,892px">
+
+        <div style="height:100%;display:flex;flex-direction:column;background:var(--color-bg);font-family:var(--font-body);color:var(--color-text);position:relative">
+          <sc-if value="{{ isIos }}" hint-placeholder-val="{{ true }}"><div style="height:44px;flex:none"></div></sc-if>
+
+          <!-- ══ LOGIN ══ -->
+          <sc-if value="{{ sLogin }}" hint-placeholder-val="{{ true }}">
+            <div class="scr" style="flex:1;overflow:auto;display:flex;flex-direction:column;justify-content:center;padding:28px 24px 40px;gap:26px">
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <img src="assets/rentech-logo.png" alt="Locadora Rentech" style="width:146px;height:auto;opacity:.95">
+                <div style="font-size:13px;opacity:.55">Ecossistema digital · acesso interno</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:14px">
+                <div class="field"><label>E-mail corporativo</label>
+                  <div class="input" style="min-height:46px;display:flex;align-items:center;font-size:15px">joao.matos@rentech.com.br</div>
+                </div>
+                <div class="field"><label>Senha</label>
+                  <div class="input" style="min-height:46px;display:flex;align-items:center;letter-spacing:.28em;font-size:15px">••••••••</div>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <button class="btn btn-primary" style="min-height:48px;font-size:15px;width:100%" onClick="{{ entrar }}">Entrar</button>
+                <button class="btn btn-secondary" style="min-height:48px;font-size:15px;width:100%;gap:9px" onClick="{{ entrar }}">
+                  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3c-2 0-3.6.7-4.8 1.6M12 3c2 0 3.6.7 4.8 1.6M5 8.5A9 9 0 0 1 12 6a9 9 0 0 1 7 2.5M8 12.5c1-1 2.3-1.6 4-1.6s3 .6 4 1.6M9 17c.8-.8 1.8-1.2 3-1.2s2.2.4 3 1.2M4 15v3M20 15v3"/></svg>
+                  Entrar com biometria
+                </button>
+              </div>
+              <div style="font-size:12px;opacity:.45;text-wrap:pretty">A sessão fica no aparelho. Mesma conta do sistema web — o cargo cadastrado define o que aparece no app.</div>
+            </div>
+          </sc-if>
+
+          <!-- ══ APP ══ -->
+          <sc-if value="{{ logado }}" hint-placeholder-val="{{ true }}">
+            <div style="flex:none;display:flex;align-items:center;gap:10px;padding:6px 18px 12px">
+              <sc-if value="{{ temVoltar }}" hint-placeholder-val="{{ false }}">
+                <button class="btn btn-ghost" style="width:34px;height:34px;padding:0;margin-left:-6px" onClick="{{ voltar }}">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+                </button>
+              </sc-if>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:19px;font-family:var(--font-heading);font-weight:500;letter-spacing:-.015em">{{ tituloTela }}</div>
+                <div style="font-size:11px;opacity:.5">{{ subtituloTela }}</div>
+              </div>
+              <button class="btn btn-secondary" style="width:38px;height:38px;padding:0;position:relative;border-radius:99px" onClick="{{ irNotificacoes }}">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15V10a6 6 0 1 0-12 0v5l-1.6 2.4h15.2z"/><path d="M10 20.5h4"/></svg>
+                <sc-if value="{{ temNaoLidas }}" hint-placeholder-val="{{ true }}">
+                  <span style="position:absolute;top:6px;right:7px;width:7px;height:7px;border-radius:99px;background:var(--color-accent)"></span>
+                </sc-if>
+              </button>
+            </div>
+
+            <sc-if value="{{ offline }}" hint-placeholder-val="{{ false }}">
+              <div style="flex:none;margin:0 18px 10px;padding:8px 11px;border-radius:var(--radius-md);background:var(--color-accent-900);display:flex;align-items:center;gap:8px">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent-300)" stroke-width="1.8" stroke-linecap="round"><path d="M3 3l18 18M5 12.5A11 11 0 0 1 9 10M2 8.5a16 16 0 0 1 5-3M12 19h.01M8.5 15.5a6 6 0 0 1 3-1.4M15 9.6c1.6.5 3 1.4 4.2 2.5M14 5.4c2.4.5 4.6 1.6 6.4 3.1"/></svg>
+                <span style="font-size:12px;color:var(--color-accent-200)">Sem rede — {{ filaLabel }}</span>
+              </div>
+            </sc-if>
+
+            <div class="scr" style="flex:1;overflow:auto;padding:0 18px 16px">
+
+              <!-- ── INÍCIO ── -->
+              <sc-if value="{{ sHome }}" hint-placeholder-val="{{ true }}">
+                <div style="display:flex;flex-direction:column;gap:18px">
+                  <div style="padding:16px;border-radius:var(--radius-lg);background:linear-gradient(150deg,var(--color-surface),var(--color-accent-900));box-shadow:var(--shadow-sm)">
+                    <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent-300);margin-bottom:6px">Ponto de hoje</div>
+                    <div style="display:flex;align-items:flex-end;gap:10px">
+                      <div style="font-size:34px;font-family:var(--font-heading);letter-spacing:-.02em;line-height:1">08:02</div>
+                      <div style="font-size:12px;opacity:.6;padding-bottom:5px">entrada registrada</div>
+                    </div>
+                    <div style="height:1px;background:var(--color-divider);margin:13px 0"></div>
+                    <div style="display:flex;align-items:center;gap:9px">
+                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent-300)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-12.4 7.6L3 21l1.9-5.6A8.5 8.5 0 1 1 21 11.5z"/></svg>
+                      <div style="flex:1;font-size:12.5px;opacity:.75;text-wrap:pretty">Batida e justificativa seguem pelo bot no WhatsApp</div>
+                      <button class="btn btn-ghost" style="font-size:13px;min-height:38px" onClick="{{ abrirWhats }}">Abrir</button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.45;margin-bottom:9px">Seus módulos</div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                      <sc-for list="{{ atalhos }}" as="a" hint-placeholder-count="4">
+                        <button onClick="{{ a.ir }}" style="text-align:left;cursor:pointer;background:var(--color-surface);border:1px solid var(--color-divider);border-radius:var(--radius-md);padding:13px;display:flex;flex-direction:column;gap:8px;min-height:96px;color:var(--color-text);font-family:var(--font-body)" style-hover="background:var(--color-neutral-800)">
+                          <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="{{ a.icone }}"/></svg>
+                          <div style="font-size:14px;font-family:var(--font-heading);font-weight:500">{{ a.nome }}</div>
+                          <div style="font-size:11px;opacity:.55;line-height:1.35">{{ a.nota }}</div>
+                        </button>
+                      </sc-for>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.45;margin-bottom:9px">Precisa de você</div>
+                    <div style="display:flex;flex-direction:column;gap:8px">
+                      <sc-for list="{{ pendencias }}" as="p" hint-placeholder-count="2">
+                        <button onClick="{{ p.ir }}" style="cursor:pointer;text-align:left;display:flex;align-items:center;gap:11px;padding:12px 13px;border-radius:var(--radius-md);background:var(--color-surface);border:1px solid transparent;color:var(--color-text);font-family:var(--font-body);min-height:56px" style-hover="border-color:var(--color-accent-700)">
+                          <span class="tag tag-accent" style="flex:none">{{ p.contagem }}</span>
+                          <span style="flex:1;min-width:0">
+                            <span style="display:block;font-size:14px">{{ p.titulo }}</span>
+                            <span style="display:block;font-size:11px;opacity:.5">{{ p.nota }}</span>
+                          </span>
+                          <svg width="8" height="14" viewBox="0 0 8 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" style="opacity:.4"><path d="M1 1l6 6-6 6"/></svg>
+                        </button>
+                      </sc-for>
+                    </div>
+                  </div>
+                </div>
+              </sc-if>
+
+              <!-- ── FROTA: LISTA ── -->
+              <sc-if value="{{ sFrota }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:14px">
+                  <div style="display:flex;gap:7px">
+                    <span class="tag tag-accent">{{ qtdVeiculos }} veículos</span>
+                    <span class="tag tag-neutral">{{ qtdVencendo }} com pendência</span>
+                  </div>
+
+                  <div>
+                    <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.45;margin-bottom:9px">Checklists em andamento</div>
+                    <button onClick="{{ abrirRetorno }}" style="cursor:pointer;width:100%;text-align:left;background:var(--color-accent-900);border:1px solid var(--color-accent-700);border-radius:var(--radius-md);padding:13px;color:var(--color-text);font-family:var(--font-body);display:flex;align-items:center;gap:11px;min-height:62px" style-hover="border-color:var(--color-accent)">
+                      <div style="flex:1;min-width:0">
+                        <div style="font-size:11px;opacity:.6;font-family:var(--font-heading)">CKL-VEI-000418 · HXP-5J34</div>
+                        <div style="font-size:14px;margin-top:2px">Retorno pendente · saiu ontem 06:40</div>
+                      </div>
+                      <span class="tag tag-outline" style="flex:none">Retorno</span>
+                    </button>
+                  </div>
+
+                  <button class="btn btn-primary" style="min-height:48px;width:100%;font-size:14px;gap:8px" onClick="{{ novoCheck }}">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                    Novo checklist de saída
+                  </button>
+
+                  <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.45">Veículos</div>
+                  <div style="display:flex;flex-direction:column;gap:9px;margin-top:-4px">
+                    <sc-for list="{{ veiculos }}" as="v" hint-placeholder-count="4">
+                      <button onClick="{{ v.abrir }}" style="cursor:pointer;text-align:left;background:var(--color-surface);border:1px solid var(--color-divider);border-radius:var(--radius-md);padding:14px;color:var(--color-text);font-family:var(--font-body);display:flex;flex-direction:column;gap:9px" style-hover="border-color:var(--color-accent-700)">
+                        <div style="display:flex;align-items:center;gap:10px">
+                          <div style="flex:1;min-width:0">
+                            <div style="font-size:16px;font-family:var(--font-heading);font-weight:500">{{ v.placa }}</div>
+                            <div style="font-size:12px;opacity:.55">{{ v.modelo }}</div>
+                          </div>
+                          <span class="{{ v.classe }}">{{ v.estado }}</span>
+                        </div>
+                        <div style="display:flex;gap:14px;font-size:11px;opacity:.5">
+                          <span>CRLV {{ v.crlv }}</span>
+                          <span>Seguro {{ v.seguro }}</span>
+                          <span>{{ v.km }} km</span>
+                        </div>
+                      </button>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-if>
+
+              <!-- ── FROTA: CHECKLIST ── -->
+              <sc-if value="{{ sCheck }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:16px">
+                  <div style="display:flex;align-items:center;gap:11px;padding:12px 13px;border-radius:var(--radius-md);background:var(--color-surface)">
+                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/></svg>
+                    <div style="flex:1;min-width:0">
+                      <div style="font-size:13px">Pavilhão 4 · Anhembi</div>
+                      <div style="font-size:11px;opacity:.5">-23.5152, -46.6321 · capturado às 07:58</div>
+                    </div>
+                  </div>
+
+                  <div style="display:flex;gap:6px">
+                    <sc-for list="{{ etapas }}" as="e" hint-placeholder-count="2">
+                      <button onClick="{{ e.selecionar }}" style="{{ e.estilo }}">{{ e.nome }}</button>
+                    </sc-for>
+                  </div>
+
+                  <div style="display:flex;gap:11px">
+                    <div class="field" style="flex:1">
+                      <label>{{ kmLabel }}</label>
+                      <div style="display:flex;align-items:center;gap:8px;background:var(--color-surface);border:1px solid var(--color-divider);border-radius:var(--radius-md);padding:5px 6px">
+                        <div style="flex:1;text-align:center;font-size:17px;font-family:var(--font-heading)">{{ kmValor }}</div>
+                        <button onClick="{{ maisKm }}" style="cursor:pointer;width:36px;height:36px;flex:none;border:0;border-radius:var(--radius-sm);background:var(--color-neutral-800);color:var(--color-text);font-size:19px;line-height:1">+</button>
+                      </div>
+                    </div>
+                    <div class="field" style="flex:1">
+                      <label>Motorista</label>
+                      <div class="input" style="min-height:48px;display:flex;align-items:center;font-size:14px">{{ motorista }}</div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.45;margin-bottom:8px">Combustível</div>
+                    <div style="display:flex;gap:5px">
+                      <sc-for list="{{ combustiveis }}" as="c" hint-placeholder-count="5">
+                        <button onClick="{{ c.selecionar }}" style="{{ c.estilo }}">{{ c.nome }}</button>
+                      </sc-for>
+                    </div>
+                  </div>
+
+                  <div class="field">
+                    <label>Destino</label>
+                    <div class="input" style="min-height:48px;display:flex;align-items:center;font-size:14px">Anhembi · Pavilhão 4</div>
+                  </div>
+
+                  <div>
+                    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:9px">
+                      <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.45">Itens · etapa {{ etapaAtual }}</div>
+                      <div style="font-size:11px;opacity:.5">{{ checkFeitos }} de {{ checkTotal }}</div>
+                    </div>
+                    <div style="height:3px;border-radius:9px;background:var(--color-neutral-800);overflow:hidden;margin-bottom:13px">
+                      <div style="height:100%;background:var(--color-accent);width:{{ checkPct }}%"></div>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:6px">
+                      <sc-for list="{{ itens }}" as="i" hint-placeholder-count="8">
+                        <button onClick="{{ i.alternar }}" style="cursor:pointer;text-align:left;display:flex;align-items:center;gap:11px;padding:11px 12px;border-radius:var(--radius-md);background:var(--color-surface);border:1px solid transparent;color:var(--color-text);font-family:var(--font-body);min-height:48px" style-hover="border-color:var(--color-accent-700)">
+                          <span style="{{ i.caixa }}">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="{{ i.tique }}"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
+                          </span>
+                          <span style="flex:1;min-width:0;font-size:14px">{{ i.nome }}</span>
+                        </button>
+                      </sc-for>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:9px">
+                      <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.45">Avarias</div>
+                      <div style="font-size:11px;opacity:.5">grava em frota_checklist_avarias</div>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:8px">
+                      <sc-for list="{{ avarias }}" as="a" hint-placeholder-count="0">
+                        <div style="display:flex;gap:11px;padding:11px;border-radius:var(--radius-md);background:var(--color-surface)">
+                          <div style="width:58px;height:58px;flex:none;border-radius:var(--radius-sm);background:var(--color-neutral-800);display:flex;align-items:flex-end;padding:5px">
+                            <span style="font-size:9px;opacity:.55">{{ a.foto }}</span>
+                          </div>
+                          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">
+                            <div style="font-size:13.5px">{{ a.descricao }}</div>
+                            <div style="font-size:10.5px;opacity:.45">{{ a.etapa }} · {{ a.hora }}</div>
+                          </div>
+                        </div>
+                      </sc-for>
+                      <button onClick="{{ registrarAvaria }}" style="cursor:pointer;min-height:48px;border-radius:var(--radius-md);border:1px dashed var(--color-neutral-700);background:transparent;color:var(--color-accent);display:flex;align-items:center;justify-content:center;gap:8px;font-family:var(--font-body);font-size:13.5px" style-hover="border-color:var(--color-accent);background:var(--color-accent-900)">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5h3.2l1.4-2.2h8.8l1.4 2.2H21v10H3z"/><circle cx="12" cy="13" r="3.4"/></svg>
+                        Registrar avaria com foto
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="field">
+                    <label>{{ obsLabel }}</label>
+                    <div class="input" style="min-height:64px;font-size:13px;opacity:.5;align-items:flex-start;display:flex">Toque para ditar ou escrever</div>
+                  </div>
+
+                  <button class="btn btn-primary" style="min-height:50px;font-size:15px;width:100%" onClick="{{ finalizar }}">{{ labelFinalizar }}</button>
+                </div>
+              </sc-if>
+
+              <!-- ── FROTA: ENVIADO ── -->
+              <sc-if value="{{ sCheckOk }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:20px;padding-top:26px;align-items:flex-start">
+                  <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.2"/><path d="M8 12.4l2.8 2.8L16.2 9"/></svg>
+                  <div>
+                    <h4 style="margin:0 0 7px">{{ okTitulo }}</h4>
+                    <p style="font-size:13.5px;opacity:.7;margin:0;text-wrap:pretty">{{ okTexto }}</p>
+                  </div>
+                  <div style="width:100%;padding:13px;border-radius:var(--radius-md);background:var(--color-surface);display:flex;flex-direction:column;gap:8px">
+                    <div style="display:flex;justify-content:space-between;font-size:12.5px"><span style="opacity:.55">Checklist</span><span>{{ numeroCheck }}</span></div>
+                    <div style="display:flex;justify-content:space-between;font-size:12.5px"><span style="opacity:.55">Veículo</span><span>{{ placaAtual }}</span></div>
+                    <div style="display:flex;justify-content:space-between;font-size:12.5px"><span style="opacity:.55">Status</span><span>{{ statusCheck }}</span></div>
+                    <div style="display:flex;justify-content:space-between;font-size:12.5px"><span style="opacity:.55">Avarias</span><span>{{ qtdAvarias }}</span></div>
+                  </div>
+                  <button class="btn btn-secondary" style="min-height:46px;width:100%" onClick="{{ irFrota }}">Voltar para a frota</button>
+                </div>
+              </sc-if>
+
+              <!-- ── NOVO CHECKLIST DE VEÍCULO ── -->
+              <sc-if value="{{ sNovoCheck }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:16px">
+                  <div>
+                    <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.45;margin-bottom:9px">Veículo</div>
+                    <div style="display:flex;flex-direction:column;gap:6px">
+                      <sc-for list="{{ escolhaVeiculos }}" as="v" hint-placeholder-count="4">
+                        <button onClick="{{ v.selecionar }}" style="{{ v.estilo }}">
+                          <span style="flex:1;min-width:0;text-align:left">
+                            <span style="display:block;font-size:14.5px">{{ v.placa }}</span>
+                            <span style="display:block;font-size:11px;opacity:.5">{{ v.modelo }} · {{ v.km }} km</span>
+                          </span>
+                          <span style="{{ v.marca }}"></span>
+                        </button>
+                      </sc-for>
+                    </div>
+                  </div>
+
+                  <div style="display:flex;gap:11px">
+                    <div class="field" style="flex:1">
+                      <label>KM inicial</label>
+                      <div class="input" style="min-height:48px;display:flex;align-items:center;font-size:15px;font-family:var(--font-heading)">{{ kmNovo }}</div>
+                    </div>
+                    <div class="field" style="flex:1">
+                      <label>Motorista</label>
+                      <div class="input" style="min-height:48px;display:flex;align-items:center;font-size:14px">{{ motorista }}</div>
+                    </div>
+                  </div>
+
+                  <div class="field">
+                    <label>Destino</label>
+                    <div class="input" style="min-height:48px;display:flex;align-items:center;font-size:14px;opacity:.5">Para onde o veículo vai</div>
+                  </div>
+
+                  <div>
+                    <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.45;margin-bottom:8px">Combustível na saída</div>
+                    <div style="display:flex;gap:5px">
+                      <sc-for list="{{ combustiveis }}" as="c" hint-placeholder-count="5">
+                        <button onClick="{{ c.selecionar }}" style="{{ c.estilo }}">{{ c.nome }}</button>
+                      </sc-for>
+                    </div>
+                  </div>
+
+                  <div style="padding:11px 12px;border-radius:var(--radius-md);border:1px solid var(--color-divider);font-size:12px;opacity:.7;text-wrap:pretty">{{ notaNumero }}</div>
+
+                  <button class="btn btn-primary" style="min-height:50px;font-size:15px;width:100%" onClick="{{ criarCheck }}">Criar e começar a vistoria</button>
+                </div>
+              </sc-if>
+
+              <!-- ── NOVO CHECKLIST DE CARGA ── -->
+              <sc-if value="{{ sNovaCarga }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:16px">
+                  <div>
+                    <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.45;margin-bottom:8px">Empresa</div>
+                    <div style="display:flex;gap:6px">
+                      <sc-for list="{{ empresas }}" as="e" hint-placeholder-count="2">
+                        <button onClick="{{ e.selecionar }}" style="{{ e.estilo }}">{{ e.nome }}</button>
+                      </sc-for>
+                    </div>
+                  </div>
+
+                  <div class="field">
+                    <label>Evento / feira</label>
+                    <div class="input" style="min-height:48px;display:flex;align-items:center;font-size:14px;opacity:.5">Nome do evento</div>
+                  </div>
+                  <div class="field">
+                    <label>Cliente</label>
+                    <div class="input" style="min-height:48px;display:flex;align-items:center;font-size:14px;opacity:.5">Quem contratou</div>
+                  </div>
+                  <div class="field">
+                    <label>Local</label>
+                    <div class="input" style="min-height:48px;display:flex;align-items:center;font-size:14px;opacity:.5">Pavilhão, endereço</div>
+                  </div>
+                  <div style="display:flex;gap:11px">
+                    <div class="field" style="flex:1">
+                      <label>Início</label>
+                      <div class="input" style="min-height:48px;display:flex;align-items:center;font-size:14px;opacity:.5">dd/mm</div>
+                    </div>
+                    <div class="field" style="flex:1">
+                      <label>Fim</label>
+                      <div class="input" style="min-height:48px;display:flex;align-items:center;font-size:14px;opacity:.5">dd/mm</div>
+                    </div>
+                  </div>
+
+                  <div style="padding:12px;border-radius:var(--radius-md);background:var(--color-surface);display:flex;align-items:center;gap:10px">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h14M5 12h14M5 17h9"/></svg>
+                    <div style="flex:1;font-size:12.5px;opacity:.75;text-wrap:pretty">Os {{ qtdModelo }} itens do modelo padrão entram automaticamente. Importar das OS's fica no sistema web.</div>
+                  </div>
+
+                  <div style="padding:11px 12px;border-radius:var(--radius-md);border:1px solid var(--color-divider);font-size:12px;opacity:.7;text-wrap:pretty">{{ notaNumero }}</div>
+
+                  <button class="btn btn-primary" style="min-height:50px;font-size:15px;width:100%" onClick="{{ criarCarga }}">Criar checklist</button>
+                </div>
+              </sc-if>
+
+              <!-- ── CARGA: LISTA ── -->
+              <sc-if value="{{ sCarga }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:14px">
+                  <div style="display:flex;gap:7px">
+                    <span class="tag tag-accent">{{ cargaAbertosLabel }}</span>
+                    <span class="tag tag-neutral">{{ cargaDivergLabel }}</span>
+                  </div>
+                  <button class="btn btn-primary" style="{{ estiloNovaCarga }}" onClick="{{ novaCarga }}">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                    Novo checklist de carga
+                  </button>
+                  <sc-if value="{{ offline }}" hint-placeholder-val="{{ false }}">
+                    <div style="padding:11px 12px;border-radius:var(--radius-md);border:1px solid var(--color-divider);font-size:12px;opacity:.7;text-wrap:pretty;margin-top:-6px">Criar carga precisa de rede: os itens vêm do modelo padrão e das OS's do evento, que só existem na base. Conferir um checklist já aberto funciona offline.</div>
+                  </sc-if>
+                  <div style="display:flex;flex-direction:column;gap:9px">
+                    <sc-for list="{{ cargas }}" as="c" hint-placeholder-count="3">
+                      <button onClick="{{ c.abrir }}" style="cursor:pointer;text-align:left;background:var(--color-surface);border:1px solid var(--color-divider);border-radius:var(--radius-md);padding:13px;color:var(--color-text);font-family:var(--font-body);display:flex;flex-direction:column;gap:8px" style-hover="border-color:var(--color-accent-700)">
+                        <div style="display:flex;align-items:center;gap:9px">
+                          <span style="font-size:11px;opacity:.45;font-family:var(--font-heading)">{{ c.numero }}</span>
+                          <span style="flex:1"></span>
+                          <span class="{{ c.classe }}">{{ c.status }}</span>
+                        </div>
+                        <div style="font-size:15px;font-family:var(--font-heading);font-weight:500">{{ c.evento }}</div>
+                        <div style="display:flex;gap:12px;font-size:11px;opacity:.5">
+                          <span>{{ c.local }}</span><span>{{ c.periodo }}</span><span>{{ c.itens }} itens</span>
+                        </div>
+                      </button>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-if>
+
+              <!-- ── CARGA: CONFERÊNCIA ── -->
+              <sc-if value="{{ sCargaDet }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:16px">
+                  <div>
+                    <div style="font-size:11px;opacity:.45;font-family:var(--font-heading)">{{ selCarga.numero }}</div>
+                    <h4 style="margin:5px 0 0">{{ selCarga.evento }}</h4>
+                    <div style="font-size:12.5px;opacity:.55;margin-top:3px">{{ selCarga.local }} · {{ selCarga.periodo }}</div>
+                  </div>
+
+                  <div style="display:flex;gap:6px">
+                    <sc-for list="{{ etapasCarga }}" as="e" hint-placeholder-count="2">
+                      <button onClick="{{ e.selecionar }}" style="{{ e.estilo }}">{{ e.nome }}</button>
+                    </sc-for>
+                  </div>
+
+                  <sc-if value="{{ temDivergencia }}" hint-placeholder-val="{{ false }}">
+                    <div style="padding:11px 12px;border-radius:var(--radius-md);background:var(--color-accent-900);font-size:12px;color:var(--color-accent-200);text-wrap:pretty">{{ divergTexto }}</div>
+                  </sc-if>
+
+                  <sc-for list="{{ secoes }}" as="s" hint-placeholder-count="3">
+                    <div>
+                      <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.45;margin-bottom:8px">{{ s.nome }}</div>
+                      <div style="display:flex;flex-direction:column;gap:6px">
+                        <sc-for list="{{ s.itens }}" as="i" hint-placeholder-count="3">
+                          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--radius-md);background:var(--color-surface)">
+                            <button onClick="{{ i.alternar }}" style="cursor:pointer;background:transparent;border:0;padding:0;flex:none;display:flex;align-items:center;justify-content:center;width:26px;height:26px;color:var(--color-text)">
+                              <span style="{{ i.caixa }}">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="{{ i.tique }}"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
+                              </span>
+                            </button>
+                            <div style="flex:1;min-width:0">
+                              <div style="font-size:13.5px">{{ i.descricao }}</div>
+                              <div style="font-size:10.5px;opacity:.45">previsto {{ i.previsto }}</div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:6px;flex:none">
+                              <button onClick="{{ i.menos }}" style="cursor:pointer;width:34px;height:38px;border:0;border-radius:var(--radius-sm);background:var(--color-neutral-800);color:var(--color-text);font-size:17px;line-height:1">−</button>
+                              <div style="{{ i.qtdEstilo }}">{{ i.qtd }}</div>
+                              <button onClick="{{ i.mais }}" style="cursor:pointer;width:34px;height:38px;border:0;border-radius:var(--radius-sm);background:var(--color-neutral-800);color:var(--color-text);font-size:17px;line-height:1">+</button>
+                            </div>
+                          </div>
+                        </sc-for>
+                      </div>
+                    </div>
+                  </sc-for>
+
+                  <button class="btn btn-primary" style="min-height:50px;font-size:15px;width:100%" onClick="{{ salvarCarga }}">{{ labelCarga }}</button>
+                </div>
+              </sc-if>
+
+              <!-- ── SIMULADOR ── -->
+              <sc-if value="{{ sSim }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:16px">
+                  <div style="display:flex;gap:6px">
+                    <sc-for list="{{ tiposSim }}" as="t" hint-placeholder-count="3">
+                      <button onClick="{{ t.selecionar }}" style="{{ t.estilo }}">{{ t.nome }}</button>
+                    </sc-for>
+                  </div>
+
+                  <div style="display:flex;gap:11px">
+                    <div class="field" style="flex:1">
+                      <label>Largura (m)</label>
+                      <div style="display:flex;align-items:center;gap:8px;background:var(--color-surface);border:1px solid var(--color-divider);border-radius:var(--radius-md);padding:5px 6px">
+                        <button onClick="{{ menosL }}" style="cursor:pointer;width:36px;height:36px;flex:none;border:0;border-radius:var(--radius-sm);background:var(--color-neutral-800);color:var(--color-text);font-size:19px;line-height:1">−</button>
+                        <div style="flex:1;text-align:center;font-size:17px;font-family:var(--font-heading)">{{ largura }}</div>
+                        <button onClick="{{ maisL }}" style="cursor:pointer;width:36px;height:36px;flex:none;border:0;border-radius:var(--radius-sm);background:var(--color-neutral-800);color:var(--color-text);font-size:19px;line-height:1">+</button>
+                      </div>
+                    </div>
+                    <div class="field" style="flex:1">
+                      <label>Altura (m)</label>
+                      <div style="display:flex;align-items:center;gap:8px;background:var(--color-surface);border:1px solid var(--color-divider);border-radius:var(--radius-md);padding:5px 6px">
+                        <button onClick="{{ menosA }}" style="cursor:pointer;width:36px;height:36px;flex:none;border:0;border-radius:var(--radius-sm);background:var(--color-neutral-800);color:var(--color-text);font-size:19px;line-height:1">−</button>
+                        <div style="flex:1;text-align:center;font-size:17px;font-family:var(--font-heading)">{{ altura }}</div>
+                        <button onClick="{{ maisA }}" style="cursor:pointer;width:36px;height:36px;flex:none;border:0;border-radius:var(--radius-sm);background:var(--color-neutral-800);color:var(--color-text);font-size:19px;line-height:1">+</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.45;margin-bottom:8px">Pitch do painel</div>
+                    <div style="display:flex;gap:6px">
+                      <sc-for list="{{ pitches }}" as="p" hint-placeholder-count="3">
+                        <button onClick="{{ p.selecionar }}" style="{{ p.estilo }}">{{ p.nome }}</button>
+                      </sc-for>
+                    </div>
+                  </div>
+
+                  <div style="padding:15px;border-radius:var(--radius-lg);background:var(--color-surface);box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:13px">
+                    <div style="display:flex;justify-content:center">
+                      <div style="display:grid;grid-template-columns:{{ colsCss }};gap:2px;padding:8px;background:var(--color-bg);border-radius:var(--radius-sm)">
+                        <sc-for list="{{ celulas }}" as="c" hint-placeholder-count="12">
+                          <div style="width:{{ c.lado }}px;height:{{ c.lado }}px;background:var(--color-accent-800);border:.5px solid var(--color-accent-700)"></div>
+                        </sc-for>
+                      </div>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px">
+                      <sc-for list="{{ resultados }}" as="r" hint-placeholder-count="6">
+                        <div>
+                          <div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;opacity:.45">{{ r.rotulo }}</div>
+                          <div style="font-size:16px;font-family:var(--font-heading)">{{ r.valor }}</div>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </div>
+
+                  <div style="display:flex;gap:9px">
+                    <button class="btn btn-primary" style="flex:1;min-height:46px" onClick="{{ enviarOrcamento }}">Enviar para orçamento</button>
+                    <button class="btn btn-secondary" style="min-height:46px;width:46px;padding:0" onClick="{{ enviarOrcamento }}">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 16v3.5h16V16"/></svg>
+                    </button>
+                  </div>
+                </div>
+              </sc-if>
+
+              <!-- ── APROVAÇÕES DE PONTO ── -->
+              <sc-if value="{{ sAprov }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:14px">
+                  <div style="display:flex;gap:6px">
+                    <sc-for list="{{ filtrosAprov }}" as="f" hint-placeholder-count="2">
+                      <button onClick="{{ f.selecionar }}" style="{{ f.estilo }}">{{ f.nome }}</button>
+                    </sc-for>
+                  </div>
+                  <sc-if value="{{ filaVazia }}" hint-placeholder-val="{{ false }}">
+                    <div style="padding:34px 14px;text-align:center;opacity:.5;font-size:13px">Nada pendente. As próximas chegam por push.</div>
+                  </sc-if>
+                  <div style="display:flex;flex-direction:column;gap:9px">
+                    <sc-for list="{{ solicitacoes }}" as="s" hint-placeholder-count="3">
+                      <button onClick="{{ s.abrir }}" style="cursor:pointer;text-align:left;background:var(--color-surface);border:1px solid var(--color-divider);border-radius:var(--radius-md);padding:13px;color:var(--color-text);font-family:var(--font-body);display:flex;flex-direction:column;gap:9px" style-hover="border-color:var(--color-accent-700)">
+                        <div style="display:flex;align-items:center;gap:9px">
+                          <div style="flex:1;min-width:0;font-size:15px;font-family:var(--font-heading);font-weight:500">{{ s.nome }}</div>
+                          <span class="{{ s.classe }}">{{ s.tipo }}</span>
+                        </div>
+                        <div style="font-size:12.5px;opacity:.7;text-wrap:pretty">{{ s.resumo }}</div>
+                        <div style="display:flex;gap:12px;font-size:11px;opacity:.45">
+                          <span>{{ s.dia }}</span><span>{{ s.origem }}</span>
+                        </div>
+                      </button>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-if>
+
+              <!-- ── APROVAÇÃO: DETALHE ── -->
+              <sc-if value="{{ sAprovDet }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:16px">
+                  <div style="display:flex;flex-direction:column;gap:5px">
+                    <span class="{{ sel.classe }}" style="align-self:flex-start">{{ sel.tipo }}</span>
+                    <h4 style="margin:6px 0 0">{{ sel.nome }}</h4>
+                    <div style="font-size:12.5px;opacity:.55">{{ sel.cargo }} · {{ sel.dia }}</div>
+                  </div>
+                  <div style="padding:14px;border-radius:var(--radius-md);background:var(--color-surface);display:flex;flex-direction:column;gap:11px">
+                    <sc-for list="{{ sel.linhas }}" as="l" hint-placeholder-count="4">
+                      <div style="display:flex;gap:12px;font-size:13px">
+                        <span style="width:96px;flex:none;opacity:.5">{{ l.rotulo }}</span>
+                        <span style="flex:1;text-wrap:pretty">{{ l.valor }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                  <div style="padding:13px;border-radius:var(--radius-md);border:1px solid var(--color-divider);font-size:12.5px;opacity:.7;text-wrap:pretty">Aprovar grava no livro-razão de ponto e avisa o colaborador pelo WhatsApp. Nada é aprovado automaticamente.</div>
+                  <div style="display:flex;gap:9px">
+                    <button class="btn btn-secondary" style="flex:1;min-height:48px" onClick="{{ rejeitar }}">Rejeitar</button>
+                    <button class="btn btn-primary" style="flex:1;min-height:48px" onClick="{{ aprovar }}">Aprovar</button>
+                  </div>
+                </div>
+              </sc-if>
+
+              <!-- ── ORDENS DE PAGAMENTO ── -->
+              <sc-if value="{{ sOp }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:14px">
+                  <div style="display:flex;gap:7px">
+                    <span class="tag tag-accent">{{ opTotal }} em aberto</span>
+                    <span class="tag tag-neutral">{{ opValor }}</span>
+                  </div>
+                  <div style="display:flex;flex-direction:column;gap:9px">
+                    <sc-for list="{{ ops }}" as="o" hint-placeholder-count="3">
+                      <button onClick="{{ o.abrir }}" style="cursor:pointer;text-align:left;background:var(--color-surface);border:1px solid var(--color-divider);border-radius:var(--radius-md);padding:13px;color:var(--color-text);font-family:var(--font-body);display:flex;flex-direction:column;gap:7px" style-hover="border-color:var(--color-accent-700)">
+                        <div style="display:flex;align-items:center;gap:9px">
+                          <span style="font-size:11px;opacity:.45;font-family:var(--font-heading)">{{ o.codigo }}</span>
+                          <span style="flex:1"></span>
+                          <span class="{{ o.classe }}">{{ o.status }}</span>
+                        </div>
+                        <div style="font-size:15px;font-family:var(--font-heading);font-weight:500">{{ o.favorecido }}</div>
+                        <div style="display:flex;align-items:baseline;gap:9px">
+                          <span style="font-size:17px">{{ o.valor }}</span>
+                          <span style="font-size:11px;opacity:.45">vence {{ o.vence }}</span>
+                        </div>
+                      </button>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-if>
+
+              <!-- ── OP: DETALHE ── -->
+              <sc-if value="{{ sOpDet }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:16px">
+                  <div>
+                    <div style="font-size:11px;opacity:.45;font-family:var(--font-heading)">{{ selOp.codigo }}</div>
+                    <h4 style="margin:5px 0 0">{{ selOp.favorecido }}</h4>
+                    <div style="font-size:28px;font-family:var(--font-heading);margin-top:9px">{{ selOp.valor }}</div>
+                  </div>
+                  <div style="padding:14px;border-radius:var(--radius-md);background:var(--color-surface);display:flex;flex-direction:column;gap:11px">
+                    <sc-for list="{{ selOp.linhas }}" as="l" hint-placeholder-count="5">
+                      <div style="display:flex;gap:12px;font-size:13px">
+                        <span style="width:96px;flex:none;opacity:.5">{{ l.rotulo }}</span>
+                        <span style="flex:1;text-wrap:pretty">{{ l.valor }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;padding:12px 13px;border-radius:var(--radius-md);border:1px solid var(--color-divider)">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12.5l2.6 2.6L16 9.5"/><path d="M20 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"/></svg>
+                    <div style="flex:1;font-size:12px;opacity:.7;text-wrap:pretty">Recibo vai para assinatura na Autentique e o link segue por WhatsApp.</div>
+                  </div>
+                  <div style="display:flex;gap:9px">
+                    <button class="btn btn-secondary" style="flex:1;min-height:48px" onClick="{{ verNoWeb }}">Ver no sistema</button>
+                    <button class="btn btn-primary" style="flex:1;min-height:48px" onClick="{{ aprovarOp }}">Aprovar pagamento</button>
+                  </div>
+                </div>
+              </sc-if>
+
+              <!-- ── NOTIFICAÇÕES ── -->
+              <sc-if value="{{ sNotif }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:9px">
+                  <sc-for list="{{ notificacoes }}" as="n" hint-placeholder-count="4">
+                    <div style="display:flex;gap:11px;padding:13px;border-radius:var(--radius-md);background:var(--color-surface)">
+                      <span style="{{ n.pontoEstilo }}"></span>
+                      <div style="flex:1;min-width:0">
+                        <div style="display:flex;gap:8px;align-items:baseline">
+                          <div style="flex:1;font-size:14px;font-family:var(--font-heading);font-weight:500">{{ n.titulo }}</div>
+                          <div style="font-size:10.5px;opacity:.4;flex:none">{{ n.quando }}</div>
+                        </div>
+                        <div style="font-size:12.5px;opacity:.65;text-wrap:pretty;margin-top:3px">{{ n.texto }}</div>
+                      </div>
+                    </div>
+                  </sc-for>
+                </div>
+              </sc-if>
+
+              <!-- ── PERFIL ── -->
+              <sc-if value="{{ sPerfil }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:18px">
+                  <div style="display:flex;align-items:center;gap:13px">
+                    <div style="width:54px;height:54px;flex:none;border-radius:99px;background:var(--color-accent-800);display:flex;align-items:center;justify-content:center;font-size:19px;font-family:var(--font-heading);color:var(--color-accent-100)">{{ iniciais }}</div>
+                    <div style="min-width:0">
+                      <div style="font-size:17px;font-family:var(--font-heading);font-weight:500">{{ usuarioNome }}</div>
+                      <div style="font-size:12.5px;opacity:.55">{{ usuarioCargo }}</div>
+                    </div>
+                  </div>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap">
+                    <span class="tag tag-outline">{{ permissao }}</span>
+                    <span class="tag tag-neutral">Matrícula 2184</span>
+                  </div>
+                  <div style="display:flex;flex-direction:column">
+                    <sc-for list="{{ linhasPerfil }}" as="l" hint-placeholder-count="5">
+                      <button onClick="{{ l.acao }}" style="cursor:pointer;background:transparent;border:0;border-bottom:1px solid var(--color-divider);padding:15px 2px;display:flex;align-items:center;gap:11px;color:var(--color-text);font-family:var(--font-body);text-align:left;min-height:52px" style-hover="background:var(--color-neutral-900)">
+                        <span style="flex:1;font-size:14px">{{ l.nome }}</span>
+                        <span style="font-size:12px;opacity:.5">{{ l.valor }}</span>
+                        <svg width="7" height="12" viewBox="0 0 8 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" style="opacity:.35"><path d="M1 1l6 6-6 6"/></svg>
+                      </button>
+                    </sc-for>
+                  </div>
+                  <button class="btn btn-secondary" style="min-height:46px;width:100%" onClick="{{ sair }}">Sair da conta</button>
+                  <div style="font-size:11px;opacity:.35">Rentech 1.0.0 · build 118 · {{ plataformaLabel }}</div>
+                </div>
+              </sc-if>
+
+              <!-- ── WEBVIEW ── -->
+              <sc-if value="{{ sWeb }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:13px">
+                  <div style="display:flex;align-items:center;gap:9px;padding:8px 12px;border-radius:99px;background:var(--color-surface);box-shadow:var(--shadow-sm)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.8" stroke-linecap="round"><path d="M7 10V7.5a5 5 0 0 1 10 0V10"/><rect x="5" y="10" width="14" height="10" rx="2"/></svg>
+                    <div style="flex:1;font-size:11.5px;opacity:.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">rentech.com.br/admin/rh/holerite</div>
+                  </div>
+                  <div style="padding:11px 12px;border-radius:var(--radius-md);background:var(--color-accent-900);font-size:11.5px;color:var(--color-accent-200);text-wrap:pretty">Módulo do sistema web, aberto com a sessão do app. Sem segunda senha.</div>
+                  <div style="display:flex;flex-direction:column;gap:11px;padding:14px;border-radius:var(--radius-md);background:var(--color-surface)">
+                    <div style="height:13px;width:52%;border-radius:4px;background:var(--color-neutral-800)"></div>
+                    <div style="height:9px;width:88%;border-radius:4px;background:var(--color-neutral-900)"></div>
+                    <div style="height:9px;width:72%;border-radius:4px;background:var(--color-neutral-900)"></div>
+                    <div style="height:1px;background:var(--color-divider);margin:3px 0"></div>
+                    <sc-for list="{{ linhasWeb }}" as="w" hint-placeholder-count="4">
+                      <div style="display:flex;gap:10px;align-items:center">
+                        <div style="height:9px;flex:1;border-radius:4px;background:var(--color-neutral-900)"></div>
+                        <div style="height:9px;width:44px;border-radius:4px;background:var(--color-neutral-800)"></div>
+                      </div>
+                    </sc-for>
+                  </div>
+                  <div style="font-size:11.5px;opacity:.45;text-wrap:pretty">Placeholder: a tela real é a página Next.js já em produção, renderizada dentro do app.</div>
+                </div>
+              </sc-if>
+
+            </div>
+
+            <!-- ── TAB BAR ── -->
+            <div style="flex:none;display:flex;align-items:stretch;padding:7px 6px 6px;background:var(--color-surface);box-shadow:0 -1px 0 var(--color-divider)">
+              <sc-for list="{{ abas }}" as="t" hint-placeholder-count="4">
+                <button onClick="{{ t.ir }}" style="{{ t.estilo }}">
+                  <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="{{ t.icone }}"/></svg>
+                  <span style="font-size:10px;letter-spacing:.01em">{{ t.nome }}</span>
+                </button>
+              </sc-for>
+            </div>
+            <sc-if value="{{ isIos }}" hint-placeholder-val="{{ true }}"><div style="height:26px;flex:none;background:var(--color-surface)"></div></sc-if>
+          </sc-if>
+
+          <sc-if value="{{ temToast }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute;left:16px;right:16px;bottom:104px;padding:12px 14px;border-radius:var(--radius-md);background:var(--color-neutral-800);box-shadow:var(--shadow-md);font-size:12.5px;animation:pop .18s ease-out;text-wrap:pretty">{{ toast }}</div>
+          </sc-if>
+        </div>
+
+      </x-import>
+    </div>
+
+    <div style="flex:1;min-width:260px;max-width:340px;display:flex;flex-direction:column;gap:14px;position:sticky;top:24px">
+      <div class="card elev-sm">
+        <div class="card-kicker">Onde estamos no código</div>
+        <p class="card-body">O scaffold em <code>mobile/</code> já tem Expo Router, Supabase com AsyncStorage, contexto de sessão e abas por cargo. O que falta são exatamente as telas deste protótipo.</p>
+      </div>
+      <div class="card elev-sm">
+        <div class="card-kicker">Próximos passos</div>
+        <p class="card-body">1. Confirmar as abas por cargo. 2. Escolher entre push da Expo ou reaproveitar o WhatsApp para avisos. 3. Fila offline: o que pode ser editado depois de enfileirado. 4. Segundo fator para aprovar OP no celular.</p>
+      </div>
+      <div class="card elev-sm">
+        <div class="card-kicker">Perguntas abertas</div>
+        <p class="card-body">A conferência de carga no celular pode criar divergência, ou só o web resolve? E o app deve deixar criar checklist novo, ou só continuar os que já existem no sistema?</p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1280,&quot;height&quot;:1000}}">
+const ICONES = {
+  home: 'M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z',
+  frota: 'M2 6.5h11v10.5H2zM13 10.5h4l3 3v3.5h-7M6 20a1.6 1.6 0 1 0 0-3.2 1.6 1.6 0 0 0 0 3.2M17 20a1.6 1.6 0 1 0 0-3.2 1.6 1.6 0 0 0 0 3.2',
+  sim: 'M5.5 3h13v18h-13zM9 7.5h6M9 11.5h2.5M14 11.5h2M9 15.5h2.5M14 15.5h2',
+  aprov: 'M4 5.5h16v14H4zM8.5 12.4l2.6 2.6 4.8-5.4M4 9h16',
+  op: 'M3 6.5h18v11H3zM7.5 12h4M15.5 10v4',
+  perfil: 'M12 4.2a3.9 3.9 0 1 1 0 7.8 3.9 3.9 0 0 1 0-7.8M4.5 20.5c0-3.7 3.4-5.6 7.5-5.6s7.5 1.9 7.5 5.6',
+  web: 'M12 3.2a8.8 8.8 0 1 0 0 17.6 8.8 8.8 0 0 0 0-17.6M3.4 12h17.2M12 3.2c2.4 2.6 2.4 15 0 17.6M12 3.2c-2.4 2.6-2.4 15 0 17.6',
+  carga: 'M4 8.5l8-4 8 4v7l-8 4-8-4zM4 8.5l8 4 8-4M12 12.5v7',
+};
+
+const PERFIS = [
+  { id: 'colab', nome: 'Colaborador', cargo: 'Técnico de LED', permissao: 'USUARIO', abas: ['home', 'sim', 'perfil'] },
+  { id: 'frota', nome: 'Campo / Frota', cargo: 'Operações — montagem', permissao: 'OPERACIONAL', abas: ['home', 'frota', 'carga', 'sim', 'perfil'] },
+  { id: 'rh', nome: 'RH / Gestor', cargo: 'Analista de RH', permissao: 'ADMINISTRATIVO', abas: ['home', 'aprov', 'op', 'perfil'] },
+  { id: 'com', nome: 'Comercial', cargo: 'Consultor de vendas', permissao: 'USUARIO', abas: ['home', 'sim', 'perfil'] },
+];
+
+const NOMES = { colab: 'João Matos', frota: 'Rafael Prado', rh: 'Camila Duarte', com: 'Bruno Aoki' };
+
+const VEICULOS = [
+  { placa: 'FLU-4C21', modelo: 'Iveco Daily 35-150 · baú', crlv: '2026 ok', seguro: 'vence 12/09', km: '84.310', estado: 'Vistoria hoje', classe: 'tag tag-accent' },
+  { placa: 'GDR-8H77', modelo: 'Fiat Ducato · carga', crlv: '2026 ok', seguro: 'ok', km: '62.905', estado: 'Em rota', classe: 'tag tag-neutral' },
+  { placa: 'BQT-1M09', modelo: 'Renault Master · equipe', crlv: 'vencido', seguro: 'ok', km: '119.442', estado: 'CRLV vencido', classe: 'tag tag-outline' },
+  { placa: 'HXP-5J34', modelo: 'VW Delivery 9.170 · truck', crlv: '2026 ok', seguro: 'ok', km: '203.118', estado: 'Pátio', classe: 'tag tag-neutral' },
+];
+
+// Espelha frota_checklist_itens: uma lista por etapa, campo `marcado` booleano.
+const ITENS_CHECK = {
+  SAIDA: ['CRLV no veículo', 'Pneus e estepe', 'Nível de óleo', 'Água do radiador', 'Luzes e setas', 'Freios', 'Extintor e triângulo', 'Cintas e catracas'],
+  RETORNO: ['KM final anotado', 'Combustível conforme saída', 'Sem avaria nova', 'Carga descarregada', 'Cintas devolvidas', 'Cabine limpa', 'Chave devolvida'],
+};
+
+const COMBUSTIVEL = ['Cheio', '3/4', '1/2', '1/4', 'Reserva'];
+
+const AVARIAS_INICIAIS = [
+  { descricao: 'Risco no para-choque traseiro', etapa: 'SAÍDA', hora: '07:56', foto: 'IMG_4180' },
+];
+
+// Espelha checklist_itens da expedição: seção, qtd_prevista, saida_qtd, saida_ok.
+const CARGAS = [
+  { id: 'c1', numero: 'CKL-000318', evento: 'Feira Hospitalar 2026', local: 'Expo Center Norte', periodo: '24–28/08', status: 'Rascunho', classe: 'tag tag-accent', itens: 24 },
+  { id: 'c2', numero: 'CKL-000317', evento: 'Congresso Anhembi', local: 'Distrito Anhembi', periodo: '21–23/08', status: 'Saída conferida', classe: 'tag tag-outline', itens: 31 },
+  { id: 'c3', numero: 'CKL-000315', evento: 'Show Allianz', local: 'Allianz Parque', periodo: '16–18/08', status: 'Finalizado', classe: 'tag tag-neutral', itens: 18 },
+];
+
+const ITENS_CARGA = [
+  { id: 'i1', secao: 'Painéis LED', descricao: 'Cabinet P3.9 500×500', previsto: 72 },
+  { id: 'i2', secao: 'Painéis LED', descricao: 'Cabinet P2.6 500×500', previsto: 12 },
+  { id: 'i3', secao: 'Painéis LED', descricao: 'Receptora / cabo flat', previsto: 8 },
+  { id: 'i4', secao: 'Estrutura', descricao: 'Box truss Q30 · 2m', previsto: 14 },
+  { id: 'i5', secao: 'Estrutura', descricao: 'Sapata / base', previsto: 6 },
+  { id: 'i6', secao: 'Processamento', descricao: 'Novastar VX600', previsto: 2 },
+  { id: 'i7', secao: 'Processamento', descricao: 'Cabo SDI 20m', previsto: 10 },
+];
+
+const SOLICITACOES = [
+  { id: 's1', nome: 'Ana Beatriz Lima', cargo: 'Assistente administrativo', tipo: 'Abono', classe: 'tag tag-accent', dia: '19/08', origem: 'WhatsApp · bot de ponto', resumo: 'Consulta médica das 14h às 16h, atestado enviado na conversa.', linhas: [ { rotulo: 'Pedido', valor: 'Abono parcial de 2h' }, { rotulo: 'Data', valor: '19/08/2026, quarta' }, { rotulo: 'Batidas', valor: '08:04 · 12:01 · 16:12 · 18:03' }, { rotulo: 'Anexo', valor: 'atestado-19-08.jpg' }, { rotulo: 'Recebido', valor: 'hoje, 09:12 — via Z-API' } ] },
+  { id: 's2', nome: 'Diego Fontes', cargo: 'Técnico de áudio', tipo: 'Justificativa', classe: 'tag tag-accent-2', dia: '18/08', origem: 'WhatsApp · bot de ponto', resumo: 'Saída às 04:40 depois da desmontagem do evento, sem batida de saída.', linhas: [ { rotulo: 'Pedido', valor: 'Justificar batida faltante' }, { rotulo: 'Data', valor: '18/08/2026, terça' }, { rotulo: 'Batidas', valor: '13:58 · — · —' }, { rotulo: 'Texto', valor: 'Desmontagem Anhembi terminou 04:30, celular sem bateria.' }, { rotulo: 'Recebido', valor: 'ontem, 06:20 — via Z-API' } ] },
+  { id: 's3', nome: 'Marcos Yuri Alves', cargo: 'Montador', tipo: 'Ponto', classe: 'tag tag-neutral', dia: '18/08', origem: 'App · geolocalizado', resumo: 'Entrada fora do raio do galpão: obra em Guarulhos.', linhas: [ { rotulo: 'Pedido', valor: 'Aceitar batida fora do raio' }, { rotulo: 'Data', valor: '18/08/2026, terça' }, { rotulo: 'Local', valor: 'Guarulhos, SP — 31 km do galpão' }, { rotulo: 'Recebido', valor: 'ontem, 07:41 — via app' } ] },
+];
+
+const OPS = [
+  { id: 'o1', codigo: 'OP-2026-0418', favorecido: 'Cenotécnica Vega ME', valor: 'R$ 18.400,00', vence: '25/08', status: 'Aguardando você', classe: 'tag tag-accent', linhas: [ { rotulo: 'Serviço', valor: 'Estrutura de box truss — evento Anhembi' }, { rotulo: 'Solicitante', valor: 'Operações · Rafael Prado' }, { rotulo: 'Forma', valor: 'PIX CNPJ 12.884.310/0001-44' }, { rotulo: 'Recibo', valor: 'assinatura pendente' }, { rotulo: 'Anexos', valor: 'nota fiscal, contrato' } ] },
+  { id: 'o2', codigo: 'OP-2026-0417', favorecido: 'Lucas Ferreira (freelance)', valor: 'R$ 2.150,00', vence: '23/08', status: 'Aguardando você', classe: 'tag tag-accent', linhas: [ { rotulo: 'Serviço', valor: 'Operação de videowall — 3 diárias' }, { rotulo: 'Solicitante', valor: 'Comercial · Bruno Aoki' }, { rotulo: 'Forma', valor: 'PIX CPF 411.***.***-08' }, { rotulo: 'Recibo', valor: 'assinado 21/08' }, { rotulo: 'Anexos', valor: 'recibo' } ] },
+  { id: 'o3', codigo: 'OP-2026-0415', favorecido: 'Transportadora Mairi', valor: 'R$ 6.980,00', vence: '21/08', status: 'Pago', classe: 'tag tag-neutral', linhas: [ { rotulo: 'Serviço', valor: 'Frete São Paulo — Campinas' }, { rotulo: 'Solicitante', valor: 'Operações' }, { rotulo: 'Forma', valor: 'Boleto' }, { rotulo: 'Recibo', valor: 'assinado 20/08' }, { rotulo: 'Anexos', valor: 'boleto, comprovante' } ] },
+];
+
+const NOTIFICACOES = [
+  { id: 'n1', titulo: 'Abono aguardando aprovação', texto: 'Ana Beatriz Lima pediu abono de 2h em 19/08.', quando: '9:12', lida: false },
+  { id: 'n2', titulo: 'CRLV vencido', texto: 'BQT-1M09 está com o CRLV vencido — automação frota-vencimentos.', quando: '7:00', lida: false },
+  { id: 'n3', titulo: 'Checklist enviado', texto: 'FLU-4C21 subiu com 2 avarias e 4 fotos.', quando: 'ontem', lida: true },
+  { id: 'n4', titulo: 'Recibo assinado', texto: 'Lucas Ferreira assinou o recibo da OP-2026-0417.', quando: 'ontem', lida: true },
+];
+
+const PITCHES = [
+  { id: 'p26', nome: 'P2.6', pixel: 192 },
+  { id: 'p39', nome: 'P3.9', pixel: 128 },
+  { id: 'p49', nome: 'P4.8', pixel: 104 },
+];
+
+const TITULOS = {
+  home: ['Início', 'terça, 22 de agosto'],
+  frota: ['Frota', 'veículos e vistorias'],
+  check: ['Checklist de veículo', 'CKL-VEI-000418'],
+  checkok: ['Checklist', ''],
+  carga: ['Checklists de carga', 'expedição de equipamentos'],
+  novocheck: ['Novo checklist', 'saída de veículo'],
+  novacarga: ['Novo checklist', 'carga de equipamento'],
+  cargadet: ['Conferência de carga', ''],
+  sim: ['Simuladores', 'dimensionamento em campo'],
+  aprov: ['Aprovações de ponto', 'fila do RH'],
+  aprovdet: ['Solicitação', ''],
+  op: ['Ordens de pagamento', 'aguardando aprovação'],
+  opdet: ['Ordem de pagamento', ''],
+  notif: ['Notificações', ''],
+  perfil: ['Perfil', ''],
+  web: ['Sistema web', 'WebView autenticada'],
+};
+
+const PAIS = { check: 'frota', checkok: 'frota', novocheck: 'frota', novacarga: 'carga', cargadet: 'carga', aprovdet: 'aprov', opdet: 'op', notif: 'home', web: 'perfil' };
+
+class Component extends DCLogic {
+  state = {
+    plataforma: 'ios',
+    perfil: 'frota',
+    offline: false,
+    logado: false,
+    tela: 'login',
+    etapa: 'SAIDA',
+    marcados: {},
+    avarias: AVARIAS_INICIAIS,
+    km: 84310,
+    combustivel: 'Cheio',
+    etapaCarga: 'SAIDA',
+    qtdsCarga: {},
+    selCargaId: 'c1',
+    veiculoNovo: 'FLU-4C21',
+    empresa: 'Rentech',
+    fotos: 0,
+    largura: 6,
+    altura: 3,
+    pitch: 'p39',
+    tipoSim: 'Videowall',
+    filtro: 'Pendentes',
+    solicitacoes: SOLICITACOES,
+    ops: OPS,
+    selId: null,
+    selOpId: null,
+    toast: '',
+    biometria: true,
+  };
+
+  set = (patch) => this.setState(patch);
+
+  ir = (tela) => this.setState({ tela, toast: '' });
+
+  aviso = (texto) => {
+    this.setState({ toast: texto });
+    clearTimeout(this._t);
+    this._t = setTimeout(() => this.setState({ toast: '' }), 2600);
+  };
+
+  componentWillUnmount() { clearTimeout(this._t); }
+
+  perfilAtual() { return PERFIS.find(p => p.id === this.state.perfil) || PERFIS[0]; }
+
+  botao(ativo) {
+    const base = 'cursor:pointer;font-family:var(--font-body);font-size:13px;padding:9px 13px;min-height:40px;border-radius:var(--radius-md);text-align:left;';
+    return ativo
+      ? base + 'background:var(--color-accent-900);border:1px solid var(--color-accent);color:var(--color-accent-200)'
+      : base + 'background:transparent;border:1px solid var(--color-divider);color:var(--color-text)';
+  }
+
+  chip(ativo) {
+    const base = 'cursor:pointer;font-family:var(--font-body);font-size:13px;padding:8px 14px;min-height:40px;border-radius:99px;flex:1;';
+    return ativo
+      ? base + 'background:var(--color-accent-900);border:1px solid var(--color-accent);color:var(--color-accent-200)'
+      : base + 'background:transparent;border:1px solid var(--color-divider);color:var(--color-text)';
+  }
+
+  renderVals() {
+    const S = this.state;
+    const perfil = this.perfilAtual();
+    const isIos = S.plataforma === 'ios';
+    const tela = S.tela;
+    const [titulo, sub] = TITULOS[tela] || ['', ''];
+
+    // checklist de veículo — frota_checklists + frota_checklist_itens (marcado) + avarias
+    const lista = ITENS_CHECK[S.etapa];
+    const chaveEtapa = (n) => `${S.etapa}::${n}`;
+    const feitos = lista.filter(n => S.marcados[chaveEtapa(n)]).length;
+    const caixa = (on) => 'flex:none;width:22px;height:22px;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;'
+      + (on ? 'background:var(--color-accent-800);border:1px solid var(--color-accent);color:var(--color-accent-100)'
+            : 'background:transparent;border:1px solid var(--color-neutral-700);color:transparent');
+    const itens = lista.map(nome => {
+      const on = !!S.marcados[chaveEtapa(nome)];
+      return {
+        nome,
+        caixa: caixa(on),
+        tique: on ? 'opacity:1' : 'opacity:0',
+        alternar: () => this.setState({ marcados: { ...S.marcados, [chaveEtapa(nome)]: !on } }),
+      };
+    });
+
+    // conferência de carga — checklists + checklist_itens + checklist_divergencias
+    const qtdDe = (i) => (S.qtdsCarga[i.id] === undefined ? i.previsto : S.qtdsCarga[i.id]);
+    const divergentes = ITENS_CARGA.filter(i => qtdDe(i) !== i.previsto);
+    const nomesSecoes = [...new Set(ITENS_CARGA.map(i => i.secao))];
+    const secoes = nomesSecoes.map(nome => ({
+      nome,
+      itens: ITENS_CARGA.filter(i => i.secao === nome).map(i => {
+        const q = qtdDe(i);
+        const ok = !!S.marcados['CARGA::' + i.id];
+        return {
+          descricao: i.descricao,
+          previsto: i.previsto,
+          qtd: q,
+          qtdEstilo: 'min-width:34px;text-align:center;font-size:16px;font-family:var(--font-heading);color:'
+            + (q === i.previsto ? 'var(--color-text)' : 'var(--color-accent-300)'),
+          caixa: caixa(ok),
+          tique: ok ? 'opacity:1' : 'opacity:0',
+          alternar: () => this.setState({ marcados: { ...S.marcados, ['CARGA::' + i.id]: !ok } }),
+          mais: () => this.setState({ qtdsCarga: { ...S.qtdsCarga, [i.id]: q + 1 } }),
+          menos: () => this.setState({ qtdsCarga: { ...S.qtdsCarga, [i.id]: Math.max(0, q - 1) } }),
+        };
+      }),
+    }));
+    const selCarga = CARGAS.find(c => c.id === S.selCargaId) || CARGAS[0];
+
+    // simulador
+    const pitch = PITCHES.find(p => p.id === S.pitch) || PITCHES[1];
+    const cols = Math.max(1, Math.round(S.largura / 0.5));
+    const rows = Math.max(1, Math.round(S.altura / 0.5));
+    const paineis = cols * rows;
+    const lado = Math.max(6, Math.min(15, Math.floor(230 / Math.max(cols, rows * 1.6))));
+    const celulas = Array.from({ length: Math.min(paineis, 240) }, (_, i) => ({ k: i, lado }));
+    const brl = (n) => 'R$ ' + n.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
+    const resultados = [
+      { rotulo: 'Painéis 50×50', valor: `${paineis} (${cols}×${rows})` },
+      { rotulo: 'Resolução', valor: `${cols * pitch.pixel} × ${rows * pitch.pixel} px` },
+      { rotulo: 'Área', valor: `${(cols * 0.5 * rows * 0.5).toFixed(2).replace('.', ',')} m²` },
+      { rotulo: 'Peso', valor: `${Math.round(paineis * 8.5)} kg` },
+      { rotulo: 'Consumo médio', valor: `${(paineis * 0.15).toFixed(1).replace('.', ',')} kW` },
+      { rotulo: 'Diária estimada', valor: brl(paineis * 145) },
+    ];
+
+    const sel = this.state.solicitacoes.find(s => s.id === S.selId) || SOLICITACOES[0];
+    const selOp = this.state.ops.find(o => o.id === S.selOpId) || OPS[0];
+
+    const fila = S.filtro === 'Pendentes' ? this.state.solicitacoes : [];
+
+    const opsAbertas = this.state.ops.filter(o => o.status !== 'Pago');
+    const naoLidas = NOTIFICACOES.some(n => !n.lida) && tela !== 'notif';
+
+    const abas = perfil.abas.map(k => {
+      const mapa = { home: ['Início', 'home'], frota: ['Frota', 'frota'], carga: ['Carga', 'carga'], sim: ['Simular', 'sim'], aprov: ['Ponto', 'aprov'], op: ['OP', 'op'], perfil: ['Perfil', 'perfil'] };
+      const [nome, destino] = mapa[k];
+      const ativo = tela === destino || PAIS[tela] === destino;
+      return {
+        k, nome, icone: ICONES[k],
+        estilo: 'cursor:pointer;flex:1;background:transparent;border:0;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 2px;min-height:52px;font-family:var(--font-body);border-radius:var(--radius-md);color:'
+          + (ativo ? 'var(--color-accent)' : 'color-mix(in srgb, var(--color-text) 50%, transparent)'),
+        ir: () => this.ir(destino),
+      };
+    });
+
+    const atalhosPorPerfil = {
+      colab: [
+        { nome: 'Holerite', nota: 'último fechamento e assinatura', icone: ICONES.web, ir: () => this.ir('web') },
+        { nome: 'Documentos', nota: 'ASO, ficha, contrato', icone: ICONES.web, ir: () => this.ir('web') },
+        { nome: 'Simuladores', nota: 'LED, videowall, tela', icone: ICONES.sim, ir: () => this.ir('sim') },
+        { nome: 'Meu ponto', nota: 'espelho do mês', icone: ICONES.aprov, ir: () => this.ir('web') },
+      ],
+      frota: [
+        { nome: 'Checklist de veículo', nota: 'saída e retorno com avaria', icone: ICONES.frota, ir: () => this.ir('frota') },
+        { nome: 'Checklist de carga', nota: 'conferência de equipamento', icone: ICONES.carga, ir: () => this.ir('carga') },
+        { nome: 'Simuladores', nota: 'grid e curvatura em campo', icone: ICONES.sim, ir: () => this.ir('sim') },
+        { nome: 'Holerite', nota: 'abre no sistema web', icone: ICONES.web, ir: () => this.ir('web') },
+      ],
+      rh: [
+        { nome: 'Aprovações', nota: 'ponto, abono, justificativa', icone: ICONES.aprov, ir: () => this.ir('aprov') },
+        { nome: 'Ordens de pagamento', nota: 'aprovar e acompanhar', icone: ICONES.op, ir: () => this.ir('op') },
+        { nome: 'Assinaturas', nota: 'Autentique, status ao vivo', icone: ICONES.web, ir: () => this.ir('web') },
+        { nome: 'Folha', nota: 'fechamento no sistema web', icone: ICONES.web, ir: () => this.ir('web') },
+      ],
+      com: [
+        { nome: 'Simuladores', nota: 'dimensionar na frente do cliente', icone: ICONES.sim, ir: () => this.ir('sim') },
+        { nome: 'Estoque', nota: 'o que está livre na data', icone: ICONES.web, ir: () => this.ir('web') },
+        { nome: 'Orçamento', nota: 'enviar por e-mail', icone: ICONES.op, ir: () => this.ir('sim') },
+        { nome: 'Cases', nota: 'vídeos para mostrar', icone: ICONES.web, ir: () => this.ir('web') },
+      ],
+    };
+
+    const pendPorPerfil = {
+      colab: [ { contagem: '1', titulo: 'Holerite de julho sem assinatura', nota: 'assinar pela Autentique', ir: () => this.ir('web') } ],
+      frota: [
+        { contagem: '1', titulo: 'Retorno de veículo pendente', nota: 'CKL-VEI-000418 · HXP-5J34', ir: () => this.setState({ tela: 'check', etapa: 'RETORNO' }) },
+        { contagem: '1', titulo: 'Carga para conferir', nota: 'CKL-000318 · Feira Hospitalar', ir: () => this.ir('carga') },
+        { contagem: '1', titulo: 'CRLV vencido', nota: 'BQT-1M09 · Renault Master', ir: () => this.ir('frota') },
+      ],
+      rh: [
+        { contagem: String(this.state.solicitacoes.length), titulo: 'Solicitações de ponto', nota: 'abono, justificativa e batida fora do raio', ir: () => this.ir('aprov') },
+        { contagem: String(opsAbertas.length), titulo: 'Ordens de pagamento', nota: 'aguardando sua aprovação', ir: () => this.ir('op') },
+      ],
+      com: [ { contagem: '2', titulo: 'Orçamentos sem resposta', nota: 'enviados há mais de 5 dias', ir: () => this.ir('web') } ],
+    };
+
+    return {
+      // topo / molduras
+      plataforma: S.plataforma,
+      isIos,
+      plataformaLabel: isIos ? 'iOS 26' : 'Android 15',
+      btnIos: this.botao(isIos) + ';flex:1;text-align:center;justify-content:center',
+      btnAnd: this.botao(!isIos) + ';flex:1;text-align:center;justify-content:center',
+      setIos: () => this.setState({ plataforma: 'ios' }),
+      setAnd: () => this.setState({ plataforma: 'android' }),
+      btnRede: this.botao(S.offline) + ';width:100%',
+      redeLabel: S.offline ? 'Offline (fila ativa)' : 'Conectado',
+      toggleOffline: () => this.setState({ offline: !S.offline }),
+      perfis: PERFIS.map(p => ({
+        nome: p.nome,
+        estilo: this.botao(p.id === S.perfil) + ';width:100%',
+        selecionar: () => this.setState({ perfil: p.id, tela: p.id === 'rh' ? 'aprov' : 'home', logado: true }),
+      })),
+      mapaTelas: [
+        ['Login', 'login'], ['Início', 'home'], ['Notificações', 'notif'], ['Frota', 'frota'],
+        ['Novo checklist de veículo', 'novocheck'], ['Checklist de veículo', 'check'], ['Checklist salvo', 'checkok'],
+        ['Checklists de carga', 'carga'], ['Novo checklist de carga', 'novacarga'], ['Conferência de carga', 'cargadet'], ['Simulador', 'sim'],
+        ['Aprovações de ponto', 'aprov'], ['Solicitação', 'aprovdet'], ['Ordens de pagamento', 'op'],
+        ['OP detalhe', 'opdet'], ['Perfil', 'perfil'], ['WebView', 'web'],
+      ].map(([nome, id]) => ({
+        nome,
+        estilo: 'cursor:pointer;text-align:left;background:transparent;border:0;border-left:2px solid ' + (tela === id ? 'var(--color-accent)' : 'transparent')
+          + ';padding:7px 10px;font-family:var(--font-body);font-size:12.5px;min-height:34px;color:' + (tela === id ? 'var(--color-accent-200)' : 'color-mix(in srgb, var(--color-text) 62%, transparent)'),
+        ir: () => this.setState({ tela: id, logado: id !== 'login', toast: '' }),
+      })),
+
+      // estado geral
+      logado: S.logado && tela !== 'login',
+      sLogin: !S.logado || tela === 'login',
+      offline: S.offline,
+      filaLabel: S.offline ? '1 vistoria na fila, sobe quando voltar' : '',
+      temVoltar: !!PAIS[tela],
+      voltar: () => this.ir(PAIS[tela] || 'home'),
+      tituloTela: titulo,
+      subtituloTela: sub,
+      entrar: () => this.setState({ logado: true, tela: S.perfil === 'rh' ? 'aprov' : 'home' }),
+      irNotificacoes: () => this.ir('notif'),
+      temNaoLidas: naoLidas,
+      abas,
+      temToast: !!S.toast,
+      toast: S.toast,
+
+      // flags de tela
+      sHome: tela === 'home', sFrota: tela === 'frota', sCheck: tela === 'check', sCheckOk: tela === 'checkok',
+      sCarga: tela === 'carga', sCargaDet: tela === 'cargadet',
+      sNovoCheck: tela === 'novocheck', sNovaCarga: tela === 'novacarga',
+      novoCheck: () => this.ir('novocheck'),
+      escolhaVeiculos: VEICULOS.map(v => {
+        const on = S.veiculoNovo === v.placa;
+        return {
+          placa: v.placa, modelo: v.modelo, km: v.km,
+          estilo: 'cursor:pointer;display:flex;align-items:center;gap:10px;padding:11px 12px;min-height:56px;border-radius:var(--radius-md);font-family:var(--font-body);color:var(--color-text);'
+            + (on ? 'background:var(--color-accent-900);border:1px solid var(--color-accent)' : 'background:var(--color-surface);border:1px solid var(--color-divider)'),
+          marca: 'flex:none;width:12px;height:12px;border-radius:99px;'
+            + (on ? 'background:var(--color-accent);box-shadow:inset 0 0 0 3px var(--color-bg)' : 'background:transparent;border:1.5px solid var(--color-neutral-700)'),
+          selecionar: () => this.setState({ veiculoNovo: v.placa, km: parseInt(v.km.replace(/\./g, ''), 10) }),
+        };
+      }),
+      kmNovo: (S.km || 0).toLocaleString('pt-BR'),
+      empresas: ['Rentech', 'AlfaLight'].map(n => ({ nome: n, estilo: this.chip(S.empresa === n), selecionar: () => this.setState({ empresa: n }) })),
+      qtdModelo: ITENS_CARGA.length,
+      notaNumero: S.offline
+        ? 'Sem rede: nasce com número provisório (CKL-VEI-LOC-04) e recebe o definitivo do banco quando sincronizar. A lista de veículos vem do cache.'
+        : 'O número sai da sequência do banco na hora da criação.',
+      criarCheck: () => this.setState({ tela: 'check', etapa: 'SAIDA', marcados: {}, avarias: [], placa: S.veiculoNovo || 'FLU-4C21' }),
+      estiloNovaCarga: 'min-height:48px;width:100%;font-size:14px;gap:8px' + (S.offline ? ';opacity:.45;cursor:not-allowed' : ''),
+      novaCarga: () => S.offline
+        ? this.aviso('Sem rede não dá: a carga importa as OS\u0027s da base.')
+        : this.ir('novacarga'),
+      criarCarga: () => this.setState({ tela: 'cargadet', etapaCarga: 'SAIDA', qtdsCarga: {}, selCargaId: 'c1' }),
+      sSim: tela === 'sim', sAprov: tela === 'aprov', sAprovDet: tela === 'aprovdet', sOp: tela === 'op',
+      sOpDet: tela === 'opdet', sNotif: tela === 'notif', sPerfil: tela === 'perfil', sWeb: tela === 'web',
+
+      // início
+      atalhos: atalhosPorPerfil[S.perfil],
+      pendencias: pendPorPerfil[S.perfil],
+      abrirWhats: () => this.aviso('Abriria a conversa do bot de ponto no WhatsApp'),
+
+      // frota
+      veiculos: VEICULOS.map(v => ({ ...v, abrir: () => this.setState({ tela: 'check', placa: v.placa }) })),
+      qtdVeiculos: VEICULOS.length,
+      qtdVencendo: 2,
+      irFrota: () => this.ir('frota'),
+      placaAtual: S.placa || 'FLU-4C21',
+
+      // checklist de veículo
+      itens,
+      etapaAtual: S.etapa === 'SAIDA' ? 'saída' : 'retorno',
+      etapas: [['SAIDA', 'Saída'], ['RETORNO', 'Retorno']].map(([id, nome]) => ({
+        nome, estilo: this.chip(S.etapa === id), selecionar: () => this.setState({ etapa: id }),
+      })),
+      checkFeitos: feitos,
+      checkTotal: lista.length,
+      checkPct: Math.round((feitos / lista.length) * 100),
+      kmLabel: S.etapa === 'SAIDA' ? 'KM inicial' : 'KM final',
+      kmValor: (S.etapa === 'SAIDA' ? S.km : S.km + 218).toLocaleString('pt-BR'),
+      maisKm: () => this.setState({ km: S.km + 1 }),
+      motorista: NOMES[S.perfil].split(' ')[0] + ' ' + NOMES[S.perfil].split(' ')[1],
+      combustiveis: COMBUSTIVEL.map(n => ({ nome: n, estilo: this.chip(S.combustivel === n) + ';padding:8px 4px;font-size:12px', selecionar: () => this.setState({ combustivel: n }) })),
+      obsLabel: S.etapa === 'SAIDA' ? 'Observações da saída' : 'Observações do retorno',
+      avarias: S.avarias,
+      qtdAvarias: S.avarias.length,
+      registrarAvaria: () => this.setState({
+        avarias: [...S.avarias, { descricao: 'Nova avaria — descreva e fotografe', etapa: S.etapa === 'SAIDA' ? 'SAÍDA' : 'RETORNO', hora: '08:1' + S.avarias.length, foto: `IMG_${4181 + S.avarias.length}` }],
+      }),
+      numeroCheck: 'CKL-VEI-000418',
+      statusCheck: S.etapa === 'SAIDA' ? 'Em andamento' : 'Finalizado',
+      labelFinalizar: S.offline
+        ? 'Salvar no aparelho'
+        : (S.etapa === 'SAIDA' ? 'Salvar saída e liberar veículo' : 'Finalizar checklist'),
+      finalizar: () => this.setState({ tela: 'checkok' }),
+      okTitulo: S.offline
+        ? 'Guardado no aparelho'
+        : (S.etapa === 'SAIDA' ? 'Saída registrada' : 'Checklist finalizado'),
+      okTexto: S.offline
+        ? 'Fica na fila e sobe sozinha quando o sinal voltar. Você pode seguir para o próximo veículo.'
+        : (S.etapa === 'SAIDA'
+          ? 'Status EM_ANDAMENTO no sistema web. O retorno reabre este mesmo checklist para a etapa RETORNO.'
+          : 'Status FINALIZADO. KM do veículo atualizado e as avarias ficam na ficha, com foto no storage.'),
+      abrirRetorno: () => this.setState({ tela: 'check', etapa: 'RETORNO' }),
+
+      // carga (equipamentos)
+      cargas: CARGAS.map(c => ({ ...c, abrir: () => this.setState({ tela: 'cargadet', selCargaId: c.id }) })),
+      cargaAbertosLabel: CARGAS.filter(c => c.status !== 'Finalizado').length + ' abertos',
+      cargaDivergLabel: divergentes.length + ' divergências',
+      selCarga,
+      etapasCarga: [['SAIDA', 'Saída'], ['RETORNO', 'Retorno']].map(([id, nome]) => ({
+        nome, estilo: this.chip(S.etapaCarga === id), selecionar: () => this.setState({ etapaCarga: id }),
+      })),
+      secoes,
+      temDivergencia: divergentes.length > 0,
+      divergTexto: divergentes.length + ' item(ns) com quantidade diferente do previsto — vira registro em checklist_divergencias ao salvar.',
+      labelCarga: S.etapaCarga === 'SAIDA' ? 'Salvar como saída conferida' : 'Finalizar retorno',
+      salvarCarga: () => this.aviso(divergentes.length
+        ? `Salvo com ${divergentes.length} divergência(s) em aberto.`
+        : 'Conferência salva sem divergência.'),
+
+      // simulador
+      tiposSim: ['Videowall', 'Tela', 'Grid'].map(n => ({ nome: n, estilo: this.chip(S.tipoSim === n), selecionar: () => this.setState({ tipoSim: n }) })),
+      pitches: PITCHES.map(p => ({ nome: p.nome, estilo: this.chip(S.pitch === p.id), selecionar: () => this.setState({ pitch: p.id }) })),
+      largura: S.largura.toFixed(1).replace('.', ','),
+      altura: S.altura.toFixed(1).replace('.', ','),
+      maisL: () => this.setState({ largura: Math.min(20, S.largura + 0.5) }),
+      menosL: () => this.setState({ largura: Math.max(0.5, S.largura - 0.5) }),
+      maisA: () => this.setState({ altura: Math.min(10, S.altura + 0.5) }),
+      menosA: () => this.setState({ altura: Math.max(0.5, S.altura - 0.5) }),
+      colsCss: `repeat(${cols}, ${lado}px)`,
+      celulas,
+      resultados,
+      enviarOrcamento: () => this.aviso('Orçamento montado e enviado — mesmo fluxo do site'),
+
+      // aprovações
+      filtrosAprov: ['Pendentes', 'Resolvidas'].map(n => ({ nome: n, estilo: this.chip(S.filtro === n), selecionar: () => this.setState({ filtro: n }) })),
+      solicitacoes: fila.map(s => ({ ...s, abrir: () => this.setState({ tela: 'aprovdet', selId: s.id }) })),
+      filaVazia: fila.length === 0,
+      sel,
+      aprovar: () => {
+        this.setState({ solicitacoes: this.state.solicitacoes.filter(s => s.id !== sel.id), tela: 'aprov' });
+        this.aviso(`Aprovado. ${sel.nome.split(' ')[0]} recebe o aviso no WhatsApp.`);
+      },
+      rejeitar: () => {
+        this.setState({ solicitacoes: this.state.solicitacoes.filter(s => s.id !== sel.id), tela: 'aprov' });
+        this.aviso('Rejeitado — o motivo vai junto na mensagem.');
+      },
+
+      // OP
+      ops: this.state.ops.map(o => ({ ...o, abrir: () => this.setState({ tela: 'opdet', selOpId: o.id }) })),
+      opTotal: opsAbertas.length,
+      opValor: 'R$ 20.550,00',
+      selOp,
+      aprovarOp: () => {
+        this.setState({ ops: this.state.ops.map(o => o.id === selOp.id ? { ...o, status: 'Aprovada', classe: 'tag tag-outline' } : o), tela: 'op' });
+        this.aviso('Aprovada. E-mail ao pagador e recibo para assinatura.');
+      },
+      verNoWeb: () => this.ir('web'),
+
+      // notificações
+      notificacoes: NOTIFICACOES.map(n => ({
+        ...n,
+        pontoEstilo: 'flex:none;width:7px;height:7px;border-radius:99px;margin-top:6px;background:' + (n.lida ? 'var(--color-neutral-700)' : 'var(--color-accent)'),
+      })),
+
+      // perfil
+      usuarioNome: NOMES[S.perfil],
+      usuarioCargo: perfil.cargo,
+      permissao: perfil.permissao,
+      iniciais: NOMES[S.perfil].split(' ').map(p => p[0]).join('').slice(0, 2),
+      linhasPerfil: [
+        { nome: 'Entrar com biometria', valor: S.biometria ? 'Ativado' : 'Desativado', acao: () => this.setState({ biometria: !S.biometria }) },
+        { nome: 'Notificações', valor: 'Ponto, frota, OP', acao: () => this.ir('notif') },
+        { nome: 'Abrir o sistema web', valor: '/admin', acao: () => this.ir('web') },
+        { nome: 'Baixar para uso offline', valor: 'Frota', acao: () => this.aviso('Dados da frota disponíveis offline') },
+        { nome: 'Suporte', valor: 'TI Rentech', acao: () => this.aviso('Abriria o WhatsApp do suporte') },
+      ],
+      sair: () => this.setState({ logado: false, tela: 'login' }),
+
+      // webview
+      linhasWeb: [1, 2, 3, 4, 5].map(k => ({ k })),
+    };
+  }
+}
+
+</script>
+</body>
+</html>

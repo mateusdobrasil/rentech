@@ -1,26 +1,25 @@
 import { Tabs } from 'expo-router';
+import { HouseIcon, TruckIcon, PackageIcon, ClipboardTextIcon, ReceiptIcon, UserIcon } from 'phosphor-react-native';
 import { useAuth } from '../../context/AuthContext';
 import { colors } from '../../constants/theme';
 
-// Quem pode ver cada aba além de Início/Simuladores (que são públicas).
-// 'qualquer-autenticado' = todo funcionário logado (RH é holerite/ponto/docs,
-// de interesse de qualquer um). As demais exigem um dos cargos normalizados
-// por normalizarPermissao() (mesma regra do web/, veja app/lib/permissoes.ts).
-// Ajuste esses arrays conforme as regras reais forem definidas em
-// folha_paginas_permissoes.
+// Abas além de Início/Perfil (sempre visíveis). Contas PORTAL nunca batem em
+// nenhuma regra aqui — permissaoNormalizada delas é o sentinela 'PORTAL', que
+// não aparece em nenhum array — então caem sempre no conjunto Início+Perfil,
+// sem checagem especial. Regras normalizadas por normalizarPermissao() (mesma
+// regra do web/, veja app/lib/permissoes.ts).
 const REGRAS_ACESSO = {
-  rh: 'qualquer-autenticado' as const,
-  frota: ['ADMINISTRADOR', 'ADMINISTRATIVO', 'OPERACIONAL'],
-  comercial: ['ADMINISTRADOR', 'ADMINISTRATIVO', 'FINANCEIRO'],
+  frota: ['OPERACIONAL'],
+  carga: ['OPERACIONAL'],
+  ponto: ['ADMINISTRATIVO', 'ADMINISTRADOR'],
+  op: ['ADMINISTRATIVO', 'ADMINISTRADOR'],
 };
 
 type RotaComRegra = keyof typeof REGRAS_ACESSO;
 
 function podeAcessar(rota: RotaComRegra, autenticado: boolean, permissaoNormalizada?: string): boolean {
   if (!autenticado) return false;
-  const regra = REGRAS_ACESSO[rota];
-  if (regra === 'qualquer-autenticado') return true;
-  return permissaoNormalizada ? regra.includes(permissaoNormalizada) : false;
+  return permissaoNormalizada ? REGRAS_ACESSO[rota].includes(permissaoNormalizada) : false;
 }
 
 export default function TabsLayout() {
@@ -39,30 +38,55 @@ export default function TabsLayout() {
         tabBarInactiveTintColor: colors.textMuted,
       }}
     >
-      <Tabs.Screen name="index" options={{ title: 'Início' }} />
-      <Tabs.Screen name="simuladores" options={{ title: 'Simuladores' }} />
       <Tabs.Screen
-        name="rh"
-        options={{
-          title: 'RH',
-          href: podeAcessar('rh', autenticado, perfil?.permissaoNormalizada) ? undefined : null,
-        }}
+        name="index"
+        options={{ title: 'Início', tabBarIcon: ({ color }) => <HouseIcon size={21} color={color} weight="regular" /> }}
       />
+      {/* headerShown: false nestas quatro — cada pasta tem seu próprio
+          _layout.tsx (Stack) que já mostra o cabeçalho, senão duplicava. */}
       <Tabs.Screen
         name="frota"
         options={{
           title: 'Frota',
+          headerShown: false,
+          tabBarIcon: ({ color }) => <TruckIcon size={21} color={color} weight="regular" />,
           href: podeAcessar('frota', autenticado, perfil?.permissaoNormalizada) ? undefined : null,
         }}
       />
       <Tabs.Screen
-        name="comercial"
+        name="carga"
         options={{
-          title: 'Comercial',
-          href: podeAcessar('comercial', autenticado, perfil?.permissaoNormalizada) ? undefined : null,
+          title: 'Carga',
+          headerShown: false,
+          tabBarIcon: ({ color }) => <PackageIcon size={21} color={color} weight="regular" />,
+          href: podeAcessar('carga', autenticado, perfil?.permissaoNormalizada) ? undefined : null,
         }}
       />
-      <Tabs.Screen name="perfil" options={{ title: autenticado ? 'Perfil' : 'Entrar' }} />
+      <Tabs.Screen
+        name="ponto"
+        options={{
+          title: 'Ponto',
+          headerShown: false,
+          tabBarIcon: ({ color }) => <ClipboardTextIcon size={21} color={color} weight="regular" />,
+          href: podeAcessar('ponto', autenticado, perfil?.permissaoNormalizada) ? undefined : null,
+        }}
+      />
+      <Tabs.Screen
+        name="op"
+        options={{
+          title: 'OP',
+          headerShown: false,
+          tabBarIcon: ({ color }) => <ReceiptIcon size={21} color={color} weight="regular" />,
+          href: podeAcessar('op', autenticado, perfil?.permissaoNormalizada) ? undefined : null,
+        }}
+      />
+      {/* Simuladores fica fora desta leva (decisão do brief) — arquivo continua
+          no repo pra quando a feature voltar, mas nunca linkado numa aba. */}
+      <Tabs.Screen name="simuladores" options={{ href: null }} />
+      <Tabs.Screen
+        name="perfil"
+        options={{ title: 'Perfil', tabBarIcon: ({ color }) => <UserIcon size={21} color={color} weight="regular" /> }}
+      />
     </Tabs>
   );
 }

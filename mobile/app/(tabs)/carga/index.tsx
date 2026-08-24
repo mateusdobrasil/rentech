@@ -1,18 +1,17 @@
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { AcessoRestrito } from '../../components/AcessoRestrito';
-import { useAuth } from '../../context/AuthContext';
-import { colors } from '../../constants/theme';
+import { AcessoRestrito } from '../../../components/AcessoRestrito';
+import { useAuth } from '../../../context/AuthContext';
+import { colors } from '../../../constants/theme';
 
-export default function Frota() {
+export default function Carga() {
   const { session } = useAuth();
   if (!session) return <AcessoRestrito />;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
-      <Text style={styles.titulo}>Frota</Text>
       <View style={styles.card}>
-        <Text style={styles.cardTitulo}>Checklist</Text>
-        <Text style={styles.cardTexto}>Foto + GPS na versão final. Placeholder por enquanto.</Text>
+        <Text style={styles.cardTitulo}>Checklist de carga</Text>
+        <Text style={styles.cardTexto}>Conferência de equipamento chega na Fase 3. Placeholder por enquanto.</Text>
       </View>
     </ScrollView>
   );

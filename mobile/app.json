@@ -27,7 +27,13 @@
       "edgeToEdgeEnabled": true
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Use Face ID para desbloquear sua sessão do app Rentech."
+        }
+      ]
     ]
   }
 }

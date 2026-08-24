@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
 import { WebView, type WebViewNavigation } from 'react-native-webview';
 import { useFocusEffect } from 'expo-router';
+import { useAuth } from '../context/AuthContext';
 import { colors } from '../constants/theme';
 
 interface Props {
@@ -12,6 +13,7 @@ interface Props {
 const SITE_URL = process.env.EXPO_PUBLIC_SITE_URL;
 
 export function WebViewScreen({ path }: Props) {
+  const { session } = useAuth();
   const webviewRef = useRef<WebView>(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(false);
@@ -41,6 +43,18 @@ export function WebViewScreen({ path }: Props) {
     );
   }
 
+  // Não deveria ser alcançável (a rota /webview só existe atrás do gate de
+  // autenticação em app/_layout.tsx), mas defensivo: sem sessão não há token
+  // pra passar pra ponte, e abrir a WebView sem sessão deixaria a página alvo
+  // cair no próprio /login ou /portal/login dela.
+  if (!session) {
+    return (
+      <View style={styles.centro}>
+        <Text style={styles.erroTexto}>Sem sessão ativa. Volte e entre de novo.</Text>
+      </View>
+    );
+  }
+
   if (erro) {
     return (
       <View style={styles.centro}>
@@ -59,12 +73,23 @@ export function WebViewScreen({ path }: Props) {
     );
   }
 
+  // A WebView é um contexto de storage isolado do AsyncStorage do app RN — não
+  // enxerga a sessão do app. /mobile-bridge (web/) recebe os tokens pelo
+  // fragment da URL (nunca vai pro servidor), estabelece a sessão do lado do
+  // navegador via supabase.auth.setSession(), e só então navega pro destino —
+  // ver app/mobile-bridge/page.tsx no repo web/.
+  const bridgeUri =
+    `${SITE_URL}/mobile-bridge` +
+    `#access_token=${encodeURIComponent(session.access_token)}` +
+    `&refresh_token=${encodeURIComponent(session.refresh_token)}` +
+    `&redirect=${encodeURIComponent(path)}`;
+
   return (
     <View style={styles.container}>
       <WebView
         key={reloadKey}
         ref={webviewRef}
-        source={{ uri: `${SITE_URL}${path}` }}
+        source={{ uri: bridgeUri }}
         onLoadEnd={() => setLoading(false)}
         onError={() => setErro(true)}
         onHttpError={() => setErro(true)}

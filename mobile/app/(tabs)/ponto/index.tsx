@@ -1,17 +1,17 @@
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { AcessoRestrito } from '../../components/AcessoRestrito';
-import { useAuth } from '../../context/AuthContext';
-import { colors } from '../../constants/theme';
+import { AcessoRestrito } from '../../../components/AcessoRestrito';
+import { useAuth } from '../../../context/AuthContext';
+import { colors } from '../../../constants/theme';
 
-export default function Comercial() {
+export default function Ponto() {
   const { session } = useAuth();
   if (!session) return <AcessoRestrito />;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
-      <Text style={styles.titulo}>Comercial</Text>
       <View style={styles.card}>
-        <Text style={styles.cardTexto}>Em breve por aqui.</Text>
+        <Text style={styles.cardTitulo}>Fila do RH</Text>
+        <Text style={styles.cardTexto}>Abono, justificativa e ponto pendente chegam na Fase 3. Placeholder por enquanto.</Text>
       </View>
     </ScrollView>
   );
@@ -27,6 +27,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.surfaceBorder,
+    gap: 4,
   },
+  cardTitulo: { fontSize: 15, fontWeight: '700', color: colors.white },
   cardTexto: { fontSize: 13, color: colors.textSecondary },
 });

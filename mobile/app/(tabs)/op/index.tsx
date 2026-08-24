@@ -1,21 +1,18 @@
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { AcessoRestrito } from '../../components/AcessoRestrito';
-import { useAuth } from '../../context/AuthContext';
-import { colors } from '../../constants/theme';
+import { AcessoRestrito } from '../../../components/AcessoRestrito';
+import { useAuth } from '../../../context/AuthContext';
+import { colors } from '../../../constants/theme';
 
-export default function RH() {
+export default function OrdensDePagamento() {
   const { session } = useAuth();
   if (!session) return <AcessoRestrito />;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
-      <Text style={styles.titulo}>RH</Text>
-      {['Holerite', 'Ponto', 'Documentos'].map((item) => (
-        <View key={item} style={styles.card}>
-          <Text style={styles.cardTitulo}>{item}</Text>
-          <Text style={styles.cardTexto}>Em breve por aqui.</Text>
-        </View>
-      ))}
+      <View style={styles.card}>
+        <Text style={styles.cardTitulo}>Aprovação com biometria</Text>
+        <Text style={styles.cardTexto}>Lista e aprovação de OP chegam na Fase 3. Placeholder por enquanto.</Text>
+      </View>
     </ScrollView>
   );
 }

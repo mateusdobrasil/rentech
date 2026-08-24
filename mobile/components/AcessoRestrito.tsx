@@ -10,7 +10,7 @@ export function AcessoRestrito() {
     <View style={styles.container}>
       <Text style={styles.titulo}>Acesso restrito</Text>
       <Text style={styles.texto}>Você precisa estar logado com o perfil correto para ver esta área.</Text>
-      <Link href="/perfil" style={styles.link}>
+      <Link href="/login" style={styles.link}>
         Ir para Entrar
       </Link>
     </View>

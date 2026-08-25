@@ -5,15 +5,10 @@ import { colors } from '../../../constants/theme';
 // própria pra Fase 3 estender com novo.tsx / [id].tsx).
 export default function CargaLayout() {
   return (
-    <Stack
-      screenOptions={{
-        headerShown: true,
-        headerStyle: { backgroundColor: colors.surface },
-        headerTitleStyle: { color: colors.white },
-        headerTintColor: colors.white,
-      }}
-    >
-      <Stack.Screen name="index" options={{ title: 'Carga' }} />
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="index" options={{ headerShown: true, title: 'Carga', headerStyle: { backgroundColor: colors.surface }, headerTitleStyle: { color: colors.white }, headerTintColor: colors.white }} />
+      <Stack.Screen name="novo" />
+      <Stack.Screen name="[id]/index" />
     </Stack>
   );
 }

@@ -5,15 +5,9 @@ import { colors } from '../../../constants/theme';
 // própria pra Fase 3 estender com [id].tsx).
 export default function OpLayout() {
   return (
-    <Stack
-      screenOptions={{
-        headerShown: true,
-        headerStyle: { backgroundColor: colors.surface },
-        headerTitleStyle: { color: colors.white },
-        headerTintColor: colors.white,
-      }}
-    >
-      <Stack.Screen name="index" options={{ title: 'Ordens de pagamento' }} />
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="index" options={{ headerShown: true, title: 'Ordens de pagamento', headerStyle: { backgroundColor: colors.surface }, headerTitleStyle: { color: colors.white }, headerTintColor: colors.white }} />
+      <Stack.Screen name="[id]/index" />
     </Stack>
   );
 }

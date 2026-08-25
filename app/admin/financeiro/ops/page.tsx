@@ -41,6 +41,7 @@ interface OP {
   status: string;
   itens: ItemOP[];
   file_url: string;
+  file_urls?: string[];
   recibo_url?: string;
   data_assinatura?: string;
   p2s_conta_pagar_oid?: string | null;
@@ -643,7 +644,9 @@ export default function PainelFinanceiro() {
                         <td className="p-2.5">
                           <div className="whitespace-nowrap mb-1">
                             <span className="bg-[#E0F2FE] text-[#0369A1] font-bold px-2 py-1 rounded-md text-xs mr-1.5 inline-block">{op.os_numero || 'S/N'}</span>
-                            {op.file_url && <a href={op.file_url} target="_blank" rel="noreferrer" className="text-base hover:scale-110 transition-transform inline-block" title="Ver Comprovante">📎</a>}
+                            {((op.file_urls && op.file_urls.length > 0) ? op.file_urls : (op.file_url ? [op.file_url] : [])).map((url, i, arr) => (
+                              <a key={i} href={url} target="_blank" rel="noreferrer" className="text-base hover:scale-110 transition-transform inline-block mr-0.5" title={arr.length > 1 ? `Ver Comprovante ${i + 1} de ${arr.length}` : 'Ver Comprovante'}>📎</a>
+                            ))}
                           </div>
                           <div className="text-xs text-[#64748B] font-semibold truncate max-w-[120px]" title={op.os_evento}>{op.os_evento || '—'}</div>
                           <div className="text-xs text-[#94A3B8] truncate max-w-[120px]" title={op.os_periodo}>{op.os_periodo || '—'}</div>

@@ -88,8 +88,9 @@ export default function NovaOrdemPagamento() {
   const [dataVencimento, setDataVencimento] = useState('');
   const [obs, setObs] = useState('');
   
-  // Captura do arquivo selecionado
-  const [arquivo, setArquivo] = useState<File | null>(null);
+  // Captura dos arquivos selecionados — pode anexar mais de um comprovante
+  // (NF + recibo + comprovante de PIX, por exemplo).
+  const [arquivos, setArquivos] = useState<File[]>([]);
   const [uploadStatus, setUploadStatus] = useState('');
 
   // Modais e Estados da Busca de Freelancers
@@ -231,15 +232,26 @@ export default function NovaOrdemPagamento() {
   }, [itens]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      const file = e.target.files[0];
-      if (file.size > 5 * 1024 * 1024) {
-        toast("O arquivo é muito grande. O limite máximo é 5MB.", 'error');
-        e.target.value = '';
-        return;
-      }
-      setArquivo(file);
+    if (!e.target.files || e.target.files.length === 0) return;
+    const selecionados = Array.from(e.target.files);
+    e.target.value = ''; // permite selecionar o mesmo arquivo de novo depois de removê-lo
+
+    const validos: File[] = [];
+    const grandesDemais: string[] = [];
+    for (const file of selecionados) {
+      if (file.size > 5 * 1024 * 1024) grandesDemais.push(file.name);
+      else validos.push(file);
     }
+    if (grandesDemais.length > 0) {
+      toast(`Arquivo(s) muito grande(s) (limite 5MB): ${grandesDemais.join(', ')}`, 'error');
+    }
+    if (validos.length > 0) {
+      setArquivos(prev => [...prev, ...validos]);
+    }
+  };
+
+  const removerArquivo = (idx: number) => {
+    setArquivos(prev => prev.filter((_, i) => i !== idx));
   };
 
   // ============================================================================
@@ -396,10 +408,11 @@ export default function NovaOrdemPagamento() {
       return;
     }
 
-    let urlFinalAnexo = '';
+    const urlsAnexos: string[] = [];
 
-    if (arquivo) {
-      setUploadStatus('Fazendo upload do comprovante...');
+    for (let i = 0; i < arquivos.length; i++) {
+      const arquivo = arquivos[i];
+      setUploadStatus(arquivos.length > 1 ? `Fazendo upload do comprovante ${i + 1} de ${arquivos.length}...` : 'Fazendo upload do comprovante...');
       const fileExt = arquivo.name.split('.').pop();
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
       const filePath = `anexos_ops/${fileName}`;
@@ -407,12 +420,12 @@ export default function NovaOrdemPagamento() {
       const { error: uploadError } = await supabase.storage.from('comprovantes').upload(filePath, arquivo);
 
       if (uploadError) {
-        setModal({ open: true, success: false, title: 'Erro no Anexo', msg: `Falha ao fazer upload: ${uploadError.message}` });
+        setModal({ open: true, success: false, title: 'Erro no Anexo', msg: `Falha ao fazer upload de "${arquivo.name}": ${uploadError.message}` });
         setLoading(false);
         return;
       }
       const { data: publicUrlData } = supabase.storage.from('comprovantes').getPublicUrl(filePath);
-      urlFinalAnexo = publicUrlData.publicUrl;
+      urlsAnexos.push(publicUrlData.publicUrl);
     }
 
     setUploadStatus('Registrando ordem de pagamento...');
@@ -438,7 +451,8 @@ export default function NovaOrdemPagamento() {
       observacao: obs.toUpperCase(),
       itens: itensValidos,
       total_geral: totalGeral,
-      file_url: urlFinalAnexo 
+      file_url: urlsAnexos[0] || '',
+      file_urls: urlsAnexos,
     };
 
     const resposta = await criarOP(payload, perfil?.accessToken || '');
@@ -828,13 +842,32 @@ export default function NovaOrdemPagamento() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-xs font-bold text-[#0A2A4A] uppercase tracking-wider mb-2">📎 Anexar Comprovante / NF / Recibo</label>
-                <input 
-                  type="file" 
+                <input
+                  type="file"
+                  multiple
                   onChange={handleFileChange}
-                  className="w-full text-sm text-[#64748B] file:mr-4 file:py-2.5 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-[#E0F2FE] file:text-[#0369A1] hover:file:bg-[#BAE6FD] cursor-pointer" 
-                  accept=".pdf, image/*" 
+                  className="w-full text-sm text-[#64748B] file:mr-4 file:py-2.5 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-[#E0F2FE] file:text-[#0369A1] hover:file:bg-[#BAE6FD] cursor-pointer"
+                  accept=".pdf, image/*"
                 />
-                <p className="text-[10px] text-[#94A3B8] mt-1">Formatos aceitos: PDF, JPG, PNG (Max 5MB)</p>
+                <p className="text-[10px] text-[#94A3B8] mt-1">Formatos aceitos: PDF, JPG, PNG (Max 5MB por arquivo) — pode selecionar mais de um</p>
+                {arquivos.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {arquivos.map((f, idx) => (
+                      <li key={`${f.name}-${f.lastModified}-${idx}`} className="flex items-center justify-between gap-2 bg-white border border-[#E2E8F0] rounded-lg px-3 py-1.5 text-xs">
+                        <span className="truncate text-[#0A2A4A] font-semibold" title={f.name}>{f.name}</span>
+                        <span className="text-[#94A3B8] shrink-0">{(f.size / 1024 / 1024).toFixed(1)}MB</span>
+                        <button
+                          type="button"
+                          onClick={() => removerArquivo(idx)}
+                          className="shrink-0 text-red-500 hover:text-red-700 font-black px-1"
+                          title="Remover"
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-bold text-[#64748B] uppercase tracking-wider mb-2">Observações Adicionais</label>

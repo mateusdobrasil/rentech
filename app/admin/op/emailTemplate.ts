@@ -57,8 +57,14 @@ export function gerarHtmlEmailOP(op: any, comBotaoConfirmacao: boolean): string 
     `;
   }).join('');
 
-  const anexoHtml = op.file_url
-    ? `<a href="${escaparHtml(op.file_url)}" style="display: inline-block; padding: 12px 24px; background-color: #336699; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 12px;">📎 Visualizar Comprovante / Anexo</a>`
+  const urlsAnexos: string[] = (Array.isArray(op.file_urls) && op.file_urls.length > 0)
+    ? op.file_urls
+    : (op.file_url ? [op.file_url] : []);
+
+  const anexoHtml = urlsAnexos.length > 0
+    ? urlsAnexos.map((url, i) => `
+        <a href="${escaparHtml(url)}" style="display: inline-block; margin: 4px 6px 4px 0; padding: 12px 24px; background-color: #336699; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 12px;">📎 ${urlsAnexos.length > 1 ? `Anexo ${i + 1}` : 'Visualizar Comprovante / Anexo'}</a>
+      `).join('')
     : `<span style="color: #94A3B8; font-style: italic; font-size: 12px;">Nenhum anexo enviado.</span>`;
 
   const htmlBase = `

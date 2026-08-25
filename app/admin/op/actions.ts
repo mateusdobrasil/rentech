@@ -51,6 +51,10 @@ export interface NovaOPData {
   data_vencimento: string; // YYYY-MM-DD
   observacao: string;
   file_url: string;
+  // Anexos podem ser mais de um comprovante (NF + recibo + PIX, por exemplo).
+  // file_url continua guardando o primeiro, por compatibilidade com telas que
+  // ainda só mostram um único link (e-mail, painel financeiro).
+  file_urls?: string[];
 }
 
 // ============================================================================

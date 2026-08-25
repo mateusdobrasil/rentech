@@ -842,13 +842,21 @@ export default function NovaOrdemPagamento() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-xs font-bold text-[#0A2A4A] uppercase tracking-wider mb-2">📎 Anexar Comprovante / NF / Recibo</label>
-                <input
-                  type="file"
-                  multiple
-                  onChange={handleFileChange}
-                  className="w-full text-sm text-[#64748B] file:mr-4 file:py-2.5 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-[#E0F2FE] file:text-[#0369A1] hover:file:bg-[#BAE6FD] cursor-pointer"
-                  accept=".pdf, image/*"
-                />
+                <div className="flex items-center gap-3">
+                  <label className="shrink-0 py-2.5 px-4 rounded-md text-sm font-semibold bg-[#E0F2FE] text-[#0369A1] hover:bg-[#BAE6FD] cursor-pointer transition-colors">
+                    Escolher arquivo(s)
+                    <input
+                      type="file"
+                      multiple
+                      onChange={handleFileChange}
+                      className="hidden"
+                      accept=".pdf, image/*"
+                    />
+                  </label>
+                  <span className="text-sm text-[#64748B] truncate">
+                    {arquivos.length > 0 ? `${arquivos.length} arquivo(s) selecionado(s)` : 'Nenhum arquivo selecionado'}
+                  </span>
+                </div>
                 <p className="text-[10px] text-[#94A3B8] mt-1">Formatos aceitos: PDF, JPG, PNG (Max 5MB por arquivo) — pode selecionar mais de um</p>
                 {arquivos.length > 0 && (
                   <ul className="mt-2 space-y-1">

@@ -1452,6 +1452,14 @@ export default function FinanceiroPage() {
                       </div>
                     </div>
 
+                    {op.status === 'PENDENTE' && op.pago_em && (
+                      <div className="mb-4 bg-blue-50 border border-blue-200 rounded-xl p-3">
+                        <p className="text-[10px] font-black text-blue-700">
+                          📡 Enviado via Pix pelo lote do Financeiro em {fmtDataHora(op.pago_em)}{op.pago_lote_id ? ` (lote #${op.pago_lote_id})` : ''} — aguardando confirmação bancária. A API só aceitou o pedido; pagamentos SISPAG passam por aprovação manual no Itaú Empresas antes de serem efetivados. Confirme no banco antes de baixar como paga em /admin/financeiro/ops.
+                        </p>
+                      </div>
+                    )}
+
                     {itensOp.length > 0 && (
                       <>
                         <h4 className="text-xs font-black uppercase text-[#0C1D4D] tracking-widest mb-2 border-b border-[#E2E8F0] pb-2">Itens Solicitados</h4>

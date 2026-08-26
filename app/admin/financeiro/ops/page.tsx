@@ -45,6 +45,13 @@ interface OP {
   recibo_url?: string;
   data_assinatura?: string;
   p2s_conta_pagar_oid?: string | null;
+  // Preenchido pelo lote de pagamento do Financeiro (/admin/financeiro/rh,
+  // fonte "Ordem de Pagamento") quando a API Pix do Itaú aceita o envio —
+  // não significa status='PAGO' ainda: SISPAG passa por aprovação manual no
+  // Itaú Empresas antes de ser efetivado de verdade, então isso só é um
+  // aviso pra não reenviar manualmente, não uma confirmação de pagamento.
+  pago_em?: string | null;
+  pago_lote_id?: number | null;
 }
 
 export default function PainelFinanceiro() {
@@ -668,6 +675,11 @@ export default function PainelFinanceiro() {
                           <span className={`px-2 py-1 rounded-full text-[9px] font-black tracking-wider whitespace-nowrap ${statusAtual.includes('ASSINADO') ? 'bg-purple-100 text-purple-700 border border-purple-200' : statusAtual === 'PAGO' ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-amber-100 text-amber-700 border border-amber-200'}`}>
                             {statusAtual}
                           </span>
+                          {statusAtual === 'PENDENTE' && op.pago_em && (
+                            <span title={`Enviado via Pix pelo lote do Financeiro em ${formatarData(op.pago_em)} — aguardando confirmação bancária, ainda não baixado como pago.`} className="block mt-1 px-2 py-0.5 rounded-full text-[9px] font-black tracking-wider whitespace-nowrap bg-blue-100 text-blue-700 border border-blue-200">
+                              📡 Enviado via Pix
+                            </span>
+                          )}
                         </td>
 
                         {/* Ações Inteligentes e Modulares — ícones lado a lado em vez de

@@ -139,12 +139,15 @@ export async function montarLoteSalariosAction(payload: {
     // combina com as outras pelo nome — por isso é tratada fora do mecanismo
     // de "nomes" abaixo e vira item de lote diretamente mais adiante. Também
     // não é escopada pelo mês de competência selecionado, mesmo critério já
-    // usado pra RESCISAO.
+    // usado pra RESCISAO. pago_em is null: exclui quem já foi enviado com
+    // sucesso pela API num lote anterior (ver enviarLoteAoBancoAction) —
+    // mesmo sem status='PAGO' ainda (isso exige confirmação humana), não
+    // pode reaparecer aqui e ser enviado de novo, senão paga em dobro.
     let opsPendentes: { id: string; numero_op: number; empresa_id: number | null; empresa_recebedora: string; cnpj_cpf_recebedora: string; tipo_pagamento: string; chave_pix: string; dados_pagamento: string; total_geral: number }[] = [];
     if (fontes.includes('OP')) {
       const { data: ops } = await db.from('op_ordens_pagamento')
         .select('id, numero_op, empresa_id, empresa_recebedora, cnpj_cpf_recebedora, tipo_pagamento, chave_pix, dados_pagamento, total_geral')
-        .eq('status', 'PENDENTE');
+        .eq('status', 'PENDENTE').is('pago_em', null);
       opsPendentes = ops || [];
     }
 
@@ -832,12 +835,17 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
               .update({ pago_em: new Date().toISOString(), pago_lote_id: payload.loteId })
               .eq('id', item.rescisaoId);
           }
-          // OP também não é escopada por mês — filtrada por status='PENDENTE'
-          // em montarLoteSalariosAction, então precisa virar 'PAGO' aqui pra
-          // não reaparecer e ser paga em dobro num próximo lote.
+          // OP também não é escopada por mês, mas "Sucesso" aqui é só a API
+          // aceitando o PEDIDO — pagamentos SISPAG ainda passam por aprovação
+          // manual no Itaú Empresas antes de serem efetivados de verdade (ver
+          // consultarStatusAtualItauAction). Por isso NÃO grava
+          // status='PAGO' automaticamente — isso continua sendo confirmação
+          // humana (botão "Baixar OP" em /admin/financeiro/ops, ou
+          // conciliação com o PrimeStart). pago_em só evita que a mesma OP
+          // reapareça num próximo lote e seja paga em dobro.
           if (item.fonte === 'OP' && item.opId) {
             await db.from('op_ordens_pagamento')
-              .update({ status: 'PAGO', updated_at: new Date().toISOString() })
+              .update({ pago_em: new Date().toISOString(), pago_lote_id: payload.loteId })
               .eq('id', item.opId);
           }
         } else {

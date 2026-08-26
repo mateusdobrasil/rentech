@@ -29,6 +29,10 @@
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT",
         "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
@@ -68,6 +72,12 @@
         "projectId": "d27080dd-4585-4933-ace9-8281357eae23"
       }
     },
-    "owner": "mateusdobrasil"
+    "owner": "mateusdobrasil",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/d27080dd-4585-4933-ace9-8281357eae23"
+    }
   }
 }

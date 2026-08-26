@@ -45,6 +45,7 @@ const STATUS_INFO: Record<string, { label: string; cor: string }> = {
 interface Rescisao {
   id: number; funcionario_nome: string; motivo: string; data_desligamento: string;
   tipo_folha: 'PROPRIO' | 'CONTABILIDADE'; status: string; valor_total_liquido: number | null;
+  pago_em: string | null;
 }
 interface FuncionarioElegivel { nome: string; cargo: string | null; dataDesligamento: string | null; tipoFolha: 'PROPRIO' | 'CONTABILIDADE'; }
 
@@ -247,6 +248,9 @@ export default function RescisaoPage() {
                         <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${STATUS_INFO[r.status]?.cor || 'bg-gray-100 text-gray-500'}`}>
                           {STATUS_INFO[r.status]?.label || r.status}
                         </span>
+                        {r.status === 'HOMOLOGADA' && r.pago_em && (
+                          <span className="block mt-1 text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-emerald-100 text-emerald-700">💰 Paga</span>
+                        )}
                       </td>
                       <td className="p-3 text-right tabular-nums font-black text-[#0C1D4D]">{r.tipo_folha === 'PROPRIO' ? fmtMoeda(r.valor_total_liquido) : '—'}</td>
                       <td className="p-3 text-center">

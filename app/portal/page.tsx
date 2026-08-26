@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState, useEffect, useMemo } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../lib/supabase';
 import { urlMeuDocumentoAction, urlMeuHoleriteAction } from './actions/actions-documentos';
@@ -26,12 +26,22 @@ const fmtMesReferencia = (m: string) => {
   return new Date(Number(ano), Number(mes) - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
 };
 
-export default function PortalDashboardPage() {
+const ABAS_VALIDAS = ['documentos', 'holerites', 'ponto', 'checklist'] as const;
+type AbaPortal = (typeof ABAS_VALIDAS)[number];
+
+function PortalDashboardConteudo() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [carregandoSessao, setCarregandoSessao] = useState(true);
   const [accessToken, setAccessToken] = useState('');
 
-  const [aba, setAba] = useState<'documentos' | 'holerites' | 'ponto' | 'checklist'>('documentos');
+  // Suporta abrir direto numa aba (?aba=holerites) — usado pelo app mobile
+  // pra linkar "Holerite" e "Documentos" pro lugar certo dentro do Portal,
+  // que é uma SPA de aba só (sem rota própria por seção).
+  const [aba, setAba] = useState<AbaPortal>(() => {
+    const abaParam = searchParams.get('aba');
+    return (ABAS_VALIDAS as readonly string[]).includes(abaParam || '') ? (abaParam as AbaPortal) : 'documentos';
+  });
   const [menuAbasAberto, setMenuAbasAberto] = useState(false);
   const [documentos, setDocumentos] = useState<DocumentoPortal[]>([]);
   const [holerites, setHolerites] = useState<HoleritePortal[]>([]);
@@ -234,5 +244,13 @@ export default function PortalDashboardPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function PortalDashboardPage() {
+  return (
+    <Suspense fallback={null}>
+      <PortalDashboardConteudo />
+    </Suspense>
   );
 }

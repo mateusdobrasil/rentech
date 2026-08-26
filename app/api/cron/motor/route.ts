@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { dispararAutomacaoWhatsApp } from '../../../lib/automacoes';
+import { notificarPush } from '../../../lib/push';
 import { montarContextoFrotaVencida } from '../../../lib/frota';
 import { montarContextoDocumentosVencidos } from '../../../lib/documentos';
 import { montarContextoAniversariantesSemana } from '../../../lib/aniversarios';
@@ -85,6 +86,17 @@ export async function GET(request: Request) {
         const contextoEspecial = await montarContexto();
         if (!contextoEspecial) continue; // nada a reportar hoje, não dispara
         contexto = contextoEspecial;
+      }
+
+      // Push espelha a automação frota-vencimentos (README do app mobile) —
+      // canal a mais pra quem tem a aba Frota no app, não substitui o
+      // WhatsApp configurado na automação. Nunca derruba o disparo principal.
+      if (automacao.chave === 'frota-vencimentos') {
+        try {
+          await notificarPush('/mobile/frota', 'Veículos com pendência de vencimento', `${contexto.quantidade} veículo(s) com CRLV ou seguro vencido.`, { tipo: 'frota' });
+        } catch (e) {
+          console.error('Falha ao notificar push sobre frota-vencimentos:', e);
+        }
       }
 
       const resultado = await dispararAutomacaoWhatsApp(automacao.chave, contexto);

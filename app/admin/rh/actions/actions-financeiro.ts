@@ -28,7 +28,7 @@ type Resultado = {
 // ============================================================================
 // MONTAR LOTE DE PAGAMENTO — 4 fontes selecionáveis por funcionário
 // ============================================================================
-export type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO';
+export type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO' | 'OP';
 
 export async function montarLoteSalariosAction(payload: {
   mesReferencia: string;
@@ -133,6 +133,21 @@ export async function montarLoteSalariosAction(payload: {
       });
     }
 
+    // ORDEM DE PAGAMENTO — OPs pendentes de baixa (status='PENDENTE'), pra
+    // entrarem no mesmo lote bancário das folhas. Diferente das demais
+    // fontes, cada OP é um favorecido isolado (não um funcionário) e não
+    // combina com as outras pelo nome — por isso é tratada fora do mecanismo
+    // de "nomes" abaixo e vira item de lote diretamente mais adiante. Também
+    // não é escopada pelo mês de competência selecionado, mesmo critério já
+    // usado pra RESCISAO.
+    let opsPendentes: { id: string; numero_op: number; empresa_id: number | null; empresa_recebedora: string; cnpj_cpf_recebedora: string; tipo_pagamento: string; chave_pix: string; dados_pagamento: string; total_geral: number }[] = [];
+    if (fontes.includes('OP')) {
+      const { data: ops } = await db.from('op_ordens_pagamento')
+        .select('id, numero_op, empresa_id, empresa_recebedora, cnpj_cpf_recebedora, tipo_pagamento, chave_pix, dados_pagamento, total_geral')
+        .eq('status', 'PENDENTE');
+      opsPendentes = ops || [];
+    }
+
     const valoresAdiant = payload.valoresAdiantamento || {};
     const valoresPagto = payload.valoresPagamento || {};
     const valoresDecimoTerceiro = payload.valoresDecimoTerceiro || {};
@@ -167,6 +182,7 @@ export async function montarLoteSalariosAction(payload: {
       Array.from(nomes).forEach(nome => {
         if (!empresaPermitida(empresasPermitidas, empresaPorNomeFunc[nome])) nomes.delete(nome);
       });
+      opsPendentes = opsPendentes.filter(op => empresaPermitida(empresasPermitidas, op.empresa_id));
     }
 
     // Empresa escolhida na tela ANTES de montar o lote — não é um filtro de
@@ -179,6 +195,7 @@ export async function montarLoteSalariosAction(payload: {
       Array.from(nomes).forEach(nome => {
         if (empresaPorNomeFunc[nome] != null && empresaPorNomeFunc[nome] !== payload.empresaId) nomes.delete(nome);
       });
+      opsPendentes = opsPendentes.filter(op => op.empresa_id == null || op.empresa_id === payload.empresaId);
     }
 
     let fontesResolvidas: Record<string, { recebeFechamento: boolean; recebeHolerite: boolean }> = {};
@@ -191,7 +208,8 @@ export async function montarLoteSalariosAction(payload: {
     const rotuloFonte: Record<FonteLote, string> = {
       FOLHA: 'Nossa folha', ADIANTAMENTO: 'Adiantamento',
       PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios',
-      DECIMO_TERCEIRO: '13º Salário', FERIAS: 'Férias', RESCISAO: 'Rescisão'
+      DECIMO_TERCEIRO: '13º Salário', FERIAS: 'Férias', RESCISAO: 'Rescisão',
+      OP: 'Ordem de Pagamento'
     };
 
     const itens: any[] = [];
@@ -262,6 +280,41 @@ export async function montarLoteSalariosAction(payload: {
       });
     });
 
+    // ORDEM DE PAGAMENTO — cada OP vira um item isolado (não passa pelo
+    // mecanismo de "nomes" acima, que serve pra combinar FOLHA/ADIANTAMENTO/
+    // etc. do MESMO funcionário). tipo_pagamento/chave_pix/dados_pagamento
+    // seguem o modelo de op_ordens_pagamento (ver app/admin/op/nova/page.tsx):
+    // chave_pix guarda o TIPO da chave (CELULAR/EMAIL/CPF-CNPJ/ALEATÓRIO) e
+    // dados_pagamento guarda o VALOR de fato (chave Pix, boleto ou
+    // agência/conta em texto livre) — nomes invertidos em relação ao
+    // ItemLote de funcionário, onde pix_chave é o valor.
+    opsPendentes.forEach(op => {
+      const ehPix = String(op.tipo_pagamento || '').toUpperCase() === 'PIX' && !!String(op.dados_pagamento || '').trim();
+      const metodo = ehPix ? 'PIX' : 'SEM_DADOS';
+      const valor = Number(op.total_geral || 0);
+      itens.push({
+        funcionario_nome: op.empresa_recebedora ? `${op.empresa_recebedora} — OP #${op.numero_op}` : `OP #${op.numero_op}`,
+        empresa_id: op.empresa_id ?? null,
+        fonte: 'OP',
+        fonte_rotulo: rotuloFonte.OP,
+        temDoc: false,
+        origem: null,
+        rescisaoId: null,
+        opId: op.id,
+        valor,
+        cpf: String(op.cnpj_cpf_recebedora || '').replace(/\D/g, ''),
+        metodo,
+        pix_tipo: ehPix ? (op.chave_pix || null) : null,
+        pix_chave: ehPix ? (op.dados_pagamento || null) : null,
+        banco_codigo: null, banco_agencia: null, banco_conta: null, banco_tipo: null,
+        // Só usado pra exibição quando não dá pra pagar via Pix (BOLETO,
+        // TRANSFERÊNCIA ou DINHEIRO) — mostra ao usuário o que foi digitado
+        // na OP em vez do aviso genérico de "sem dados bancários".
+        nota: !ehPix ? [op.tipo_pagamento, op.dados_pagamento].filter(Boolean).join(': ') : null,
+        pronto: ehPix && valor > 0
+      });
+    });
+
     const semDados = itens.filter(i => i.metodo === 'SEM_DADOS').length;
     const semOcr = itens.filter(i => i.temDoc && i.valor <= 0).length;
     const valorTotal = itens.filter(i => i.pronto).reduce((s, i) => s + i.valor, 0);
@@ -284,7 +337,8 @@ export async function montarLoteSalariosAction(payload: {
           BENEFICIOS: itens.filter(i => i.fonte === 'BENEFICIOS').reduce((s, i) => s + i.valor, 0),
           DECIMO_TERCEIRO: itens.filter(i => i.fonte === 'DECIMO_TERCEIRO').reduce((s, i) => s + i.valor, 0),
           FERIAS: itens.filter(i => i.fonte === 'FERIAS').reduce((s, i) => s + i.valor, 0),
-          RESCISAO: itens.filter(i => i.fonte === 'RESCISAO').reduce((s, i) => s + i.valor, 0)
+          RESCISAO: itens.filter(i => i.fonte === 'RESCISAO').reduce((s, i) => s + i.valor, 0),
+          OP: itens.filter(i => i.fonte === 'OP').reduce((s, i) => s + i.valor, 0)
         }
       }
     };
@@ -408,6 +462,39 @@ export async function listarPdfsContabilidadeAction(payload: {
 }
 
 // ============================================================================
+// Resolve a empresa "de verdade" (do banco, não do que o item possa trazer no
+// payload) de cada item de um lote, pra revalidar a permissão de empresa antes
+// de gravar/enviar. Itens de funcionário (FOLHA/ADIANTAMENTO/etc.) resolvem
+// via folha_funcionarios pelo nome; itens de OP resolvem via
+// op_ordens_pagamento pelo opId — nomes de favorecido de OP não existem
+// nessa tabela, então cairiam sempre em "sem restrição" se reaproveitassem a
+// mesma busca por nome.
+// ============================================================================
+async function construirResolvedorEmpresa(db: any, itens: any[]): Promise<(item: any) => number | null> {
+  const nomesFunc = Array.from(new Set(itens.filter(i => i.fonte !== 'OP').map(i => i.funcionario_nome)));
+  const opIds = Array.from(new Set(itens.filter(i => i.fonte === 'OP').map(i => i.opId).filter((v: any): v is string => v != null)));
+
+  const [{ data: funcsLote }, { data: opsLote }] = await Promise.all([
+    nomesFunc.length > 0
+      ? db.from('folha_funcionarios').select('nome_completo, empresa_id').in('nome_completo', nomesFunc)
+      : Promise.resolve({ data: [] }),
+    opIds.length > 0
+      ? db.from('op_ordens_pagamento').select('id, empresa_id').in('id', opIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const empresaPorNome: Record<string, number | null> = {};
+  (funcsLote || []).forEach((f: any) => { empresaPorNome[f.nome_completo] = f.empresa_id; });
+  const empresaPorOpId: Record<string, number | null> = {};
+  (opsLote || []).forEach((o: any) => { empresaPorOpId[o.id] = o.empresa_id; });
+
+  return (item: any): number | null =>
+    item.fonte === 'OP'
+      ? (item.opId != null ? (empresaPorOpId[item.opId] ?? null) : null)
+      : (empresaPorNome[item.funcionario_nome] ?? null);
+}
+
+// ============================================================================
 // SALVAR LOTE (histórico). Guarda o snapshot dos pagamentos escolhidos.
 // ============================================================================
 export async function salvarLoteAction(payload: {
@@ -428,13 +515,10 @@ export async function salvarLoteAction(payload: {
     // empresa_id que possa ter vindo embutido no payload do cliente.
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     if (empresasPermitidas) {
-      const nomesLote = Array.from(new Set(prontos.map(i => i.funcionario_nome)));
-      const { data: funcsLote } = await db.from('folha_funcionarios').select('nome_completo, empresa_id').in('nome_completo', nomesLote);
-      const empresaPorNome: Record<string, number | null> = {};
-      (funcsLote || []).forEach(f => { empresaPorNome[f.nome_completo] = f.empresa_id; });
-      const foraDoEscopo = nomesLote.filter(n => !empresaPermitida(empresasPermitidas, empresaPorNome[n]));
+      const resolverEmpresa = await construirResolvedorEmpresa(db, prontos);
+      const foraDoEscopo = prontos.filter(i => !empresaPermitida(empresasPermitidas, resolverEmpresa(i)));
       if (foraDoEscopo.length > 0) {
-        return { ok: false, erro: `Você não tem permissão para incluir no lote: ${foraDoEscopo.join(', ')}.` };
+        return { ok: false, erro: `Você não tem permissão para incluir no lote: ${foraDoEscopo.map(i => i.funcionario_nome).join(', ')}.` };
       }
     }
 
@@ -658,12 +742,9 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     let itensElegiveis = itens;
     if (empresasPermitidas) {
-      const nomesLote = Array.from(new Set(itens.map((i: any) => i.funcionario_nome)));
-      const { data: funcsLote } = await db.from('folha_funcionarios').select('nome_completo, empresa_id').in('nome_completo', nomesLote);
-      const empresaPorNome: Record<string, number | null> = {};
-      (funcsLote || []).forEach(f => { empresaPorNome[f.nome_completo] = f.empresa_id; });
+      const resolverEmpresa = await construirResolvedorEmpresa(db, itens);
       itensElegiveis = itens.filter((i: any) =>
-        empresaPermitida(empresasPermitidas, i.empresa_id !== undefined ? i.empresa_id : empresaPorNome[i.funcionario_nome])
+        empresaPermitida(empresasPermitidas, i.empresa_id !== undefined ? i.empresa_id : resolverEmpresa(i))
       );
     }
 
@@ -751,6 +832,14 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
               .update({ pago_em: new Date().toISOString(), pago_lote_id: payload.loteId })
               .eq('id', item.rescisaoId);
           }
+          // OP também não é escopada por mês — filtrada por status='PENDENTE'
+          // em montarLoteSalariosAction, então precisa virar 'PAGO' aqui pra
+          // não reaparecer e ser paga em dobro num próximo lote.
+          if (item.fonte === 'OP' && item.opId) {
+            await db.from('op_ordens_pagamento')
+              .update({ status: 'PAGO', updated_at: new Date().toISOString() })
+              .eq('id', item.opId);
+          }
         } else {
           rejeitado++;
         }
@@ -805,6 +894,36 @@ export async function consultarStatusAtualItauAction(payload: { idPagamentoSispa
     // em app/admin/financeiro/integracao/actions.ts.
     const pagamento = data?.data ?? data;
     return { ok: true, info: { ambiente: ambienteItau, pagamento } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// DETALHES DE UMA OP (popup "ver" na linha do lote, fonte 'OP') — gatilhada
+// pela mesma permissão de /admin/financeiro/rh, não pela de
+// /admin/op/responsavel ou /admin/financeiro/ops (buscarOP, em
+// app/admin/op/actions.ts): quem já vê a linha da OP no lote (montada por
+// montarLoteSalariosAction, sob esta mesma rota) precisa poder abrir o
+// detalhe sem esbarrar numa permissão de outro módulo que talvez não tenha.
+// ============================================================================
+export async function buscarDetalhesOPAction(payload: { opId: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const { data: op, error } = await db.from('op_ordens_pagamento')
+      .select('*').eq('id', payload.opId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!op) return { ok: false, erro: 'OP não encontrada.' };
+
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, op.empresa_id)) {
+      return { ok: false, erro: 'Você não tem permissão para ver esta OP.' };
+    }
+
+    return { ok: true, info: { op } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

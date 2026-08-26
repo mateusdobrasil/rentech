@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { router, useFocusEffect } from 'expo-router';
 import NetInfo from '@react-native-community/netinfo';
 import { AcessoRestrito } from '../../../components/AcessoRestrito';
+import { FaixaOffline } from '../../../components/FaixaOffline';
 import { useAuth } from '../../../context/AuthContext';
 import { colors } from '../../../constants/theme';
 import { estadoVeiculo } from '../../../lib/frota';
@@ -71,7 +72,9 @@ export default function Frota() {
   }
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
+    <View style={styles.screen}>
+      <FaixaOffline naFila={pendentes.length} />
+      <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.tags}>
         <View style={styles.tag}><Text style={styles.tagTexto}>{veiculos.length} veículos</Text></View>
         <View style={[styles.tag, veiculosPendencia > 0 && styles.tagAlerta]}>
@@ -150,7 +153,8 @@ export default function Frota() {
           })}
         </>
       )}
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 

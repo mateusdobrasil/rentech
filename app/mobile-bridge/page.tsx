@@ -12,6 +12,19 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
+// Lê só o "sub" (user id) do JWT, sem validar assinatura — a validação de
+// verdade continua sendo o setSession()/getUser() logo abaixo; isso aqui é
+// só pra decidir SE precisa chamar setSession(), nunca pra confiar no token.
+function subClaimDoJwt(jwt: string): string | null {
+  try {
+    const payload = jwt.split('.')[1];
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(base64))?.sub || null;
+  } catch {
+    return null;
+  }
+}
+
 export default function MobileBridgePage() {
   const [erro, setErro] = useState('');
 
@@ -36,11 +49,16 @@ export default function MobileBridgePage() {
       // que o app mandou nesse caso é o que quebra: refresh token do
       // Supabase é de uso único (rotaciona a cada renovação) — o token que o
       // app mobile guarda pode já ter sido consumido pela própria WebView, e
-      // reenviá-lo dá "Auth session missing!". Só chama setSession() quando
-      // ainda NÃO há sessão utilizável aqui.
+      // reenviá-lo dá "Auth session missing!". Só pula o setSession() quando
+      // já há sessão válida E ELA É DA MESMA CONTA — sem essa segunda
+      // checagem, uma sessão de outra conta deixada nesse storage
+      // compartilhado (ex.: testou como Equipe antes, agora entra como
+      // Colaborador no mesmo aparelho) seria reaproveitada por engano, e a
+      // página de destino carregaria os dados de outra pessoa.
       const { data: existente } = await supabase.auth.getSession();
       const expiraEm = existente.session?.expires_at;
-      const jaTemSessaoValida = !!existente.session && !!expiraEm && expiraEm * 1000 > Date.now();
+      const mesmaConta = !!accessToken && subClaimDoJwt(accessToken) === existente.session?.user?.id;
+      const jaTemSessaoValida = !!existente.session && !!expiraEm && expiraEm * 1000 > Date.now() && mesmaConta;
 
       let accessTokenAtivo = existente.session?.access_token || null;
 

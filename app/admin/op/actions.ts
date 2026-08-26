@@ -5,6 +5,7 @@ import { registrarLogAuditoria } from '../../actions';
 import { revalidatePath } from 'next/cache';
 import nodemailer from 'nodemailer';
 import { dispararAutomacaoWhatsApp } from '../../lib/automacoes';
+import { notificarPush } from '../../lib/push';
 import { normalizarPermissao, ehAltaGestaoOP } from '../../lib/permissoes';
 import { obterEmpresasPermitidas, empresaPermitida } from '../../lib/serverAuth';
 import { gerarHtmlEmailOP } from './emailTemplate';
@@ -211,6 +212,22 @@ export async function criarOP(data: NovaOPData, accessToken: string) {
       });
     } catch (whatsappError) {
       console.error("A OP foi criada, mas houve um erro no disparo do WhatsApp:", whatsappError);
+    }
+
+    // =========================================================
+    // DISPARO AUTOMÁTICO DE PUSH (app mobile) NA CRIAÇÃO
+    // Quem tem acesso a /admin/financeiro/ops (mesmo público que aprova pelo
+    // app) recebe o aviso — nunca bloqueia a criação da OP.
+    // =========================================================
+    try {
+      await notificarPush(
+        '/mobile/op',
+        'Nova OP aguardando pagamento',
+        `OP #${novaOp.numero_op} — ${payload.empresa_recebedora} — ${Number(payload.total_geral || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`,
+        { tipo: 'op', id: novaOp.id }
+      );
+    } catch (pushError) {
+      console.error("A OP foi criada, mas houve um erro no disparo do push:", pushError);
     }
 
     // =========================================================

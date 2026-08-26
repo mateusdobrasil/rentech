@@ -12,6 +12,7 @@
 import { supabaseAdmin } from './supabase';
 import { registrarLogAuditoria } from '../actions';
 import { dispararAutomacaoWhatsApp } from './automacoes';
+import { notificarPush } from './push';
 
 // Chave da automação (tela Agendamentos e Disparos, /admin/parametros/agendamentos)
 // que avisa os gestores operacionais de uma nova solicitação de folga. A
@@ -639,6 +640,14 @@ async function avancarJustificar(db: Db, pendencia: PendenciaPonto, texto: strin
       setor: 'RECURSOS HUMANOS / PONTO WHATSAPP',
     });
 
+    // Avisa quem tem a aba Ponto no app — falha aqui não pode derrubar a
+    // confirmação pro funcionário, por isso o try/catch isolado.
+    try {
+      await notificarPush('/mobile/ponto', 'Nova justificativa de ponto', `${pendencia.funcionario_nome} pediu justificativa de ${ROTULO_BATIDA[tipoBatida]} em ${formatarDataBR(dataReferencia)}.`, { tipo: 'ponto' });
+    } catch (e) {
+      console.error('Falha ao notificar aprovadores sobre nova justificativa:', e);
+    }
+
     return { mensagem: `✅ Solicitação enviada ao RH: ${ROTULO_BATIDA[tipoBatida]} às ${horario} em ${formatarDataBR(dataReferencia)}. Você será avisado quando for analisada.` };
   }
 
@@ -756,6 +765,12 @@ async function avancarAbonar(db: Db, pendencia: PendenciaPonto, texto: string, a
       setor: 'RECURSOS HUMANOS / PONTO WHATSAPP',
     });
 
+    try {
+      await notificarPush('/mobile/ponto', 'Nova solicitação de abono', `${pendencia.funcionario_nome} pediu abono em ${formatarDataBR(dataReferencia)}.`, { tipo: 'ponto' });
+    } catch (e) {
+      console.error('Falha ao notificar aprovadores sobre novo abono:', e);
+    }
+
     return { mensagem: `✅ Solicitação de abono enviada ao RH para ${formatarDataBR(dataReferencia)}${anexoSalvo ? ' (com anexo)' : ''}. Você será avisado quando for analisada.` };
   }
 
@@ -839,6 +854,12 @@ async function avancarFolgar(db: Db, pendencia: PendenciaPonto, texto: string, a
       });
     } catch (e) {
       console.error('Falha ao notificar gestores sobre nova solicitação de folga:', e);
+    }
+
+    try {
+      await notificarPush('/mobile/ponto', 'Nova solicitação de folga', `${pendencia.funcionario_nome} pediu folga em ${formatarPeriodoBR(dataReferencia, dataReferenciaFim)}.`, { tipo: 'ponto' });
+    } catch (e) {
+      console.error('Falha ao notificar aprovadores sobre nova folga:', e);
     }
 
     return { mensagem: `✅ Solicitação de folga enviada para aprovação: ${formatarPeriodoBR(dataReferencia, dataReferenciaFim)}. Você será avisado quando for analisada.` };

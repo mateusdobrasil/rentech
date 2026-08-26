@@ -13,6 +13,35 @@ export type RotaMobile = (typeof ROTAS_MOBILE)[number];
 
 const CHAVE_CACHE = '@rentech/permissoes-rotas';
 
+export interface ModuloAcesso {
+  rota: RotaMobile;
+  /** true = cabe na tab bar; false = passou do limite de 5 abas (Início +
+   * Perfil + 3), vira só card na Início (README: "Máximo 5 abas. O que não
+   * cabe vira card na tela Início."). */
+  comoAba: boolean;
+}
+
+const LIMITE_ABAS_MODULO = 3; // Início + Perfil já ocupam 2 das 5 possíveis
+
+// Calcula, na mesma ordem de ROTAS_MOBILE (Frota, Carga, Ponto, OP), quais
+// módulos o usuário acessa e quais cabem como aba — usado tanto por
+// (tabs)/_layout.tsx (pra decidir a tab bar) quanto por (tabs)/index.tsx
+// (pra saber o que virar card na Início, inclusive o que foi demovido da
+// tab bar). Cargos com acesso amplo (ex.: ADMINISTRADOR, hoje liberado nas
+// 4 rotas) não devem nunca ver mais de 3 abas de módulo ao mesmo tempo.
+export function calcularModulosAcessiveis(
+  mapa: Record<string, string[]>,
+  permissaoNormalizada: string | undefined,
+  podeDirigir: boolean | undefined
+): ModuloAcesso[] {
+  const acessiveis = ROTAS_MOBILE.filter(rota => {
+    if (rota === '/mobile/frota' && podeDirigir) return true;
+    if (!permissaoNormalizada) return false;
+    return (mapa[rota] || []).includes(permissaoNormalizada);
+  });
+  return acessiveis.map((rota, indice) => ({ rota, comoAba: indice < LIMITE_ABAS_MODULO }));
+}
+
 export async function carregarPermissoesRotas(): Promise<Record<string, string[]>> {
   try {
     const { data, error } = await supabase

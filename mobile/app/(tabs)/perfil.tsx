@@ -1,6 +1,7 @@
 import Constants from 'expo-constants';
-import { router } from 'expo-router';
-import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import {
   FingerprintIcon,
   BellIcon,
@@ -12,8 +13,11 @@ import {
 } from 'phosphor-react-native';
 import { useAuth } from '../../context/AuthContext';
 import { colors } from '../../constants/theme';
+import { carregarPermissoesRotas } from '../../lib/permissoesRotas';
+import { baixarParaOffline } from '../../lib/baixarOffline';
 
 const SUPORTE_EMAIL = 'contato@locadorarentech.com.br';
+const SITE_URL = process.env.EXPO_PUBLIC_SITE_URL;
 
 function iniciais(nome: string): string {
   const partes = nome.trim().split(/\s+/).filter(Boolean);
@@ -23,7 +27,22 @@ function iniciais(nome: string): string {
 }
 
 export default function Perfil() {
-  const { loading, session, perfil, signOut, biometriaSuportada, biometriaAtivada, ativarBiometria, desativarBiometria } = useAuth();
+  const {
+    loading, session, perfil, signOut,
+    biometriaSuportada, biometriaAtivada, ativarBiometria, desativarBiometria,
+    notificacoesAtivadas, ativarNotificacoes, desativarNotificacoes,
+  } = useAuth();
+  const [alternandoNotificacoes, setAlternandoNotificacoes] = useState(false);
+  const [baixando, setBaixando] = useState(false);
+  const [naoLidas, setNaoLidas] = useState(0);
+
+  useFocusEffect(useCallback(() => {
+    if (!session || !SITE_URL) return;
+    fetch(`${SITE_URL}/api/portal/notificacoes?filtro=nao-lidas`, { headers: { Authorization: `Bearer ${session.access_token}` } })
+      .then(res => res.json())
+      .then(json => { if (json.ok) setNaoLidas(json.info.length); })
+      .catch(() => {});
+  }, [session]));
 
   if (loading || !session) {
     return (
@@ -51,6 +70,26 @@ export default function Perfil() {
 
   function abrirSistemaWeb() {
     router.push({ pathname: '/webview', params: { url: perfil?.tipo === 'PORTAL' ? '/portal' : '/admin' } });
+  }
+
+  async function alternarNotificacoes(valor: boolean) {
+    setAlternandoNotificacoes(true);
+    if (valor) {
+      const resultado = await ativarNotificacoes();
+      if (!resultado.ok) Alert.alert('Notificações', resultado.erro || 'Não foi possível ativar agora.');
+    } else {
+      await desativarNotificacoes();
+    }
+    setAlternandoNotificacoes(false);
+  }
+
+  async function baixarOffline() {
+    if (!session || !perfil) return;
+    setBaixando(true);
+    const permissoesRotas = await carregarPermissoesRotas();
+    const resultado = await baixarParaOffline(session.access_token, perfil, permissoesRotas);
+    setBaixando(false);
+    Alert.alert('Baixar para uso offline', resultado.resumo);
   }
 
   return (
@@ -81,10 +120,23 @@ export default function Perfil() {
         </View>
 
         <View style={styles.linha}>
-          <BellIcon size={18} color={colors.textMuted} weight="regular" />
-          <Text style={[styles.linhaTexto, styles.linhaTextoDesabilitado]}>Notificações</Text>
-          <Text style={styles.linhaNota}>Em breve</Text>
+          <BellIcon size={18} color={colors.accent} weight="regular" />
+          <Text style={styles.linhaTexto}>Notificações</Text>
+          {alternandoNotificacoes ? (
+            <ActivityIndicator color={colors.accent} />
+          ) : (
+            <Switch value={notificacoesAtivadas} onValueChange={alternarNotificacoes} />
+          )}
         </View>
+
+        <Pressable style={styles.linha} onPress={() => router.push('/notificacoes')}>
+          <BellIcon size={18} color={colors.accent} weight="regular" />
+          <Text style={styles.linhaTexto}>Ver notificações</Text>
+          {naoLidas > 0 ? (
+            <View style={styles.badge}><Text style={styles.badgeTexto}>{naoLidas}</Text></View>
+          ) : null}
+          <CaretRightIcon size={16} color={colors.textMuted} weight="regular" />
+        </Pressable>
 
         <Pressable style={styles.linha} onPress={abrirSistemaWeb}>
           <GlobeIcon size={18} color={colors.accent} weight="regular" />
@@ -92,11 +144,11 @@ export default function Perfil() {
           <CaretRightIcon size={16} color={colors.textMuted} weight="regular" />
         </Pressable>
 
-        <View style={styles.linha}>
-          <CloudArrowDownIcon size={18} color={colors.textMuted} weight="regular" />
-          <Text style={[styles.linhaTexto, styles.linhaTextoDesabilitado]}>Baixar para uso offline</Text>
-          <Text style={styles.linhaNota}>Em breve</Text>
-        </View>
+        <Pressable style={styles.linha} onPress={baixarOffline} disabled={baixando}>
+          <CloudArrowDownIcon size={18} color={colors.accent} weight="regular" />
+          <Text style={styles.linhaTexto}>Baixar para uso offline</Text>
+          {baixando ? <ActivityIndicator color={colors.accent} /> : <CaretRightIcon size={16} color={colors.textMuted} weight="regular" />}
+        </Pressable>
 
         <Pressable style={styles.linha} onPress={() => Linking.openURL(`mailto:${SUPORTE_EMAIL}`)}>
           <LifebuoyIcon size={18} color={colors.accent} weight="regular" />
@@ -154,6 +206,8 @@ const styles = StyleSheet.create({
   linhaTexto: { flex: 1, fontSize: 14, color: colors.white },
   linhaTextoDesabilitado: { color: colors.textMuted },
   linhaNota: { fontSize: 11, color: colors.textSubtle },
+  badge: { minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 5, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
+  badgeTexto: { fontSize: 10.5, fontWeight: '800', color: colors.white },
   botaoSair: {
     minHeight: 48,
     borderWidth: 1,

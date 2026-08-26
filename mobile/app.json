@@ -47,6 +47,13 @@
         {
           "locationWhenInUsePermission": "O app Rentech usa sua localização para registrar o local de saída e retorno do checklist de veículo."
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#336699"
+        }
       ]
     ]
   }

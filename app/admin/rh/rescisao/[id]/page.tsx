@@ -7,7 +7,7 @@ import {
   obterRescisaoAction, atualizarItemCalculoAction, recalcularRescisaoAction, atualizarFgtsAction,
   uploadTrctRescisaoAction, urlTrctRescisaoAction, homologarRescisaoAction, cancelarRescisaoAction,
   enviarRescisaoParaAssinaturaAction, obterAssinaturaRescisaoAction, atualizarAssinaturaRescisaoAction,
-  baixarAssinadoRescisaoAction, gerarPdfRescisaoAction
+  baixarAssinadoRescisaoAction, gerarPdfRescisaoAction, marcarRescisaoPagaAction
 } from '../../actions/actions-rescisao';
 import type { ItemRescisao, MotivoRescisao } from '../../../../lib/calculoRescisao';
 import { usePageAccess } from '../../../../components/hooks/usePageAccess';
@@ -231,6 +231,21 @@ export default function DetalheRescisaoPage() {
     finally { setHomologando(false); }
   };
 
+  const [marcandoPago, setMarcandoPago] = useState(false);
+  const marcarPago = async (pago: boolean) => {
+    const msg = pago
+      ? 'Marcar esta rescisão como paga? Ela deixará de aparecer no filtro "Rescisão" do lote de pagamento em /admin/financeiro/rh.'
+      : 'Desfazer a marcação de paga? A rescisão volta a aparecer no filtro "Rescisão" do lote de pagamento.';
+    if (!confirm(msg)) return;
+    setMarcandoPago(true);
+    try {
+      const res = await marcarRescisaoPagaAction({ id, pago, usuarioNome: usuarioAtual }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      await carregar();
+    } catch (e: any) { toast('Erro ao atualizar status de pagamento: ' + e.message, 'error'); }
+    finally { setMarcandoPago(false); }
+  };
+
   const [cancelando, setCancelando] = useState(false);
   const cancelar = async () => {
     if (!confirm('Cancelar esta rescisão?')) return;
@@ -385,7 +400,11 @@ export default function DetalheRescisaoPage() {
             <p className="text-[10px] text-emerald-700 font-bold mt-3">✓ Homologada em {rescisao.homologado_em ? new Date(rescisao.homologado_em).toLocaleString('pt-BR') : '—'} por {rescisao.homologado_por || '—'}.</p>
           )}
           {rescisao.pago_em && (
-            <p className="text-[10px] text-emerald-700 font-bold mt-1">💰 Pago via PIX em {new Date(rescisao.pago_em).toLocaleString('pt-BR')} (Financeiro RH).</p>
+            <p className="text-[10px] text-emerald-700 font-bold mt-1">
+              💰 {rescisao.pago_lote_id
+                ? `Pago via PIX em ${new Date(rescisao.pago_em).toLocaleString('pt-BR')} (Financeiro RH, lote #${rescisao.pago_lote_id}).`
+                : `Marcado como paga em ${new Date(rescisao.pago_em).toLocaleString('pt-BR')}.`}
+            </p>
           )}
         </div>
 
@@ -438,6 +457,20 @@ export default function DetalheRescisaoPage() {
                     </button>
                   )}
                 </>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 mt-3 pt-3 border-t border-[#E2E8F0]">
+              {!rescisao.pago_em ? (
+                <button onClick={() => marcarPago(true)} disabled={marcandoPago} className="text-[10px] font-black text-white bg-emerald-600 hover:bg-emerald-700 px-4 py-2.5 rounded-lg uppercase disabled:opacity-50">
+                  {marcandoPago ? 'Salvando...' : '💰 Marcar como paga'}
+                </button>
+              ) : !rescisao.pago_lote_id ? (
+                <button onClick={() => marcarPago(false)} disabled={marcandoPago} className="text-[10px] font-black text-gray-500 bg-gray-100 hover:bg-gray-200 px-4 py-2.5 rounded-lg uppercase disabled:opacity-50">
+                  {marcandoPago ? 'Salvando...' : '↺ Desfazer marcação de paga'}
+                </button>
+              ) : (
+                <span className="text-[10px] font-black text-gray-400 uppercase">Paga via lote bancário — não pode ser desmarcada por aqui.</span>
               )}
             </div>
           </div>

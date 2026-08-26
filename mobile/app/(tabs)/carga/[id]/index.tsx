@@ -141,8 +141,14 @@ export default function ConferenciaCarga() {
       });
       const json = await res.json();
       if (json.ok) {
-        Alert.alert('Conferência salva', etapa === 'SAIDA' ? 'Saída conferida.' : 'Checklist finalizado.');
-        carregar();
+        if (etapa === 'RETORNO') {
+          Alert.alert('Checklist finalizado', 'O checklist foi finalizado com sucesso.', [
+            { text: 'OK', onPress: () => router.replace('/(tabs)/carga') },
+          ]);
+        } else {
+          Alert.alert('Conferência salva', 'Saída conferida.');
+          carregar();
+        }
       } else {
         Alert.alert('Salvar conferência', json.erro || 'Não foi possível salvar agora.');
       }

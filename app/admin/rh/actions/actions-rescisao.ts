@@ -612,6 +612,60 @@ export async function cancelarRescisaoAction(payload: { id: number; motivo?: str
 }
 
 // ============================================================================
+// MARCAR/DESMARCAR PAGA — mesmo campo pago_em que enviarLoteAoBancoAction (em
+// actions-financeiro.ts) grava automaticamente quando a rescisão é paga via
+// PIX pelo lote do Financeiro. Serve pra pagamentos feitos por fora do lote
+// (ex.: TED manual, acordo direto) — sem isso, a rescisão continuaria
+// aparecendo indefinidamente no filtro "Rescisão" de /admin/financeiro/rh
+// (que só exclui quem já tem pago_em preenchido).
+// Desmarcar só é permitido se foi marcada manualmente (pago_lote_id nulo) —
+// uma rescisão paga de fato via lote bancário não pode ser reaberta por
+// aqui, pra não arriscar reentrar no lote e pagar em dobro.
+// ============================================================================
+export async function marcarRescisaoPagaAction(payload: {
+  id: number; pago: boolean; usuarioNome: string;
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const { data: r, error } = await db.from('folha_rescisoes')
+      .select('status, funcionario_nome, empresa_id, pago_em, pago_lote_id').eq('id', payload.id).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
+    if (r.status !== 'HOMOLOGADA') return { ok: false, erro: 'Só é possível marcar como paga uma rescisão já homologada.' };
+
+    if (payload.pago) {
+      if (r.pago_em) return { ok: true }; // já paga — idempotente
+      const { error: updErr } = await db.from('folha_rescisoes')
+        .update({ pago_em: new Date().toISOString(), atualizado_em: new Date().toISOString() })
+        .eq('id', payload.id);
+      if (updErr) throw new Error(updErr.message);
+      await registrarLogAuditoria({
+        usuario_nome: payload.usuarioNome, acao: `MARCOU RESCISÃO COMO PAGA MANUALMENTE: ${r.funcionario_nome}`, setor: 'RECURSOS HUMANOS / RESCISÃO'
+      });
+    } else {
+      if (r.pago_lote_id) return { ok: false, erro: 'Esta rescisão foi paga via lote bancário do Financeiro — não é possível desmarcar por aqui.' };
+      if (!r.pago_em) return { ok: true }; // já não está paga — idempotente
+      const { error: updErr } = await db.from('folha_rescisoes')
+        .update({ pago_em: null, atualizado_em: new Date().toISOString() })
+        .eq('id', payload.id);
+      if (updErr) throw new Error(updErr.message);
+      await registrarLogAuditoria({
+        usuario_nome: payload.usuarioNome, acao: `DESFEZ MARCAÇÃO DE PAGA DA RESCISÃO: ${r.funcionario_nome}`, setor: 'RECURSOS HUMANOS / RESCISÃO'
+      });
+    }
+
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
 // PAINEL: lista todas as rescisões + KPIs, para a própria página e para o
 // painel de pendências do HUB (actions-dashboard.ts).
 // ============================================================================

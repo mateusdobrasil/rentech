@@ -1,8 +1,20 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, View } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { colors } from '../constants/theme';
+
+// Sem isso, notificação nenhuma aparece com o app aberto em primeiro plano —
+// comportamento padrão da lib é suprimir, não é bug do servidor.
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+  }),
+});
 
 function RootNavigator() {
   const { loading, session, locked } = useAuth();
@@ -25,6 +37,7 @@ function RootNavigator() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="webview" />
         <Stack.Screen name="meu-ponto" />
+        <Stack.Screen name="notificacoes" />
       </Stack.Protected>
       <Stack.Protected guard={!autenticado}>
         <Stack.Screen name="login" />

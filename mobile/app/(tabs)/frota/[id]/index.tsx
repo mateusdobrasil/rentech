@@ -5,6 +5,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { MapPinIcon, CameraIcon } from 'phosphor-react-native';
 import { Cabecalho } from '../../../../components/Cabecalho';
 import { AcessoRestrito } from '../../../../components/AcessoRestrito';
+import { FaixaOffline } from '../../../../components/FaixaOffline';
 import { useAuth } from '../../../../context/AuthContext';
 import { colors } from '../../../../constants/theme';
 import { capturarGps, type GpsCaptura } from '../../../../lib/gps';
@@ -48,6 +49,11 @@ export default function ChecklistVeiculoTela() {
   const [novaAvariaDescricao, setNovaAvariaDescricao] = useState('');
   const [gps, setGps] = useState<GpsCaptura | null>(null);
   const [gpsCarregando, setGpsCarregando] = useState(true);
+  const [naFila, setNaFila] = useState(0);
+
+  useEffect(() => {
+    listarPendentes().then(p => setNaFila(p.length));
+  }, [registro]);
 
   useEffect(() => {
     let ativo = true;
@@ -192,6 +198,7 @@ export default function ChecklistVeiculoTela() {
   return (
     <View style={styles.screen}>
       <Cabecalho titulo="Checklist de veículo" subtitulo={veiculoLabel} />
+      <FaixaOffline naFila={naFila} />
 
       <View style={styles.chipsEtapa}>
         <View style={[styles.chipEtapa, etapa === 'SAIDA' && styles.chipEtapaAtivo]}>

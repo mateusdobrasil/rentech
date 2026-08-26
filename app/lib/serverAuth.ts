@@ -49,6 +49,30 @@ export async function possuiAcessoRota(permissaoNormalizada: string, rota: strin
   return ((data?.permissoes_permitidas as string[]) || []).includes(permissaoNormalizada);
 }
 
+// Inverso de possuiAcessoRota: em vez de validar 1 usuário já conhecido,
+// lista todo mundo que acessa uma rota — usado pra decidir quem recebe uma
+// notificação push quando um evento acontece (ver app/lib/push.ts). Não
+// cruza com perfis_usuarios_empresas (empresa_id): o pior caso de não
+// filtrar por empresa aqui é alguém receber um push que não era bem pra ele,
+// não um vazamento de dado sensível — ver justificativa no plano da Fase de
+// Push.
+export async function listarPerfisComAcessoRota(rota: string): Promise<{ id: string; nome: string }[]> {
+  const admin = supabaseAdmin();
+
+  const { data: permissaoRow } = await admin
+    .from('folha_paginas_permissoes')
+    .select('permissoes_permitidas')
+    .eq('endereco_route', rota)
+    .maybeSingle();
+  const permitidas = (permissaoRow?.permissoes_permitidas as string[]) || [];
+  if (permitidas.length === 0) return [];
+
+  const { data: perfis } = await admin.from('perfis_usuarios').select('id, nome, permissao, nivel');
+  return ((perfis || []) as { id: string; nome: string; permissao: string | null; nivel: string | null }[])
+    .filter(p => permitidas.includes(normalizarPermissao(p.permissao || p.nivel || '')))
+    .map(p => ({ id: p.id, nome: p.nome }));
+}
+
 export type ResultadoAcesso =
   | { ok: true; perfil: PerfilValidado }
   | { ok: false; message: string };

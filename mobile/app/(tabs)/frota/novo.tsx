@@ -3,10 +3,11 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 import { router } from 'expo-router';
 import { Cabecalho } from '../../../components/Cabecalho';
 import { AcessoRestrito } from '../../../components/AcessoRestrito';
+import { FaixaOffline } from '../../../components/FaixaOffline';
 import { useAuth } from '../../../context/AuthContext';
 import { colors } from '../../../constants/theme';
 import { lerVeiculosCache, type VeiculoCache } from '../../../lib/veiculosCache';
-import { criarRascunhoSaida } from '../../../lib/filaFrota';
+import { criarRascunhoSaida, listarPendentes } from '../../../lib/filaFrota';
 
 const COMBUSTIVEL_CHIPS = ['CHEIO', '3/4', '1/2', '1/4', 'RESERVA'];
 
@@ -18,9 +19,11 @@ export default function NovoChecklist() {
   const [combustivel, setCombustivel] = useState('CHEIO');
   const [destino, setDestino] = useState('');
   const [criando, setCriando] = useState(false);
+  const [naFila, setNaFila] = useState(0);
 
   useEffect(() => {
     lerVeiculosCache().then(setVeiculos);
+    listarPendentes().then(p => setNaFila(p.length));
   }, []);
 
   if (!session) return <AcessoRestrito />;
@@ -53,6 +56,7 @@ export default function NovoChecklist() {
   return (
     <View style={styles.screen}>
       <Cabecalho titulo="Novo checklist" subtitulo="Saída de veículo" />
+      <FaixaOffline naFila={naFila} />
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.rotuloSecao}>VEÍCULO</Text>
         <View style={styles.lista}>

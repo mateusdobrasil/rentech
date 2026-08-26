@@ -42,7 +42,7 @@ O protótipo roda no navegador e usa dados fictícios. Toda a lógica de dados d
 
 **Fase 2 — o módulo que justifica o app.** Checklist de veículo completo: criação, etapas saída/retorno, câmera, avarias, fila offline.
 
-**Fase 3 — o resto.** Checklist de carga, aprovações de ponto, OP com biometria, push.
+**Fase 3 — o resto.** Checklist de carga, aprovações de ponto, OP com biometria. Concluída em 2026-08-25 — **push ficou de fora desta fase**, adiado por decisão do usuário (exige criar projeto EAS + credenciais APNs/FCM, infraestrutura nova); entra numa leva futura, tela 13 (Notificações) já especificada abaixo.
 
 ---
 
@@ -377,7 +377,9 @@ Para abrir o protótipo, mantenha-o na raiz do projeto de design (ele referencia
 
 Resolvidas em 2026-08-23: Simuladores fica fora desta leva (perguntas 1 e 2 do simulador ficam em suspenso até a feature voltar); conferência de carga cria divergência direto no app; Meu Ponto é tela nativa (tela 16).
 
-Em aberto:
+Resolvidas em 2026-08-25 (Fase 4):
 
-1. Colaborador comum sem conta nenhuma (nem `perfis_usuarios`, nem `portal_funcionarios_auth`) — o app só orienta a criar a conta no navegador, ou vale a pena trazer o fluxo de CPF+OTP de primeiro acesso pro app numa leva futura?
-2. `folha_funcionarios` casa com o funcionário pelo nome (`funcionario_nome` como string) tanto no Portal quanto na leitura de ponto — vale a pena, nesta fase, também expor "Meu Ponto" pra contas de equipe (`perfis_usuarios`) cujo nome bata com um `folha_funcionarios`? Hoje a spec da tela 16 deixa de fora RH/Frota/Comercial.
+1. **Primeiro acesso de colaborador sem conta nenhuma** — continua só no navegador. O app mantém apenas o link "Primeiro acesso? Crie sua conta pelo navegador"; o fluxo de CPF+OTP não entra no app, pra não duplicar a lógica de OTP (SMS/WhatsApp) em duas plataformas.
+2. **Meu Ponto para contas de equipe** — continua restrito a colaborador comum (`PORTAL`). O casamento de `perfis_usuarios` com `folha_funcionarios` seria só por nome (string), frágil o bastante (homônimos, grafia diferente) pra arriscar mostrar o ponto de outra pessoa; RH/Frota/Comercial continuam sem essa tela no app.
+
+Em aberto: nenhuma pendência de escopo restante nesta leva além do que já está marcado como fora de escopo (Simuladores, push notifications).

@@ -7,6 +7,7 @@
 // evento_p2s_oid existe — checklists criados pelo app nunca têm isso, já que
 // a criação aqui é sempre manual, sem vínculo de evento).
 import { supabaseAdmin } from '../../lib/supabase';
+import { notificarPush } from '../../lib/push';
 
 export type EtapaCarga = 'SAIDA' | 'RETORNO';
 
@@ -200,4 +201,19 @@ export async function salvarConferenciaCore(db: ReturnType<typeof supabaseAdmin>
 
   const { error: erroStatus } = await db.from('checklists').update(patch).eq('id', params.checklistId);
   if (erroStatus) throw new Error(erroStatus.message);
+
+  // Saída conferida = falta só o retorno. Avisa quem tem a aba Carga —
+  // nunca bloqueia o salvamento da conferência.
+  if (novoStatus === 'SAIDA_CONFERIDA') {
+    try {
+      await notificarPush(
+        '/mobile/carga',
+        'Checklist aguardando retorno',
+        `CKL-${String(checklist.numero).padStart(6, '0')} — ${checklist.evento_feira || checklist.cliente || 'evento'} — saída conferida, falta o retorno.`,
+        { tipo: 'carga', id: params.checklistId }
+      );
+    } catch (e) {
+      console.error('Falha ao notificar sobre checklist aguardando retorno:', e);
+    }
+  }
 }

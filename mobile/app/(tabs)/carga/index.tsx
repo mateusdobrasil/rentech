@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
+import NetInfo from '@react-native-community/netinfo';
 import { PlusIcon } from 'phosphor-react-native';
 import { AcessoRestrito } from '../../../components/AcessoRestrito';
 import { useAuth } from '../../../context/AuthContext';
@@ -35,6 +36,12 @@ export default function ChecklistDeCarga() {
   const { session } = useAuth();
   const [lista, setLista] = useState<Checklist[]>([]);
   const [carregando, setCarregando] = useState(true);
+  const [online, setOnline] = useState(true);
+
+  useEffect(() => {
+    const cancelar = NetInfo.addEventListener(estado => setOnline(!!estado.isConnected));
+    return cancelar;
+  }, []);
 
   const carregar = useCallback(async () => {
     if (!session) return;
@@ -111,7 +118,19 @@ export default function ChecklistDeCarga() {
         </ScrollView>
       )}
 
-      <Pressable style={styles.fab} onPress={() => router.push('/(tabs)/carga/novo')} hitSlop={8}>
+      {!online && (
+        <View style={styles.avisoOffline}>
+          <Text style={styles.avisoOfflineTexto}>
+            Criar carga precisa de rede: os itens vêm do modelo padrão e das OS's do evento, que só existem na base. Conferir um checklist já aberto funciona offline.
+          </Text>
+        </View>
+      )}
+      <Pressable
+        style={[styles.fab, !online && styles.fabDesabilitado]}
+        onPress={() => online && router.push('/(tabs)/carga/novo')}
+        disabled={!online}
+        hitSlop={8}
+      >
         <PlusIcon size={24} color={colors.white} weight="bold" />
       </Pressable>
     </View>
@@ -146,4 +165,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center',
     shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 4,
   },
+  fabDesabilitado: { opacity: 0.45 },
+  avisoOffline: {
+    position: 'absolute', left: 17, right: 17, bottom: 84, borderRadius: 10,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.surfaceBorder, padding: 10,
+  },
+  avisoOfflineTexto: { fontSize: 11, color: colors.textMuted, lineHeight: 15 },
 });

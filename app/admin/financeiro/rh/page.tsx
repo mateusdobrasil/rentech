@@ -7,9 +7,10 @@ import { supabase } from '../../../lib/supabase';
 import {
   montarLoteSalariosAction, salvarLoteAction, listarLotesAction, enviarLoteAoBancoAction,
   listarPdfsContabilidadeAction, processarOcrAwsAction, alternarAtivoLoteAction, buscarLoteAction,
-  consultarStatusAtualItauAction
+  consultarStatusAtualItauAction, buscarDetalhesOPAction
 } from '../../rh/actions/actions-financeiro';
 import { listarIntegracoesAction } from '../../parametros/integracao/actions';
+import { normalizarItensOP, ItemOPNormalizado } from '../../op/utils';
 import SepararHolerites from '../../rh/holerite/SepararHolerites';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
@@ -37,7 +38,7 @@ interface Integracao {
   id: number; parceiro: string; nome_exibicao: string; tipo: string;
   ativo: boolean; ambiente: string; config: any;
 }
-type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO';
+type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO' | 'OP';
 
 interface ItemLote {
   funcionario_nome: string; cpf: string; empresa_id: number | null; valor: number; metodo: string;
@@ -45,6 +46,11 @@ interface ItemLote {
   temDoc: boolean;
   origem: string | null;
   rescisaoId: number | null;
+  opId: string | null;
+  // Só preenchido pelas OPs sem Pix (BOLETO/TRANSFERÊNCIA/DINHEIRO) — o que
+  // foi digitado na OP, exibido no lugar do aviso genérico de "sem dados
+  // bancários" já que não há como pagar/exportar isso automaticamente.
+  nota: string | null;
   pix_tipo: string | null; pix_chave: string | null;
   banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null;
   pronto: boolean;
@@ -90,10 +96,10 @@ export default function FinanceiroPage() {
     return `${c.getFullYear()}-${String(c.getMonth() + 1).padStart(2, '0')}`;
   });
   const [itens, setItens] = useState<ItemLote[]>([]);
-  const [fontesSel, setFontesSel] = useState<FonteLote[]>(['FOLHA']);
+  const [fontesSel, setFontesSel] = useState<FonteLote[]>([]);
   const [resumoLote, setResumoLote] = useState({
     semDados: 0, semOcr: 0, valorTotal: 0, totalItens: 0,
-    totaisPorFonte: { FOLHA: 0, ADIANTAMENTO: 0, PAGAMENTO: 0, BENEFICIOS: 0, DECIMO_TERCEIRO: 0, FERIAS: 0, RESCISAO: 0 }
+    totaisPorFonte: { FOLHA: 0, ADIANTAMENTO: 0, PAGAMENTO: 0, BENEFICIOS: 0, DECIMO_TERCEIRO: 0, FERIAS: 0, RESCISAO: 0, OP: 0 }
   });
 
   const [valoresAdiant, setValoresAdiant] = useState<Record<string, number>>({});
@@ -129,6 +135,11 @@ export default function FinanceiroPage() {
   const [detalheBrutoItem, setDetalheBrutoItem] = useState<ItemLote | null>(null);
   const [consultandoStatusId, setConsultandoStatusId] = useState<string | null>(null);
   const [statusAtual, setStatusAtual] = useState<{ item: ItemLote; ambiente: string; pagamento: any } | null>(null);
+
+  // Popup "ver" de uma OP incluída no lote (fonte 'OP') — mostra os dados da
+  // Ordem de Pagamento sem sair da tela, em vez de navegar para
+  // /admin/financeiro/ops.
+  const [modalOP, setModalOP] = useState<{ open: boolean; carregando: boolean; op: any | null; erro: string | null }>({ open: false, carregando: false, op: null, erro: null });
 
   useEffect(() => {
     if (!authLoading && !acessoNegado) carregar();
@@ -356,7 +367,7 @@ export default function FinanceiroPage() {
 
   const gerarLote = async () => {
     if (prontos.length === 0) { toast('Nenhum pagamento pronto para gerar o lote.', 'info'); return; }
-    const sugestao = `${fontesSel.map(f => ({ FOLHA: 'Folha', ADIANTAMENTO: 'Adiantamento', PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios', DECIMO_TERCEIRO: '13º', FERIAS: 'Férias', RESCISAO: 'Rescisão' }[f])).join(' + ')} ${fmtMesBR(mesReferencia)}`;
+    const sugestao = `${fontesSel.map(f => ({ FOLHA: 'Folha', ADIANTAMENTO: 'Adiantamento', PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios', DECIMO_TERCEIRO: '13º', FERIAS: 'Férias', RESCISAO: 'Rescisão', OP: 'OP' }[f])).join(' + ')} ${fmtMesBR(mesReferencia)}`;
     const nome = prompt(`Nome do lote (para identificar no histórico):`, sugestao);
     if (nome === null) return;
     setSalvandoLote(true);
@@ -753,6 +764,13 @@ export default function FinanceiroPage() {
     }
   };
 
+  const abrirDetalhesOP = async (opId: string) => {
+    setModalOP({ open: true, carregando: true, op: null, erro: null });
+    const res = await buscarDetalhesOPAction({ opId }, accessToken);
+    if (!res.ok) { setModalOP({ open: true, carregando: false, op: null, erro: res.erro || 'Não foi possível carregar a OP.' }); return; }
+    setModalOP({ open: true, carregando: false, op: res.info.op, erro: null });
+  };
+
   // Datas do Itaú vêm como "2026-08-12-22.46.12.850000" — não é ISO.
   const fmtDataItau = (d: string | null | undefined) => {
     if (!d) return '—';
@@ -910,7 +928,7 @@ export default function FinanceiroPage() {
               </div>
               <div className="flex-1">
                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Fontes a incluir no lote</label>
-                <div className="flex flex-wrap gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {([
                     ['FOLHA', '💼 Nossa folha', 'bg-blue-50 text-blue-700 border-blue-300'],
                     ['ADIANTAMENTO', '📄 Adiantamento', 'bg-purple-50 text-purple-700 border-purple-300'],
@@ -918,10 +936,11 @@ export default function FinanceiroPage() {
                     ['BENEFICIOS', '🎁 Benefícios', 'bg-emerald-50 text-emerald-700 border-emerald-300'],
                     ['DECIMO_TERCEIRO', '🎄 13º Salário', 'bg-amber-50 text-amber-700 border-amber-300'],
                     ['FERIAS', '🏖️ Férias', 'bg-cyan-50 text-cyan-700 border-cyan-300'],
-                    ['RESCISAO', '📤 Rescisão', 'bg-red-50 text-red-700 border-red-300']
+                    ['RESCISAO', '📤 Rescisão', 'bg-red-50 text-red-700 border-red-300'],
+                    ['OP', '🧾 Ordem de Pagamento', 'bg-indigo-50 text-indigo-700 border-indigo-300']
                   ] as const).map(([f, lbl, cor]) => (
-                    <label key={f} className={`cursor-pointer inline-flex items-center gap-2 px-3 py-2 rounded-lg border-2 text-[11px] font-black uppercase tracking-wider transition-all ${fontesSel.includes(f) ? cor : 'bg-gray-50 text-gray-400 border-gray-200'}`}>
-                      <input type="checkbox" checked={fontesSel.includes(f)} onChange={() => alternarFonte(f)} className="w-4 h-4" />
+                    <label key={f} className={`cursor-pointer inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border-2 text-[11px] font-black uppercase tracking-wider transition-all ${fontesSel.includes(f) ? cor : 'bg-gray-50 text-gray-400 border-gray-200'}`}>
+                      <input type="checkbox" checked={fontesSel.includes(f)} onChange={() => alternarFonte(f)} className="w-4 h-4 shrink-0" />
                       {lbl}
                     </label>
                   ))}
@@ -1069,6 +1088,7 @@ export default function FinanceiroPage() {
                         : it.fonte === 'DECIMO_TERCEIRO' ? 'bg-amber-100 text-amber-700'
                         : it.fonte === 'FERIAS' ? 'bg-cyan-100 text-cyan-700'
                         : it.fonte === 'RESCISAO' ? 'bg-red-100 text-red-700'
+                        : it.fonte === 'OP' ? 'bg-indigo-100 text-indigo-700'
                         : 'bg-emerald-100 text-emerald-700';
                       const chaveEdit = `${it.funcionario_nome}::${it.fonte}`;
                       return (
@@ -1079,7 +1099,10 @@ export default function FinanceiroPage() {
                           <td className="p-3">
                             <span className="font-black text-[#0C1D4D] block">{it.funcionario_nome}</span>
                             <span className="text-[10px] text-gray-400">
-                              {it.metodo === 'SEM_DADOS' ? <span className="text-amber-600 font-black">⚠ Sem dados bancários na ficha</span>
+                              {it.metodo === 'SEM_DADOS'
+                                ? (it.fonte === 'OP' && it.nota
+                                    ? <span className="text-amber-600 font-black">⚠ Pagar manualmente: {it.nota}</span>
+                                    : <span className="text-amber-600 font-black">⚠ Sem dados bancários na ficha</span>)
                                 : it.metodo === 'PIX' ? `PIX ${it.pix_tipo}: ${it.pix_chave}`
                                 : `Ag ${it.banco_agencia} · C/C ${it.banco_conta}`}
                             </span>
@@ -1089,6 +1112,11 @@ export default function FinanceiroPage() {
                             {it.origem && <span className="ml-1 text-[9px] font-bold text-gray-400 uppercase">{it.origem === 'FICHA' ? '📋 ficha' : '🔍 ocr'}</span>}
                             {it.fonte === 'RESCISAO' && it.rescisaoId && (
                               <button type="button" onClick={() => router.push(`/admin/rh/rescisao/${it.rescisaoId}`)} className="ml-1 text-[9px] font-black text-gray-400 hover:text-red-600 uppercase underline">
+                                ↗ ver
+                              </button>
+                            )}
+                            {it.fonte === 'OP' && it.opId && (
+                              <button type="button" onClick={() => abrirDetalhesOP(it.opId!)} className="ml-1 text-[9px] font-black text-gray-400 hover:text-indigo-600 uppercase underline">
                                 ↗ ver
                               </button>
                             )}
@@ -1373,6 +1401,95 @@ export default function FinanceiroPage() {
                   {JSON.stringify(statusAtual.pagamento, null, 2)}
                 </pre>
               )}
+            </div>
+          </div>
+        )}
+
+        {modalOP.open && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setModalOP({ open: false, carregando: false, op: null, erro: null })}>
+            <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-5" onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider">
+                  🧾 Ordem de Pagamento {modalOP.op ? `#${modalOP.op.numero_op}` : ''}
+                </h3>
+                <button onClick={() => setModalOP({ open: false, carregando: false, op: null, erro: null })} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
+              </div>
+
+              {modalOP.carregando && (
+                <div className="p-12 text-center text-gray-400 font-bold uppercase tracking-wider">Carregando...</div>
+              )}
+
+              {!modalOP.carregando && modalOP.erro && (
+                <div className="p-6 text-center text-red-600 font-bold text-sm">{modalOP.erro}</div>
+              )}
+
+              {!modalOP.carregando && modalOP.op && (() => {
+                const op = modalOP.op;
+                const itensOp: ItemOPNormalizado[] = normalizarItensOP(op.itens);
+                const anexos: string[] = (op.file_urls && op.file_urls.length > 0) ? op.file_urls : (op.file_url ? [op.file_url] : []);
+                const ehPix = String(op.tipo_pagamento || '').toUpperCase() === 'PIX';
+                const coresStatusOp: Record<string, string> = {
+                  PENDENTE: 'bg-amber-100 text-amber-700',
+                  PAGO: 'bg-emerald-100 text-emerald-700',
+                };
+                return (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4 bg-[#F8FAFC] p-4 rounded-xl border border-[#E2E8F0]">
+                      <div><span className="block text-[10px] uppercase text-gray-400 font-bold">OS</span><strong className="text-xs">{op.os_numero || '—'}</strong></div>
+                      <div><span className="block text-[10px] uppercase text-gray-400 font-bold">Status</span>
+                        <span className={`inline-block text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${coresStatusOp[(op.status || '').toUpperCase()] || 'bg-purple-100 text-purple-700'}`}>{op.status || '—'}</span>
+                      </div>
+                      <div><span className="block text-[10px] uppercase text-gray-400 font-bold">Solicitante</span><strong className="text-xs">{op.responsavel_nome || '—'}</strong></div>
+                      <div><span className="block text-[10px] uppercase text-gray-400 font-bold">Cliente</span><strong className="text-xs">{op.os_cliente || '—'}</strong></div>
+                      <div><span className="block text-[10px] uppercase text-gray-400 font-bold">Evento</span><strong className="text-xs">{op.os_evento || '—'}</strong></div>
+                      <div><span className="block text-[10px] uppercase text-gray-400 font-bold">Período</span><strong className="text-xs">{op.os_periodo || '—'}</strong></div>
+                      <div><span className="block text-[10px] uppercase text-gray-400 font-bold">Natureza</span><strong className="text-xs">{op.natureza_pagamento || '—'}</strong></div>
+                      <div><span className="block text-[10px] uppercase text-gray-400 font-bold">Vencimento</span><strong className="text-xs">{fmtData(op.data_vencimento)}</strong></div>
+                      <div><span className="block text-[10px] uppercase text-gray-400 font-bold">Favorecido</span><strong className="text-xs">{op.empresa_recebedora || '—'}</strong></div>
+                      <div><span className="block text-[10px] uppercase text-gray-400 font-bold">CNPJ/CPF</span><strong className="text-xs">{op.cnpj_cpf_recebedora || '—'}</strong></div>
+                      <div className="col-span-2"><span className="block text-[10px] uppercase text-gray-400 font-bold">Pagamento</span>
+                        <strong className="text-xs">{ehPix ? `PIX ${op.chave_pix || ''}: ${op.dados_pagamento || '—'}` : `${op.tipo_pagamento || '—'}: ${op.dados_pagamento || '—'}`}</strong>
+                      </div>
+                    </div>
+
+                    {itensOp.length > 0 && (
+                      <>
+                        <h4 className="text-xs font-black uppercase text-[#0C1D4D] tracking-widest mb-2 border-b border-[#E2E8F0] pb-2">Itens Solicitados</h4>
+                        <div className="space-y-2 mb-4">
+                          {itensOp.map((it, idx) => (
+                            <div key={idx} className="flex justify-between items-center bg-white border border-[#E2E8F0] p-3 rounded-lg text-xs">
+                              <span className="flex-grow font-semibold text-[#0A2A4A] uppercase">{it.descricao} <span className="text-gray-400 font-normal">(x{it.qtd})</span></span>
+                              <strong className="w-24 text-right text-[#336699]">{BRL(it.total)}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+
+                    {op.observacao && (
+                      <div className="mb-4">
+                        <span className="block text-[10px] uppercase text-gray-400 font-bold mb-1">Observação</span>
+                        <p className="text-xs text-gray-600">{op.observacao}</p>
+                      </div>
+                    )}
+
+                    {anexos.length > 0 && (
+                      <div className="mb-4 flex flex-wrap gap-2">
+                        {anexos.map((url, i) => (
+                          <a key={i} href={url} target="_blank" rel="noreferrer" className="text-[10px] font-black text-indigo-600 hover:underline uppercase">
+                            📎 Comprovante {anexos.length > 1 ? i + 1 : ''}
+                          </a>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="bg-[#F8FAFC] rounded-lg p-3 flex justify-between items-center border-t border-[#E2E8F0]">
+                      <span className="text-xs font-bold text-gray-500 uppercase">Valor Total</span>
+                      <span className="text-xl font-black text-[#0C1D4D]">{BRL(op.total_geral)}</span>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
         )}

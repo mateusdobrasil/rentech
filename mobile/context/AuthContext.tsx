@@ -5,9 +5,11 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { supabase } from '../lib/supabase';
 import { normalizarPermissao } from '../lib/permissoes';
 import { emailSinteticoPortal } from '../lib/cpf';
+import { registrarPushToken, removerPushToken } from '../lib/pushNotifications';
 
 const SITE_URL = process.env.EXPO_PUBLIC_SITE_URL;
 const CHAVE_BIOMETRIA_ATIVADA = 'biometria_ativada';
+const CHAVE_NOTIFICACOES_ATIVADAS = 'notificacoes_ativadas';
 
 // O sistema tem duas bases de conta separadas de propósito (ver app/actions.ts:313
 // no repo web/): 'STAFF' = perfis_usuarios (equipe com acesso ao /admin, e-mail+senha),
@@ -42,12 +44,15 @@ interface AuthContextValue {
   locked: boolean;
   biometriaSuportada: boolean;
   biometriaAtivada: boolean;
+  notificacoesAtivadas: boolean;
   signInEquipe: (email: string, senha: string) => Promise<{ error: string | null }>;
   signInColaborador: (cpf: string, senha: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
   ativarBiometria: () => Promise<{ ok: boolean; erro?: string }>;
   desativarBiometria: () => Promise<void>;
   desbloquearComBiometria: () => Promise<{ ok: boolean; erro?: string }>;
+  ativarNotificacoes: () => Promise<{ ok: boolean; erro?: string }>;
+  desativarNotificacoes: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -119,6 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [locked, setLocked] = useState(false);
   const [biometriaSuportada, setBiometriaSuportada] = useState(false);
   const [biometriaAtivada, setBiometriaAtivada] = useState(false);
+  const [notificacoesAtivadas, setNotificacoesAtivadas] = useState(false);
 
   // Só a primeira carga (sessão restaurada do AsyncStorage no cold start) pode
   // travar atrás de biometria — um signIn explícito dentro desta mesma sessão
@@ -127,6 +133,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // "Uma vez por sessão do app" — análogo ao sessionStorage do web (que reseta
   // por aba); aqui reseta ao reabrir o app.
   const logRegistrado = useRef(false);
+  // Idem, mas pra re-registrar o token de push silenciosamente (o token
+  // pode mudar entre instalações) quando o usuário já tinha ativado antes.
+  const pushRegistrado = useRef(false);
 
   useEffect(() => {
     let ativo = true;
@@ -136,6 +145,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (ativo) setBiometriaSuportada(suportada);
       const ativada = await AsyncStorage.getItem(CHAVE_BIOMETRIA_ATIVADA);
       if (ativo) setBiometriaAtivada(ativada === 'true');
+      const notificacoesAtivadasSalvo = await AsyncStorage.getItem(CHAVE_NOTIFICACOES_ATIVADAS);
+      if (ativo) setNotificacoesAtivadas(notificacoesAtivadasSalvo === 'true');
     })();
 
     async function carregar(sessaoAtual: Session | null) {
@@ -196,6 +207,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })();
   }, [session, perfil]);
 
+  // Se o usuário já tinha ativado notificações numa sessão anterior,
+  // re-registra o token sozinho ao abrir o app (best-effort, nunca bloqueia
+  // nem avisa erro — se falhar, o toggle no Perfil simplesmente aparece
+  // desligado da próxima vez que ele checar).
+  useEffect(() => {
+    if (!session || !perfil || !notificacoesAtivadas || pushRegistrado.current) return;
+    pushRegistrado.current = true;
+    registrarPushToken(session.access_token, perfil.tipo).catch(() => {});
+  }, [session, perfil, notificacoesAtivadas]);
+
   async function signInEquipe(email: string, senha: string) {
     const { error } = await supabase.auth.signInWithPassword({ email, password: senha });
     return { error: error?.message ?? null };
@@ -230,6 +251,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { ok: true };
   }
 
+  async function ativarNotificacoes() {
+    if (!session || !perfil) return { ok: false, erro: 'Sessão indisponível.' };
+    const resultado = await registrarPushToken(session.access_token, perfil.tipo);
+    if (!resultado.ok) return resultado;
+    await AsyncStorage.setItem(CHAVE_NOTIFICACOES_ATIVADAS, 'true');
+    setNotificacoesAtivadas(true);
+    return { ok: true };
+  }
+
+  async function desativarNotificacoes() {
+    if (session) await removerPushToken(session.access_token);
+    await AsyncStorage.setItem(CHAVE_NOTIFICACOES_ATIVADAS, 'false');
+    setNotificacoesAtivadas(false);
+  }
+
   return (
     <AuthContext.Provider
       value={{
@@ -239,12 +275,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         locked,
         biometriaSuportada,
         biometriaAtivada,
+        notificacoesAtivadas,
         signInEquipe,
         signInColaborador,
         signOut,
         ativarBiometria,
         desativarBiometria,
         desbloquearComBiometria,
+        ativarNotificacoes,
+        desativarNotificacoes,
       }}
     >
       {children}

@@ -916,23 +916,38 @@ export default function GestaoDePonto() {
     carregarSolicitacoesPendentes();
   };
 
+  // processandoSolicitacaoId trava TODOS os botões da lista (não só os da
+  // linha clicada) enquanto uma aprovação/rejeição está em andamento — e só
+  // libera depois do recarregamento completo (Promise.all), não logo após a
+  // action responder. Antes disso, o botão de outra linha reabilitava durante
+  // o recarregamento e permitia disparar uma segunda aprovação em paralelo;
+  // como cada uma recarrega a mesma lista de pendentes de forma independente,
+  // a resposta que chegasse por último (não necessariamente a mais recente)
+  // sobrescrevia o estado, e com várias solicitações na fila a tela parecia
+  // travar sem atualizar as informações.
   const aprovarSolicitacao = async (id: number) => {
     if (!(await confirm('Aprovar esta solicitação? Isso já grava o ajuste/abono e avisa o funcionário pelo WhatsApp.'))) return;
     setProcessandoSolicitacaoId(id);
-    const res = await aprovarSolicitacaoAction({ id, aprovadorNome: usuarioAtual }, accessToken);
-    setProcessandoSolicitacaoId(null);
-    if (!res.ok) { toast(res.erro || 'Erro ao aprovar a solicitação.', 'error'); return; }
-    await Promise.all([carregarSolicitacoesPendentes(), carregarAcessoEDados(), carregarHistoricoSolicitacoes()]);
+    try {
+      const res = await aprovarSolicitacaoAction({ id, aprovadorNome: usuarioAtual }, accessToken);
+      if (!res.ok) { toast(res.erro || 'Erro ao aprovar a solicitação.', 'error'); return; }
+      await Promise.all([carregarSolicitacoesPendentes(), carregarAcessoEDados(), carregarHistoricoSolicitacoes()]);
+    } finally {
+      setProcessandoSolicitacaoId(null);
+    }
   };
 
   const rejeitarSolicitacao = async (id: number) => {
     const motivo = await prompt('Motivo da rejeição (o funcionário verá esta mensagem):');
     if (!motivo?.trim()) return;
     setProcessandoSolicitacaoId(id);
-    const res = await rejeitarSolicitacaoAction({ id, aprovadorNome: usuarioAtual, motivoRejeicao: motivo.trim() }, accessToken);
-    setProcessandoSolicitacaoId(null);
-    if (!res.ok) { toast(res.erro || 'Erro ao rejeitar a solicitação.', 'error'); return; }
-    await Promise.all([carregarSolicitacoesPendentes(), carregarHistoricoSolicitacoes()]);
+    try {
+      const res = await rejeitarSolicitacaoAction({ id, aprovadorNome: usuarioAtual, motivoRejeicao: motivo.trim() }, accessToken);
+      if (!res.ok) { toast(res.erro || 'Erro ao rejeitar a solicitação.', 'error'); return; }
+      await Promise.all([carregarSolicitacoesPendentes(), carregarHistoricoSolicitacoes()]);
+    } finally {
+      setProcessandoSolicitacaoId(null);
+    }
   };
 
   const carregarHistoricoSolicitacoes = async () => {
@@ -1441,8 +1456,8 @@ export default function GestaoDePonto() {
                             </td>
                             <td className="p-4 text-right">
                               <div className="flex gap-2 justify-end">
-                                <button disabled={processandoSolicitacaoId === s.id} onClick={() => aprovarSolicitacao(s.id)} className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors">✓ Aprovar</button>
-                                <button disabled={processandoSolicitacaoId === s.id} onClick={() => rejeitarSolicitacao(s.id)} className="bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-600 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors">✕ Rejeitar</button>
+                                <button disabled={processandoSolicitacaoId !== null} onClick={() => aprovarSolicitacao(s.id)} className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors">{processandoSolicitacaoId === s.id ? '...' : '✓ Aprovar'}</button>
+                                <button disabled={processandoSolicitacaoId !== null} onClick={() => rejeitarSolicitacao(s.id)} className="bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-600 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors">{processandoSolicitacaoId === s.id ? '...' : '✕ Rejeitar'}</button>
                               </div>
                             </td>
                           </tr>

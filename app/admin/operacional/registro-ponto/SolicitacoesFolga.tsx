@@ -144,23 +144,35 @@ export default function SolicitacoesFolga({ usuarioAtual, accessToken, onCountCh
     onCountChangeRef.current?.(solicitacoesFiltradas.filter(s => s.status === 'PENDENTE').length);
   }, [solicitacoesFiltradas]);
 
+  // processandoId trava todos os botões (não só os da linha clicada) até o
+  // carregar() terminar — antes o botão de outra linha reabilitava assim que
+  // a action respondia, deixando disparar uma segunda aprovação enquanto o
+  // recarregamento da primeira ainda estava em voo; com várias solicitações
+  // na fila, respostas fora de ordem sobrescreviam a lista com dados velhos
+  // e a tela parecia travada sem atualizar.
   const aprovar = async (id: number) => {
     if (!confirm('Aprovar esta folga? Isso abona os dias úteis do período em folha_ponto_abono e avisa o funcionário pelo WhatsApp.')) return;
     setProcessandoId(id);
-    const res = await aprovarSolicitacaoAction({ id, aprovadorNome: usuarioAtual }, accessToken);
-    setProcessandoId(null);
-    if (!res.ok) { toast(res.erro || 'Erro ao aprovar a solicitação.', 'error'); return; }
-    await carregar();
+    try {
+      const res = await aprovarSolicitacaoAction({ id, aprovadorNome: usuarioAtual }, accessToken);
+      if (!res.ok) { toast(res.erro || 'Erro ao aprovar a solicitação.', 'error'); return; }
+      await carregar();
+    } finally {
+      setProcessandoId(null);
+    }
   };
 
   const rejeitar = async (id: number) => {
     const motivo = prompt('Motivo da rejeição (o funcionário verá esta mensagem):');
     if (!motivo?.trim()) return;
     setProcessandoId(id);
-    const res = await rejeitarSolicitacaoAction({ id, aprovadorNome: usuarioAtual, motivoRejeicao: motivo.trim() }, accessToken);
-    setProcessandoId(null);
-    if (!res.ok) { toast(res.erro || 'Erro ao rejeitar a solicitação.', 'error'); return; }
-    await carregar();
+    try {
+      const res = await rejeitarSolicitacaoAction({ id, aprovadorNome: usuarioAtual, motivoRejeicao: motivo.trim() }, accessToken);
+      if (!res.ok) { toast(res.erro || 'Erro ao rejeitar a solicitação.', 'error'); return; }
+      await carregar();
+    } finally {
+      setProcessandoId(null);
+    }
   };
 
   return (
@@ -207,8 +219,8 @@ export default function SolicitacoesFolga({ usuarioAtual, accessToken, onCountCh
                     <td className="p-4 text-right">
                       {s.status === 'PENDENTE' ? (
                         <div className="flex gap-2 justify-end">
-                          <button disabled={processandoId === s.id} onClick={() => aprovar(s.id)} className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors">✓ Aprovar</button>
-                          <button disabled={processandoId === s.id} onClick={() => rejeitar(s.id)} className="bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-600 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors">✕ Rejeitar</button>
+                          <button disabled={processandoId !== null} onClick={() => aprovar(s.id)} className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors">{processandoId === s.id ? '...' : '✓ Aprovar'}</button>
+                          <button disabled={processandoId !== null} onClick={() => rejeitar(s.id)} className="bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-600 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors">{processandoId === s.id ? '...' : '✕ Rejeitar'}</button>
                         </div>
                       ) : <span className="text-gray-300 text-xs">—</span>}
                     </td>

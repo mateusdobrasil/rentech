@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { CheckIcon, MinusIcon, PlusIcon } from 'phosphor-react-native';
 import { Cabecalho } from '../../../../components/Cabecalho';
 import { useAuth } from '../../../../context/AuthContext';
@@ -111,6 +111,11 @@ export default function ConferenciaCarga() {
   const podeEditar = checklist ? (etapa === 'SAIDA' ? checklist.status === 'RASCUNHO' : checklist.status === 'SAIDA_CONFERIDA') : false;
   const retornoHabilitado = checklist ? checklist.status !== 'RASCUNHO' : false;
 
+  function verNoSistema() {
+    if (!checklist) return;
+    router.push({ pathname: '/webview', params: { url: `/admin/estoque/expedicao?id=${checklist.id}`, titulo: 'Carga' } });
+  }
+
   function alternar(itemId: string) {
     if (!podeEditar) return;
     setMarcados(prev => ({ ...prev, [itemId]: !prev[itemId] }));
@@ -194,6 +199,11 @@ export default function ConferenciaCarga() {
       ) : null}
 
       <ScrollView contentContainerStyle={styles.container}>
+        <Pressable style={styles.botaoSecundario} onPress={verNoSistema}>
+          <Text style={styles.botaoSecundarioTexto}>Ver no sistema</Text>
+        </Pressable>
+        <Text style={styles.nota}>Importar itens das OS's vinculadas ao evento só dá pra fazer no sistema web — abre este mesmo checklist lá e usa "Importar Itens das OS's".</Text>
+
         {secoes.map(([secao, itensSecao]) => (
           <View key={secao} style={{ gap: 8 }}>
             <Text style={styles.secaoTitulo}>{secao}</Text>
@@ -272,4 +282,9 @@ const styles = StyleSheet.create({
   },
   botao: { height: 48, borderRadius: 8, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
   botaoTexto: { fontSize: 14, fontWeight: '700', color: colors.white },
+  botaoSecundario: {
+    height: 44, borderRadius: 8, borderWidth: 1, borderColor: colors.surfaceBorder, alignItems: 'center', justifyContent: 'center',
+  },
+  botaoSecundarioTexto: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
+  nota: { fontSize: 11.5, color: colors.textMuted, lineHeight: 16, marginTop: -6 },
 });

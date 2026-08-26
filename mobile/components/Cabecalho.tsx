@@ -1,5 +1,6 @@
 import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CaretLeftIcon, BellIcon } from 'phosphor-react-native';
 import { colors } from '../constants/theme';
 
@@ -18,8 +19,9 @@ interface Props {
 }
 
 export function Cabecalho({ titulo, subtitulo, mostrarVoltar = true, onNotificacoesPress, naoLidas }: Props) {
+  const insets = useSafeAreaInsets();
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top + 11 }]}>
       {mostrarVoltar ? (
         <Pressable style={styles.voltar} onPress={() => router.back()} hitSlop={8}>
           <CaretLeftIcon size={18} color={colors.white} weight="bold" />

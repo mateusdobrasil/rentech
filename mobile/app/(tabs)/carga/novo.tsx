@@ -12,11 +12,26 @@ interface Empresa {
   nome: string;
 }
 
+interface EventoFeira {
+  nome: string;
+  local: string | null;
+  data_inicial: string | null;
+  data_final: string | null;
+}
+
+function formatarDataBR(iso: string | null): string {
+  if (!iso) return '';
+  return iso.slice(0, 10).split('-').reverse().join('/');
+}
+
 export default function NovoChecklistCarga() {
   const { session } = useAuth();
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [empresaId, setEmpresaId] = useState<number | null>(null);
   const [eventoFeira, setEventoFeira] = useState('');
+  const [eventoSelecionado, setEventoSelecionado] = useState<EventoFeira | null>(null);
+  const [resultadosEvento, setResultadosEvento] = useState<EventoFeira[]>([]);
+  const [buscandoEvento, setBuscandoEvento] = useState(false);
   const [cliente, setCliente] = useState('');
   const [local, setLocal] = useState('');
   const [periodoInicio, setPeriodoInicio] = useState('');
@@ -43,6 +58,50 @@ export default function NovoChecklistCarga() {
   }, [session]);
 
   useEffect(() => { carregarEmpresas(); }, [carregarEmpresas]);
+
+  // Busca eventos_feiras (mesma tabela sincronizada do PrimeStart que o
+  // /admin/estoque/expedicao usa) — escolher um daqui em vez de digitar
+  // garante que o nome bate exatamente com o que "Importar Itens das OS's"
+  // no desktop procura depois (ilike exato contra fichas_reserva.evento_feira).
+  useEffect(() => {
+    if (!session || eventoSelecionado) {
+      setResultadosEvento([]);
+      return;
+    }
+    const termo = eventoFeira.trim();
+    if (termo.length < 2) {
+      setResultadosEvento([]);
+      return;
+    }
+    setBuscandoEvento(true);
+    const handle = setTimeout(async () => {
+      try {
+        const res = await fetch(`${SITE_URL}/api/portal/checklist-carga/eventos?q=${encodeURIComponent(termo)}`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        const json = await res.json();
+        if (json.ok) setResultadosEvento(json.info);
+      } catch {
+        // sem rede — busca de sugestão não é crítica, segue com texto livre
+      }
+      setBuscandoEvento(false);
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [eventoFeira, eventoSelecionado, session]);
+
+  function alterarEventoTexto(v: string) {
+    setEventoFeira(v);
+    if (eventoSelecionado) setEventoSelecionado(null);
+  }
+
+  function selecionarEvento(ev: EventoFeira) {
+    setEventoSelecionado(ev);
+    setEventoFeira(ev.nome);
+    setResultadosEvento([]);
+    if (ev.local) setCliente(prev => prev || ev.local || '');
+    if (ev.data_inicial) setPeriodoInicio(ev.data_inicial);
+    if (ev.data_final) setPeriodoFim(ev.data_final);
+  }
 
   async function criar() {
     if (!session) return;
@@ -83,7 +142,7 @@ export default function NovoChecklistCarga() {
   return (
     <View style={styles.screen}>
       <Cabecalho titulo="Novo checklist" subtitulo="Carga" />
-      <ScrollView contentContainerStyle={styles.container}>
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <Text style={styles.rotulo}>Empresa</Text>
         {carregandoEmpresas ? (
           <ActivityIndicator color={colors.accent} />
@@ -97,7 +156,37 @@ export default function NovoChecklistCarga() {
           </View>
         )}
 
-        <Campo rotulo="Evento / feira" valor={eventoFeira} onChangeText={setEventoFeira} placeholder="Ex.: Feira XYZ 2026" />
+        <View style={{ gap: 6 }}>
+          <Text style={styles.rotulo}>Evento / feira</Text>
+          <TextInput
+            style={styles.input}
+            value={eventoFeira}
+            onChangeText={alterarEventoTexto}
+            placeholder="Busque pelo nome já cadastrado no PrimeStart"
+            placeholderTextColor={colors.textMuted}
+          />
+          {eventoSelecionado ? (
+            <Text style={styles.eventoVinculado}>
+              Vinculado a {eventoSelecionado.nome}{eventoSelecionado.data_inicial ? ` · ${formatarDataBR(eventoSelecionado.data_inicial)}` : ''} — "Importar das OS's" no sistema web vai encontrar este evento.
+            </Text>
+          ) : (
+            <Text style={styles.nota}>
+              Se o evento não aparecer na busca, pode digitar livre — mas depois não vai dar pra importar os itens das OS's pelo sistema web (o nome precisa bater exatamente).
+            </Text>
+          )}
+          {buscandoEvento ? <ActivityIndicator color={colors.accent} style={{ alignSelf: 'flex-start' }} /> : null}
+          {resultadosEvento.length > 0 ? (
+            <View style={styles.sugestoes}>
+              {resultadosEvento.map(ev => (
+                <Pressable key={ev.nome} style={styles.sugestaoLinha} onPress={() => selecionarEvento(ev)}>
+                  <Text style={styles.sugestaoNome}>{ev.nome}</Text>
+                  <Text style={styles.sugestaoMeta}>{ev.local || 'Local não informado'}{ev.data_inicial ? ` · ${formatarDataBR(ev.data_inicial)}` : ''}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+        </View>
+
         <Campo rotulo="Cliente" valor={cliente} onChangeText={setCliente} placeholder="Nome do cliente" />
         <Campo rotulo="Local" valor={local} onChangeText={setLocal} placeholder="Endereço ou pavilhão" />
         <View style={styles.linhaDupla}>
@@ -149,6 +238,13 @@ const styles = StyleSheet.create({
   },
   linhaDupla: { flexDirection: 'row', gap: 10 },
   nota: { fontSize: 12, color: colors.textMuted, lineHeight: 17 },
+  eventoVinculado: { fontSize: 12, color: colors.accent, lineHeight: 17, fontWeight: '600' },
+  sugestoes: {
+    borderRadius: 8, borderWidth: 1, borderColor: colors.surfaceBorder, backgroundColor: colors.surface, overflow: 'hidden',
+  },
+  sugestaoLinha: { paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: colors.surfaceBorder },
+  sugestaoNome: { fontSize: 13.5, fontWeight: '700', color: colors.white },
+  sugestaoMeta: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
   botao: { height: 48, borderRadius: 8, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
   botaoTexto: { fontSize: 14, fontWeight: '700', color: colors.white },
 });

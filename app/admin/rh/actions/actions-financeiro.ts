@@ -143,10 +143,10 @@ export async function montarLoteSalariosAction(payload: {
     // sucesso pela API num lote anterior (ver enviarLoteAoBancoAction) —
     // mesmo sem status='PAGO' ainda (isso exige confirmação humana), não
     // pode reaparecer aqui e ser enviado de novo, senão paga em dobro.
-    let opsPendentes: { id: string; numero_op: number; empresa_id: number | null; empresa_recebedora: string; cnpj_cpf_recebedora: string; tipo_pagamento: string; chave_pix: string; dados_pagamento: string; total_geral: number }[] = [];
+    let opsPendentes: { id: string; numero_op: number; empresa_id: number | null; empresa_recebedora: string; cnpj_cpf_recebedora: string; tipo_pagamento: string; chave_pix: string; dados_pagamento: string; total_geral: number; data_vencimento: string | null }[] = [];
     if (fontes.includes('OP')) {
       const { data: ops } = await db.from('op_ordens_pagamento')
-        .select('id, numero_op, empresa_id, empresa_recebedora, cnpj_cpf_recebedora, tipo_pagamento, chave_pix, dados_pagamento, total_geral')
+        .select('id, numero_op, empresa_id, empresa_recebedora, cnpj_cpf_recebedora, tipo_pagamento, chave_pix, dados_pagamento, total_geral, data_vencimento')
         .eq('status', 'PENDENTE').is('pago_em', null);
       opsPendentes = ops || [];
     }
@@ -276,6 +276,9 @@ export async function montarLoteSalariosAction(payload: {
           temDoc: e.temDoc || false,
           origem: e.origem || null,
           rescisaoId: e.rescisaoId || null,
+          opId: null,
+          nota: null,
+          dataPagamento: null,
           valor: e.valor,
           ...bancoInfo,
           pronto: (temPix || temConta) && e.valor > 0
@@ -309,6 +312,10 @@ export async function montarLoteSalariosAction(payload: {
         metodo,
         pix_tipo: ehPix ? (op.chave_pix || null) : null,
         pix_chave: ehPix ? (op.dados_pagamento || null) : null,
+        // Data de pagamento da OP é a própria data de vencimento dela, nunca
+        // a digitada na tela de montagem do lote — ver enviarLoteAoBancoAction
+        // e a exportação CNAB no front, que preferem este campo quando presente.
+        dataPagamento: op.data_vencimento || null,
         banco_codigo: null, banco_agencia: null, banco_conta: null, banco_tipo: null,
         // Só usado pra exibição quando não dá pra pagar via Pix (BOLETO,
         // TRANSFERÊNCIA ou DINHEIRO) — mostra ao usuário o que foi digitado
@@ -770,6 +777,10 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
       const referencia_empresa = `FOLHA ${lote.mes_referencia}`.slice(0, 20);
       const identificacao_comprovante = `Pagamento - ${item.funcionario_nome}`.slice(0, 100);
       const informacoes_entre_usuarios = `Pagamento de ${item.fonte_rotulo || 'folha'} - ${lote.mes_referencia}`;
+      // Itens de OP usam a própria data de vencimento (item.dataPagamento),
+      // nunca a data digitada na tela de montagem do lote — ver
+      // montarLoteSalariosAction, onde esse campo é preenchido só pra OP.
+      const dataPagamentoItem = item.dataPagamento || payload.dataPagamento;
 
       let resultado;
       if (item.pix_chave) {
@@ -778,8 +789,8 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
           valor_pagamento: Number(item.valor || 0),
           // Data pura "yyyy-MM-dd" — confirmado na Especificação Técnica
           // (tamanho 10, exemplos sem horário). dataPagamento já vem nesse
-          // formato do <input type="date"> no front.
-          data_pagamento: payload.dataPagamento,
+          // formato do <input type="date"> no front (ou de op.data_vencimento).
+          data_pagamento: dataPagamentoItem,
           chave: item.pix_chave,
           referencia_empresa, identificacao_comprovante, informacoes_entre_usuarios,
           pagador,
@@ -794,7 +805,7 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
         resultado = await enviarPixPorDadosBancarios({
           ambiente: ambienteItau,
           valor_pagamento: Number(item.valor || 0),
-          data_pagamento: payload.dataPagamento,
+          data_pagamento: dataPagamentoItem,
           ispb,
           tipo_identificacao_conta: tipoContaSispag(item.banco_tipo),
           agencia_recebedor: String(item.banco_agencia).replace(/\D/g, ''),

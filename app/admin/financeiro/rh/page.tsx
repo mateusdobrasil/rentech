@@ -51,6 +51,11 @@ interface ItemLote {
   // foi digitado na OP, exibido no lugar do aviso genérico de "sem dados
   // bancários" já que não há como pagar/exportar isso automaticamente.
   nota: string | null;
+  // Só preenchido nos itens de OP (= data_vencimento da própria OP) — usado
+  // no lugar da "Data de pagamento" digitada nesta tela, tanto no envio via
+  // API (enviarLoteAoBancoAction) quanto na exportação CNAB. Demais fontes
+  // ficam null e usam a data digitada, como sempre.
+  dataPagamento: string | null;
   pix_tipo: string | null; pix_chave: string | null;
   banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null;
   pronto: boolean;
@@ -443,9 +448,13 @@ export default function FinanceiroPage() {
     const horaGeracao = padL(hoje.getHours(), 2) + padL(hoje.getMinutes(), 2) + padL(hoje.getSeconds(), 2);
 
     // Data de pagamento é escolhida pelo usuário (pode ser diferente do dia
-    // de geração do arquivo, ex.: gerar hoje para pagar daqui a alguns dias).
-    const [anoPag, mesPag, diaPag] = dataPagamento.split('-').map(Number);
-    const dataPagamentoStr = padL(diaPag, 2) + padL(mesPag, 2) + String(anoPag);
+    // de geração do arquivo, ex.: gerar hoje para pagar daqui a alguns dias)
+    // — exceto para itens de OP, que usam a própria data de vencimento da OP
+    // (item.dataPagamento), nunca a digitada nesta tela.
+    const formatarDataPagamentoCnab = (dataStr: string) => {
+      const [ano, mes, dia] = dataStr.split('-').map(Number);
+      return padL(dia, 2) + padL(mes, 2) + String(ano);
+    };
 
     let sequencialRegistro = 1;
     let linhasCnab: string[] = [];
@@ -479,6 +488,7 @@ export default function FinanceiroPage() {
       const nomeFuncionario = padR(formataTexto(item.funcionario_nome), 30);
       const idPagamento = padR(`PGTO${index + 1}`, 20);
       const valorStr = padL(valorCentavos, 15);
+      const dataPagamentoStr = formatarDataPagamentoCnab(item.dataPagamento || dataPagamento);
 
       sequencialRegistro++;
 
@@ -581,8 +591,12 @@ export default function FinanceiroPage() {
     const hoje = new Date();
     const dataGeracao = padL(hoje.getDate(), 2) + padL(hoje.getMonth() + 1, 2) + hoje.getFullYear();
     const horaGeracao = padL(hoje.getHours(), 2) + padL(hoje.getMinutes(), 2) + padL(hoje.getSeconds(), 2);
-    const [anoPag, mesPag, diaPag] = dataPagamento.split('-').map(Number);
-    const dataPagamentoStr = padL(diaPag, 2) + padL(mesPag, 2) + String(anoPag);
+    // Itens de OP usam a própria data de vencimento da OP (item.dataPagamento),
+    // nunca a digitada nesta tela — ver formatarDataPagamentoCnab acima.
+    const formatarDataPagamentoCnab = (dataStr: string) => {
+      const [ano, mes, dia] = dataStr.split('-').map(Number);
+      return padL(dia, 2) + padL(mes, 2) + String(ano);
+    };
 
     const itensItau = pagamentosConta.filter(i => limpaNum(i.banco_codigo || '') === '341');
     const itensOutrosBancos = pagamentosConta.filter(i => limpaNum(i.banco_codigo || '') !== '341');
@@ -624,6 +638,7 @@ export default function FinanceiroPage() {
         const nomeFuncionario = padR(formataTexto(item.funcionario_nome), 30);
         const idPagamento = padR(`PGTO${index + 1}`, 20);
         const valorStr = padL(valorCentavos, 15);
+        const dataPagamentoStr = formatarDataPagamentoCnab(item.dataPagamento || dataPagamento);
         const bancoFavorecido = padL(limpaNum(item.banco_codigo || ''), 3);
         const contaFavorecidoSep = separarContaDac(item.banco_conta);
 
@@ -1114,6 +1129,11 @@ export default function FinanceiroPage() {
                               <button type="button" onClick={() => router.push(`/admin/rh/rescisao/${it.rescisaoId}`)} className="ml-1 text-[9px] font-black text-gray-400 hover:text-red-600 uppercase underline">
                                 ↗ ver
                               </button>
+                            )}
+                            {it.fonte === 'OP' && it.dataPagamento && (
+                              <span className="block text-[9px] font-bold text-gray-400 mt-0.5" title="Data de pagamento desta OP — usa o vencimento próprio, não a data digitada acima">
+                                📅 Venc.: {fmtData(it.dataPagamento)}
+                              </span>
                             )}
                             {it.fonte === 'OP' && it.opId && (
                               <button type="button" onClick={() => abrirDetalhesOP(it.opId!)} className="ml-1 text-[9px] font-black text-gray-400 hover:text-indigo-600 uppercase underline">

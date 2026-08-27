@@ -16,7 +16,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "br.com.rentech.mobile"
+      "bundleIdentifier": "br.com.rentech.mobile",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "br.com.rentech.mobile",
@@ -26,10 +29,6 @@
       },
       "edgeToEdgeEnabled": true,
       "permissions": [
-        "android.permission.USE_BIOMETRIC",
-        "android.permission.USE_FINGERPRINT",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT",
         "android.permission.ACCESS_COARSE_LOCATION",

@@ -156,7 +156,13 @@ async function obterToken(ambiente: AmbienteItau): Promise<string> {
     cliente: carregarCertificadoCliente(ambiente),
   });
   if (status < 200 || status >= 300 || !data?.access_token) {
-    throw new Error(`Falha ao autenticar na API do Itaú (HTTP ${status}): ${data?.error_description || data?.error || data?.mensagem || 'resposta inválida'}`);
+    const erro: any = new Error(`Falha ao autenticar na API do Itaú (HTTP ${status}): ${data?.error_description || data?.error || data?.mensagem || 'resposta inválida'}`);
+    // Anexa o corpo bruto da resposta pro chamador conseguir salvar em
+    // api_resposta_bruta — sem isso, um erro de autenticação (ex.: "HTTP 403:
+    // Certificado inválido") perdia todo o detalhe extra que o Itaú manda
+    // (codigo_erro, acao etc.), só sobrava a mensagem resumida.
+    erro.respostaBruta = data;
+    throw erro;
   }
 
   const novoCache = { token: data.access_token, expiraEm: Date.now() + (Number(data.expires_in || 300) * 1000) };
@@ -377,7 +383,7 @@ export async function enviarPixPorChave(params: EnviarPixPorChaveParams): Promis
     }
     return { httpStatus: status, erro: `Resposta inesperada da API do Itaú (HTTP ${status}).`, respostaBruta: data };
   } catch (e: any) {
-    return { httpStatus: 0, erro: e.message };
+    return { httpStatus: 0, erro: e.message, respostaBruta: e.respostaBruta };
   }
 }
 
@@ -429,7 +435,7 @@ export async function enviarPixPorDadosBancarios(params: EnviarPixPorDadosBancar
     }
     return { httpStatus: status, erro: `Resposta inesperada da API do Itaú (HTTP ${status}).`, respostaBruta: data };
   } catch (e: any) {
-    return { httpStatus: 0, erro: e.message };
+    return { httpStatus: 0, erro: e.message, respostaBruta: e.respostaBruta };
   }
 }
 

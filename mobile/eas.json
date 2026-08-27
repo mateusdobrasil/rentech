@@ -17,6 +17,9 @@
         "simulator": false,
         "distribution": "store"
       },
+      "android": {
+        "buildType": "app-bundle"
+      },
       "channel": "preview"
     },
     "production": {

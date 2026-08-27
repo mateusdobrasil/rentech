@@ -794,6 +794,11 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
           chave: item.pix_chave,
           referencia_empresa, identificacao_comprovante, informacoes_entre_usuarios,
           pagador,
+          // Teste empírico (2026-08-27, pedido do usuário): o eco da resposta
+          // do Itaú mostra pagador.modulo_sispag="CONTAS" mesmo mandando
+          // "Fornecedores" — não documentado no schema oficial do recebedor,
+          // mas mandado mesmo assim pra ver se muda a reclassificação.
+          recebedor: { modulo_sispag: 'Fornecedores' },
         });
       } else if (item.banco_codigo && item.banco_agencia && item.banco_conta) {
         const ispb = ispbPorCompe(item.banco_codigo);
@@ -814,6 +819,7 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
           identificacao_recebedor: String(item.cpf || '').replace(/\D/g, ''),
           referencia_empresa, identificacao_comprovante, informacoes_entre_usuarios,
           pagador,
+          recebedor: { modulo_sispag: 'Fornecedores' },
         });
       } else {
         item.api_status = 'Erro'; item.api_erro = 'Sem chave PIX nem conta bancária cadastrada.'; item.api_enviado_em = new Date().toISOString();

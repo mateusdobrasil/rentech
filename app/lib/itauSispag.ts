@@ -308,6 +308,19 @@ export interface PagadorSispag {
   modulo_sispag: 'Fornecedores' | 'Diversos';
 }
 
+// O schema oficial do "recebedor" (Especificação Técnica) NÃO documenta um
+// campo modulo_sispag aqui — só existe documentado em "pagador". Incluído
+// mesmo assim a pedido do usuário (2026-08-27) como teste empírico: o eco
+// da resposta do Itaú mostra pagador.modulo_sispag="CONTAS" mesmo quando
+// mandamos "Fornecedores", então o banco parece reclassificar esse campo
+// do lado deles — testando se informar o mesmo valor também no recebedor
+// muda esse comportamento. Se a API ignorar/rejeitar, é sinal de que o
+// campo realmente não existe nesse objeto e a reclassificação é 100%
+// server-side, fora do nosso controle via payload.
+export interface RecebedorSispag {
+  modulo_sispag?: 'Fornecedores' | 'Diversos';
+}
+
 export interface EnviarPixPorChaveParams {
   ambiente: AmbienteItau;
   valor_pagamento: number;
@@ -317,6 +330,7 @@ export interface EnviarPixPorChaveParams {
   identificacao_comprovante?: string;
   informacoes_entre_usuarios?: string;
   pagador: PagadorSispag;
+  recebedor?: RecebedorSispag;
 }
 
 export interface ResultadoTransferenciaSispag {
@@ -381,6 +395,7 @@ export interface EnviarPixPorDadosBancariosParams {
   identificacao_comprovante?: string;
   informacoes_entre_usuarios?: string;
   pagador: PagadorSispag;
+  recebedor?: RecebedorSispag;
 }
 
 // Inclui uma transferência Pix por dados bancários (agência+conta do

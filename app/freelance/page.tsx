@@ -99,15 +99,26 @@ export default function CadastroFreelance() {
     // Cadastro..." pra sempre, sem nenhuma mensagem — a pessoa via a tela
     // travada e desistia, achando que o cadastro nunca foi enviado.
     try {
+      // O id é gerado aqui no cliente (e não deixado pro banco gerar com
+      // .select('id') depois do insert) de propósito: ler o registro recém
+      // criado de volta exige uma política de SELECT liberada pro papel
+      // "anon" no RLS — e como esta tabela guarda CPF, chave PIX, telefone e
+      // endereço, abrir SELECT público seria vazar dado sensível de todo
+      // mundo já cadastrado pra internet inteira (e contradiz o próprio
+      // texto de LGPD desta página, que promete uso só interno). O INSERT
+      // já é liberado pro anônimo — só o INSERT ... RETURNING é que precisa
+      // de SELECT, então evitamos o RETURNING gerando o id antes.
+      const idFreelancer = crypto.randomUUID();
       const payloadFinal = {
         ...formData,
+        id: idFreelancer,
         empresa_id: formData.empresa_id ? Number(formData.empresa_id) : null,
         // Garante que o valor da diária seja salvo como número no banco, mesmo se o usuário digitar vírgula
         valor_diaria: formData.valor_diaria ? parseFloat(formData.valor_diaria.replace(',', '.')) : null,
         lgpd_aceite: true,
       };
 
-      const { data: freelancerCriado, error } = await supabase.from('freelancers').insert([payloadFinal]).select('id').single();
+      const { error } = await supabase.from('freelancers').insert([payloadFinal]);
 
       if (!error) {
         // Um insert em lote com os setores respondidos (setor sem resposta =
@@ -118,7 +129,7 @@ export default function CadastroFreelance() {
         // acha que nunca conseguiu se cadastrar).
         const linhasSetorNivel = Object.entries(niveisEscolhidos)
           .filter(([, nivelId]) => nivelId)
-          .map(([setorId, nivelId]) => ({ freelancer_id: freelancerCriado.id, setor_id: setorId, nivel_id: nivelId }));
+          .map(([setorId, nivelId]) => ({ freelancer_id: idFreelancer, setor_id: setorId, nivel_id: nivelId }));
         if (linhasSetorNivel.length > 0) {
           try {
             const { error: erroSetores } = await supabase.from('freelancers_setor_nivel').insert(linhasSetorNivel);

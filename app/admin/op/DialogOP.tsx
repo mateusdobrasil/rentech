@@ -49,13 +49,14 @@ export function DialogOP({ dialog, onClose }: DialogOPProps) {
 // Botão "Assinatura" das tabelas de OP — antes copiava um link para o
 // clipboard (assinatura manuscrita via canvas); agora leva para o painel
 // dedicado de assinaturas via Autentique, onde o envio/consulta acontece.
-export function BotaoLinkAssinatura({ opId }: { opId: string }) {
+export function BotaoLinkAssinatura({ opId, disabled }: { opId: string; disabled?: boolean }) {
   const router = useRouter();
   return (
     <button
-      onClick={() => router.push('/admin/op/assinaturas')}
-      title="Assinatura Digital (Autentique)"
-      className="w-8 h-8 flex items-center justify-center bg-[#E0F2FE] hover:bg-[#BAE6FD] border border-[#7DD3FC] text-[#0369A1] rounded transition-colors shadow-sm shrink-0"
+      onClick={() => !disabled && router.push('/admin/op/assinaturas')}
+      disabled={disabled}
+      title={disabled ? 'OP reprovada — sem ações disponíveis' : 'Assinatura Digital (Autentique)'}
+      className="w-8 h-8 flex items-center justify-center bg-[#E0F2FE] hover:bg-[#BAE6FD] border border-[#7DD3FC] text-[#0369A1] rounded transition-colors shadow-sm shrink-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#E0F2FE]"
     >
       ✍️
     </button>

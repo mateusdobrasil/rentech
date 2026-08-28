@@ -317,6 +317,90 @@ export async function atualizarStatus(opId: string, novoStatus: string, accessTo
   }
 }
 
+// 3.1 Reprovar OP — para quando a OP foi criada mas não foi autorizada pelo
+// Financeiro. Diferente de atualizarStatus (genérica), essa: só permite
+// reprovar quem ainda está PENDENTE (uma OP já paga não pode ser "reprovada"
+// depois — nesse caso o caminho é outro, fora do escopo daqui); guarda o
+// motivo digitado anexado à observação da OP; e loga a ação com o texto
+// correto (a genérica sempre grava "BAIXOU OP", mesmo pra outros status).
+export async function reprovarOPAction(opId: string, motivo: string, accessToken: string) {
+  const acesso = await validarAcesso(accessToken, '/admin/financeiro/ops');
+  if (!acesso.ok) return { success: false, message: acesso.message };
+  const { perfil } = acesso;
+
+  try {
+    const { data: op, error: buscaError } = await supabaseAdmin
+      .from('op_ordens_pagamento')
+      .select('status, observacao, os_numero')
+      .eq('id', opId)
+      .single();
+    if (buscaError) throw buscaError;
+    if (!op) return { success: false, message: 'OP não encontrada.' };
+    if (op.status !== 'PENDENTE') return { success: false, message: `Só é possível reprovar uma OP pendente (status atual: ${op.status}).` };
+
+    const notaReprovacao = `[REPROVADA em ${new Date().toLocaleString('pt-BR')} por ${perfil.nome}]${motivo ? `: ${motivo}` : ''}`;
+    const observacaoAtualizada = [op.observacao, notaReprovacao].filter(Boolean).join('\n');
+
+    const { error } = await supabaseAdmin
+      .from('op_ordens_pagamento')
+      .update({ status: 'REPROVADA', observacao: observacaoAtualizada, updated_at: new Date().toISOString() })
+      .eq('id', opId);
+    if (error) throw error;
+
+    registrarLogAuditoria({
+      usuario_nome: perfil.nome,
+      acao: `REPROVOU OP${motivo ? ` — MOTIVO: ${motivo}` : ''}`,
+      setor: 'OP',
+      equipamento_id: opId,
+      equipamento_nome: `OS ${op.os_numero || 'S/N'}`,
+    });
+
+    revalidatePath('/admin');
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, message: error.message };
+  }
+}
+
+// 3.2 Reabrir OP reprovada — desfaz uma reprovação feita por engano, volta
+// pra PENDENTE. Só faz sentido a partir de REPROVADA (uma OP já paga segue
+// o fluxo normal, não "reabre" por aqui).
+export async function reabrirOPAction(opId: string, accessToken: string) {
+  const acesso = await validarAcesso(accessToken, '/admin/financeiro/ops');
+  if (!acesso.ok) return { success: false, message: acesso.message };
+  const { perfil } = acesso;
+
+  try {
+    const { data: op, error: buscaError } = await supabaseAdmin
+      .from('op_ordens_pagamento')
+      .select('status, os_numero')
+      .eq('id', opId)
+      .single();
+    if (buscaError) throw buscaError;
+    if (!op) return { success: false, message: 'OP não encontrada.' };
+    if (op.status !== 'REPROVADA') return { success: false, message: `Só é possível reabrir uma OP reprovada (status atual: ${op.status}).` };
+
+    const { error } = await supabaseAdmin
+      .from('op_ordens_pagamento')
+      .update({ status: 'PENDENTE', updated_at: new Date().toISOString() })
+      .eq('id', opId);
+    if (error) throw error;
+
+    registrarLogAuditoria({
+      usuario_nome: perfil.nome,
+      acao: 'REABRIU OP REPROVADA — VOLTOU PARA PENDENTE',
+      setor: 'OP',
+      equipamento_id: opId,
+      equipamento_nome: `OS ${op.os_numero || 'S/N'}`,
+    });
+
+    revalidatePath('/admin');
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, message: error.message };
+  }
+}
+
 // 4. Buscar OP Específica para Edição
 export async function buscarOP(opId: string, accessToken: string) {
   const perfil = await obterPerfilValidado(accessToken);

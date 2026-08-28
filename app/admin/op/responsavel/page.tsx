@@ -430,7 +430,7 @@ export default function PainelResponsavel() {
                       <td className="p-2.5 font-bold text-[#64748B] truncate max-w-[130px]" title={op.empresa_recebedora}>{op.empresa_recebedora}</td>
                       <td className="p-2.5 font-black text-[#0C1D4D] whitespace-nowrap">{formatarMoeda(op.total_geral)}</td>
                       <td className="p-2.5">
-                        <span className={`px-2 py-1 rounded-full text-[9px] font-black tracking-wider whitespace-nowrap ${op.status.includes('ASSINADO') ? 'bg-purple-100 text-purple-700 border border-purple-200' : isPago ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-orange-100 text-orange-700 border border-orange-200'}`}>
+                        <span className={`px-2 py-1 rounded-full text-[9px] font-black tracking-wider whitespace-nowrap ${op.status.includes('ASSINADO') ? 'bg-purple-100 text-purple-700 border border-purple-200' : isPago ? 'bg-green-100 text-green-700 border border-green-200' : op.status === 'REPROVADA' ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-orange-100 text-orange-700 border border-orange-200'}`}>
                           {op.status}
                         </span>
                       </td>

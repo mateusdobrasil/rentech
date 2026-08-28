@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { listarOPs, atualizarStatus, dispararEmailOP } from '../../op/actions';
+import { listarOPs, atualizarStatus, dispararEmailOP, reprovarOPAction, reabrirOPAction } from '../../op/actions';
 import { conciliarOpsComContasPagarAction, enviarOpParaPrimeStartAction } from './actions';
 import { sincronizarContasPagarP2sAction } from '../contas-pagar/actions';
 import { sincronizarParceirosP2sAction, sincronizarColaboradoresP2sAction } from '../../comercial/parceiros/actions';
@@ -223,8 +223,10 @@ export default function PainelFinanceiro() {
     opsFiltradas.forEach(op => {
       const val = Number(op.total_geral) || 0;
       tGeral += val;
+      // Reprovada não conta nem como pendente (não é mais dinheiro a pagar)
+      // nem como pago.
       if (op.status.includes('PAGO')) tPago += val;
-      else tPendente += val;
+      else if (op.status !== 'REPROVADA') tPendente += val;
 
       const nat = op.natureza_pagamento || "NÃO INFORMADA";
       naturezas[nat] = (naturezas[nat] || 0) + val;
@@ -244,6 +246,52 @@ export default function PainelFinanceiro() {
       onConfirm: async () => {
         setDialog({ open: true, type: 'loading', title: 'Aguarde...', msg: 'Atualizando o banco de dados...' });
         const res = await atualizarStatus(id, 'PAGO', perfil.accessToken);
+        if (res.success) {
+          await carregarDados();
+          setDialog(d => ({ ...d, open: false }));
+        } else {
+          setDialog({ open: true, type: 'error', title: 'Erro', msg: res.message });
+        }
+      }
+    });
+  };
+
+  // Reprovar OP (criada mas não autorizada pelo Financeiro) — pede o motivo
+  // antes de confirmar, igual ao "Nome do lote" em /admin/financeiro/rh.
+  // Cancelar o prompt (null) aborta sem nenhuma chamada.
+  const reprovarOP = (op: OP) => {
+    if (!perfil) return;
+    const motivo = prompt(`Motivo da reprovação da OP #${op.numero_op} — ${op.empresa_recebedora} (opcional):`, '');
+    if (motivo === null) return;
+    setDialog({
+      open: true,
+      type: 'confirm',
+      title: 'Reprovar OP',
+      msg: `Confirma a reprovação da OP #${op.numero_op} (OS ${op.os_numero || 'S/N'})? Ela deixa de poder ser paga ou incluída em lote até ser reaberta.`,
+      onConfirm: async () => {
+        setDialog({ open: true, type: 'loading', title: 'Aguarde...', msg: 'Atualizando o banco de dados...' });
+        const res = await reprovarOPAction(op.id, motivo.trim(), perfil.accessToken);
+        if (res.success) {
+          await carregarDados();
+          setDialog(d => ({ ...d, open: false }));
+        } else {
+          setDialog({ open: true, type: 'error', title: 'Erro', msg: res.message });
+        }
+      }
+    });
+  };
+
+  // Reabrir OP reprovada por engano — volta pra PENDENTE.
+  const reabrirOP = (op: OP) => {
+    if (!perfil) return;
+    setDialog({
+      open: true,
+      type: 'confirm',
+      title: 'Reabrir OP',
+      msg: `Reabrir a OP #${op.numero_op} (OS ${op.os_numero || 'S/N'})? Ela volta para PENDENTE e passa a poder ser paga ou incluída em lote de novo.`,
+      onConfirm: async () => {
+        setDialog({ open: true, type: 'loading', title: 'Aguarde...', msg: 'Atualizando o banco de dados...' });
+        const res = await reabrirOPAction(op.id, perfil.accessToken);
         if (res.success) {
           await carregarDados();
           setDialog(d => ({ ...d, open: false }));
@@ -672,7 +720,7 @@ export default function PainelFinanceiro() {
                         <td className="p-2.5 font-black text-[#0C1D4D] whitespace-nowrap">{formatarMoeda(op.total_geral)}</td>
                         <td className="p-2.5 font-bold text-red-500 whitespace-nowrap">{formatarData(op.data_vencimento)}</td>
                         <td className="p-2.5">
-                          <span className={`px-2 py-1 rounded-full text-[9px] font-black tracking-wider whitespace-nowrap ${statusAtual.includes('ASSINADO') ? 'bg-purple-100 text-purple-700 border border-purple-200' : statusAtual === 'PAGO' ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-amber-100 text-amber-700 border border-amber-200'}`}>
+                          <span className={`px-2 py-1 rounded-full text-[9px] font-black tracking-wider whitespace-nowrap ${statusAtual.includes('ASSINADO') ? 'bg-purple-100 text-purple-700 border border-purple-200' : statusAtual === 'PAGO' ? 'bg-green-100 text-green-700 border border-green-200' : statusAtual === 'REPROVADA' ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-amber-100 text-amber-700 border border-amber-200'}`}>
                             {statusAtual}
                           </span>
                           {statusAtual === 'PENDENTE' && op.pago_em && (
@@ -686,31 +734,51 @@ export default function PainelFinanceiro() {
                             botões de texto empilhados, pra caber sem estourar a largura */}
                         <td className="p-2.5">
                           <div className="flex items-center justify-center gap-1 flex-wrap">
-                            {statusAtual !== 'PENDENTE' ? (
-                              <span title="Pago" className="w-8 h-8 flex items-center justify-center bg-green-50 text-green-600 rounded shrink-0">✅</span>
+                            {statusAtual === 'PENDENTE' ? (
+                              <>
+                                <button onClick={() => confirmarBaixa(op.id, op.os_numero)} title="Baixar OP" className="w-8 h-8 flex items-center justify-center bg-green-600 hover:bg-green-500 text-white rounded transition-colors shadow-sm shrink-0">
+                                  ✅
+                                </button>
+                                <button onClick={() => reprovarOP(op)} title="Reprovar OP" className="w-8 h-8 flex items-center justify-center bg-red-600 hover:bg-red-500 text-white rounded transition-colors shadow-sm shrink-0">
+                                  ❌
+                                </button>
+                              </>
+                            ) : statusAtual === 'REPROVADA' ? (
+                              <>
+                                <span title="Reprovada" className="w-8 h-8 flex items-center justify-center bg-red-50 text-red-600 rounded shrink-0">❌</span>
+                                <button onClick={() => reabrirOP(op)} title="Reabrir OP (volta pra Pendente)" className="w-8 h-8 flex items-center justify-center bg-white hover:bg-gray-50 border border-[#CBD5E1] text-[#0C1D4D] rounded transition-colors shadow-sm shrink-0">
+                                  ↺
+                                </button>
+                              </>
                             ) : (
-                              <button onClick={() => confirmarBaixa(op.id, op.os_numero)} title="Baixar OP" className="w-8 h-8 flex items-center justify-center bg-green-600 hover:bg-green-500 text-white rounded transition-colors shadow-sm shrink-0">
-                                ✅
-                              </button>
+                              <span title="Pago" className="w-8 h-8 flex items-center justify-center bg-green-50 text-green-600 rounded shrink-0">✅</span>
                             )}
 
-                            <button onClick={() => setModalRecibo({ open: true, op })} title="Gerar Recibo" className="w-8 h-8 flex items-center justify-center bg-white hover:bg-gray-50 border border-[#CBD5E1] text-[#0C1D4D] rounded transition-colors shadow-sm shrink-0">
+                            <button onClick={() => setModalRecibo({ open: true, op })} disabled={statusAtual === 'REPROVADA'} title={statusAtual === 'REPROVADA' ? 'OP reprovada — sem ações disponíveis' : 'Gerar Recibo'} className="w-8 h-8 flex items-center justify-center bg-white hover:bg-gray-50 border border-[#CBD5E1] text-[#0C1D4D] rounded transition-colors shadow-sm shrink-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white">
                               📄
                             </button>
 
-                            <BotaoLinkAssinatura opId={op.id} />
+                            <BotaoLinkAssinatura opId={op.id} disabled={statusAtual === 'REPROVADA'} />
 
                             {op.recibo_url && (
-                              <a href={op.recibo_url} target="_blank" rel="noreferrer" title="Ver Assinatura" className="w-8 h-8 flex items-center justify-center bg-purple-100 hover:bg-purple-200 border border-purple-300 text-purple-700 rounded transition-colors shadow-sm shrink-0">
-                                👁️
-                              </a>
+                              statusAtual === 'REPROVADA' ? (
+                                <span title="OP reprovada — sem ações disponíveis" className="w-8 h-8 flex items-center justify-center bg-purple-50 border border-purple-100 text-purple-300 rounded shrink-0 opacity-40 cursor-not-allowed">👁️</span>
+                              ) : (
+                                <a href={op.recibo_url} target="_blank" rel="noreferrer" title="Ver Assinatura" className="w-8 h-8 flex items-center justify-center bg-purple-100 hover:bg-purple-200 border border-purple-300 text-purple-700 rounded transition-colors shadow-sm shrink-0">
+                                  👁️
+                                </a>
+                              )
                             )}
 
-                            <button onClick={() => dispararReenvio(op)} title="Reenviar" className="w-8 h-8 flex items-center justify-center bg-orange-50 hover:bg-orange-100 border border-orange-200 text-orange-600 rounded transition-colors shrink-0">
+                            <button onClick={() => dispararReenvio(op)} disabled={statusAtual === 'REPROVADA'} title={statusAtual === 'REPROVADA' ? 'OP reprovada — sem ações disponíveis' : 'Reenviar'} className="w-8 h-8 flex items-center justify-center bg-orange-50 hover:bg-orange-100 border border-orange-200 text-orange-600 rounded transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-orange-50">
                               🔄
                             </button>
 
-                            {op.p2s_conta_pagar_oid ? (
+                            {statusAtual === 'REPROVADA' ? (
+                              op.p2s_conta_pagar_oid && (
+                                <span title="Já enviado pro PrimeStart" className="w-8 h-8 flex items-center justify-center bg-blue-50 text-blue-600 rounded shrink-0 opacity-40">🏦</span>
+                              )
+                            ) : op.p2s_conta_pagar_oid ? (
                               <span title="Já enviado pro PrimeStart" className="w-8 h-8 flex items-center justify-center bg-blue-50 text-blue-600 rounded shrink-0">🏦</span>
                             ) : (
                               <button onClick={() => enviarParaPrimeStart(op)} title="Enviar pro PrimeStart (cria Conta a Pagar)" className="w-8 h-8 flex items-center justify-center bg-white hover:bg-blue-50 border border-[#CBD5E1] text-[#0C1D4D] rounded transition-colors shadow-sm shrink-0">

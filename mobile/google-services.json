@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "580014710661",
+    "project_id": "project-5e425b71-a0dd-4f1d-9e2",
+    "storage_bucket": "project-5e425b71-a0dd-4f1d-9e2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:580014710661:android:8f801763549f45e6e86eec",
+        "android_client_info": {
+          "package_name": "br.com.rentech.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDTwjjORiCfy879o1qBxJ8QH3ypQC6tJOc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

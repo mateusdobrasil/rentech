@@ -23,6 +23,7 @@
     },
     "android": {
       "package": "br.com.rentech.mobile",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000000"

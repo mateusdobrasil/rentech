@@ -67,9 +67,9 @@ export async function listarPerfisComAcessoRota(rota: string): Promise<{ id: str
   const permitidas = (permissaoRow?.permissoes_permitidas as string[]) || [];
   if (permitidas.length === 0) return [];
 
-  const { data: perfis } = await admin.from('perfis_usuarios').select('id, nome, permissao, nivel');
-  return ((perfis || []) as { id: string; nome: string; permissao: string | null; nivel: string | null }[])
-    .filter(p => permitidas.includes(normalizarPermissao(p.permissao || p.nivel || '')))
+  const { data: perfis } = await admin.from('perfis_usuarios').select('id, nome, permissao').eq('ativo', true);
+  return ((perfis || []) as { id: string; nome: string; permissao: string | null }[])
+    .filter(p => permitidas.includes(normalizarPermissao(p.permissao || '')))
     .map(p => ({ id: p.id, nome: p.nome }));
 }
 

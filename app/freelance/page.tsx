@@ -137,10 +137,15 @@ export default function CadastroFreelance() {
         setSucesso(true);
         window.scrollTo(0, 0);
       } else {
+        console.error('Falha ao gravar o cadastro de freelancer:', error);
         if (error.code === '23505' || error.message.includes('duplicate') || error.message.includes('unique')) {
           setErroMsg("⚠️ Este CPF ou Número de WhatsApp já se encontra cadastrado em nossa base.");
         } else {
-          setErroMsg("❌ Ocorreu um erro inesperado ao enviar. Verifique a sua conexão e tente novamente.");
+          // Inclui o motivo devolvido pelo banco (ex.: permissão/RLS) — sem
+          // isso a mensagem genérica escondia erros de configuração (como o
+          // 42501 de RLS que derrubou o auto-cadastro) e só dava pra
+          // descobrir a causa abrindo o DevTools do navegador.
+          setErroMsg(`❌ Não foi possível gravar o cadastro (${error.message || 'erro desconhecido'}). Tente novamente ou avise a Rentech.`);
         }
       }
     } catch (erroInesperado) {

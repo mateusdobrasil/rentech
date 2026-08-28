@@ -19,6 +19,7 @@ interface Checklist {
   periodo_fim: string | null;
   status: 'RASCUNHO' | 'SAIDA_CONFERIDA' | 'FINALIZADO';
   divergencias: number;
+  created_at: string;
 }
 
 const ROTULO_STATUS: Record<string, string> = {
@@ -51,7 +52,17 @@ export default function ChecklistDeCarga() {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       const json = await res.json();
-      if (json.ok) setLista(json.info);
+      // Finalizados vão pro final da fila, igual no web app (admin/estoque/expedicao) —
+      // ativos primeiro por data mais recente, finalizados por último também por recência.
+      if (json.ok) {
+        const ordenados = [...(json.info as Checklist[])].sort((a, b) => {
+          const aFinalizado = a.status === 'FINALIZADO' ? 1 : 0;
+          const bFinalizado = b.status === 'FINALIZADO' ? 1 : 0;
+          if (aFinalizado !== bFinalizado) return aFinalizado - bFinalizado;
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        });
+        setLista(ordenados);
+      }
     } catch {
       // sem rede — mantém a última lista carregada
     }

@@ -1,6 +1,7 @@
-import { useCallback, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useRef, useState } from 'react';
+import { ActivityIndicator, Animated, PanResponder, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
+import { TrashIcon } from 'phosphor-react-native';
 import { Cabecalho } from '../components/Cabecalho';
 import { useAuth } from '../context/AuthContext';
 import { colors } from '../constants/theme';
@@ -25,6 +26,39 @@ const DESTINO_POR_TIPO: Record<string, string> = {
 
 function horaCurta(iso: string): string {
   return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+// Swipe pra esquerda descarta a notificação — sem gesture-handler/reanimated
+// (não instalados no projeto ainda), só Animated + PanResponder do próprio
+// React Native, pra essa tela poder ir por OTA update sem exigir rebuild nativo.
+function LinhaSwipeable({ children, onDescartar }: { children: React.ReactNode; onDescartar: () => void }) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_e, gesto) => Math.abs(gesto.dx) > 8 && Math.abs(gesto.dx) > Math.abs(gesto.dy),
+      onPanResponderMove: (_e, gesto) => {
+        if (gesto.dx < 0) translateX.setValue(gesto.dx);
+      },
+      onPanResponderRelease: (_e, gesto) => {
+        if (gesto.dx < -90) {
+          Animated.timing(translateX, { toValue: -500, duration: 180, useNativeDriver: true }).start(() => onDescartar());
+        } else {
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 0 }).start();
+        }
+      },
+    })
+  ).current;
+
+  return (
+    <View style={styles.swipeWrapper}>
+      <View style={styles.swipeFundo}>
+        <TrashIcon size={18} color={colors.white} weight="bold" />
+      </View>
+      <Animated.View style={{ transform: [{ translateX }] }} {...panResponder.panHandlers}>
+        {children}
+      </Animated.View>
+    </View>
+  );
 }
 
 export default function Notificacoes() {
@@ -63,9 +97,38 @@ export default function Notificacoes() {
     if (destino) router.push(destino as never);
   }
 
+  function descartar(id: string) {
+    if (!session || !SITE_URL) return;
+    setLista(prev => prev.filter(item => item.id !== id));
+    fetch(`${SITE_URL}/api/portal/notificacoes/excluir`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ id }),
+    }).catch(() => {});
+  }
+
+  function marcarTodasComoLidas() {
+    if (!session || !SITE_URL) return;
+    setLista(prev => prev.map(item => ({ ...item, lida: true })));
+    fetch(`${SITE_URL}/api/portal/notificacoes/marcar-lida`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ todas: true }),
+    }).catch(() => {});
+  }
+
+  const temNaoLida = lista.some(n => !n.lida);
+
   return (
     <View style={styles.screen}>
       <Cabecalho titulo="Notificações" />
+      {temNaoLida && (
+        <View style={styles.acoes}>
+          <Pressable onPress={marcarTodasComoLidas} hitSlop={8}>
+            <Text style={styles.acaoTexto}>Marcar todas como lida</Text>
+          </Pressable>
+        </View>
+      )}
       {carregando && lista.length === 0 ? (
         <ActivityIndicator color={colors.accent} style={{ marginTop: 24 }} />
       ) : lista.length === 0 ? (
@@ -75,16 +138,18 @@ export default function Notificacoes() {
       ) : (
         <ScrollView contentContainerStyle={styles.container}>
           {lista.map(n => (
-            <Pressable key={n.id} style={styles.linha} onPress={() => abrir(n)}>
-              <View style={[styles.ponto, !n.lida && styles.pontoNaoLido]} />
-              <View style={{ flex: 1 }}>
-                <View style={styles.linhaTopo}>
-                  <Text style={styles.titulo} numberOfLines={1}>{n.titulo}</Text>
-                  <Text style={styles.hora}>{horaCurta(n.criado_em)}</Text>
+            <LinhaSwipeable key={n.id} onDescartar={() => descartar(n.id)}>
+              <Pressable style={styles.linha} onPress={() => abrir(n)}>
+                <View style={[styles.ponto, !n.lida && styles.pontoNaoLido]} />
+                <View style={{ flex: 1 }}>
+                  <View style={styles.linhaTopo}>
+                    <Text style={styles.titulo} numberOfLines={1}>{n.titulo}</Text>
+                    <Text style={styles.hora}>{horaCurta(n.criado_em)}</Text>
+                  </View>
+                  <Text style={styles.corpo}>{n.corpo}</Text>
                 </View>
-                <Text style={styles.corpo}>{n.corpo}</Text>
-              </View>
-            </Pressable>
+              </Pressable>
+            </LinhaSwipeable>
           ))}
         </ScrollView>
       )}
@@ -94,9 +159,19 @@ export default function Notificacoes() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
+  acoes: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 17, paddingTop: 12 },
+  acaoTexto: { fontSize: 12.5, fontWeight: '700', color: colors.accent },
   vazio: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   vazioTexto: { fontSize: 13, color: colors.textMuted, textAlign: 'center' },
   container: { padding: 17, gap: 10 },
+  swipeWrapper: { borderRadius: 14, overflow: 'hidden' },
+  swipeFundo: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.danger,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    paddingRight: 20,
+  },
   linha: {
     flexDirection: 'row', gap: 10,
     borderRadius: 14, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.surfaceBorder, padding: 14,

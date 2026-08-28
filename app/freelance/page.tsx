@@ -24,11 +24,27 @@ export default function CadastroFreelance() {
   // cada empresa loca equipamento diferente, então tem sua própria lista.
   const [empresas, setEmpresas] = useState<{ id: number; nome: string }[]>([]);
   const [empresaTravada, setEmpresaTravada] = useState<{ id: number; nome: string } | null>(null);
+  // Sem isso, uma falha de rede nesta busca inicial (comum em quem preenche
+  // pelo celular, no local do evento) deixava "Empresa de Cadastro" preso em
+  // "Carregando..." pra sempre — sem empresa_id, o botão de enviar nunca
+  // habilita e o formulário fica todo travado sem explicação nenhuma.
+  const [erroEmpresas, setErroEmpresas] = useState(false);
+  const [tentativaEmpresas, setTentativaEmpresas] = useState(0);
 
   useEffect(() => {
+    let cancelado = false;
+    setErroEmpresas(false);
     supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome')
-      .then(({ data }) => setEmpresas(data || []));
-  }, []);
+      .then(
+        ({ data, error }) => {
+          if (cancelado) return;
+          if (error) { setErroEmpresas(true); return; }
+          setEmpresas(data || []);
+        },
+        () => { if (!cancelado) setErroEmpresas(true); }
+      );
+    return () => { cancelado = true; };
+  }, [tentativaEmpresas]);
 
   useEffect(() => {
     if (empresas.length === 0) return;
@@ -63,7 +79,7 @@ export default function CadastroFreelance() {
     ]).then(([resSetores, resNiveis]) => {
       setSetores(resSetores.data || []);
       setNiveis(resNiveis.data || []);
-    });
+    }).catch(err => console.error('Falha ao carregar setores/níveis:', err));
   }, [formData.empresa_id]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
@@ -73,48 +89,66 @@ export default function CadastroFreelance() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setErroMsg(''); 
+    setErroMsg('');
 
-    const payloadFinal = {
-      ...formData,
-      empresa_id: formData.empresa_id ? Number(formData.empresa_id) : null,
-      // Garante que o valor da diária seja salvo como número no banco, mesmo se o usuário digitar vírgula
-      valor_diaria: formData.valor_diaria ? parseFloat(formData.valor_diaria.replace(',', '.')) : null,
-      lgpd_aceite: true,
-    };
+    // Tudo dentro de try/catch/finally: antes, uma falha de REDE (não um erro
+    // de validação do banco, e sim a requisição em si falhando — comum em
+    // quem preenche pelo celular no local do evento) fazia o insert() lançar
+    // exceção sem cair no "else" de baixo. Como não havia try/catch, isso
+    // pulava o setLoading(false) final e travava o botão em "A Enviar
+    // Cadastro..." pra sempre, sem nenhuma mensagem — a pessoa via a tela
+    // travada e desistia, achando que o cadastro nunca foi enviado.
+    try {
+      const payloadFinal = {
+        ...formData,
+        empresa_id: formData.empresa_id ? Number(formData.empresa_id) : null,
+        // Garante que o valor da diária seja salvo como número no banco, mesmo se o usuário digitar vírgula
+        valor_diaria: formData.valor_diaria ? parseFloat(formData.valor_diaria.replace(',', '.')) : null,
+        lgpd_aceite: true,
+      };
 
-    const { data: freelancerCriado, error } = await supabase.from('freelancers').insert([payloadFinal]).select('id').single();
+      const { data: freelancerCriado, error } = await supabase.from('freelancers').insert([payloadFinal]).select('id').single();
 
-    if (!error) {
-      // Um insert em lote com os setores respondidos (setor sem resposta =
-      // "Não trabalho com o Item", não vira linha nenhuma). Se isso falhar,
-      // o cadastro em si já foi feito — só avisa no console, mesma
-      // tolerância já usada ao copiar o modelo padrão de itens do Checklist
-      // de Carga (app/admin/estoque/expedicao/page.tsx).
-      const linhasSetorNivel = Object.entries(niveisEscolhidos)
-        .filter(([, nivelId]) => nivelId)
-        .map(([setorId, nivelId]) => ({ freelancer_id: freelancerCriado.id, setor_id: setorId, nivel_id: nivelId }));
-      if (linhasSetorNivel.length > 0) {
-        const { error: erroSetores } = await supabase.from('freelancers_setor_nivel').insert(linhasSetorNivel);
-        if (erroSetores) console.error('Falha ao gravar setores/níveis do freelancer:', erroSetores.message);
-      }
+      if (!error) {
+        // Um insert em lote com os setores respondidos (setor sem resposta =
+        // "Não trabalho com o Item", não vira linha nenhuma). Se isso falhar,
+        // o cadastro em si já foi feito — só avisa no console (try/catch
+        // próprio: o cadastro não pode ficar "preso" por causa disso, senão
+        // uma nova tentativa esbarra no CPF/telefone já gravado e a pessoa
+        // acha que nunca conseguiu se cadastrar).
+        const linhasSetorNivel = Object.entries(niveisEscolhidos)
+          .filter(([, nivelId]) => nivelId)
+          .map(([setorId, nivelId]) => ({ freelancer_id: freelancerCriado.id, setor_id: setorId, nivel_id: nivelId }));
+        if (linhasSetorNivel.length > 0) {
+          try {
+            const { error: erroSetores } = await supabase.from('freelancers_setor_nivel').insert(linhasSetorNivel);
+            if (erroSetores) console.error('Falha ao gravar setores/níveis do freelancer:', erroSetores.message);
+          } catch (erroSetoresInesperado) {
+            console.error('Falha inesperada ao gravar setores/níveis do freelancer:', erroSetoresInesperado);
+          }
+        }
 
-      registrarLogAuditoria({
-        usuario_nome: formData.nome,
-        acao: 'AUTO-CADASTRO FREELANCER',
-        setor: 'FREELANCE',
-        equipamento_nome: `Tel: ${formData.telefone} | PIX: ${formData.pix_tipo} — ${formData.pix_chave}`,
-      });
-      setSucesso(true);
-      window.scrollTo(0, 0);
-    } else {
-      if (error.code === '23505' || error.message.includes('duplicate') || error.message.includes('unique')) {
-        setErroMsg("⚠️ Este CPF ou Número de WhatsApp já se encontra cadastrado em nossa base.");
+        registrarLogAuditoria({
+          usuario_nome: formData.nome,
+          acao: 'AUTO-CADASTRO FREELANCER',
+          setor: 'FREELANCE',
+          equipamento_nome: `Tel: ${formData.telefone} | PIX: ${formData.pix_tipo} — ${formData.pix_chave}`,
+        });
+        setSucesso(true);
+        window.scrollTo(0, 0);
       } else {
-        setErroMsg("❌ Ocorreu um erro inesperado ao enviar. Verifique a sua conexão e tente novamente.");
+        if (error.code === '23505' || error.message.includes('duplicate') || error.message.includes('unique')) {
+          setErroMsg("⚠️ Este CPF ou Número de WhatsApp já se encontra cadastrado em nossa base.");
+        } else {
+          setErroMsg("❌ Ocorreu um erro inesperado ao enviar. Verifique a sua conexão e tente novamente.");
+        }
       }
+    } catch (erroInesperado) {
+      console.error('Falha inesperada ao enviar o cadastro de freelancer:', erroInesperado);
+      setErroMsg("❌ Não foi possível enviar o cadastro. Verifique a sua conexão com a internet e tente novamente.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   if (sucesso) {
@@ -226,9 +260,15 @@ export default function CadastroFreelance() {
                 <div className="md:col-span-2">
                   <label className="block text-[10px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Empresa de Cadastro</label>
                   <div className="w-full p-3 bg-[#F0F4F8] border border-[#CBD5E1] rounded-xl text-sm font-bold text-[#0C1D4D]">
-                    {empresaTravada ? empresaTravada.nome : 'Carregando...'}
+                    {empresaTravada ? empresaTravada.nome : erroEmpresas ? '⚠️ Falha ao carregar' : 'Carregando...'}
                   </div>
-                  <p className="mt-1 text-[10px] text-[#94A3B8] font-semibold">Definida automaticamente pelo endereço deste formulário.</p>
+                  {erroEmpresas ? (
+                    <button type="button" onClick={() => setTentativaEmpresas(t => t + 1)} className="mt-1 text-[10px] text-red-600 font-bold uppercase tracking-wider hover:underline">
+                      Não foi possível identificar a empresa. Verifique a sua conexão e toque para tentar novamente.
+                    </button>
+                  ) : (
+                    <p className="mt-1 text-[10px] text-[#94A3B8] font-semibold">Definida automaticamente pelo endereço deste formulário.</p>
+                  )}
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-[10px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Nome Completo</label>

@@ -17,8 +17,10 @@ import { supabase } from '../../../lib/supabase';
 import {
   listarLocaisAction, criarLocalAction, listarEscalaDiaAction, salvarAlocacaoAction,
   removerAlocacaoAction, copiarEscalaAction, notificarColaboradoresAction,
+  listarContextoLocaisDiaAction, salvarContextoLocalAction, removerLocalDiaAction,
 } from '../actions/actions-escala';
 import { gerarImagemEscala } from './gerarImagemEscala';
+import { TIPO_OPCOES } from './tiposEscala';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { HubErro } from '../../../components/ui/HubStates';
@@ -32,6 +34,11 @@ interface Alocacao {
   id: string; empresa_id: number; data: string; funcionario_nome: string; departamento: string | null;
   local_id: string | null; local_nome: string; horario: string; observacao: string | null; criado_por: string | null;
 }
+interface ContextoLocalDia {
+  id: string; empresa_id: number; data: string; local_id: string;
+  horario_padrao: string | null; tipo: string | null; evento: string | null; responsavel: string | null;
+}
+type CampoContexto = 'horario_padrao' | 'tipo' | 'evento' | 'responsavel';
 
 const hojeStr = () => new Date().toISOString().slice(0, 10);
 const diaAnterior = (d: string) => {
@@ -83,12 +90,16 @@ function Pool({ funcionarios }: { funcionarios: Funcionario[] }) {
 }
 
 function LocalColuna({
-  local, itens, onHorarioChange, onRemover, salvandoId,
+  local, contexto, itens, onHorarioChange, onRemover, onContextoChange, onRemoverLocalDia, salvandoId,
 }: {
-  local: Local; itens: Alocacao[]; onHorarioChange: (a: Alocacao, horario: string) => void;
-  onRemover: (a: Alocacao) => void; salvandoId: string | null;
+  local: Local; contexto: ContextoLocalDia | undefined; itens: Alocacao[];
+  onHorarioChange: (a: Alocacao, horario: string) => void; onRemover: (a: Alocacao) => void;
+  onContextoChange: (localId: string, campo: CampoContexto, valor: string) => void;
+  onRemoverLocalDia: (localId: string) => void;
+  salvandoId: string | null;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `local:${local.id}` });
+  const responsavelForaDaLista = contexto?.responsavel && !itens.some(a => a.funcionario_nome === contexto.responsavel);
   return (
     <div
       ref={setNodeRef}
@@ -96,8 +107,65 @@ function LocalColuna({
     >
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wide truncate">📍 {local.nome}</h3>
-        <span className="text-[10px] font-bold text-gray-400 shrink-0 ml-2">{itens.length}</span>
+        <div className="flex items-center gap-2 shrink-0 ml-2">
+          <span className="text-[10px] font-bold text-gray-400">{itens.length}</span>
+          {itens.length === 0 && (
+            <button
+              onClick={() => onRemoverLocalDia(local.id)} title="Tirar esse local da escala de hoje"
+              className="text-gray-300 hover:text-red-500 text-xs font-black"
+            >✕</button>
+          )}
+        </div>
       </div>
+
+      {/* Contexto do local NAQUELE DIA — horário padrão se propaga pra todo
+          mundo já alocado ali (exceção pontual: editar o horário direto no
+          card do colaborador, mais abaixo); tipo/evento/responsável não têm
+          exceção por colaborador. */}
+      <div className="grid grid-cols-2 gap-1.5 mb-3 bg-white rounded-lg border border-[#E2E8F0] p-2">
+        <div>
+          <label className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">Horário padrão</label>
+          <input
+            type="time" defaultValue={contexto?.horario_padrao?.slice(0, 5) || ''}
+            onBlur={e => onContextoChange(local.id, 'horario_padrao', e.target.value)}
+            className="w-full text-xs border border-[#E2E8F0] rounded p-1 mt-0.5"
+          />
+        </div>
+        <div>
+          <label className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">Tipo</label>
+          <select
+            defaultValue={contexto?.tipo || ''}
+            onChange={e => onContextoChange(local.id, 'tipo', e.target.value)}
+            className="w-full text-xs border border-[#E2E8F0] rounded p-1 mt-0.5"
+          >
+            <option value="">—</option>
+            {TIPO_OPCOES.map(t => <option key={t.valor} value={t.valor}>{t.rotulo}</option>)}
+          </select>
+        </div>
+        <div className="col-span-2">
+          <label className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">Evento</label>
+          <input
+            type="text" defaultValue={contexto?.evento || ''} placeholder="Ex: Rock in Rio"
+            onBlur={e => onContextoChange(local.id, 'evento', e.target.value)}
+            className="w-full text-xs border border-[#E2E8F0] rounded p-1 mt-0.5"
+          />
+        </div>
+        <div className="col-span-2">
+          <label className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">Responsável</label>
+          <select
+            value={contexto?.responsavel || ''}
+            onChange={e => onContextoChange(local.id, 'responsavel', e.target.value)}
+            className="w-full text-xs border border-[#E2E8F0] rounded p-1 mt-0.5"
+          >
+            <option value="">{itens.length === 0 ? 'Aloque alguém primeiro' : '—'}</option>
+            {itens.map(a => <option key={a.funcionario_nome} value={a.funcionario_nome}>{a.funcionario_nome}</option>)}
+            {responsavelForaDaLista && (
+              <option value={contexto!.responsavel!}>⚠️ {contexto!.responsavel} (não está mais aqui)</option>
+            )}
+          </select>
+        </div>
+      </div>
+
       <div className="space-y-2">
         {itens.map(a => (
           <div key={a.id} className="bg-white rounded-lg border border-[#E2E8F0] p-2">
@@ -137,6 +205,7 @@ export default function EscalaPage() {
   const [funcionarios, setFuncionarios] = useState<Funcionario[]>([]);
   const [locais, setLocais] = useState<Local[]>([]);
   const [alocacoes, setAlocacoes] = useState<Alocacao[]>([]);
+  const [contextos, setContextos] = useState<Map<string, ContextoLocalDia>>(new Map());
   const [carregandoEscala, setCarregandoEscala] = useState(false);
   const [salvandoId, setSalvandoId] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -196,10 +265,6 @@ export default function EscalaPage() {
     [empresasCatalogo, empresasPermitidas]
   );
 
-  useEffect(() => {
-    if (!empresaId && empresasVisiveis.length > 0) setEmpresaId(empresasVisiveis[0].id);
-  }, [empresasVisiveis, empresaId]);
-
   const carregarLocais = useCallback(async () => {
     if (!empresaId) return;
     const res = await listarLocaisAction({ empresaId }, accessToken);
@@ -210,9 +275,18 @@ export default function EscalaPage() {
     if (!empresaId) return;
     setCarregandoEscala(true);
     try {
-      const res = await listarEscalaDiaAction({ empresaId, data }, accessToken);
-      if (res.ok) setAlocacoes(res.info.alocacoes);
-      else toast('Erro ao carregar escala: ' + res.erro, 'error');
+      const [resAlocacoes, resContextos] = await Promise.all([
+        listarEscalaDiaAction({ empresaId, data }, accessToken),
+        listarContextoLocaisDiaAction({ empresaId, data }, accessToken),
+      ]);
+      if (resAlocacoes.ok) setAlocacoes(resAlocacoes.info.alocacoes);
+      else toast('Erro ao carregar escala: ' + resAlocacoes.erro, 'error');
+
+      if (resContextos.ok) {
+        const mapa = new Map<string, ContextoLocalDia>();
+        (resContextos.info.contextos as ContextoLocalDia[]).forEach(c => mapa.set(c.local_id, c));
+        setContextos(mapa);
+      }
     } finally {
       setCarregandoEscala(false);
     }
@@ -239,6 +313,19 @@ export default function EscalaPage() {
     return mapa;
   }, [alocacoes]);
 
+  // Só mostra como coluna o local que já tem alocação ou contexto salvo
+  // nesse dia — o catálogo (locais) pode acumular dezenas de locais ao
+  // longo do tempo, mas a tela de um dia só precisa mostrar os que estão
+  // em uso. "+ Adicionar Local" deixa escolher entre os que faltam.
+  const locaisAtivosHoje = useMemo(
+    () => locais.filter(l => alocacoesPorLocal.has(l.id) || contextos.has(l.id)),
+    [locais, alocacoesPorLocal, contextos]
+  );
+  const locaisDisponiveis = useMemo(() => {
+    const ativosIds = new Set(locaisAtivosHoje.map(l => l.id));
+    return locais.filter(l => !ativosIds.has(l.id));
+  }, [locais, locaisAtivosHoje]);
+
   const handleHorarioChange = async (a: Alocacao, horario: string) => {
     if (!empresaId || !horario) return;
     setSalvandoId(a.id);
@@ -249,6 +336,39 @@ export default function EscalaPage() {
     }, accessToken);
     setSalvandoId(null);
     if (!res.ok) { toast('Erro ao salvar horário: ' + res.erro, 'error'); carregarEscala(); }
+  };
+
+  const handleContextoChange = async (localId: string, campo: CampoContexto, valor: string) => {
+    if (!empresaId) return;
+    const valorFinal = valor.trim() ? valor.trim() : null;
+
+    setContextos(prev => {
+      const atual = prev.get(localId);
+      const novo: ContextoLocalDia = {
+        id: atual?.id || '', empresa_id: empresaId, data, local_id: localId,
+        horario_padrao: atual?.horario_padrao ?? null, tipo: atual?.tipo ?? null,
+        evento: atual?.evento ?? null, responsavel: atual?.responsavel ?? null,
+        [campo]: valorFinal,
+      };
+      const mapa = new Map(prev);
+      mapa.set(localId, novo);
+      return mapa;
+    });
+
+    // Horário padrão se propaga na hora pra todo mundo já alocado nesse
+    // local — cards individuais (controlados) refletem isso imediatamente.
+    if (campo === 'horario_padrao' && valorFinal) {
+      setAlocacoes(prev => prev.map(a => a.local_id === localId ? { ...a, horario: valorFinal } : a));
+    }
+
+    const res = await salvarContextoLocalAction({
+      empresaId, data, localId,
+      horarioPadrao: campo === 'horario_padrao' ? valorFinal : undefined,
+      tipo: campo === 'tipo' ? valorFinal : undefined,
+      evento: campo === 'evento' ? valorFinal : undefined,
+      responsavel: campo === 'responsavel' ? valorFinal : undefined,
+    }, accessToken);
+    if (!res.ok) { toast('Erro ao salvar: ' + res.erro, 'error'); carregarEscala(); }
   };
 
   const handleRemover = async (a: Alocacao) => {
@@ -284,6 +404,7 @@ export default function EscalaPage() {
 
     const funcionario = funcionarios.find(f => f.nome_completo === nome);
     const horario = existente?.horario?.slice(0, 5)
+      || contextos.get(localId)?.horario_padrao?.slice(0, 5)
       || maisComum((alocacoesPorLocal.get(localId) || []).map(a => a.horario?.slice(0, 5)))
       || '07:00';
 
@@ -295,15 +416,40 @@ export default function EscalaPage() {
     setAlocacoes(prev => [...prev.filter(a => a.funcionario_nome !== nome), res.info.alocacao]);
   };
 
+  // Deixa um local do catálogo (já cadastrado, mas ainda não usado hoje)
+  // aparecer como coluna nesse dia — cria uma linha "em branco" em
+  // escala_locais_dia (reaproveita salvarContextoLocalAction sem nenhum
+  // campo, que já faz upsert com os defaults).
+  const ativarLocalHoje = async (local: Local) => {
+    if (!empresaId) return;
+    setContextos(prev => {
+      if (prev.has(local.id)) return prev;
+      const mapa = new Map(prev);
+      mapa.set(local.id, { id: '', empresa_id: empresaId, data, local_id: local.id, horario_padrao: null, tipo: null, evento: null, responsavel: null });
+      return mapa;
+    });
+    setNovoLocalAberto(false);
+    const res = await salvarContextoLocalAction({ empresaId, data, localId: local.id }, accessToken);
+    if (!res.ok) { toast('Erro ao adicionar local: ' + res.erro, 'error'); carregarEscala(); }
+  };
+
+  const removerLocalDoDia = async (localId: string) => {
+    if (!empresaId) return;
+    setContextos(prev => { const mapa = new Map(prev); mapa.delete(localId); return mapa; });
+    const res = await removerLocalDiaAction({ empresaId, data, localId }, accessToken);
+    if (!res.ok) { toast('Erro ao remover local: ' + res.erro, 'error'); carregarEscala(); }
+  };
+
   const criarLocal = async () => {
     if (!empresaId || !novoLocalNome.trim()) return;
     setCriandoLocal(true);
     try {
       const res = await criarLocalAction({ empresaId, nome: novoLocalNome.trim() }, accessToken);
       if (!res.ok) throw new Error(res.erro);
+      const novoLocal = res.info.local as Local;
       setNovoLocalNome('');
-      setNovoLocalAberto(false);
-      carregarLocais();
+      await carregarLocais();
+      await ativarLocalHoje(novoLocal);
     } catch (e: any) {
       toast('Erro ao criar local: ' + e.message, 'error');
     } finally {
@@ -331,9 +477,15 @@ export default function EscalaPage() {
   const compartilharEscala = async () => {
     if (!empresaId) return;
     const empresaNome = empresasVisiveis.find(e => e.id === empresaId)?.nome || '';
+    const contextosImg = locaisAtivosHoje
+      .filter(l => contextos.has(l.id))
+      .map(l => {
+        const c = contextos.get(l.id)!;
+        return { local_nome: l.nome, tipo: c.tipo, evento: c.evento, responsavel: c.responsavel };
+      });
     setCompartilhando(true);
     try {
-      const blob = await gerarImagemEscala({ empresaNome, data, alocacoes, logo: logoImg });
+      const blob = await gerarImagemEscala({ empresaNome, data, alocacoes, contextos: contextosImg, logo: logoImg });
       if (!blob) throw new Error('Não foi possível gerar a imagem.');
 
       const arquivoNome = `escala-${data}.png`;
@@ -487,15 +639,35 @@ export default function EscalaPage() {
             <Pool funcionarios={poolFuncionarios} />
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {locais.map(local => (
+              {locaisAtivosHoje.map(local => (
                 <LocalColuna
-                  key={local.id} local={local} itens={alocacoesPorLocal.get(local.id) || []}
-                  onHorarioChange={handleHorarioChange} onRemover={handleRemover} salvandoId={salvandoId}
+                  // key inclui `data`: força remontar ao trocar de dia, senão os
+                  // inputs de contexto (não-controlados, defaultValue) ficariam
+                  // mostrando o valor do dia anterior.
+                  key={`${local.id}::${data}`} local={local} contexto={contextos.get(local.id)}
+                  itens={alocacoesPorLocal.get(local.id) || []}
+                  onHorarioChange={handleHorarioChange} onRemover={handleRemover}
+                  onContextoChange={handleContextoChange} onRemoverLocalDia={removerLocalDoDia}
+                  salvandoId={salvandoId}
                 />
               ))}
 
               {novoLocalAberto ? (
-                <div className="rounded-2xl border-2 border-dashed border-[#CBD5E1] bg-white p-3 flex flex-col gap-2 justify-center">
+                <div className="rounded-2xl border-2 border-dashed border-[#CBD5E1] bg-white p-3 flex flex-col gap-2">
+                  {locaisDisponiveis.length > 0 && (
+                    <div className="mb-1">
+                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Já cadastrados</p>
+                      <div className="max-h-32 overflow-y-auto space-y-1">
+                        {locaisDisponiveis.map(l => (
+                          <button
+                            key={l.id} onClick={() => ativarLocalHoje(l)}
+                            className="w-full text-left text-xs font-bold text-[#0C1D4D] bg-[#F8FAFC] hover:bg-blue-50 border border-[#E2E8F0] rounded-lg px-2 py-1.5 transition-colors"
+                          >📍 {l.nome}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-wider">Ou crie um novo</p>
                   <input
                     autoFocus value={novoLocalNome} onChange={e => setNovoLocalNome(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && criarLocal()}
@@ -506,7 +678,7 @@ export default function EscalaPage() {
                     <button
                       onClick={criarLocal} disabled={criandoLocal || !novoLocalNome.trim()}
                       className="flex-1 bg-[#0C1D4D] text-white text-xs font-black uppercase py-2 rounded-lg disabled:opacity-40"
-                    >Adicionar</button>
+                    >Criar</button>
                     <button
                       onClick={() => { setNovoLocalAberto(false); setNovoLocalNome(''); }}
                       className="px-3 text-xs font-black uppercase text-gray-400 hover:text-gray-600"
@@ -518,7 +690,7 @@ export default function EscalaPage() {
                   onClick={() => setNovoLocalAberto(true)}
                   className="rounded-2xl border-2 border-dashed border-[#CBD5E1] bg-white p-3 min-h-[140px] flex items-center justify-center text-gray-400 hover:text-[#336699] hover:border-[#336699] transition-colors text-sm font-black uppercase tracking-wide"
                 >
-                  + Novo Local
+                  + Adicionar Local
                 </button>
               )}
             </div>

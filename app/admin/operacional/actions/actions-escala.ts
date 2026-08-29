@@ -34,6 +34,11 @@ interface Alocacao {
   local_id: string | null; local_nome: string; horario: string; observacao: string | null; criado_por: string | null;
 }
 
+interface ContextoLocalDia {
+  id: string; empresa_id: number; data: string; local_id: string;
+  horario_padrao: string | null; tipo: string | null; evento: string | null; responsavel: string | null;
+}
+
 async function autorizarEmpresa(accessToken: string, empresaId: number) {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false as const, erro: acesso.message };
@@ -149,6 +154,26 @@ export async function copiarEscalaAction(params: {
       .from('escala_alocacoes').select('*')
       .eq('empresa_id', params.empresaId).eq('data', params.dataOrigem);
     if (erroOrigem) throw erroOrigem;
+
+    // Contexto do local (horário padrão/tipo/evento/responsável) do dia de
+    // origem também é copiado — sem isso, "copiar de ontem" traria os
+    // colaboradores mas perderia o que estavam fazendo lá.
+    const { data: contextoOrigem, error: erroContexto } = await db
+      .from('escala_locais_dia').select('*')
+      .eq('empresa_id', params.empresaId).eq('data', params.dataOrigem);
+    if (erroContexto) throw erroContexto;
+
+    if (contextoOrigem && contextoOrigem.length > 0) {
+      const linhasContexto = (contextoOrigem as ContextoLocalDia[]).map(c => ({
+        empresa_id: params.empresaId, data: params.dataDestino, local_id: c.local_id,
+        horario_padrao: c.horario_padrao, tipo: c.tipo, evento: c.evento, responsavel: c.responsavel,
+      }));
+      const { error: erroUpsertContexto } = await db
+        .from('escala_locais_dia')
+        .upsert(linhasContexto, { onConflict: 'empresa_id,data,local_id', ignoreDuplicates: true });
+      if (erroUpsertContexto) throw erroUpsertContexto;
+    }
+
     if (!origem || origem.length === 0) return { ok: true, info: { copiados: 0 } };
 
     const linhas = (origem as Alocacao[]).map(a => ({
@@ -163,6 +188,97 @@ export async function copiarEscalaAction(params: {
       .upsert(linhas, { onConflict: 'empresa_id,data,funcionario_nome', ignoreDuplicates: true });
     if (error) throw error;
     return { ok: true, info: { copiados: linhas.length } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+export async function listarContextoLocaisDiaAction(params: { empresaId: number; data: string }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizarEmpresa(accessToken, params.empresaId);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+
+  const db = supabaseAdmin();
+  try {
+    const { data, error } = await db
+      .from('escala_locais_dia').select('*')
+      .eq('empresa_id', params.empresaId).eq('data', params.data);
+    if (error) throw error;
+    return { ok: true, info: { contextos: (data || []) as ContextoLocalDia[] } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// Salva o contexto do local naquele dia (horário padrão, tipo, evento,
+// responsável) — cada campo é opcional (undefined = não mexe nele, mantém o
+// que já tinha), então a tela pode chamar essa action um campo por vez sem
+// perder os outros. Quando `horarioPadrao` é informado, propaga pra todos os
+// colaboradores já alocados nesse local naquele dia (exceções pontuais
+// continuam editáveis direto no card do colaborador).
+export async function salvarContextoLocalAction(params: {
+  empresaId: number; data: string; localId: string;
+  horarioPadrao?: string | null; tipo?: string | null; evento?: string | null; responsavel?: string | null;
+}, accessToken: string): Promise<Resultado> {
+  const auth = await autorizarEmpresa(accessToken, params.empresaId);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+
+  const db = supabaseAdmin();
+  try {
+    const { data: existente } = await db
+      .from('escala_locais_dia').select('*')
+      .eq('empresa_id', params.empresaId).eq('data', params.data).eq('local_id', params.localId).maybeSingle();
+
+    const payload = {
+      empresa_id: params.empresaId, data: params.data, local_id: params.localId,
+      horario_padrao: params.horarioPadrao !== undefined ? params.horarioPadrao : (existente?.horario_padrao ?? null),
+      tipo: params.tipo !== undefined ? params.tipo : (existente?.tipo ?? null),
+      evento: params.evento !== undefined ? params.evento : (existente?.evento ?? null),
+      responsavel: params.responsavel !== undefined ? params.responsavel : (existente?.responsavel ?? null),
+      atualizado_em: new Date().toISOString(),
+    };
+
+    const { data: salvo, error } = await db
+      .from('escala_locais_dia')
+      .upsert(payload, { onConflict: 'empresa_id,data,local_id' })
+      .select('*').single();
+    if (error) throw error;
+
+    if (params.horarioPadrao !== undefined && params.horarioPadrao) {
+      const { error: erroBulk } = await db
+        .from('escala_alocacoes')
+        .update({ horario: params.horarioPadrao, atualizado_em: new Date().toISOString() })
+        .eq('empresa_id', params.empresaId).eq('data', params.data).eq('local_id', params.localId);
+      if (erroBulk) throw erroBulk;
+    }
+
+    return { ok: true, info: { contexto: salvo as ContextoLocalDia } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// Tira um local da visão do dia (a tela só mostra locais com alocação ou
+// contexto salvo naquele dia — ver locaisAtivosHoje em page.tsx). Só permite
+// remover se ninguém estiver alocado ali naquele dia, pra nunca esconder
+// gente já escalada sem querer; o local em si continua no catálogo
+// (escala_locais), só some da tela desse dia específico.
+export async function removerLocalDiaAction(params: { empresaId: number; data: string; localId: string }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizarEmpresa(accessToken, params.empresaId);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+
+  const db = supabaseAdmin();
+  try {
+    const { count, error: erroCount } = await db
+      .from('escala_alocacoes').select('id', { count: 'exact', head: true })
+      .eq('empresa_id', params.empresaId).eq('data', params.data).eq('local_id', params.localId);
+    if (erroCount) throw erroCount;
+    if ((count || 0) > 0) return { ok: false, erro: 'Esse local ainda tem colaboradores alocados hoje.' };
+
+    const { error } = await db
+      .from('escala_locais_dia').delete()
+      .eq('empresa_id', params.empresaId).eq('data', params.data).eq('local_id', params.localId);
+    if (error) throw error;
+    return { ok: true };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

@@ -6,7 +6,10 @@
 // genérico de propósito: texto em canvas é síncrono, então uma webfont
 // customizada ainda carregando faria o desenho cair silenciosamente pro
 // fallback — com sans-serif isso nunca é um problema.
+import { tipoRotulo } from './tiposEscala';
+
 export interface AlocacaoImg { funcionario_nome: string; horario: string; local_nome: string; }
+export interface ContextoLocalImg { local_nome: string; tipo: string | null; evento: string | null; responsavel: string | null; }
 
 const NAVY = '#0C1D4D';
 const EMERALD = '#059669';
@@ -28,10 +31,17 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath();
 }
 
+function truncar(ctx: CanvasRenderingContext2D, texto: string, larguraMax: number): string {
+  if (ctx.measureText(texto).width <= larguraMax) return texto;
+  let t = texto;
+  while (t.length > 1 && ctx.measureText(t + '…').width > larguraMax) t = t.slice(0, -1);
+  return t + '…';
+}
+
 export async function gerarImagemEscala(params: {
-  empresaNome: string; data: string; alocacoes: AlocacaoImg[]; logo?: HTMLImageElement | null;
+  empresaNome: string; data: string; alocacoes: AlocacaoImg[]; contextos?: ContextoLocalImg[]; logo?: HTMLImageElement | null;
 }): Promise<Blob | null> {
-  const { empresaNome, data, alocacoes, logo } = params;
+  const { empresaNome, data, alocacoes, contextos = [], logo } = params;
 
   const porLocal = new Map<string, AlocacaoImg[]>();
   alocacoes.forEach(a => porLocal.set(a.local_nome, [...(porLocal.get(a.local_nome) || []), a]));
@@ -39,11 +49,26 @@ export async function gerarImagemEscala(params: {
   locais.forEach(l => porLocal.get(l)!.sort((a, b) =>
     (a.horario || '').localeCompare(b.horario || '') || a.funcionario_nome.localeCompare(b.funcionario_nome)));
 
-  const HEADER_H = 168, FOOTER_H = 56, GROUP_HEADER_H = 46, ROW_H = 38, GROUP_GAP = 22, PAD_X = 36;
+  const contextoPorLocal = new Map(contextos.map(c => [c.local_nome, c]));
+  const subtituloDoLocal = (local: string): string | null => {
+    const c = contextoPorLocal.get(local);
+    if (!c) return null;
+    const partes = [
+      c.tipo ? tipoRotulo(c.tipo) : null,
+      c.evento || null,
+      c.responsavel ? `Resp.: ${c.responsavel}` : null,
+    ].filter(Boolean);
+    return partes.length > 0 ? partes.join('  ·  ') : null;
+  };
+
+  const HEADER_H = 168, FOOTER_H = 56, GROUP_HEADER_H = 46, SUBTITULO_H = 24, ROW_H = 38, GROUP_GAP = 22, PAD_X = 36;
 
   const corpoH = locais.length === 0
     ? 80
-    : locais.reduce((acc, l) => acc + GROUP_HEADER_H + (porLocal.get(l)!.length * ROW_H) + GROUP_GAP, 0);
+    : locais.reduce((acc, l) => {
+        const temSubtitulo = subtituloDoLocal(l) !== null;
+        return acc + GROUP_HEADER_H + (temSubtitulo ? SUBTITULO_H : 0) + (porLocal.get(l)!.length * ROW_H) + GROUP_GAP;
+      }, 0);
   const H = HEADER_H + corpoH + FOOTER_H;
 
   const canvas = document.createElement('canvas');
@@ -94,6 +119,7 @@ export async function gerarImagemEscala(params: {
   } else {
     locais.forEach(local => {
       const itens = porLocal.get(local)!;
+      const subtitulo = subtituloDoLocal(local);
 
       ctx.fillStyle = '#DCFCE7';
       roundRect(ctx, PAD_X, y, W - PAD_X * 2, GROUP_HEADER_H - 10, 8);
@@ -102,6 +128,13 @@ export async function gerarImagemEscala(params: {
       ctx.font = '800 17px sans-serif';
       ctx.fillText(`\u{1F4CD} ${local}`, PAD_X + 14, y + (GROUP_HEADER_H - 10) / 2 + 6);
       y += GROUP_HEADER_H;
+
+      if (subtitulo) {
+        ctx.fillStyle = MUTED;
+        ctx.font = '600 13px sans-serif';
+        ctx.fillText(truncar(ctx, subtitulo, W - PAD_X * 2 - 14), PAD_X + 14, y);
+        y += SUBTITULO_H;
+      }
 
       itens.forEach((a, i) => {
         if (i % 2 === 1) {

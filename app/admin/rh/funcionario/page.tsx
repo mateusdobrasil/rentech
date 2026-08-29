@@ -116,6 +116,7 @@ export default function FuncionarioPage() {
   const [buscaGrid, setBuscaGrid] = useState('');
   const [filtroContrato, setFiltroContrato] = useState('TODOS');
   const [filtroEmpresa, setFiltroEmpresa] = useState<string>('TODAS');
+  const [filtroDepartamento, setFiltroDepartamento] = useState('TODOS');
   const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null); // null = sem restrição (ex: ADMINISTRADOR)
   const [modoAtribuicaoMassa, setModoAtribuicaoMassa] = useState(false);
   const [selecionadosMassa, setSelecionadosMassa] = useState<Set<string>>(new Set());
@@ -372,6 +373,12 @@ export default function FuncionarioPage() {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [listaFuncionarios]);
 
+  const departamentosDisponiveis = useMemo(() => {
+    const set = new Set<string>();
+    listaFuncionarios.forEach(f => { if (f.departamento) set.add(f.departamento); });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [listaFuncionarios]);
+
   // Restrição por empresa: null = sem restrição (ADMINISTRADOR); array = só
   // enxerga funcionários dessas empresas (ver checkAuth acima).
   const funcVisiveis = useMemo(() =>
@@ -393,11 +400,12 @@ export default function FuncionarioPage() {
       .filter(f => f.nome_completo.toLowerCase().includes(buscaGrid.toLowerCase()))
       .filter(f => filtroContrato === 'TODOS' || f.tipo_contrato === filtroContrato)
       .filter(f => filtroEmpresa === 'TODAS' || String(f.empresa_id) === filtroEmpresa)
+      .filter(f => filtroDepartamento === 'TODOS' || f.departamento === filtroDepartamento)
       .sort((a, b) => {
         if (a.ativo !== b.ativo) return a.ativo ? -1 : 1;
         return a.nome_completo.localeCompare(b.nome_completo);
       }),
-    [funcVisiveis, buscaGrid, filtroContrato, filtroEmpresa]);
+    [funcVisiveis, buscaGrid, filtroContrato, filtroEmpresa, filtroDepartamento]);
 
   const alternarSelecaoMassa = (nome: string) => {
     setSelecionadosMassa(prev => {
@@ -478,6 +486,13 @@ export default function FuncionarioPage() {
               className="w-full p-2.5 rounded-lg text-sm text-white bg-[#1E3A6E] outline-none font-bold placeholder:text-blue-200"
             />
             <select
+              value={filtroDepartamento} onChange={e => setFiltroDepartamento(e.target.value)}
+              className="w-full mt-3 p-2.5 rounded-lg text-sm text-white bg-[#1E3A6E] outline-none font-bold cursor-pointer"
+            >
+              <option value="TODOS">Todos os departamentos</option>
+              {departamentosDisponiveis.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+            <select
               value={filtroContrato} onChange={e => setFiltroContrato(e.target.value)}
               className="w-full mt-3 p-2.5 rounded-lg text-sm text-white bg-[#1E3A6E] outline-none font-bold cursor-pointer"
             >
@@ -491,7 +506,7 @@ export default function FuncionarioPage() {
               <option value="TODAS">Todas as empresas</option>
               {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
             </select>
-            {(filtroContrato !== 'TODOS' || filtroEmpresa !== 'TODAS') && (
+            {(filtroContrato !== 'TODOS' || filtroEmpresa !== 'TODAS' || filtroDepartamento !== 'TODOS') && (
               <p className="text-[10px] text-blue-200 font-bold mt-2 uppercase tracking-wider">
                 {funcFiltrados.length} de {funcVisiveis.length} — filtrado
               </p>

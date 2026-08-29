@@ -1,0 +1,534 @@
+"use client";
+
+// Escala de Trabalho: o coordenador escolhe empresa + departamento + data,
+// vê os colaboradores daquele departamento e arrasta cada um até o local de
+// trabalho do dia, definindo o horário de chegada. Funciona no celular
+// (dnd-kit com PointerSensor unifica mouse e toque — ver nota no sensor
+// abaixo). Escala é por dia (não é modelo semanal fixo); "Copiar de ontem"
+// cobre a rotina que se repete sem precisar remontar tudo.
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
+import { Analytics } from "@vercel/analytics/next";
+import {
+  DndContext, DragOverlay, useDraggable, useDroppable, PointerSensor, useSensor, useSensors,
+  type DragEndEvent, type DragStartEvent,
+} from '@dnd-kit/core';
+import { supabase } from '../../../lib/supabase';
+import {
+  listarLocaisAction, criarLocalAction, listarEscalaDiaAction, salvarAlocacaoAction,
+  removerAlocacaoAction, copiarEscalaAction, notificarColaboradoresAction,
+} from '../actions/actions-escala';
+import { gerarImagemEscala } from './gerarImagemEscala';
+import { usePageAccess } from '../../../components/hooks/usePageAccess';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import { HubErro } from '../../../components/ui/HubStates';
+import { useToast } from '../../../components/ui/NotificationProvider';
+import logoColorido from '../../../imgs/logo.png';
+
+interface Empresa { id: number; nome: string; }
+interface Funcionario { nome_completo: string; cargo: string | null; departamento: string | null; empresa_id: number | null; ativo: boolean; }
+interface Local { id: string; nome: string; }
+interface Alocacao {
+  id: string; empresa_id: number; data: string; funcionario_nome: string; departamento: string | null;
+  local_id: string | null; local_nome: string; horario: string; observacao: string | null; criado_por: string | null;
+}
+
+const hojeStr = () => new Date().toISOString().slice(0, 10);
+const diaAnterior = (d: string) => {
+  const dt = new Date(d + 'T00:00:00');
+  dt.setDate(dt.getDate() - 1);
+  return dt.toISOString().slice(0, 10);
+};
+const fmtDataExtenso = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
+const maisComum = (valores: (string | undefined)[]): string | null => {
+  const contagem = new Map<string, number>();
+  valores.forEach(v => { if (v) contagem.set(v, (contagem.get(v) || 0) + 1); });
+  let melhor: string | null = null, max = 0;
+  contagem.forEach((n, v) => { if (n > max) { max = n; melhor = v; } });
+  return melhor;
+};
+
+function FuncionarioCard({ nome, cargo, arrastando }: { nome: string; cargo?: string | null; arrastando?: boolean }) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `func:${nome}` });
+  return (
+    <div
+      ref={setNodeRef} {...listeners} {...attributes}
+      className={`touch-none select-none cursor-grab active:cursor-grabbing bg-white rounded-xl border px-3 py-2 shadow-sm transition-opacity ${
+        isDragging || arrastando ? 'opacity-30 border-[#336699]' : 'border-[#E2E8F0]'
+      }`}
+    >
+      <p className="text-sm font-bold text-[#0C1D4D] truncate">{nome}</p>
+      {cargo && <p className="text-[10px] text-gray-400 font-medium truncate">{cargo}</p>}
+    </div>
+  );
+}
+
+function Pool({ funcionarios }: { funcionarios: Funcionario[] }) {
+  const { setNodeRef, isOver } = useDroppable({ id: 'pool' });
+  return (
+    <div
+      ref={setNodeRef}
+      className={`rounded-2xl border-2 p-3 mb-6 transition-colors ${isOver ? 'border-[#336699] bg-blue-50' : 'border-dashed border-[#CBD5E1] bg-white'}`}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wide">Sem local definido hoje</h3>
+        <span className="text-[10px] font-bold text-gray-400">{funcionarios.length}</span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {funcionarios.map(f => <FuncionarioCard key={f.nome_completo} nome={f.nome_completo} cargo={f.cargo} />)}
+        {funcionarios.length === 0 && <p className="text-[10px] text-gray-400 py-2">Todo mundo do departamento já está alocado hoje.</p>}
+      </div>
+    </div>
+  );
+}
+
+function LocalColuna({
+  local, itens, onHorarioChange, onRemover, salvandoId,
+}: {
+  local: Local; itens: Alocacao[]; onHorarioChange: (a: Alocacao, horario: string) => void;
+  onRemover: (a: Alocacao) => void; salvandoId: string | null;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: `local:${local.id}` });
+  return (
+    <div
+      ref={setNodeRef}
+      className={`rounded-2xl border-2 p-3 min-h-[140px] transition-colors ${isOver ? 'border-[#336699] bg-blue-50' : 'border-dashed border-[#CBD5E1] bg-[#F8FAFC]'}`}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wide truncate">📍 {local.nome}</h3>
+        <span className="text-[10px] font-bold text-gray-400 shrink-0 ml-2">{itens.length}</span>
+      </div>
+      <div className="space-y-2">
+        {itens.map(a => (
+          <div key={a.id} className="bg-white rounded-lg border border-[#E2E8F0] p-2">
+            <FuncionarioCard nome={a.funcionario_nome} cargo={a.departamento} />
+            <div className="flex items-center gap-2 mt-2">
+              <input
+                type="time" value={a.horario?.slice(0, 5) || ''} disabled={salvandoId === a.id}
+                onChange={e => onHorarioChange(a, e.target.value)}
+                className="flex-1 text-xs border border-[#E2E8F0] rounded-lg p-1.5 disabled:opacity-50"
+              />
+              <button
+                onClick={() => onRemover(a)} title="Remover da escala"
+                className="text-red-400 hover:text-red-600 text-sm font-black px-2 shrink-0"
+              >✕</button>
+            </div>
+          </div>
+        ))}
+        {itens.length === 0 && <p className="text-[10px] text-gray-400 text-center py-4">Arraste um colaborador aqui</p>}
+      </div>
+    </div>
+  );
+}
+
+export default function EscalaPage() {
+  const router = useRouter();
+  const toast = useToast();
+  const { usuarioAtual, permissaoBruta, authLoading, acessoNegado, erro, tentarNovamente, accessToken } =
+    usePageAccess({ nomeFallback: 'Coordenador' });
+
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<Empresa[]>([]);
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>([]);
+  const [empresaId, setEmpresaId] = useState<number | null>(null);
+  const [departamentosCatalogo, setDepartamentosCatalogo] = useState<string[]>([]);
+  const [departamento, setDepartamento] = useState('');
+  const [data, setData] = useState(hojeStr());
+
+  const [funcionarios, setFuncionarios] = useState<Funcionario[]>([]);
+  const [locais, setLocais] = useState<Local[]>([]);
+  const [alocacoes, setAlocacoes] = useState<Alocacao[]>([]);
+  const [carregandoEscala, setCarregandoEscala] = useState(false);
+  const [salvandoId, setSalvandoId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  const [novoLocalAberto, setNovoLocalAberto] = useState(false);
+  const [novoLocalNome, setNovoLocalNome] = useState('');
+  const [criandoLocal, setCriandoLocal] = useState(false);
+  const [copiando, setCopiando] = useState(false);
+  const [compartilhando, setCompartilhando] = useState(false);
+  const [notificando, setNotificando] = useState(false);
+  const [logoImg, setLogoImg] = useState<HTMLImageElement | null>(null);
+
+  // Pré-carrega o logo uma vez — usado só na hora de desenhar a imagem
+  // exportável (gerarImagemEscala.ts). Se falhar, a imagem sai sem logo.
+  useEffect(() => {
+    const img = new window.Image();
+    img.onload = () => setLogoImg(img);
+    img.onerror = () => setLogoImg(null);
+    img.src = logoColorido.src;
+  }, []);
+
+  const sensors = useSensors(
+    // PointerSensor sozinho cobre mouse e toque (Pointer Events) — dnd-kit
+    // recomenda não misturar com TouchSensor pra não disparar drag em
+    // duplicidade. touch-none nos cards (FuncionarioCard) impede o navegador
+    // de competir com o gesto de arrastar no celular.
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
+
+  // Catálogos base: empresas permitidas, departamentos e funcionários — uma vez, após liberado o acesso.
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    (async () => {
+      if (ehAdministradorGlobal(permissaoBruta)) {
+        setEmpresasPermitidas(null);
+      } else {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          const { data: vinculos } = await supabase
+            .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+          setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+        }
+      }
+      const [{ data: empresasData }, { data: departamentosData }, { data: funcData }] = await Promise.all([
+        supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome'),
+        supabase.from('folha_departamento').select('nome').order('nome'),
+        supabase.from('folha_funcionarios').select('nome_completo, cargo, departamento, empresa_id, ativo').eq('ativo', true).order('nome_completo'),
+      ]);
+      setEmpresasCatalogo(empresasData || []);
+      setDepartamentosCatalogo((departamentosData || []).map(d => d.nome));
+      setFuncionarios((funcData || []) as Funcionario[]);
+    })();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasVisiveis = useMemo(
+    () => empresasPermitidas === null ? empresasCatalogo : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id)),
+    [empresasCatalogo, empresasPermitidas]
+  );
+
+  useEffect(() => {
+    if (!empresaId && empresasVisiveis.length > 0) setEmpresaId(empresasVisiveis[0].id);
+  }, [empresasVisiveis, empresaId]);
+
+  const carregarLocais = useCallback(async () => {
+    if (!empresaId) return;
+    const res = await listarLocaisAction({ empresaId }, accessToken);
+    if (res.ok) setLocais(res.info.locais);
+  }, [empresaId, accessToken]);
+
+  const carregarEscala = useCallback(async () => {
+    if (!empresaId) return;
+    setCarregandoEscala(true);
+    try {
+      const res = await listarEscalaDiaAction({ empresaId, data }, accessToken);
+      if (res.ok) setAlocacoes(res.info.alocacoes);
+      else toast('Erro ao carregar escala: ' + res.erro, 'error');
+    } finally {
+      setCarregandoEscala(false);
+    }
+  }, [empresaId, data, accessToken, toast]);
+
+  useEffect(() => { carregarLocais(); }, [carregarLocais]);
+  useEffect(() => { carregarEscala(); }, [carregarEscala]);
+
+  const funcionariosDoDepartamento = useMemo(
+    () => funcionarios.filter(f => f.empresa_id === empresaId && f.departamento === departamento && f.ativo),
+    [funcionarios, empresaId, departamento]
+  );
+  const alocadosPorNome = useMemo(() => new Set(alocacoes.map(a => a.funcionario_nome)), [alocacoes]);
+  const poolFuncionarios = useMemo(
+    () => funcionariosDoDepartamento.filter(f => !alocadosPorNome.has(f.nome_completo)),
+    [funcionariosDoDepartamento, alocadosPorNome]
+  );
+  const alocacoesPorLocal = useMemo(() => {
+    const mapa = new Map<string, Alocacao[]>();
+    alocacoes.forEach(a => {
+      if (!a.local_id) return;
+      mapa.set(a.local_id, [...(mapa.get(a.local_id) || []), a]);
+    });
+    return mapa;
+  }, [alocacoes]);
+
+  const handleHorarioChange = async (a: Alocacao, horario: string) => {
+    if (!empresaId || !horario) return;
+    setSalvandoId(a.id);
+    setAlocacoes(prev => prev.map(x => x.id === a.id ? { ...x, horario } : x));
+    const res = await salvarAlocacaoAction({
+      empresaId, data, funcionarioNome: a.funcionario_nome, departamento: a.departamento,
+      localId: a.local_id!, localNome: a.local_nome, horario, criadoPor: usuarioAtual,
+    }, accessToken);
+    setSalvandoId(null);
+    if (!res.ok) { toast('Erro ao salvar horário: ' + res.erro, 'error'); carregarEscala(); }
+  };
+
+  const handleRemover = async (a: Alocacao) => {
+    if (!empresaId) return;
+    setAlocacoes(prev => prev.filter(x => x.id !== a.id));
+    const res = await removerAlocacaoAction({ id: a.id, empresaId }, accessToken);
+    if (!res.ok) { toast('Erro ao remover: ' + res.erro, 'error'); carregarEscala(); }
+  };
+
+  const handleDragStart = (event: DragStartEvent) => setActiveId(String(event.active.id));
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    setActiveId(null);
+    const { active, over } = event;
+    if (!over || !empresaId) return;
+    const nome = String(active.id).replace(/^func:/, '');
+    const overId = String(over.id);
+    const existente = alocacoes.find(a => a.funcionario_nome === nome);
+
+    if (overId === 'pool') {
+      if (!existente) return;
+      setAlocacoes(prev => prev.filter(a => a.id !== existente.id));
+      const res = await removerAlocacaoAction({ id: existente.id, empresaId }, accessToken);
+      if (!res.ok) { toast('Erro ao remover: ' + res.erro, 'error'); carregarEscala(); }
+      return;
+    }
+
+    if (!overId.startsWith('local:')) return;
+    const localId = overId.slice('local:'.length);
+    if (existente?.local_id === localId) return;
+    const local = locais.find(l => l.id === localId);
+    if (!local) return;
+
+    const funcionario = funcionarios.find(f => f.nome_completo === nome);
+    const horario = existente?.horario?.slice(0, 5)
+      || maisComum((alocacoesPorLocal.get(localId) || []).map(a => a.horario?.slice(0, 5)))
+      || '07:00';
+
+    const res = await salvarAlocacaoAction({
+      empresaId, data, funcionarioNome: nome, departamento: departamento || funcionario?.departamento || null,
+      localId, localNome: local.nome, horario, criadoPor: usuarioAtual,
+    }, accessToken);
+    if (!res.ok) { toast('Erro ao alocar: ' + res.erro, 'error'); return; }
+    setAlocacoes(prev => [...prev.filter(a => a.funcionario_nome !== nome), res.info.alocacao]);
+  };
+
+  const criarLocal = async () => {
+    if (!empresaId || !novoLocalNome.trim()) return;
+    setCriandoLocal(true);
+    try {
+      const res = await criarLocalAction({ empresaId, nome: novoLocalNome.trim() }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      setNovoLocalNome('');
+      setNovoLocalAberto(false);
+      carregarLocais();
+    } catch (e: any) {
+      toast('Erro ao criar local: ' + e.message, 'error');
+    } finally {
+      setCriandoLocal(false);
+    }
+  };
+
+  const copiarDeOntem = async () => {
+    if (!empresaId) return;
+    const origem = diaAnterior(data);
+    if (!confirm(`Copiar a escala de ${fmtDataExtenso(origem)} para ${fmtDataExtenso(data)}?\n\nQuem já tem local definido hoje não será alterado.`)) return;
+    setCopiando(true);
+    try {
+      const res = await copiarEscalaAction({ empresaId, dataOrigem: origem, dataDestino: data, criadoPor: usuarioAtual }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      toast(`${res.info.copiados} colaborador(es) copiado(s) de ontem.`, 'success');
+      carregarEscala();
+    } catch (e: any) {
+      toast('Erro ao copiar: ' + e.message, 'error');
+    } finally {
+      setCopiando(false);
+    }
+  };
+
+  const compartilharEscala = async () => {
+    if (!empresaId) return;
+    const empresaNome = empresasVisiveis.find(e => e.id === empresaId)?.nome || '';
+    setCompartilhando(true);
+    try {
+      const blob = await gerarImagemEscala({ empresaNome, data, alocacoes, logo: logoImg });
+      if (!blob) throw new Error('Não foi possível gerar a imagem.');
+
+      const arquivoNome = `escala-${data}.png`;
+      const file = new File([blob], arquivoNome, { type: 'image/png' });
+
+      if (typeof navigator !== 'undefined' && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file], title: 'Escala de Trabalho', text: `Escala de ${fmtDataExtenso(data)}` });
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = arquivoNome;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        toast('Imagem baixada — é só anexar no grupo do WhatsApp.', 'success');
+      }
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') toast('Erro ao gerar imagem: ' + e.message, 'error');
+    } finally {
+      setCompartilhando(false);
+    }
+  };
+
+  const notificarColaboradores = async () => {
+    if (!empresaId) return;
+    if (alocacoes.length === 0) { toast('Ninguém foi alocado hoje ainda.', 'error'); return; }
+    if (!confirm(`Enviar WhatsApp pra ${alocacoes.length} colaborador(es) avisando local e horário da escala de ${fmtDataExtenso(data)}?`)) return;
+    setNotificando(true);
+    try {
+      const res = await notificarColaboradoresAction({ empresaId, data }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      const { enviados, semCelular, falhas } = res.info as { enviados: number; semCelular: string[]; falhas: string[] };
+      let msg = `${enviados} colaborador(es) notificado(s).`;
+      if (semCelular.length > 0) msg += ` ${semCelular.length} sem celular cadastrado.`;
+      if (falhas.length > 0) msg += ` ${falhas.length} falha(s) no envio.`;
+      toast(msg, falhas.length > 0 || semCelular.length > 0 ? 'error' : 'success');
+    } catch (e: any) {
+      toast('Erro ao notificar: ' + e.message, 'error');
+    } finally {
+      setNotificando(false);
+    }
+  };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center pt-16">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-[#0C1D4D] border-t-[#336699] rounded-full animate-spin mx-auto mb-4"></div>
+          <h2 className="text-[#0C1D4D] font-black uppercase tracking-widest text-sm">Verificando acesso...</h2>
+        </div>
+      </div>
+    );
+  }
+
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
+
+  if (acessoNegado) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200">
+          <div className="text-5xl mb-4">⛔</div>
+          <h2 className="text-xl font-black text-red-600 uppercase tracking-wider mb-2">Acesso Restrito</h2>
+          <p className="text-sm text-gray-500 mb-6">Você não possui permissão para acessar esta página.</p>
+          <button onClick={() => router.push('/admin/operacional')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
+            Voltar ao Menu Principal
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const activeNome = activeId?.replace(/^func:/, '') || null;
+
+  return (
+    <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] pt-4 pb-16">
+      <Analytics />
+
+      <div className="bg-emerald-50 border-b border-emerald-200 px-4 md:px-8 py-4 flex justify-between items-center shadow-sm">
+        <p className="text-emerald-800 font-medium text-sm">
+          🗓️ <strong>Escala de Trabalho</strong>. Arraste o colaborador até o local do dia.
+        </p>
+        <button onClick={() => router.push('/admin/operacional')} className="text-[10px] md:text-xs font-black bg-white hover:bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
+          ⬅ VOLTAR
+        </button>
+      </div>
+
+      <div className="max-w-6xl mx-auto px-4 md:px-8 mt-6">
+        {/* FILTROS */}
+        <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-4 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1 block">Empresa</label>
+              <select
+                value={empresaId ?? ''} onChange={e => setEmpresaId(e.target.value ? Number(e.target.value) : null)}
+                className="w-full p-2.5 border border-[#E2E8F0] rounded-lg text-sm"
+              >
+                <option value="">Selecione...</option>
+                {empresasVisiveis.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1 block">Departamento</label>
+              <select
+                value={departamento} onChange={e => setDepartamento(e.target.value)}
+                className="w-full p-2.5 border border-[#E2E8F0] rounded-lg text-sm"
+              >
+                <option value="">Selecione...</option>
+                {departamentosCatalogo.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1 block">Data</label>
+              <input
+                type="date" value={data} onChange={e => setData(e.target.value)}
+                className="w-full p-2.5 border border-[#E2E8F0] rounded-lg text-sm"
+              />
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 mt-3">
+            <button
+              onClick={copiarDeOntem} disabled={!empresaId || copiando}
+              className="flex-1 min-w-[160px] p-2.5 rounded-lg text-xs font-black uppercase tracking-wider bg-[#0C1D4D] text-white hover:bg-[#284B8C] disabled:opacity-40 transition-colors"
+            >
+              {copiando ? 'Copiando...' : '↺ Copiar de Ontem'}
+            </button>
+            <button
+              onClick={compartilharEscala} disabled={!empresaId || compartilhando}
+              className="flex-1 min-w-[160px] p-2.5 rounded-lg text-xs font-black uppercase tracking-wider bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 transition-colors"
+            >
+              {compartilhando ? 'Gerando...' : '🖼️ Exportar / Compartilhar'}
+            </button>
+            <button
+              onClick={notificarColaboradores} disabled={!empresaId || notificando}
+              className="flex-1 min-w-[160px] p-2.5 rounded-lg text-xs font-black uppercase tracking-wider bg-[#25D366] text-white hover:bg-[#1ebe5a] disabled:opacity-40 transition-colors"
+            >
+              {notificando ? 'Enviando...' : '📣 Notificar Colaboradores'}
+            </button>
+          </div>
+        </div>
+
+        {!empresaId ? (
+          <div className="text-center py-16 text-gray-400 font-bold uppercase text-sm">Selecione uma empresa para começar.</div>
+        ) : !departamento ? (
+          <div className="text-center py-16 text-gray-400 font-bold uppercase text-sm">Selecione um departamento para ver os colaboradores.</div>
+        ) : carregandoEscala ? (
+          <div className="text-center py-16 text-gray-400 font-bold uppercase text-sm">Carregando escala...</div>
+        ) : (
+          <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+            <Pool funcionarios={poolFuncionarios} />
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {locais.map(local => (
+                <LocalColuna
+                  key={local.id} local={local} itens={alocacoesPorLocal.get(local.id) || []}
+                  onHorarioChange={handleHorarioChange} onRemover={handleRemover} salvandoId={salvandoId}
+                />
+              ))}
+
+              {novoLocalAberto ? (
+                <div className="rounded-2xl border-2 border-dashed border-[#CBD5E1] bg-white p-3 flex flex-col gap-2 justify-center">
+                  <input
+                    autoFocus value={novoLocalNome} onChange={e => setNovoLocalNome(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && criarLocal()}
+                    placeholder="Nome do local (ex: Obra Centro)"
+                    className="w-full p-2 border border-[#E2E8F0] rounded-lg text-sm"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={criarLocal} disabled={criandoLocal || !novoLocalNome.trim()}
+                      className="flex-1 bg-[#0C1D4D] text-white text-xs font-black uppercase py-2 rounded-lg disabled:opacity-40"
+                    >Adicionar</button>
+                    <button
+                      onClick={() => { setNovoLocalAberto(false); setNovoLocalNome(''); }}
+                      className="px-3 text-xs font-black uppercase text-gray-400 hover:text-gray-600"
+                    >Cancelar</button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setNovoLocalAberto(true)}
+                  className="rounded-2xl border-2 border-dashed border-[#CBD5E1] bg-white p-3 min-h-[140px] flex items-center justify-center text-gray-400 hover:text-[#336699] hover:border-[#336699] transition-colors text-sm font-black uppercase tracking-wide"
+                >
+                  + Novo Local
+                </button>
+              )}
+            </div>
+
+            <DragOverlay>
+              {activeNome ? <FuncionarioCard nome={activeNome} arrastando /> : null}
+            </DragOverlay>
+          </DndContext>
+        )}
+      </div>
+    </div>
+  );
+}

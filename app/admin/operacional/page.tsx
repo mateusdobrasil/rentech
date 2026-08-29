@@ -38,6 +38,12 @@ const modulosOperacional = [
     descricao: 'Consulta (somente leitura) se cada colaborador já registrou o ponto do dia.',
     icone: '🕒', link: '/admin/operacional/registro-ponto',
     cor: 'bg-sky-50 border-sky-200 text-sky-700', hover: 'hover:border-sky-500'
+  },
+  {
+    titulo: 'Escala de Trabalho',
+    descricao: 'Monta a escala diária dos colaboradores por local e horário de chegada.',
+    icone: '🗓️', link: '/admin/operacional/escala',
+    cor: 'bg-emerald-50 border-emerald-200 text-emerald-700', hover: 'hover:border-emerald-500'
   }
 ];
 

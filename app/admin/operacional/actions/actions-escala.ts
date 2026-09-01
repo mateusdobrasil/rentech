@@ -170,8 +170,14 @@ export async function listarDiasComEscalaAction(params: { empresaId: number; ano
   }
 }
 
+// Um colaborador pode ter mais de um turno no mesmo dia (ex: visita técnica
+// de manhã, desmontagem à tarde — ver sql/escala_multiplos_turnos.sql, que
+// removeu o unique(empresa,data,funcionario) que travava isso a 1 por dia).
+// Por isso não é mais upsert por pessoa+dia: com `id`, atualiza aquele turno
+// específico (editar horário ou mover pra outro local); sem `id`, sempre
+// cria um turno novo (arrastar do pool).
 export async function salvarAlocacaoAction(params: {
-  empresaId: number; data: string; funcionarioNome: string; departamento: string | null;
+  id?: string; empresaId: number; data: string; funcionarioNome: string; departamento: string | null;
   localId: string; localNome: string; horario: string; observacao?: string | null; criadoPor: string;
 }, accessToken: string): Promise<Resultado> {
   const auth = await autorizarEmpresa(accessToken, params.empresaId);
@@ -179,14 +185,26 @@ export async function salvarAlocacaoAction(params: {
 
   const db = supabaseAdmin();
   try {
+    if (params.id) {
+      const { data, error } = await db
+        .from('escala_alocacoes')
+        .update({
+          local_id: params.localId, local_nome: params.localNome, horario: params.horario,
+          observacao: params.observacao || null, atualizado_em: new Date().toISOString(),
+        })
+        .eq('id', params.id).eq('empresa_id', params.empresaId)
+        .select('*').single();
+      if (error) throw error;
+      return { ok: true, info: { alocacao: data as Alocacao } };
+    }
+
     const { data, error } = await db
       .from('escala_alocacoes')
-      .upsert({
+      .insert({
         empresa_id: params.empresaId, data: params.data, funcionario_nome: params.funcionarioNome,
         departamento: params.departamento, local_id: params.localId, local_nome: params.localNome,
         horario: params.horario, observacao: params.observacao || null, criado_por: params.criadoPor,
-        atualizado_em: new Date().toISOString(),
-      }, { onConflict: 'empresa_id,data,funcionario_nome' })
+      })
       .select('*').single();
     if (error) throw error;
     return { ok: true, info: { alocacao: data as Alocacao } };
@@ -244,17 +262,28 @@ export async function copiarEscalaAction(params: {
 
     if (!origem || origem.length === 0) return { ok: true, info: { copiados: 0 } };
 
-    const linhas = (origem as Alocacao[]).map(a => ({
-      empresa_id: params.empresaId, data: params.dataDestino, funcionario_nome: a.funcionario_nome,
-      departamento: a.departamento, local_id: a.local_id, local_nome: a.local_nome, horario: a.horario,
-      observacao: a.observacao, criado_por: params.criadoPor,
-    }));
+    // Colaborador pode ter mais de um turno por dia agora, então não dá mais
+    // pra distinguir "já copiado" só por pessoa — usa pessoa+local: evita
+    // duplicar o mesmo turno se "copiar de ontem" for clicado de novo, mas
+    // deixa passar um turno genuinamente novo (outro local) da mesma pessoa.
+    const { data: destinoExistente, error: erroDestino } = await db
+      .from('escala_alocacoes').select('funcionario_nome, local_id')
+      .eq('empresa_id', params.empresaId).eq('data', params.dataDestino);
+    if (erroDestino) throw erroDestino;
+    const jaExiste = new Set((destinoExistente || []).map(d => `${d.funcionario_nome}|${d.local_id}`));
 
-    // ignoreDuplicates: quem já tem alocação em dataDestino não é sobrescrito.
-    const { error } = await db
-      .from('escala_alocacoes')
-      .upsert(linhas, { onConflict: 'empresa_id,data,funcionario_nome', ignoreDuplicates: true });
-    if (error) throw error;
+    const linhas = (origem as Alocacao[])
+      .filter(a => !jaExiste.has(`${a.funcionario_nome}|${a.local_id}`))
+      .map(a => ({
+        empresa_id: params.empresaId, data: params.dataDestino, funcionario_nome: a.funcionario_nome,
+        departamento: a.departamento, local_id: a.local_id, local_nome: a.local_nome, horario: a.horario,
+        observacao: a.observacao, criado_por: params.criadoPor,
+      }));
+
+    if (linhas.length > 0) {
+      const { error } = await db.from('escala_alocacoes').insert(linhas);
+      if (error) throw error;
+    }
     return { ok: true, info: { copiados: linhas.length } };
   } catch (e: any) {
     return { ok: false, erro: e.message };

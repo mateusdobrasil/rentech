@@ -58,33 +58,45 @@ const maisComum = (valores: (string | undefined)[]): string | null => {
   return melhor;
 };
 
-function FuncionarioCard({ nome, cargo, arrastando, confirmado, notificado }: {
-  nome: string; cargo?: string | null; arrastando?: boolean; confirmado?: boolean; notificado?: boolean;
+// dragId identifica o CARD, não a pessoa — um colaborador pode ter mais de
+// um turno no mesmo dia (ver sql/escala_multiplos_turnos.sql), então o card
+// dele no pool ("pool:<nome>") e cada card de turno já alocado
+// ("turno:<alocacao.id>") precisam de ids de drag distintos, senão o
+// dnd-kit vê dois draggables com o mesmo id ao mesmo tempo. Sem dragId
+// (usado só no preview do DragOverlay), o card não é arrastável.
+function FuncionarioCard({ dragId, nome, cargo, arrastando, confirmado, notificado, turnos }: {
+  dragId?: string; nome: string; cargo?: string | null; arrastando?: boolean;
+  confirmado?: boolean; notificado?: boolean; turnos?: number;
 }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `func:${nome}` });
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: dragId || `preview:${nome}` });
   return (
     <div
-      ref={setNodeRef} {...listeners} {...attributes}
-      className={`touch-none select-none cursor-grab active:cursor-grabbing bg-white rounded-xl border px-3 py-2 shadow-sm transition-opacity ${
+      ref={dragId ? setNodeRef : undefined} {...(dragId ? { ...listeners, ...attributes } : {})}
+      className={`${dragId ? 'touch-none select-none cursor-grab active:cursor-grabbing' : ''} bg-white rounded-xl border px-3 py-2 shadow-sm transition-opacity ${
         isDragging || arrastando ? 'opacity-30 border-[#336699]' : 'border-[#E2E8F0]'
       }`}
     >
       <div className="flex items-center justify-between gap-1">
         <p className="text-sm font-bold text-[#0C1D4D] truncate">{nome}</p>
-        {/* Sem notificação ainda: sem ícone (evita poluir antes do 1º envio).
-            Notificado mas sem confirmar: 📨. Confirmou: ✅. */}
-        {confirmado ? (
-          <span title="Confirmou ciência da escala" className="text-xs shrink-0 text-emerald-500">✅</span>
-        ) : notificado ? (
-          <span title="Notificado por WhatsApp — ainda não confirmou" className="text-xs shrink-0 text-sky-500">📨</span>
-        ) : null}
+        <div className="flex items-center gap-1 shrink-0">
+          {!!turnos && turnos > 0 && (
+            <span title={`Já tem ${turnos} turno(s) hoje`} className="text-[9px] font-black text-amber-700 bg-amber-100 rounded-full px-1.5 py-0.5">{turnos}×</span>
+          )}
+          {/* Sem notificação ainda: sem ícone (evita poluir antes do 1º envio).
+              Notificado mas sem confirmar: 📨. Confirmou: ✅. */}
+          {confirmado ? (
+            <span title="Confirmou ciência da escala" className="text-xs text-emerald-500">✅</span>
+          ) : notificado ? (
+            <span title="Notificado por WhatsApp — ainda não confirmou" className="text-xs text-sky-500">📨</span>
+          ) : null}
+        </div>
       </div>
       {cargo && <p className="text-[10px] text-gray-400 font-medium truncate">{cargo}</p>}
     </div>
   );
 }
 
-function Pool({ funcionarios }: { funcionarios: Funcionario[] }) {
+function Pool({ funcionarios, turnosPorNome }: { funcionarios: Funcionario[]; turnosPorNome: Map<string, number> }) {
   const { setNodeRef, isOver } = useDroppable({ id: 'pool' });
   return (
     <div
@@ -92,12 +104,17 @@ function Pool({ funcionarios }: { funcionarios: Funcionario[] }) {
       className={`rounded-2xl border-2 p-3 mb-6 transition-colors ${isOver ? 'border-[#336699] bg-blue-50' : 'border-dashed border-[#CBD5E1] bg-white'}`}
     >
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wide">Sem local definido hoje</h3>
+        <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wide">Colaboradores do departamento</h3>
         <span className="text-[10px] font-bold text-gray-400">{funcionarios.length}</span>
       </div>
+      <p className="text-[10px] text-gray-400 mb-2">
+        Arraste até um local — dá pra arrastar a mesma pessoa mais de uma vez, pra colocar mais de um turno no dia.
+      </p>
       <div className="flex flex-wrap gap-2">
-        {funcionarios.map(f => <FuncionarioCard key={f.nome_completo} nome={f.nome_completo} cargo={f.cargo} />)}
-        {funcionarios.length === 0 && <p className="text-[10px] text-gray-400 py-2">Todo mundo do departamento já está alocado hoje.</p>}
+        {funcionarios.map(f => (
+          <FuncionarioCard key={f.nome_completo} dragId={`pool:${f.nome_completo}`} nome={f.nome_completo} cargo={f.cargo} turnos={turnosPorNome.get(f.nome_completo) || 0} />
+        ))}
+        {funcionarios.length === 0 && <p className="text-[10px] text-gray-400 py-2">Nenhum colaborador nesse departamento.</p>}
       </div>
     </div>
   );
@@ -183,7 +200,8 @@ function LocalColuna({
             className="w-full text-xs border border-[#E2E8F0] rounded p-1 mt-0.5"
           >
             <option value="">{itens.length === 0 ? 'Aloque alguém primeiro' : '—'}</option>
-            {itens.map(a => <option key={a.funcionario_nome} value={a.funcionario_nome}>{a.funcionario_nome}</option>)}
+            {/* dedupe: a mesma pessoa pode ter 2 turnos nesse local no mesmo dia */}
+            {Array.from(new Set(itens.map(a => a.funcionario_nome))).map(nome => <option key={nome} value={nome}>{nome}</option>)}
             {responsavelForaDaLista && (
               <option value={contexto!.responsavel!}>⚠️ {contexto!.responsavel} (não está mais aqui)</option>
             )}
@@ -194,7 +212,7 @@ function LocalColuna({
       <div className="space-y-2">
         {itens.map(a => (
           <div key={a.id} className="bg-white rounded-lg border border-[#E2E8F0] p-2">
-            <FuncionarioCard nome={a.funcionario_nome} cargo={a.departamento} confirmado={!!a.confirmado_em} notificado={!!a.notificado_em} />
+            <FuncionarioCard dragId={`turno:${a.id}`} nome={a.funcionario_nome} cargo={a.departamento} confirmado={!!a.confirmado_em} notificado={!!a.notificado_em} />
             <div className="flex items-center gap-2 mt-2">
               <input
                 type="time" value={a.horario?.slice(0, 5) || ''} disabled={salvandoId === a.id}
@@ -442,11 +460,15 @@ export default function EscalaPage() {
     () => funcionarios.filter(f => f.empresa_id === empresaId && f.departamento === departamento && f.ativo),
     [funcionarios, empresaId, departamento]
   );
-  const alocadosPorNome = useMemo(() => new Set(alocacoes.map(a => a.funcionario_nome)), [alocacoes]);
-  const poolFuncionarios = useMemo(
-    () => funcionariosDoDepartamento.filter(f => !alocadosPorNome.has(f.nome_completo)),
-    [funcionariosDoDepartamento, alocadosPorNome]
-  );
+  // Colaborador pode ter mais de um turno no mesmo dia, então o pool mostra
+  // todo mundo do departamento sempre (não some depois de alocado) — cada
+  // card traz uma marquinha de quantos turnos a pessoa já tem hoje.
+  const turnosPorNome = useMemo(() => {
+    const mapa = new Map<string, number>();
+    alocacoes.forEach(a => mapa.set(a.funcionario_nome, (mapa.get(a.funcionario_nome) || 0) + 1));
+    return mapa;
+  }, [alocacoes]);
+  const poolFuncionarios = funcionariosDoDepartamento;
   const alocacoesPorLocal = useMemo(() => {
     const mapa = new Map<string, Alocacao[]>();
     alocacoes.forEach(a => {
@@ -474,7 +496,7 @@ export default function EscalaPage() {
     setSalvandoId(a.id);
     setAlocacoes(prev => prev.map(x => x.id === a.id ? { ...x, horario } : x));
     const res = await salvarAlocacaoAction({
-      empresaId, data, funcionarioNome: a.funcionario_nome, departamento: a.departamento,
+      id: a.id, empresaId, data, funcionarioNome: a.funcionario_nome, departamento: a.departamento,
       localId: a.local_id!, localNome: a.local_nome, horario, criadoPor: usuarioAtual,
     }, accessToken);
     setSalvandoId(null);
@@ -553,40 +575,62 @@ export default function EscalaPage() {
 
   const handleDragStart = (event: DragStartEvent) => setActiveId(String(event.active.id));
 
+  // "pool:<nome>" solto num local SEMPRE cria um turno novo (a pessoa pode
+  // já ter outro(s) turno(s) hoje — ver sql/escala_multiplos_turnos.sql).
+  // "turno:<id>" solto no pool remove só aquele turno; solto num local MOVE
+  // só aquele turno específico, sem tocar nos outros da mesma pessoa.
   const handleDragEnd = async (event: DragEndEvent) => {
     setActiveId(null);
     const { active, over } = event;
     if (!over || !empresaId) return;
-    const nome = String(active.id).replace(/^func:/, '');
+    const activeIdStr = String(active.id);
     const overId = String(over.id);
-    const existente = alocacoes.find(a => a.funcionario_nome === nome);
+
+    if (activeIdStr.startsWith('pool:')) {
+      if (!overId.startsWith('local:')) return;
+      const nome = activeIdStr.slice('pool:'.length);
+      const localId = overId.slice('local:'.length);
+      const local = locais.find(l => l.id === localId);
+      if (!local) return;
+
+      const funcionario = funcionarios.find(f => f.nome_completo === nome);
+      const horario = contextos.get(localId)?.horario_padrao?.slice(0, 5)
+        || maisComum((alocacoesPorLocal.get(localId) || []).map(a => a.horario?.slice(0, 5)))
+        || '07:00';
+
+      const res = await salvarAlocacaoAction({
+        empresaId, data, funcionarioNome: nome, departamento: departamento || funcionario?.departamento || null,
+        localId, localNome: local.nome, horario, criadoPor: usuarioAtual,
+      }, accessToken);
+      if (!res.ok) { toast('Erro ao alocar: ' + res.erro, 'error'); return; }
+      setAlocacoes(prev => [...prev, res.info.alocacao]);
+      return;
+    }
+
+    if (!activeIdStr.startsWith('turno:')) return;
+    const alocacaoId = activeIdStr.slice('turno:'.length);
+    const existente = alocacoes.find(a => a.id === alocacaoId);
+    if (!existente) return;
 
     if (overId === 'pool') {
-      if (!existente) return;
-      setAlocacoes(prev => prev.filter(a => a.id !== existente.id));
-      const res = await removerAlocacaoAction({ id: existente.id, empresaId }, accessToken);
+      setAlocacoes(prev => prev.filter(a => a.id !== alocacaoId));
+      const res = await removerAlocacaoAction({ id: alocacaoId, empresaId }, accessToken);
       if (!res.ok) { toast('Erro ao remover: ' + res.erro, 'error'); carregarEscala(); }
       return;
     }
 
     if (!overId.startsWith('local:')) return;
     const localId = overId.slice('local:'.length);
-    if (existente?.local_id === localId) return;
+    if (existente.local_id === localId) return;
     const local = locais.find(l => l.id === localId);
     if (!local) return;
 
-    const funcionario = funcionarios.find(f => f.nome_completo === nome);
-    const horario = existente?.horario?.slice(0, 5)
-      || contextos.get(localId)?.horario_padrao?.slice(0, 5)
-      || maisComum((alocacoesPorLocal.get(localId) || []).map(a => a.horario?.slice(0, 5)))
-      || '07:00';
-
     const res = await salvarAlocacaoAction({
-      empresaId, data, funcionarioNome: nome, departamento: departamento || funcionario?.departamento || null,
-      localId, localNome: local.nome, horario, criadoPor: usuarioAtual,
+      id: alocacaoId, empresaId, data, funcionarioNome: existente.funcionario_nome, departamento: existente.departamento,
+      localId, localNome: local.nome, horario: existente.horario?.slice(0, 5) || '07:00', criadoPor: usuarioAtual,
     }, accessToken);
-    if (!res.ok) { toast('Erro ao alocar: ' + res.erro, 'error'); return; }
-    setAlocacoes(prev => [...prev.filter(a => a.funcionario_nome !== nome), res.info.alocacao]);
+    if (!res.ok) { toast('Erro ao mover: ' + res.erro, 'error'); return; }
+    setAlocacoes(prev => prev.map(a => a.id === alocacaoId ? res.info.alocacao : a));
   };
 
   // Deixa um local do catálogo (já cadastrado, mas ainda não usado hoje)
@@ -736,7 +780,12 @@ export default function EscalaPage() {
     );
   }
 
-  const activeNome = activeId?.replace(/^func:/, '') || null;
+  const activeNome = (() => {
+    if (!activeId) return null;
+    if (activeId.startsWith('pool:')) return activeId.slice('pool:'.length);
+    if (activeId.startsWith('turno:')) return alocacoes.find(a => a.id === activeId.slice('turno:'.length))?.funcionario_nome || null;
+    return null;
+  })();
 
   return (
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] pt-4 pb-16">
@@ -844,7 +893,7 @@ export default function EscalaPage() {
                     independente do departamento — ele só é necessário pra
                     saber quem oferecer no "pool" pra colocar gente nova. */}
                 {departamento ? (
-                  <Pool funcionarios={poolFuncionarios} />
+                  <Pool funcionarios={poolFuncionarios} turnosPorNome={turnosPorNome} />
                 ) : (
                   <div className="rounded-2xl border-2 border-dashed border-[#CBD5E1] bg-white p-3 mb-6 text-center text-[10px] text-gray-400 font-bold uppercase tracking-wider">
                     Selecione um departamento pra adicionar novos colaboradores à escala

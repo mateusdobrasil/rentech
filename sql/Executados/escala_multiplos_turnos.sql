@@ -1,0 +1,15 @@
+-- Permite múltiplos turnos por colaborador no mesmo dia — ex: Raimundo faz
+-- uma Visita Técnica às 08:00 e depois uma Desmontagem às 15:00. Hoje a
+-- unique(empresa_id, data, funcionario_nome) trava isso a 1 alocação por
+-- pessoa por dia; cada turno passa a ser uma linha independente (o próprio
+-- `id` da linha já identifica o turno — nada mais muda no schema).
+--
+-- O nome do constraint abaixo é o padrão automático do Postgres pra um
+-- `unique(...)` inline sem nome explícito (como foi criado em
+-- sql/Executados/operacional_escala.sql). Se der erro "constraint ... does
+-- not exist", rode antes:
+--   select conname from pg_constraint where conrelid = 'escala_alocacoes'::regclass and contype = 'u';
+-- e troque o nome abaixo pelo que aparecer.
+--
+-- Roda uma vez no SQL Editor do Supabase.
+alter table escala_alocacoes drop constraint if exists escala_alocacoes_empresa_id_data_funcionario_nome_key;

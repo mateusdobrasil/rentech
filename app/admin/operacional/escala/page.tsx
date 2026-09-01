@@ -18,27 +18,30 @@ import {
   listarLocaisAction, criarLocalAction, listarEscalaDiaAction, salvarAlocacaoAction,
   removerAlocacaoAction, copiarEscalaAction, notificarColaboradoresAction,
   listarContextoLocaisDiaAction, salvarContextoLocalAction, removerLocalDiaAction,
+  listarDiasComEscalaAction, listarTiposAction, criarTipoAction,
 } from '../actions/actions-escala';
 import { gerarImagemEscala } from './gerarImagemEscala';
-import { TIPO_OPCOES } from './tiposEscala';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { HubErro } from '../../../components/ui/HubStates';
-import { useToast } from '../../../components/ui/NotificationProvider';
+import { useToast, usePrompt } from '../../../components/ui/NotificationProvider';
 import logoColorido from '../../../imgs/logo.png';
 
 interface Empresa { id: number; nome: string; }
 interface Funcionario { nome_completo: string; cargo: string | null; departamento: string | null; empresa_id: number | null; ativo: boolean; }
 interface Local { id: string; nome: string; }
+interface TipoEscala { id: string; nome: string; }
 interface Alocacao {
   id: string; empresa_id: number; data: string; funcionario_nome: string; departamento: string | null;
   local_id: string | null; local_nome: string; horario: string; observacao: string | null; criado_por: string | null;
+  confirmado_em: string | null; notificado_em: string | null;
 }
 interface ContextoLocalDia {
   id: string; empresa_id: number; data: string; local_id: string;
-  horario_padrao: string | null; tipo: string | null; evento: string | null; responsavel: string | null;
+  horario_padrao: string | null; tipo_id: string | null; tipo_nome: string | null;
+  evento: string | null; responsavel: string | null;
 }
-type CampoContexto = 'horario_padrao' | 'tipo' | 'evento' | 'responsavel';
+type CampoContexto = 'horario_padrao' | 'evento' | 'responsavel';
 
 const hojeStr = () => new Date().toISOString().slice(0, 10);
 const diaAnterior = (d: string) => {
@@ -55,7 +58,9 @@ const maisComum = (valores: (string | undefined)[]): string | null => {
   return melhor;
 };
 
-function FuncionarioCard({ nome, cargo, arrastando }: { nome: string; cargo?: string | null; arrastando?: boolean }) {
+function FuncionarioCard({ nome, cargo, arrastando, confirmado, notificado }: {
+  nome: string; cargo?: string | null; arrastando?: boolean; confirmado?: boolean; notificado?: boolean;
+}) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `func:${nome}` });
   return (
     <div
@@ -64,7 +69,16 @@ function FuncionarioCard({ nome, cargo, arrastando }: { nome: string; cargo?: st
         isDragging || arrastando ? 'opacity-30 border-[#336699]' : 'border-[#E2E8F0]'
       }`}
     >
-      <p className="text-sm font-bold text-[#0C1D4D] truncate">{nome}</p>
+      <div className="flex items-center justify-between gap-1">
+        <p className="text-sm font-bold text-[#0C1D4D] truncate">{nome}</p>
+        {/* Sem notificação ainda: sem ícone (evita poluir antes do 1º envio).
+            Notificado mas sem confirmar: 📨. Confirmou: ✅. */}
+        {confirmado ? (
+          <span title="Confirmou ciência da escala" className="text-xs shrink-0 text-emerald-500">✅</span>
+        ) : notificado ? (
+          <span title="Notificado por WhatsApp — ainda não confirmou" className="text-xs shrink-0 text-sky-500">📨</span>
+        ) : null}
+      </div>
       {cargo && <p className="text-[10px] text-gray-400 font-medium truncate">{cargo}</p>}
     </div>
   );
@@ -90,11 +104,13 @@ function Pool({ funcionarios }: { funcionarios: Funcionario[] }) {
 }
 
 function LocalColuna({
-  local, contexto, itens, onHorarioChange, onRemover, onContextoChange, onRemoverLocalDia, salvandoId,
+  local, contexto, itens, tipos, onHorarioChange, onRemover, onContextoChange, onTipoChange, onCriarTipo, onRemoverLocalDia, salvandoId,
 }: {
-  local: Local; contexto: ContextoLocalDia | undefined; itens: Alocacao[];
+  local: Local; contexto: ContextoLocalDia | undefined; itens: Alocacao[]; tipos: TipoEscala[];
   onHorarioChange: (a: Alocacao, horario: string) => void; onRemover: (a: Alocacao) => void;
   onContextoChange: (localId: string, campo: CampoContexto, valor: string) => void;
+  onTipoChange: (localId: string, tipoId: string | null, tipoNome: string | null) => void;
+  onCriarTipo: (localId: string) => void;
   onRemoverLocalDia: (localId: string) => void;
   salvandoId: string | null;
 }) {
@@ -108,7 +124,11 @@ function LocalColuna({
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wide truncate">📍 {local.nome}</h3>
         <div className="flex items-center gap-2 shrink-0 ml-2">
-          <span className="text-[10px] font-bold text-gray-400">{itens.length}</span>
+          {itens.length > 0 && (
+            <span className="text-[10px] font-bold text-emerald-600" title="Confirmaram ciência da escala">
+              ✅ {itens.filter(a => a.confirmado_em).length}/{itens.length}
+            </span>
+          )}
           {itens.length === 0 && (
             <button
               onClick={() => onRemoverLocalDia(local.id)} title="Tirar esse local da escala de hoje"
@@ -134,12 +154,17 @@ function LocalColuna({
         <div>
           <label className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">Tipo</label>
           <select
-            defaultValue={contexto?.tipo || ''}
-            onChange={e => onContextoChange(local.id, 'tipo', e.target.value)}
+            value={contexto?.tipo_id || ''}
+            onChange={e => {
+              if (e.target.value === '__novo__') { onCriarTipo(local.id); return; }
+              const tipo = tipos.find(t => t.id === e.target.value);
+              onTipoChange(local.id, tipo?.id || null, tipo?.nome || null);
+            }}
             className="w-full text-xs border border-[#E2E8F0] rounded p-1 mt-0.5"
           >
             <option value="">—</option>
-            {TIPO_OPCOES.map(t => <option key={t.valor} value={t.valor}>{t.rotulo}</option>)}
+            {tipos.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
+            <option value="__novo__">+ Novo tipo...</option>
           </select>
         </div>
         <div className="col-span-2">
@@ -169,7 +194,7 @@ function LocalColuna({
       <div className="space-y-2">
         {itens.map(a => (
           <div key={a.id} className="bg-white rounded-lg border border-[#E2E8F0] p-2">
-            <FuncionarioCard nome={a.funcionario_nome} cargo={a.departamento} />
+            <FuncionarioCard nome={a.funcionario_nome} cargo={a.departamento} confirmado={!!a.confirmado_em} notificado={!!a.notificado_em} />
             <div className="flex items-center gap-2 mt-2">
               <input
                 type="time" value={a.horario?.slice(0, 5) || ''} disabled={salvandoId === a.id}
@@ -189,9 +214,93 @@ function LocalColuna({
   );
 }
 
+const NOMES_DIA_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+// Aba "Escalas Montadas": calendário do mês (empresa selecionada), com o
+// total de colaboradores alocados em cada dia. Substituiu um popover
+// pequeno de calendário que o usuário achou pouco prático — isso aqui é uma
+// tela própria, cabe mais informação e dá pra tocar num dia direto pra abrir
+// a escala dele.
+function CalendarioEscalasMontadas({
+  data, mesAno, diasComEscala, onSelecionarDia, onMudarMes,
+}: {
+  data: string; mesAno: { ano: number; mes: number }; diasComEscala: Map<string, number>;
+  onSelecionarDia: (dia: string) => void; onMudarMes: (ano: number, mes: number) => void;
+}) {
+  const { ano, mes } = mesAno; // mes: 1-12
+  const primeiroDiaSemana = new Date(ano, mes - 1, 1).getDay();
+  const diasNoMes = new Date(ano, mes, 0).getDate();
+  const celulas: (number | null)[] = [...Array(primeiroDiaSemana).fill(null), ...Array.from({ length: diasNoMes }, (_, i) => i + 1)];
+  const fmtDia = (dia: number) => `${ano}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+  const hoje = hojeStr();
+
+  const mudarMes = (delta: number) => {
+    const novo = new Date(ano, mes - 1 + delta, 1);
+    onMudarMes(novo.getFullYear(), novo.getMonth() + 1);
+  };
+
+  const totalDias = diasComEscala.size;
+  const totalAlocacoes = Array.from(diasComEscala.values()).reduce((a, b) => a + b, 0);
+
+  return (
+    <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-4 md:p-6">
+      <div className="flex items-center justify-between mb-4">
+        <button type="button" onClick={() => mudarMes(-1)} className="w-9 h-9 rounded-lg border border-[#E2E8F0] text-gray-500 hover:bg-[#F8FAFC] font-black shrink-0">‹</button>
+        <div className="text-center">
+          <h2 className="text-base md:text-lg font-black text-[#0C1D4D] uppercase tracking-wide">
+            {new Date(ano, mes - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+          </h2>
+          <p className="text-[10px] text-gray-400 font-bold uppercase">
+            {totalDias} dia(s) com escala · {totalAlocacoes} alocação(ões) no mês
+          </p>
+        </div>
+        <button type="button" onClick={() => mudarMes(1)} className="w-9 h-9 rounded-lg border border-[#E2E8F0] text-gray-500 hover:bg-[#F8FAFC] font-black shrink-0">›</button>
+      </div>
+
+      <div className="grid grid-cols-7 gap-1.5 text-center mb-1.5">
+        {NOMES_DIA_SEMANA.map((d, i) => <span key={i} className="text-[9px] font-black text-gray-400 uppercase">{d}</span>)}
+      </div>
+      <div className="grid grid-cols-7 gap-1.5">
+        {celulas.map((dia, i) => {
+          if (dia === null) return <span key={i} />;
+          const diaStr = fmtDia(dia);
+          const quantidade = diasComEscala.get(diaStr) || 0;
+          const temEscala = quantidade > 0;
+          const selecionado = diaStr === data;
+          const ehHoje = diaStr === hoje;
+          return (
+            <button
+              type="button" key={i} onClick={() => onSelecionarDia(diaStr)}
+              className={`relative min-h-[52px] md:min-h-[64px] rounded-xl border-2 flex flex-col items-center justify-center gap-0.5 transition-colors ${
+                selecionado
+                  ? 'bg-[#336699] border-[#336699] text-white'
+                  : temEscala
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:border-emerald-400'
+                    : 'border-transparent text-gray-500 hover:bg-gray-50'
+              } ${ehHoje && !selecionado ? 'ring-2 ring-[#336699]/40' : ''}`}
+            >
+              <span className="text-sm font-black">{dia}</span>
+              {temEscala && (
+                <span className={`text-[9px] font-black px-1.5 rounded-full ${selecionado ? 'bg-white/20' : 'bg-emerald-500 text-white'}`}>
+                  {quantidade}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      <p className="text-[10px] text-gray-400 font-medium mt-4">
+        O número no dia é quantas alocações existem nele. Toque num dia pra abrir e montar/editar a escala dele.
+      </p>
+    </div>
+  );
+}
+
 export default function EscalaPage() {
   const router = useRouter();
   const toast = useToast();
+  const prompt = usePrompt();
   const { usuarioAtual, permissaoBruta, authLoading, acessoNegado, erro, tentarNovamente, accessToken } =
     usePageAccess({ nomeFallback: 'Coordenador' });
 
@@ -199,8 +308,15 @@ export default function EscalaPage() {
   const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>([]);
   const [empresaId, setEmpresaId] = useState<number | null>(null);
   const [departamentosCatalogo, setDepartamentosCatalogo] = useState<string[]>([]);
+  const [tiposCatalogo, setTiposCatalogo] = useState<TipoEscala[]>([]);
   const [departamento, setDepartamento] = useState('');
   const [data, setData] = useState(hojeStr());
+  const [aba, setAba] = useState<'montar' | 'calendario'>('montar');
+  const [mesCalendario, setMesCalendario] = useState(() => {
+    const hoje = new Date();
+    return { ano: hoje.getFullYear(), mes: hoje.getMonth() + 1 };
+  });
+  const [diasComEscala, setDiasComEscala] = useState<Map<string, number>>(new Map());
 
   const [funcionarios, setFuncionarios] = useState<Funcionario[]>([]);
   const [locais, setLocais] = useState<Local[]>([]);
@@ -249,16 +365,18 @@ export default function EscalaPage() {
           setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
         }
       }
-      const [{ data: empresasData }, { data: departamentosData }, { data: funcData }] = await Promise.all([
+      const [{ data: empresasData }, { data: departamentosData }, { data: funcData }, resTipos] = await Promise.all([
         supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome'),
         supabase.from('folha_departamento').select('nome').order('nome'),
         supabase.from('folha_funcionarios').select('nome_completo, cargo, departamento, empresa_id, ativo').eq('ativo', true).order('nome_completo'),
+        listarTiposAction(accessToken),
       ]);
       setEmpresasCatalogo(empresasData || []);
       setDepartamentosCatalogo((departamentosData || []).map(d => d.nome));
       setFuncionarios((funcData || []) as Funcionario[]);
+      if (resTipos.ok) setTiposCatalogo(resTipos.info.tipos);
     })();
-  }, [authLoading, acessoNegado, permissaoBruta]);
+  }, [authLoading, acessoNegado, permissaoBruta, accessToken]);
 
   const empresasVisiveis = useMemo(
     () => empresasPermitidas === null ? empresasCatalogo : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id)),
@@ -294,6 +412,31 @@ export default function EscalaPage() {
 
   useEffect(() => { carregarLocais(); }, [carregarLocais]);
   useEffect(() => { carregarEscala(); }, [carregarEscala]);
+
+  // Dias com escala do mês em exibição na aba "Escalas Montadas" — recarrega
+  // ao trocar de empresa ou navegar de mês dentro do calendário.
+  const carregarDiasComEscala = useCallback(async () => {
+    if (!empresaId) return;
+    const res = await listarDiasComEscalaAction({ empresaId, ano: mesCalendario.ano, mes: mesCalendario.mes }, accessToken);
+    if (res.ok) {
+      const mapa = new Map<string, number>();
+      (res.info.dias as { dia: string; quantidade: number }[]).forEach(d => mapa.set(d.dia, d.quantidade));
+      setDiasComEscala(mapa);
+    }
+  }, [empresaId, mesCalendario, accessToken]);
+
+  useEffect(() => { carregarDiasComEscala(); }, [carregarDiasComEscala]);
+
+  const abrirAbaCalendario = () => {
+    const dt = new Date(data + 'T00:00:00');
+    setMesCalendario({ ano: dt.getFullYear(), mes: dt.getMonth() + 1 });
+    setAba('calendario');
+  };
+
+  const selecionarDiaCalendario = (dia: string) => {
+    setData(dia);
+    setAba('montar');
+  };
 
   const funcionariosDoDepartamento = useMemo(
     () => funcionarios.filter(f => f.empresa_id === empresaId && f.departamento === departamento && f.ativo),
@@ -346,7 +489,7 @@ export default function EscalaPage() {
       const atual = prev.get(localId);
       const novo: ContextoLocalDia = {
         id: atual?.id || '', empresa_id: empresaId, data, local_id: localId,
-        horario_padrao: atual?.horario_padrao ?? null, tipo: atual?.tipo ?? null,
+        horario_padrao: atual?.horario_padrao ?? null, tipo_id: atual?.tipo_id ?? null, tipo_nome: atual?.tipo_nome ?? null,
         evento: atual?.evento ?? null, responsavel: atual?.responsavel ?? null,
         [campo]: valorFinal,
       };
@@ -364,11 +507,41 @@ export default function EscalaPage() {
     const res = await salvarContextoLocalAction({
       empresaId, data, localId,
       horarioPadrao: campo === 'horario_padrao' ? valorFinal : undefined,
-      tipo: campo === 'tipo' ? valorFinal : undefined,
       evento: campo === 'evento' ? valorFinal : undefined,
       responsavel: campo === 'responsavel' ? valorFinal : undefined,
     }, accessToken);
     if (!res.ok) { toast('Erro ao salvar: ' + res.erro, 'error'); carregarEscala(); }
+  };
+
+  const handleTipoChange = async (localId: string, tipoId: string | null, tipoNome: string | null) => {
+    if (!empresaId) return;
+
+    setContextos(prev => {
+      const atual = prev.get(localId);
+      const novo: ContextoLocalDia = {
+        id: atual?.id || '', empresa_id: empresaId, data, local_id: localId,
+        horario_padrao: atual?.horario_padrao ?? null, tipo_id: tipoId, tipo_nome: tipoNome,
+        evento: atual?.evento ?? null, responsavel: atual?.responsavel ?? null,
+      };
+      const mapa = new Map(prev);
+      mapa.set(localId, novo);
+      return mapa;
+    });
+
+    const res = await salvarContextoLocalAction({ empresaId, data, localId, tipoId, tipoNome }, accessToken);
+    if (!res.ok) { toast('Erro ao salvar tipo: ' + res.erro, 'error'); carregarEscala(); }
+  };
+
+  // "+ Novo tipo..." no select — cadastra no catálogo (escala_tipo) e já
+  // aplica no local em questão, sem precisar de tela própria pra isso.
+  const criarTipoInline = async (localId: string) => {
+    const nome = await prompt({ title: 'Novo tipo de escala', message: 'Nome do tipo (ex: Manutenção)', placeholder: 'Ex: Manutenção' });
+    if (!nome || !nome.trim()) return;
+    const res = await criarTipoAction({ nome: nome.trim() }, accessToken);
+    if (!res.ok) { toast('Erro ao criar tipo: ' + res.erro, 'error'); return; }
+    const novoTipo = res.info.tipo as TipoEscala;
+    setTiposCatalogo(prev => [...prev, novoTipo].sort((a, b) => a.nome.localeCompare(b.nome)));
+    await handleTipoChange(localId, novoTipo.id, novoTipo.nome);
   };
 
   const handleRemover = async (a: Alocacao) => {
@@ -425,7 +598,7 @@ export default function EscalaPage() {
     setContextos(prev => {
       if (prev.has(local.id)) return prev;
       const mapa = new Map(prev);
-      mapa.set(local.id, { id: '', empresa_id: empresaId, data, local_id: local.id, horario_padrao: null, tipo: null, evento: null, responsavel: null });
+      mapa.set(local.id, { id: '', empresa_id: empresaId, data, local_id: local.id, horario_padrao: null, tipo_id: null, tipo_nome: null, evento: null, responsavel: null });
       return mapa;
     });
     setNovoLocalAberto(false);
@@ -481,7 +654,7 @@ export default function EscalaPage() {
       .filter(l => contextos.has(l.id))
       .map(l => {
         const c = contextos.get(l.id)!;
-        return { local_nome: l.nome, tipo: c.tipo, evento: c.evento, responsavel: c.responsavel };
+        return { local_nome: l.nome, tipo_nome: c.tipo_nome, evento: c.evento, responsavel: c.responsavel };
       });
     setCompartilhando(true);
     try {
@@ -514,16 +687,20 @@ export default function EscalaPage() {
   const notificarColaboradores = async () => {
     if (!empresaId) return;
     if (alocacoes.length === 0) { toast('Ninguém foi alocado hoje ainda.', 'error'); return; }
-    if (!confirm(`Enviar WhatsApp pra ${alocacoes.length} colaborador(es) avisando local e horário da escala de ${fmtDataExtenso(data)}?`)) return;
+    const pendentes = alocacoes.filter(a => !a.notificado_em).length;
+    if (pendentes === 0) { toast('Todo mundo já foi notificado dessa escala.', 'info'); return; }
+    if (!confirm(`Enviar WhatsApp pra ${pendentes} colaborador(es) que ainda não foram notificados da escala de ${fmtDataExtenso(data)}?\n\nQuem já foi notificado antes não recebe de novo.`)) return;
     setNotificando(true);
     try {
       const res = await notificarColaboradoresAction({ empresaId, data }, accessToken);
       if (!res.ok) throw new Error(res.erro);
-      const { enviados, semCelular, falhas } = res.info as { enviados: number; semCelular: string[]; falhas: string[] };
-      let msg = `${enviados} colaborador(es) notificado(s).`;
+      const { enviados, semCelular, falhas, jaNotificados } = res.info as { enviados: number; semCelular: string[]; falhas: string[]; jaNotificados: number };
+      let msg = `${enviados} colaborador(es) notificado(s) agora.`;
+      if (jaNotificados > 0) msg += ` ${jaNotificados} já tinham sido notificados antes (pulado).`;
       if (semCelular.length > 0) msg += ` ${semCelular.length} sem celular cadastrado.`;
       if (falhas.length > 0) msg += ` ${falhas.length} falha(s) no envio.`;
       toast(msg, falhas.length > 0 || semCelular.length > 0 ? 'error' : 'success');
+      carregarEscala();
     } catch (e: any) {
       toast('Erro ao notificar: ' + e.message, 'error');
     } finally {
@@ -575,130 +752,169 @@ export default function EscalaPage() {
       </div>
 
       <div className="max-w-6xl mx-auto px-4 md:px-8 mt-6">
-        {/* FILTROS */}
-        <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-4 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1 block">Empresa</label>
-              <select
-                value={empresaId ?? ''} onChange={e => setEmpresaId(e.target.value ? Number(e.target.value) : null)}
-                className="w-full p-2.5 border border-[#E2E8F0] rounded-lg text-sm"
-              >
-                <option value="">Selecione...</option>
-                {empresasVisiveis.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1 block">Departamento</label>
-              <select
-                value={departamento} onChange={e => setDepartamento(e.target.value)}
-                className="w-full p-2.5 border border-[#E2E8F0] rounded-lg text-sm"
-              >
-                <option value="">Selecione...</option>
-                {departamentosCatalogo.map(d => <option key={d} value={d}>{d}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1 block">Data</label>
-              <input
-                type="date" value={data} onChange={e => setData(e.target.value)}
-                className="w-full p-2.5 border border-[#E2E8F0] rounded-lg text-sm"
-              />
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2 mt-3">
-            <button
-              onClick={copiarDeOntem} disabled={!empresaId || copiando}
-              className="flex-1 min-w-[160px] p-2.5 rounded-lg text-xs font-black uppercase tracking-wider bg-[#0C1D4D] text-white hover:bg-[#284B8C] disabled:opacity-40 transition-colors"
-            >
-              {copiando ? 'Copiando...' : '↺ Copiar de Ontem'}
-            </button>
-            <button
-              onClick={compartilharEscala} disabled={!empresaId || compartilhando}
-              className="flex-1 min-w-[160px] p-2.5 rounded-lg text-xs font-black uppercase tracking-wider bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 transition-colors"
-            >
-              {compartilhando ? 'Gerando...' : '🖼️ Exportar / Compartilhar'}
-            </button>
-            <button
-              onClick={notificarColaboradores} disabled={!empresaId || notificando}
-              className="flex-1 min-w-[160px] p-2.5 rounded-lg text-xs font-black uppercase tracking-wider bg-[#25D366] text-white hover:bg-[#1ebe5a] disabled:opacity-40 transition-colors"
-            >
-              {notificando ? 'Enviando...' : '📣 Notificar Colaboradores'}
-            </button>
-          </div>
+        {/* EMPRESA — compartilhada pelas duas abas */}
+        <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-4 mb-4">
+          <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1 block">Empresa</label>
+          <select
+            value={empresaId ?? ''} onChange={e => setEmpresaId(e.target.value ? Number(e.target.value) : null)}
+            className="w-full p-2.5 border border-[#E2E8F0] rounded-lg text-sm"
+          >
+            <option value="">Selecione...</option>
+            {empresasVisiveis.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+          </select>
         </div>
 
-        {!empresaId ? (
-          <div className="text-center py-16 text-gray-400 font-bold uppercase text-sm">Selecione uma empresa para começar.</div>
-        ) : !departamento ? (
-          <div className="text-center py-16 text-gray-400 font-bold uppercase text-sm">Selecione um departamento para ver os colaboradores.</div>
-        ) : carregandoEscala ? (
-          <div className="text-center py-16 text-gray-400 font-bold uppercase text-sm">Carregando escala...</div>
+        {/* ABAS */}
+        <div className="flex gap-2 mb-4">
+          <button
+            onClick={() => setAba('montar')}
+            className={`px-4 py-2.5 rounded-lg text-xs font-black uppercase tracking-wider transition-colors ${aba === 'montar' ? 'bg-[#0C1D4D] text-white' : 'bg-white text-gray-500 border border-[#E2E8F0] hover:bg-[#F8FAFC]'}`}
+          >
+            📋 Montar Escala
+          </button>
+          <button
+            onClick={abrirAbaCalendario} disabled={!empresaId}
+            className={`px-4 py-2.5 rounded-lg text-xs font-black uppercase tracking-wider transition-colors disabled:opacity-40 ${aba === 'calendario' ? 'bg-[#0C1D4D] text-white' : 'bg-white text-gray-500 border border-[#E2E8F0] hover:bg-[#F8FAFC]'}`}
+          >
+            📅 Escalas Montadas
+          </button>
+        </div>
+
+        {aba === 'calendario' ? (
+          !empresaId ? (
+            <div className="text-center py-16 text-gray-400 font-bold uppercase text-sm">Selecione uma empresa para ver o calendário.</div>
+          ) : (
+            <CalendarioEscalasMontadas
+              data={data} mesAno={mesCalendario} diasComEscala={diasComEscala}
+              onSelecionarDia={selecionarDiaCalendario} onMudarMes={(ano, mes) => setMesCalendario({ ano, mes })}
+            />
+          )
         ) : (
-          <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-            <Pool funcionarios={poolFuncionarios} />
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {locaisAtivosHoje.map(local => (
-                <LocalColuna
-                  // key inclui `data`: força remontar ao trocar de dia, senão os
-                  // inputs de contexto (não-controlados, defaultValue) ficariam
-                  // mostrando o valor do dia anterior.
-                  key={`${local.id}::${data}`} local={local} contexto={contextos.get(local.id)}
-                  itens={alocacoesPorLocal.get(local.id) || []}
-                  onHorarioChange={handleHorarioChange} onRemover={handleRemover}
-                  onContextoChange={handleContextoChange} onRemoverLocalDia={removerLocalDoDia}
-                  salvandoId={salvandoId}
-                />
-              ))}
-
-              {novoLocalAberto ? (
-                <div className="rounded-2xl border-2 border-dashed border-[#CBD5E1] bg-white p-3 flex flex-col gap-2">
-                  {locaisDisponiveis.length > 0 && (
-                    <div className="mb-1">
-                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Já cadastrados</p>
-                      <div className="max-h-32 overflow-y-auto space-y-1">
-                        {locaisDisponiveis.map(l => (
-                          <button
-                            key={l.id} onClick={() => ativarLocalHoje(l)}
-                            className="w-full text-left text-xs font-bold text-[#0C1D4D] bg-[#F8FAFC] hover:bg-blue-50 border border-[#E2E8F0] rounded-lg px-2 py-1.5 transition-colors"
-                          >📍 {l.nome}</button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <p className="text-[9px] font-black text-gray-400 uppercase tracking-wider">Ou crie um novo</p>
-                  <input
-                    autoFocus value={novoLocalNome} onChange={e => setNovoLocalNome(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && criarLocal()}
-                    placeholder="Nome do local (ex: Obra Centro)"
-                    className="w-full p-2 border border-[#E2E8F0] rounded-lg text-sm"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={criarLocal} disabled={criandoLocal || !novoLocalNome.trim()}
-                      className="flex-1 bg-[#0C1D4D] text-white text-xs font-black uppercase py-2 rounded-lg disabled:opacity-40"
-                    >Criar</button>
-                    <button
-                      onClick={() => { setNovoLocalAberto(false); setNovoLocalNome(''); }}
-                      className="px-3 text-xs font-black uppercase text-gray-400 hover:text-gray-600"
-                    >Cancelar</button>
-                  </div>
+          <>
+            {/* FILTROS da aba Montar Escala */}
+            <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-4 mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1 block">Departamento</label>
+                  <select
+                    value={departamento} onChange={e => setDepartamento(e.target.value)}
+                    className="w-full p-2.5 border border-[#E2E8F0] rounded-lg text-sm"
+                  >
+                    <option value="">Selecione...</option>
+                    {departamentosCatalogo.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
                 </div>
-              ) : (
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1 block">Data</label>
+                  <input
+                    type="date" value={data} onChange={e => setData(e.target.value)}
+                    className="w-full p-2.5 border border-[#E2E8F0] rounded-lg text-sm"
+                  />
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 mt-3">
                 <button
-                  onClick={() => setNovoLocalAberto(true)}
-                  className="rounded-2xl border-2 border-dashed border-[#CBD5E1] bg-white p-3 min-h-[140px] flex items-center justify-center text-gray-400 hover:text-[#336699] hover:border-[#336699] transition-colors text-sm font-black uppercase tracking-wide"
+                  onClick={copiarDeOntem} disabled={!empresaId || copiando}
+                  className="flex-1 min-w-[160px] p-2.5 rounded-lg text-xs font-black uppercase tracking-wider bg-[#0C1D4D] text-white hover:bg-[#284B8C] disabled:opacity-40 transition-colors"
                 >
-                  + Adicionar Local
+                  {copiando ? 'Copiando...' : '↺ Copiar de Ontem'}
                 </button>
-              )}
+                <button
+                  onClick={compartilharEscala} disabled={!empresaId || compartilhando}
+                  className="flex-1 min-w-[160px] p-2.5 rounded-lg text-xs font-black uppercase tracking-wider bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 transition-colors"
+                >
+                  {compartilhando ? 'Gerando...' : '🖼️ Exportar / Compartilhar'}
+                </button>
+                <button
+                  onClick={notificarColaboradores} disabled={!empresaId || notificando}
+                  className="flex-1 min-w-[160px] p-2.5 rounded-lg text-xs font-black uppercase tracking-wider bg-[#25D366] text-white hover:bg-[#1ebe5a] disabled:opacity-40 transition-colors"
+                >
+                  {notificando ? 'Enviando...' : '📣 Notificar Colaboradores'}
+                </button>
+              </div>
             </div>
 
-            <DragOverlay>
-              {activeNome ? <FuncionarioCard nome={activeNome} arrastando /> : null}
-            </DragOverlay>
-          </DndContext>
+            {!empresaId ? (
+              <div className="text-center py-16 text-gray-400 font-bold uppercase text-sm">Selecione uma empresa para começar.</div>
+            ) : carregandoEscala ? (
+              <div className="text-center py-16 text-gray-400 font-bold uppercase text-sm">Carregando escala...</div>
+            ) : (
+              <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+                {/* A escala já montada (locais + colaboradores) aparece
+                    independente do departamento — ele só é necessário pra
+                    saber quem oferecer no "pool" pra colocar gente nova. */}
+                {departamento ? (
+                  <Pool funcionarios={poolFuncionarios} />
+                ) : (
+                  <div className="rounded-2xl border-2 border-dashed border-[#CBD5E1] bg-white p-3 mb-6 text-center text-[10px] text-gray-400 font-bold uppercase tracking-wider">
+                    Selecione um departamento pra adicionar novos colaboradores à escala
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {locaisAtivosHoje.map(local => (
+                    <LocalColuna
+                      // key inclui `data`: força remontar ao trocar de dia, senão os
+                      // inputs de contexto (não-controlados, defaultValue) ficariam
+                      // mostrando o valor do dia anterior.
+                      key={`${local.id}::${data}`} local={local} contexto={contextos.get(local.id)}
+                      itens={alocacoesPorLocal.get(local.id) || []} tipos={tiposCatalogo}
+                      onHorarioChange={handleHorarioChange} onRemover={handleRemover}
+                      onContextoChange={handleContextoChange} onTipoChange={handleTipoChange} onCriarTipo={criarTipoInline}
+                      onRemoverLocalDia={removerLocalDoDia}
+                      salvandoId={salvandoId}
+                    />
+                  ))}
+
+                  {novoLocalAberto ? (
+                    <div className="rounded-2xl border-2 border-dashed border-[#CBD5E1] bg-white p-3 flex flex-col gap-2">
+                      {locaisDisponiveis.length > 0 && (
+                        <div className="mb-1">
+                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Já cadastrados</p>
+                          <div className="max-h-32 overflow-y-auto space-y-1">
+                            {locaisDisponiveis.map(l => (
+                              <button
+                                key={l.id} onClick={() => ativarLocalHoje(l)}
+                                className="w-full text-left text-xs font-bold text-[#0C1D4D] bg-[#F8FAFC] hover:bg-blue-50 border border-[#E2E8F0] rounded-lg px-2 py-1.5 transition-colors"
+                              >📍 {l.nome}</button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-wider">Ou crie um novo</p>
+                      <input
+                        autoFocus value={novoLocalNome} onChange={e => setNovoLocalNome(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && criarLocal()}
+                        placeholder="Nome do local (ex: Obra Centro)"
+                        className="w-full p-2 border border-[#E2E8F0] rounded-lg text-sm"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={criarLocal} disabled={criandoLocal || !novoLocalNome.trim()}
+                          className="flex-1 bg-[#0C1D4D] text-white text-xs font-black uppercase py-2 rounded-lg disabled:opacity-40"
+                        >Criar</button>
+                        <button
+                          onClick={() => { setNovoLocalAberto(false); setNovoLocalNome(''); }}
+                          className="px-3 text-xs font-black uppercase text-gray-400 hover:text-gray-600"
+                        >Cancelar</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setNovoLocalAberto(true)}
+                      className="rounded-2xl border-2 border-dashed border-[#CBD5E1] bg-white p-3 min-h-[140px] flex items-center justify-center text-gray-400 hover:text-[#336699] hover:border-[#336699] transition-colors text-sm font-black uppercase tracking-wide"
+                    >
+                      + Adicionar Local
+                    </button>
+                  )}
+                </div>
+
+                <DragOverlay>
+                  {activeNome ? <FuncionarioCard nome={activeNome} arrastando /> : null}
+                </DragOverlay>
+              </DndContext>
+            )}
+          </>
         )}
       </div>
     </div>

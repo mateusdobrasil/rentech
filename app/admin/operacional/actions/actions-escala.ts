@@ -36,7 +36,8 @@ interface Alocacao {
 
 interface ContextoLocalDia {
   id: string; empresa_id: number; data: string; local_id: string;
-  horario_padrao: string | null; tipo: string | null; evento: string | null; responsavel: string | null;
+  horario_padrao: string | null; tipo_id: string | null; tipo_nome: string | null;
+  evento: string | null; responsavel: string | null;
 }
 
 async function autorizarEmpresa(accessToken: string, empresaId: number) {
@@ -86,6 +87,44 @@ export async function criarLocalAction(params: { empresaId: number; nome: string
   }
 }
 
+// Catálogo de tipos de escala (escala_tipo) — global (não por empresa,
+// mesmo critério de folha_departamento: tipo de operação não muda por
+// empresa). Substituiu um enum fixo no código pra crescer sem deploy — ver
+// sql/escala_tipo.sql.
+export async function listarTiposAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const { data, error } = await db.from('escala_tipo').select('id, nome').eq('ativo', true).order('nome');
+    if (error) throw error;
+    return { ok: true, info: { tipos: data || [] } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+export async function criarTipoAction(params: { nome: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const nome = params.nome.trim();
+  if (!nome) return { ok: false, erro: 'Informe o nome do tipo.' };
+
+  const db = supabaseAdmin();
+  try {
+    const { data, error } = await db
+      .from('escala_tipo')
+      .upsert({ nome, ativo: true }, { onConflict: 'nome' })
+      .select('id, nome').single();
+    if (error) throw error;
+    return { ok: true, info: { tipo: data } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
 export async function listarEscalaDiaAction(params: { empresaId: number; data: string }, accessToken: string): Promise<Resultado> {
   const auth = await autorizarEmpresa(accessToken, params.empresaId);
   if (!auth.ok) return { ok: false, erro: auth.erro };
@@ -98,6 +137,34 @@ export async function listarEscalaDiaAction(params: { empresaId: number; data: s
       .order('local_nome').order('funcionario_nome');
     if (error) throw error;
     return { ok: true, info: { alocacoes: (data || []) as Alocacao[] } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// Dias do mês (empresa específica) que já têm colaborador alocado, com a
+// quantidade de cada dia — alimenta a aba "Escalas Montadas" (calendário do
+// mês, com o total de gente escalada em cada dia), pro coordenador enxergar
+// de longe onde já tem escala pronta sem precisar ir trocando a data um a um.
+export async function listarDiasComEscalaAction(params: { empresaId: number; ano: number; mes: number }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizarEmpresa(accessToken, params.empresaId);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+
+  const db = supabaseAdmin();
+  try {
+    const inicio = `${params.ano}-${String(params.mes).padStart(2, '0')}-01`;
+    const proximoMes = params.mes === 12 ? { ano: params.ano + 1, mes: 1 } : { ano: params.ano, mes: params.mes + 1 };
+    const fim = `${proximoMes.ano}-${String(proximoMes.mes).padStart(2, '0')}-01`;
+
+    const { data, error } = await db
+      .from('escala_alocacoes').select('data')
+      .eq('empresa_id', params.empresaId).gte('data', inicio).lt('data', fim);
+    if (error) throw error;
+
+    const contagem = new Map<string, number>();
+    (data || []).forEach(d => contagem.set(d.data as string, (contagem.get(d.data as string) || 0) + 1));
+    const dias = Array.from(contagem.entries()).map(([dia, quantidade]) => ({ dia, quantidade }));
+    return { ok: true, info: { dias } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
@@ -166,7 +233,8 @@ export async function copiarEscalaAction(params: {
     if (contextoOrigem && contextoOrigem.length > 0) {
       const linhasContexto = (contextoOrigem as ContextoLocalDia[]).map(c => ({
         empresa_id: params.empresaId, data: params.dataDestino, local_id: c.local_id,
-        horario_padrao: c.horario_padrao, tipo: c.tipo, evento: c.evento, responsavel: c.responsavel,
+        horario_padrao: c.horario_padrao, tipo_id: c.tipo_id, tipo_nome: c.tipo_nome,
+        evento: c.evento, responsavel: c.responsavel,
       }));
       const { error: erroUpsertContexto } = await db
         .from('escala_locais_dia')
@@ -217,7 +285,8 @@ export async function listarContextoLocaisDiaAction(params: { empresaId: number;
 // continuam editáveis direto no card do colaborador).
 export async function salvarContextoLocalAction(params: {
   empresaId: number; data: string; localId: string;
-  horarioPadrao?: string | null; tipo?: string | null; evento?: string | null; responsavel?: string | null;
+  horarioPadrao?: string | null; tipoId?: string | null; tipoNome?: string | null;
+  evento?: string | null; responsavel?: string | null;
 }, accessToken: string): Promise<Resultado> {
   const auth = await autorizarEmpresa(accessToken, params.empresaId);
   if (!auth.ok) return { ok: false, erro: auth.erro };
@@ -231,7 +300,8 @@ export async function salvarContextoLocalAction(params: {
     const payload = {
       empresa_id: params.empresaId, data: params.data, local_id: params.localId,
       horario_padrao: params.horarioPadrao !== undefined ? params.horarioPadrao : (existente?.horario_padrao ?? null),
-      tipo: params.tipo !== undefined ? params.tipo : (existente?.tipo ?? null),
+      tipo_id: params.tipoId !== undefined ? params.tipoId : (existente?.tipo_id ?? null),
+      tipo_nome: params.tipoNome !== undefined ? params.tipoNome : (existente?.tipo_nome ?? null),
       evento: params.evento !== undefined ? params.evento : (existente?.evento ?? null),
       responsavel: params.responsavel !== undefined ? params.responsavel : (existente?.responsavel ?? null),
       atualizado_em: new Date().toISOString(),
@@ -285,11 +355,20 @@ export async function removerLocalDiaAction(params: { empresaId: number; data: s
 }
 
 // Avisa cada colaborador alocado no dia (WhatsApp individual, um por um) do
-// local e horário dele. Texto livre só entrega se o colaborador falou com o
-// WhatsApp da empresa nas últimas 24h (enviarComJanela cuida dessa decisão);
-// fora disso cai automaticamente no Message Template — por isso o disparo
-// nunca falha silenciosamente por causa da janela, só se o template ainda
-// não estiver aprovado na Meta.
+// local e horário dele, com um link de confirmação de ciência
+// (/api/confirmar-escala?id=<alocacao.id> — a gestão vê quem confirmou pelo
+// campo escala_alocacoes.confirmado_em, atualizado por esse Route Handler).
+// Texto livre só entrega se o colaborador falou com o WhatsApp da empresa
+// nas últimas 24h (enviarComJanela cuida dessa decisão); fora disso cai
+// automaticamente no Message Template — por isso o disparo nunca falha
+// silenciosamente por causa da janela, só se o template ainda não estiver
+// aprovado na Meta. O template tem 5 variáveis agora (a 5ª é o link) — se
+// o nome/corpo aprovado na Meta ainda for a versão de 4 variáveis, o envio
+// via template falha até re-aprovar (ver sql/escala_confirmacao.sql). Pula
+// quem já foi notificado antes (escala_alocacoes.notificado_em) — sem isso,
+// notificar de novo depois de adicionar uma turma nova no mesmo dia
+// reenviava a mensagem pra quem já tinha recebido de manhã (ver
+// sql/escala_notificacao_status.sql).
 export async function notificarColaboradoresAction(params: { empresaId: number; data: string }, accessToken: string): Promise<Resultado> {
   const auth = await autorizarEmpresa(accessToken, params.empresaId);
   if (!auth.ok) return { ok: false, erro: auth.erro };
@@ -313,12 +392,17 @@ export async function notificarColaboradoresAction(params: { empresaId: number; 
     const templateIdioma = automacao?.meta_template_idioma || ESCALA_TEMPLATE_IDIOMA_PADRAO;
 
     const { data: alocacoes, error: erroAlocacoes } = await db
-      .from('escala_alocacoes').select('funcionario_nome, local_nome, horario')
+      .from('escala_alocacoes').select('id, funcionario_nome, local_nome, horario, notificado_em')
       .eq('empresa_id', params.empresaId).eq('data', params.data);
     if (erroAlocacoes) throw erroAlocacoes;
-    if (!alocacoes || alocacoes.length === 0) return { ok: true, info: { enviados: 0, semCelular: [], falhas: [] } };
+    if (!alocacoes || alocacoes.length === 0) return { ok: true, info: { enviados: 0, semCelular: [], falhas: [], jaNotificados: 0 } };
 
-    const nomes = alocacoes.map(a => a.funcionario_nome);
+    const pendentes = (alocacoes as { id: string; funcionario_nome: string; local_nome: string; horario: string; notificado_em: string | null }[])
+      .filter(a => !a.notificado_em);
+    const jaNotificados = alocacoes.length - pendentes.length;
+    if (pendentes.length === 0) return { ok: true, info: { enviados: 0, semCelular: [], falhas: [], jaNotificados } };
+
+    const nomes = pendentes.map(a => a.funcionario_nome);
     const { data: funcionarios, error: erroFuncs } = await db
       .from('folha_funcionarios').select('nome_completo, celular').in('nome_completo', nomes);
     if (erroFuncs) throw erroFuncs;
@@ -331,20 +415,28 @@ export async function notificarColaboradoresAction(params: { empresaId: number; 
     const semCelular: string[] = [];
     const falhas: string[] = [];
 
-    for (const a of alocacoes as { funcionario_nome: string; local_nome: string; horario: string }[]) {
+    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+
+    for (const a of pendentes) {
       const celular = celularPorNome.get(a.funcionario_nome);
       if (!celular) { semCelular.push(a.funcionario_nome); continue; }
 
       const primeiroNome = a.funcionario_nome.split(' ')[0];
       const horarioFmt = a.horario?.slice(0, 5) || '--:--';
-      const textoLivre = `Olá ${primeiroNome}! Sua escala de ${dataExtenso} já está definida:\n\n📍 Local: ${a.local_nome}\n🕐 Horário: ${horarioFmt}\n\nQualquer dúvida, fale com seu coordenador.`;
+      const link = `${baseUrl}/api/confirmar-escala?id=${a.id}`;
+      const textoLivre = `Olá ${primeiroNome}! Sua escala de ${dataExtenso} já está definida:\n\n📍 Local: ${a.local_nome}\n🕐 Horário: ${horarioFmt}\n\n${link}\nQualquer dúvida, fale com seu encarregado ou coordenador.`;
       const templateMeta: TemplateMeta = {
         nome: templateNome, idioma: templateIdioma,
-        parametros: [primeiroNome, dataExtenso, a.local_nome, horarioFmt],
+        parametros: [primeiroNome, dataExtenso, a.local_nome, horarioFmt, link],
       };
 
       const res = await enviarComJanela(provedor, celular, textoLivre, templateMeta);
-      if (res.ok) enviados++; else falhas.push(a.funcionario_nome);
+      if (res.ok) {
+        enviados++;
+        await db.from('escala_alocacoes').update({ notificado_em: new Date().toISOString() }).eq('id', a.id);
+      } else {
+        falhas.push(a.funcionario_nome);
+      }
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
@@ -356,7 +448,7 @@ export async function notificarColaboradoresAction(params: { empresaId: number; 
     }
     await db.from('folha_automacoes').update({ ultima_execucao: new Date().toISOString() }).eq('chave', ESCALA_AUTOMACAO_CHAVE);
 
-    return { ok: true, info: { enviados, semCelular, falhas } };
+    return { ok: true, info: { enviados, semCelular, falhas, jaNotificados } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

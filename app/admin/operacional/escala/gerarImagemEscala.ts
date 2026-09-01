@@ -6,10 +6,8 @@
 // genérico de propósito: texto em canvas é síncrono, então uma webfont
 // customizada ainda carregando faria o desenho cair silenciosamente pro
 // fallback — com sans-serif isso nunca é um problema.
-import { tipoRotulo } from './tiposEscala';
-
 export interface AlocacaoImg { funcionario_nome: string; horario: string; local_nome: string; }
-export interface ContextoLocalImg { local_nome: string; tipo: string | null; evento: string | null; responsavel: string | null; }
+export interface ContextoLocalImg { local_nome: string; tipo_nome: string | null; evento: string | null; responsavel: string | null; }
 
 const NAVY = '#0C1D4D';
 const EMERALD = '#059669';
@@ -54,7 +52,7 @@ export async function gerarImagemEscala(params: {
     const c = contextoPorLocal.get(local);
     if (!c) return null;
     const partes = [
-      c.tipo ? tipoRotulo(c.tipo) : null,
+      c.tipo_nome || null,
       c.evento || null,
       c.responsavel ? `Resp.: ${c.responsavel}` : null,
     ].filter(Boolean);

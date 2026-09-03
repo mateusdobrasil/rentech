@@ -7,9 +7,9 @@ import {
   listarAutomacoesAction, alternarStatusAutomacaoAction,
   criarAutomacaoAction, atualizarAutomacaoAction, excluirAutomacaoAction,
   listarFuncionariosParaAutomacaoAction, contarEnviosMesAction, verificarStatusZapiAction,
-  FONTES_DADOS_DISPONIVEIS, EVENTOS_SISTEMA_DISPONIVEIS,
   type RotinaAutomacaoDB, type FormAutomacao, type FuncionarioParaAutomacao
 } from './actions';
+import { FONTES_DADOS_DISPONIVEIS, EVENTOS_SISTEMA_DISPONIVEIS } from './catalogoAutomacoes';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';

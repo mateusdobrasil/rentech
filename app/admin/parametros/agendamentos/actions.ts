@@ -8,6 +8,34 @@ import { supabaseAdmin } from '../../../lib/supabase';
 import { verificarConexaoZapi } from '../../../lib/zapi';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 
+// Catálogo fixo de "listas dinâmicas" que o motor de Cron sabe calcular
+// (app/api/cron/motor/route.ts, mapa FONTES_DADOS) — só para automações tipo
+// CRON. Escolhido por dropdown na tela, em vez de depender da `chave`
+// (gerada do nome digitado) bater com um literal escondido no código: dá pra
+// reaproveitar a mesma fonte em quantas automações quiser (horários/públicos
+// diferentes), e renomear/recriar a automação não quebra mais nada.
+export const FONTES_DADOS_DISPONIVEIS = [
+  { valor: 'FROTA_VENCIMENTOS', label: 'Frota com documentação vencida (CRLV/Seguro)', variaveis: ['lista', 'quantidade'] },
+  { valor: 'DOCUMENTOS_VENCIDOS', label: 'Documentos vencidos (RH e Empresa)', variaveis: ['lista', 'quantidade'] },
+  { valor: 'ANIVERSARIANTES_SEMANA', label: 'Aniversariantes da semana (RH)', variaveis: ['lista', 'quantidade'] },
+] as const;
+export type FonteDados = typeof FONTES_DADOS_DISPONIVEIS[number]['valor'];
+
+// Catálogo fixo de eventos de sistema que já disparam automações (só para
+// tipo WEBHOOK) — mesmo espírito do catálogo acima: escolha explícita por
+// dropdown em vez de o disparo depender de a `chave` bater com o literal
+// espalhado pelo código (app/admin/op/actions.ts, consignadoCore.ts,
+// pontoWhatsapp.ts). Um evento novo, que o sistema ainda não sabe detectar,
+// sempre vai exigir um desenvolvedor plugar uma chamada nova em algum lugar
+// do código — mas, uma vez feito, qualquer automação (inclusive várias) pode
+// reagir a ele sem tocar em código de novo.
+export const EVENTOS_SISTEMA_DISPONIVEIS = [
+  { valor: 'NOVA_OP', label: 'Nova Ordem de Pagamento criada', variaveis: ['numero_op', 'os_numero', 'solicitante', 'favorecido', 'valor', 'link'] },
+  { valor: 'NOVO_EMPRESTIMO_CONSIGNADO', label: 'Novo empréstimo consignado identificado', variaveis: ['quantidade', 'funcionarios', 'competencia'] },
+  { valor: 'SOLICITACAO_FOLGA', label: 'Solicitação de folga (Ponto via WhatsApp)', variaveis: ['solicitante', 'periodo', 'motivo'] },
+] as const;
+export type EventoSistema = typeof EVENTOS_SISTEMA_DISPONIVEIS[number]['valor'];
+
 export interface RotinaAutomacaoDB {
   id: number;
   chave: string;
@@ -31,6 +59,8 @@ export interface RotinaAutomacaoDB {
   meta_template_idioma: string;
   meta_template_variaveis: string[];
   publico_dinamico: 'PADRAO' | 'ANIVERSARIANTES_FUNCIONARIOS';
+  fonte_dados: string | null; // um dos FONTES_DADOS_DISPONIVEIS, só para tipo CRON
+  evento_sistema: string | null; // um dos EVENTOS_SISTEMA_DISPONIVEIS, só para tipo WEBHOOK
 }
 
 export interface FormAutomacao {
@@ -53,6 +83,8 @@ export interface FormAutomacao {
   // os destinatários a cada execução, com quem faz aniversário no dia (ver
   // dispararAutomacaoWhatsApp em app/lib/automacoes.ts).
   publico_dinamico: 'PADRAO' | 'ANIVERSARIANTES_FUNCIONARIOS';
+  fonte_dados: string | null;
+  evento_sistema: string | null;
 }
 
 export interface FuncionarioParaAutomacao {
@@ -168,6 +200,15 @@ async function gerarChaveUnica(db: ReturnType<typeof supabaseAdmin>, nome: strin
 const parseVariaveisTemplate = (texto: string): string[] =>
   (texto || '').split(',').map(s => s.trim()).filter(Boolean);
 
+// Nunca confiar cegamente no valor vindo do cliente: se não for um dos
+// valores do catálogo (ex: aba antiga, ou o campo não se aplica ao tipo
+// escolhido), grava null em vez de travar o salvamento.
+const validarFonteDados = (tipo: FormAutomacao['tipo'], valor: string | null): string | null =>
+  tipo === 'CRON' && FONTES_DADOS_DISPONIVEIS.some(f => f.valor === valor) ? valor : null;
+
+const validarEventoSistema = (tipo: FormAutomacao['tipo'], valor: string | null): string | null =>
+  tipo === 'WEBHOOK' && EVENTOS_SISTEMA_DISPONIVEIS.some(e => e.valor === valor) ? valor : null;
+
 export async function criarAutomacaoAction(payload: FormAutomacao, accessToken: string): Promise<Resultado<{ chave: string }>> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
@@ -208,6 +249,8 @@ export async function criarAutomacaoAction(payload: FormAutomacao, accessToken: 
       meta_template_idioma: payload.meta_template_idioma?.trim() || 'pt_BR',
       meta_template_variaveis: parseVariaveisTemplate(payload.meta_template_variaveis),
       publico_dinamico: payload.publico_dinamico || 'PADRAO',
+      fonte_dados: validarFonteDados(payload.tipo, payload.fonte_dados),
+      evento_sistema: validarEventoSistema(payload.tipo, payload.evento_sistema),
       ativo: true,
     });
     if (error) throw new Error(error.message);
@@ -255,6 +298,8 @@ export async function atualizarAutomacaoAction(id: number, payload: FormAutomaca
       meta_template_idioma: payload.meta_template_idioma?.trim() || 'pt_BR',
       meta_template_variaveis: parseVariaveisTemplate(payload.meta_template_variaveis),
       publico_dinamico: payload.publico_dinamico || 'PADRAO',
+      fonte_dados: validarFonteDados(payload.tipo, payload.fonte_dados),
+      evento_sistema: validarEventoSistema(payload.tipo, payload.evento_sistema),
     }).eq('id', id);
     if (error) throw new Error(error.message);
     return { ok: true };

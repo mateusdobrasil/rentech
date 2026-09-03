@@ -9,9 +9,7 @@
 // integração (DATAPREV/GOV.BR, layout do arquivo, etc.) — os comentários deste
 // arquivo cobrem só o que foi movido pra cá.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { dispararAutomacaoWhatsApp, dispararAutomacaoEmail } from '../../../lib/automacoes';
-
-const CHAVE_AUTOMACAO_NOVO_CONSIGNADO = 'novo-emprestimo-consignado';
+import { dispararAutomacoesPorEventoWhatsApp, dispararAutomacoesPorEventoEmail } from '../../../lib/automacoes';
 
 export type StatusConsultaConsignado = 'NAO_CONFIGURADO' | 'OK' | 'SEM_CONSIGNACAO' | 'ERRO';
 
@@ -191,8 +189,8 @@ async function notificarNovosConsignados(novos: LinhaConsignadoDB[], competencia
   };
 
   await Promise.allSettled([
-    dispararAutomacaoWhatsApp(CHAVE_AUTOMACAO_NOVO_CONSIGNADO, contexto),
-    dispararAutomacaoEmail(CHAVE_AUTOMACAO_NOVO_CONSIGNADO, contexto, 'Novo empréstimo consignado identificado'),
+    dispararAutomacoesPorEventoWhatsApp('NOVO_EMPRESTIMO_CONSIGNADO', contexto),
+    dispararAutomacoesPorEventoEmail('NOVO_EMPRESTIMO_CONSIGNADO', contexto, 'Novo empréstimo consignado identificado'),
   ]);
 }
 

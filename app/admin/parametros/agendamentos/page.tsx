@@ -7,6 +7,7 @@ import {
   listarAutomacoesAction, alternarStatusAutomacaoAction,
   criarAutomacaoAction, atualizarAutomacaoAction, excluirAutomacaoAction,
   listarFuncionariosParaAutomacaoAction, contarEnviosMesAction, verificarStatusZapiAction,
+  FONTES_DADOS_DISPONIVEIS, EVENTOS_SISTEMA_DISPONIVEIS,
   type RotinaAutomacaoDB, type FormAutomacao, type FuncionarioParaAutomacao
 } from './actions';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
@@ -110,6 +111,7 @@ export default function GestaoAgendamentos() {
     nome: '', descricao: '', tipo: 'CRON', gatilho: '', canais: [], publico_alvo: '', empresaId: null, destinatarios: [], mensagem: '', horario: '08:00', dias_semana: [1, 2, 3, 4, 5],
     provedor_whatsapp: 'PADRAO', meta_template_nome: '', meta_template_idioma: 'pt_BR', meta_template_variaveis: 'primeiro_nome',
     publico_dinamico: 'PADRAO',
+    fonte_dados: null, evento_sistema: null,
   };
   const [modalAutomacao, setModalAutomacao] = useState<{ open: boolean; isNew: boolean; id: number | null; chave?: string; modoTodos: boolean; form: FormAutomacao } | null>(null);
   const [salvandoAutomacao, setSalvandoAutomacao] = useState(false);
@@ -151,6 +153,8 @@ export default function GestaoAgendamentos() {
       meta_template_idioma: rotina.meta_template_idioma || 'pt_BR',
       meta_template_variaveis: (rotina.meta_template_variaveis || ['primeiro_nome']).join(', '),
       publico_dinamico: rotina.publico_dinamico || 'PADRAO',
+      fonte_dados: rotina.fonte_dados || null,
+      evento_sistema: rotina.evento_sistema || null,
     }
   });
 
@@ -503,18 +507,49 @@ export default function GestaoAgendamentos() {
                     ))}
                   </div>
                   <p className="text-[10px] text-[#94A3B8] mt-1">O motor de Cron verifica os horários a cada 5 minutos.</p>
+
+                  <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1 mt-3">Fonte de Dados (lista dinâmica)</label>
+                  <select
+                    className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer"
+                    value={modalAutomacao.form.fonte_dados ?? ''}
+                    onChange={e => setModalAutomacao({ ...modalAutomacao, form: { ...modalAutomacao.form, fonte_dados: e.target.value || null } })}
+                  >
+                    <option value="">Nenhuma (mensagem simples)</option>
+                    {FONTES_DADOS_DISPONIVEIS.map(f => <option key={f.valor} value={f.valor}>{f.label}</option>)}
+                  </select>
+                  <p className="text-[10px] text-[#94A3B8] mt-1">
+                    {modalAutomacao.form.fonte_dados
+                      ? <>Preenche <code>{'{{lista}}'}</code> e <code>{'{{quantidade}}'}</code> na mensagem automaticamente a cada execução. Se não houver nada a reportar no dia, esta automação não dispara.</>
+                      : 'Sem fonte de dados, a mensagem usa só as variáveis do funcionário destinatário (nome) — nenhuma lista é calculada.'}
+                  </p>
                 </div>
               ) : (
                 <div>
-                  <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Gatilho</label>
-                  <input
-                    type="text"
-                    className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm"
-                    value={modalAutomacao.form.gatilho}
-                    onChange={e => setModalAutomacao({ ...modalAutomacao, form: { ...modalAutomacao.form, gatilho: e.target.value } })}
-                    placeholder="Ex: Ao Fechar Folha"
-                  />
-                  <p className="text-[10px] text-[#94A3B8] mt-1">Texto livre — o evento em si precisa existir no código (ex: criação de OP).</p>
+                  <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Evento do Sistema</label>
+                  <select
+                    className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer"
+                    value={modalAutomacao.form.evento_sistema ?? ''}
+                    onChange={e => {
+                      const evento = EVENTOS_SISTEMA_DISPONIVEIS.find(ev => ev.valor === e.target.value);
+                      setModalAutomacao({
+                        ...modalAutomacao,
+                        form: { ...modalAutomacao.form, evento_sistema: evento?.valor || null, gatilho: evento?.label || '' },
+                      });
+                    }}
+                  >
+                    <option value="">Nenhum (não dispara sozinho)</option>
+                    {EVENTOS_SISTEMA_DISPONIVEIS.map(ev => <option key={ev.valor} value={ev.valor}>{ev.label}</option>)}
+                  </select>
+                  {modalAutomacao.form.evento_sistema ? (
+                    <p className="text-[10px] text-[#94A3B8] mt-1">
+                      Variáveis disponíveis: {EVENTOS_SISTEMA_DISPONIVEIS.find(ev => ev.valor === modalAutomacao.form.evento_sistema)?.variaveis.map(v => <code key={v} className="mr-1">{`{{${v}}}`}</code>)}
+                      {' '}(além de <code>{'{{primeiro_nome}}'}</code>/<code>{'{{nome_completo}}'}</code> do destinatário). Pode haver mais de uma automação para o mesmo evento.
+                    </p>
+                  ) : (
+                    <p className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mt-1">
+                      ⚠️ Sem evento de sistema vinculado — esta automação nunca vai disparar sozinha. Um evento novo, que o sistema ainda não sabe detectar, precisa ser adicionado ao código uma vez.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -528,7 +563,7 @@ export default function GestaoAgendamentos() {
                   placeholder={'Olá, *{{primeiro_nome}}*! Não esqueça de bater o ponto.'}
                 />
                 <p className="text-[10px] text-[#94A3B8] mt-1">
-                  Placeholders disponíveis: <code>{'{{primeiro_nome}}'}</code> e <code>{'{{nome_completo}}'}</code> (e outras variáveis específicas do evento, se houver — ex: <code>{'{{valor}}'}</code>, <code>{'{{numero_op}}'}</code> na automação de Nova OP).
+                  Placeholders disponíveis: <code>{'{{primeiro_nome}}'}</code> e <code>{'{{nome_completo}}'}</code> sempre; mais as variáveis da Fonte de Dados ou do Evento do Sistema escolhidos acima, se houver.
                 </p>
               </div>
 
@@ -700,7 +735,7 @@ export default function GestaoAgendamentos() {
                 <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-3">
                   <p className="text-[10px] font-bold text-[#64748B] uppercase mb-1">Identificador Técnico (chave)</p>
                   <p className="text-xs font-mono text-[#336699]">{modalAutomacao.chave}</p>
-                  <p className="text-[10px] text-[#94A3B8] mt-1">Usado pela rota de Cron correspondente para checar se esta automação está ativa. Não muda ao editar o nome.</p>
+                  <p className="text-[10px] text-[#94A3B8] mt-1">Identificador interno estável, usado nos registros de envio e na última execução. Não muda ao editar o nome. Quem liga esta automação ao Cron ou a um evento do sistema são os campos "Fonte de Dados"/"Evento do Sistema" acima, não esta chave.</p>
                 </div>
               )}
             </div>

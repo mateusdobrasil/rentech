@@ -7,20 +7,23 @@ import { montarContextoDocumentosVencidos } from '../../../lib/documentos';
 import { montarContextoAniversariantesSemana } from '../../../lib/aniversarios';
 
 // Automações cujo disparo depende de um contexto calculado em código (ex: uma
-// lista dinâmica), em vez de só {{primeiro_nome}}/{{nome_completo}}. Se a
-// função devolver null, o motor pula essa automação sem disparar nada.
-const CONTEXTOS_ESPECIAIS: Record<string, () => Promise<Record<string, string | number> | null>> = {
-  'frota-vencimentos': async () => {
+// lista dinâmica), em vez de só {{primeiro_nome}}/{{nome_completo}}. Casadas
+// por `fonte_dados` — um catálogo fixo, escolhido por dropdown na tela de
+// Agendamentos e Disparos — em vez de pela `chave` (que é só um slug gerado
+// do nome digitado na criação, e não deveria carregar significado funcional).
+// Se a função devolver null, o motor pula essa automação sem disparar nada.
+const FONTES_DADOS: Record<string, () => Promise<Record<string, string | number> | null>> = {
+  FROTA_VENCIMENTOS: async () => {
     const resultado = await montarContextoFrotaVencida();
     if (!resultado) return null;
     return { lista: resultado.lista, quantidade: resultado.quantidade };
   },
-  'documentos-vencidos': async () => {
+  DOCUMENTOS_VENCIDOS: async () => {
     const resultado = await montarContextoDocumentosVencidos();
     if (!resultado) return null;
     return { lista: resultado.lista, quantidade: resultado.quantidade };
   },
-  'aniversariantes-da-semana': async () => {
+  ANIVERSARIANTES_SEMANA: async () => {
     const resultado = await montarContextoAniversariantesSemana();
     if (!resultado) return null;
     return { lista: resultado.lista, quantidade: resultado.quantidade };
@@ -59,7 +62,7 @@ export async function GET(request: Request) {
   try {
     const { data: automacoes, error } = await db
       .from('folha_automacoes')
-      .select('chave, nome, horario, dias_semana, ultima_execucao')
+      .select('chave, nome, horario, dias_semana, ultima_execucao, fonte_dados')
       .eq('tipo', 'CRON')
       .eq('ativo', true)
       .eq('horario', horarioAtual);
@@ -81,17 +84,18 @@ export async function GET(request: Request) {
       }
 
       let contexto: Record<string, string | number> = {};
-      const montarContexto = CONTEXTOS_ESPECIAIS[automacao.chave];
+      const montarContexto = automacao.fonte_dados ? FONTES_DADOS[automacao.fonte_dados] : null;
       if (montarContexto) {
         const contextoEspecial = await montarContexto();
         if (!contextoEspecial) continue; // nada a reportar hoje, não dispara
         contexto = contextoEspecial;
       }
 
-      // Push espelha a automação frota-vencimentos (README do app mobile) —
-      // canal a mais pra quem tem a aba Frota no app, não substitui o
-      // WhatsApp configurado na automação. Nunca derruba o disparo principal.
-      if (automacao.chave === 'frota-vencimentos') {
+      // Push espelha qualquer automação que use a fonte de dados de frota
+      // (README do app mobile) — canal a mais pra quem tem a aba Frota no
+      // app, não substitui o WhatsApp configurado na automação. Nunca
+      // derruba o disparo principal.
+      if (automacao.fonte_dados === 'FROTA_VENCIMENTOS') {
         try {
           await notificarPush('/mobile/frota', 'Veículos com pendência de vencimento', `${contexto.quantidade} veículo(s) com CRLV ou seguro vencido.`, { tipo: 'frota' });
         } catch (e) {

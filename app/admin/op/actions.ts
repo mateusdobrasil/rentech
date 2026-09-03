@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import { registrarLogAuditoria } from '../../actions';
 import { revalidatePath } from 'next/cache';
 import nodemailer from 'nodemailer';
-import { dispararAutomacaoWhatsApp } from '../../lib/automacoes';
+import { dispararAutomacoesPorEventoWhatsApp } from '../../lib/automacoes';
 import { notificarPush } from '../../lib/push';
 import { normalizarPermissao, ehAltaGestaoOP } from '../../lib/permissoes';
 import { obterEmpresasPermitidas, empresaPermitida } from '../../lib/serverAuth';
@@ -196,13 +196,15 @@ export async function criarOP(data: NovaOPData, accessToken: string) {
 
     // =========================================================
     // DISPARO AUTOMÁTICO DE WHATSAPP NA CRIAÇÃO
-    // Respeita o toggle, os destinatários e o texto da mensagem configurados
-    // na automação "Notificação de Nova OP" (Agendamentos e Disparos, chave
-    // 'nova-op') — só passamos as variáveis do evento, o template é 100% dela.
+    // Respeita o toggle, os destinatários e o texto da mensagem de qualquer
+    // automação cadastrada em Agendamentos e Disparos com evento de sistema
+    // "Nova Ordem de Pagamento criada" — só passamos as variáveis do evento,
+    // o template é 100% dela. Pode haver mais de uma (ex: uma pra Operacional
+    // e outra pra Diretoria).
     // =========================================================
     try {
       const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
-      await dispararAutomacaoWhatsApp('nova-op', {
+      await dispararAutomacoesPorEventoWhatsApp('NOVA_OP', {
         numero_op: novaOp.numero_op || novaOp.id,
         os_numero: payload.os_numero || 'S/N',
         solicitante: payload.responsavel_nome,

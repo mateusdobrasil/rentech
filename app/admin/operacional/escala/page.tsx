@@ -40,6 +40,7 @@ interface ContextoLocalDia {
   id: string; empresa_id: number; data: string; local_id: string;
   horario_padrao: string | null; tipo_id: string | null; tipo_nome: string | null;
   evento: string | null; responsavel: string | null;
+  vai_para_local_id: string | null; vai_para_local_nome: string | null;
 }
 type CampoContexto = 'horario_padrao' | 'evento' | 'responsavel';
 
@@ -151,14 +152,16 @@ function Pool({ funcionarios, turnosPorNome, selecionados, onSelecionar, onColoc
 }
 
 function LocalColuna({
-  local, contexto, itens, tipos, onHorarioChange, onRemover, onContextoChange, onTipoChange, onCriarTipo, onRemoverLocalDia, salvandoId,
+  local, contexto, itens, tipos, locaisCatalogo, onHorarioChange, onRemover, onContextoChange, onTipoChange, onCriarTipo,
+  onVaiParaChange, onRemoverLocalDia, salvandoId,
   selecionados, onSelecionar, onColocarAqui,
 }: {
-  local: Local; contexto: ContextoLocalDia | undefined; itens: Alocacao[]; tipos: TipoEscala[];
+  local: Local; contexto: ContextoLocalDia | undefined; itens: Alocacao[]; tipos: TipoEscala[]; locaisCatalogo: Local[];
   onHorarioChange: (a: Alocacao, horario: string) => void; onRemover: (a: Alocacao) => void;
   onContextoChange: (localId: string, campo: CampoContexto, valor: string) => void;
   onTipoChange: (localId: string, tipoId: string | null, tipoNome: string | null) => void;
   onCriarTipo: (localId: string) => void;
+  onVaiParaChange: (localId: string, vaiParaId: string | null, vaiParaNome: string | null) => void;
   onRemoverLocalDia: (localId: string) => void;
   salvandoId: string | null;
   selecionados: Set<string>; onSelecionar: (dragId: string) => void; onColocarAqui: () => void;
@@ -176,7 +179,14 @@ function LocalColuna({
       className={`rounded-2xl border-2 p-3 min-h-[140px] transition-colors ${isOver || mostrarColocarAqui ? 'border-[#336699] bg-blue-50' : 'border-dashed border-[#CBD5E1] bg-[#F8FAFC]'}`}
     >
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wide truncate">📍 {local.nome}</h3>
+        <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wide truncate">
+          📍 {local.nome}
+          {contexto?.vai_para_local_nome && (
+            <span className="ml-1.5 text-[9px] font-bold text-amber-700 bg-amber-100 rounded-full px-1.5 py-0.5 normal-case tracking-normal align-middle">
+              🚚 depois: {contexto.vai_para_local_nome}
+            </span>
+          )}
+        </h3>
         <div className="flex items-center gap-2 shrink-0 ml-2">
           {itens.length > 0 && (
             <span className="text-[10px] font-bold text-emerald-600" title="Confirmaram ciência da escala">
@@ -242,6 +252,20 @@ function LocalColuna({
             {responsavelForaDaLista && (
               <option value={contexto!.responsavel!}>⚠️ {contexto!.responsavel} (não está mais aqui)</option>
             )}
+          </select>
+        </div>
+        <div className="col-span-2">
+          <label className="text-[9px] font-black text-gray-400 uppercase tracking-wider block">🚚 Ir para (depois daqui)</label>
+          <select
+            value={contexto?.vai_para_local_id || ''}
+            onChange={e => {
+              const destino = locaisCatalogo.find(l => l.id === e.target.value);
+              onVaiParaChange(local.id, destino?.id || null, destino?.nome || null);
+            }}
+            className="w-full text-xs border border-[#E2E8F0] rounded p-1 mt-0.5"
+          >
+            <option value="">— Fica só aqui —</option>
+            {locaisCatalogo.filter(l => l.id !== local.id).map(l => <option key={l.id} value={l.id}>{l.nome}</option>)}
           </select>
         </div>
       </div>
@@ -573,6 +597,7 @@ export default function EscalaPage() {
         id: atual?.id || '', empresa_id: empresaId, data, local_id: localId,
         horario_padrao: atual?.horario_padrao ?? null, tipo_id: atual?.tipo_id ?? null, tipo_nome: atual?.tipo_nome ?? null,
         evento: atual?.evento ?? null, responsavel: atual?.responsavel ?? null,
+        vai_para_local_id: atual?.vai_para_local_id ?? null, vai_para_local_nome: atual?.vai_para_local_nome ?? null,
         [campo]: valorFinal,
       };
       const mapa = new Map(prev);
@@ -604,6 +629,7 @@ export default function EscalaPage() {
         id: atual?.id || '', empresa_id: empresaId, data, local_id: localId,
         horario_padrao: atual?.horario_padrao ?? null, tipo_id: tipoId, tipo_nome: tipoNome,
         evento: atual?.evento ?? null, responsavel: atual?.responsavel ?? null,
+        vai_para_local_id: atual?.vai_para_local_id ?? null, vai_para_local_nome: atual?.vai_para_local_nome ?? null,
       };
       const mapa = new Map(prev);
       mapa.set(localId, novo);
@@ -612,6 +638,30 @@ export default function EscalaPage() {
 
     const res = await salvarContextoLocalAction({ empresaId, data, localId, tipoId, tipoNome }, accessToken);
     if (!res.ok) { toast('Erro ao salvar tipo: ' + res.erro, 'error'); carregarEscala(); }
+  };
+
+  // "Ir para": local pra onde o pessoal segue DEPOIS de sair daqui (ex: sai
+  // da Empresa e o caminhão segue pro Anhembi) — só informativo, aparece na
+  // tela, na imagem exportada e dobrado na mensagem de WhatsApp; não cria um
+  // turno novo (ver sql/escala_vai_para.sql).
+  const handleVaiParaChange = async (localId: string, vaiParaId: string | null, vaiParaNome: string | null) => {
+    if (!empresaId) return;
+
+    setContextos(prev => {
+      const atual = prev.get(localId);
+      const novo: ContextoLocalDia = {
+        id: atual?.id || '', empresa_id: empresaId, data, local_id: localId,
+        horario_padrao: atual?.horario_padrao ?? null, tipo_id: atual?.tipo_id ?? null, tipo_nome: atual?.tipo_nome ?? null,
+        evento: atual?.evento ?? null, responsavel: atual?.responsavel ?? null,
+        vai_para_local_id: vaiParaId, vai_para_local_nome: vaiParaNome,
+      };
+      const mapa = new Map(prev);
+      mapa.set(localId, novo);
+      return mapa;
+    });
+
+    const res = await salvarContextoLocalAction({ empresaId, data, localId, vaiParaLocalId: vaiParaId, vaiParaLocalNome: vaiParaNome }, accessToken);
+    if (!res.ok) { toast('Erro ao salvar "Ir para": ' + res.erro, 'error'); carregarEscala(); }
   };
 
   // "+ Novo tipo..." no select — cadastra no catálogo (escala_tipo) e já
@@ -753,7 +803,10 @@ export default function EscalaPage() {
     setContextos(prev => {
       if (prev.has(local.id)) return prev;
       const mapa = new Map(prev);
-      mapa.set(local.id, { id: '', empresa_id: empresaId, data, local_id: local.id, horario_padrao: null, tipo_id: null, tipo_nome: null, evento: null, responsavel: null });
+      mapa.set(local.id, {
+        id: '', empresa_id: empresaId, data, local_id: local.id, horario_padrao: null, tipo_id: null, tipo_nome: null,
+        evento: null, responsavel: null, vai_para_local_id: null, vai_para_local_nome: null,
+      });
       return mapa;
     });
     setNovoLocalAberto(false);
@@ -809,7 +862,7 @@ export default function EscalaPage() {
       .filter(l => contextos.has(l.id))
       .map(l => {
         const c = contextos.get(l.id)!;
-        return { local_nome: l.nome, tipo_nome: c.tipo_nome, evento: c.evento, responsavel: c.responsavel };
+        return { local_nome: l.nome, tipo_nome: c.tipo_nome, evento: c.evento, responsavel: c.responsavel, vai_para_local_nome: c.vai_para_local_nome };
       });
     setCompartilhando(true);
     try {
@@ -1018,9 +1071,10 @@ export default function EscalaPage() {
                       // inputs de contexto (não-controlados, defaultValue) ficariam
                       // mostrando o valor do dia anterior.
                       key={`${local.id}::${data}`} local={local} contexto={contextos.get(local.id)}
-                      itens={alocacoesPorLocal.get(local.id) || []} tipos={tiposCatalogo}
+                      itens={alocacoesPorLocal.get(local.id) || []} tipos={tiposCatalogo} locaisCatalogo={locais}
                       onHorarioChange={handleHorarioChange} onRemover={handleRemover}
                       onContextoChange={handleContextoChange} onTipoChange={handleTipoChange} onCriarTipo={criarTipoInline}
+                      onVaiParaChange={handleVaiParaChange}
                       onRemoverLocalDia={removerLocalDoDia}
                       salvandoId={salvandoId}
                       selecionados={selecionados} onSelecionar={handleSelecionar} onColocarAqui={() => handleTocarDestino(local.id)}

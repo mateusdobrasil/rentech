@@ -38,6 +38,7 @@ interface ContextoLocalDia {
   id: string; empresa_id: number; data: string; local_id: string;
   horario_padrao: string | null; tipo_id: string | null; tipo_nome: string | null;
   evento: string | null; responsavel: string | null;
+  vai_para_local_id: string | null; vai_para_local_nome: string | null;
 }
 
 async function autorizarEmpresa(accessToken: string, empresaId: number) {
@@ -253,6 +254,7 @@ export async function copiarEscalaAction(params: {
         empresa_id: params.empresaId, data: params.dataDestino, local_id: c.local_id,
         horario_padrao: c.horario_padrao, tipo_id: c.tipo_id, tipo_nome: c.tipo_nome,
         evento: c.evento, responsavel: c.responsavel,
+        vai_para_local_id: c.vai_para_local_id, vai_para_local_nome: c.vai_para_local_nome,
       }));
       const { error: erroUpsertContexto } = await db
         .from('escala_locais_dia')
@@ -316,6 +318,7 @@ export async function salvarContextoLocalAction(params: {
   empresaId: number; data: string; localId: string;
   horarioPadrao?: string | null; tipoId?: string | null; tipoNome?: string | null;
   evento?: string | null; responsavel?: string | null;
+  vaiParaLocalId?: string | null; vaiParaLocalNome?: string | null;
 }, accessToken: string): Promise<Resultado> {
   const auth = await autorizarEmpresa(accessToken, params.empresaId);
   if (!auth.ok) return { ok: false, erro: auth.erro };
@@ -333,6 +336,8 @@ export async function salvarContextoLocalAction(params: {
       tipo_nome: params.tipoNome !== undefined ? params.tipoNome : (existente?.tipo_nome ?? null),
       evento: params.evento !== undefined ? params.evento : (existente?.evento ?? null),
       responsavel: params.responsavel !== undefined ? params.responsavel : (existente?.responsavel ?? null),
+      vai_para_local_id: params.vaiParaLocalId !== undefined ? params.vaiParaLocalId : (existente?.vai_para_local_id ?? null),
+      vai_para_local_nome: params.vaiParaLocalNome !== undefined ? params.vaiParaLocalNome : (existente?.vai_para_local_nome ?? null),
       atualizado_em: new Date().toISOString(),
     };
 
@@ -421,15 +426,24 @@ export async function notificarColaboradoresAction(params: { empresaId: number; 
     const templateIdioma = automacao?.meta_template_idioma || ESCALA_TEMPLATE_IDIOMA_PADRAO;
 
     const { data: alocacoes, error: erroAlocacoes } = await db
-      .from('escala_alocacoes').select('id, funcionario_nome, local_nome, horario, notificado_em')
+      .from('escala_alocacoes').select('id, funcionario_nome, local_id, local_nome, horario, notificado_em')
       .eq('empresa_id', params.empresaId).eq('data', params.data);
     if (erroAlocacoes) throw erroAlocacoes;
     if (!alocacoes || alocacoes.length === 0) return { ok: true, info: { enviados: 0, semCelular: [], falhas: [], jaNotificados: 0 } };
 
-    const pendentes = (alocacoes as { id: string; funcionario_nome: string; local_nome: string; horario: string; notificado_em: string | null }[])
+    const pendentes = (alocacoes as { id: string; funcionario_nome: string; local_id: string | null; local_nome: string; horario: string; notificado_em: string | null }[])
       .filter(a => !a.notificado_em);
     const jaNotificados = alocacoes.length - pendentes.length;
     if (pendentes.length === 0) return { ok: true, info: { enviados: 0, semCelular: [], falhas: [], jaNotificados } };
+
+    // "Vai para" (escala_locais_dia.vai_para_local_nome) é só informativo —
+    // dobrado dentro do próprio texto do local, em vez de virar uma 6ª
+    // variável no Message Template (evita ter que re-submeter o template na
+    // Meta de novo por causa disso — ver sql/escala_vai_para.sql).
+    const { data: contextosDia } = await db
+      .from('escala_locais_dia').select('local_id, vai_para_local_nome')
+      .eq('empresa_id', params.empresaId).eq('data', params.data);
+    const vaiParaPorLocal = new Map((contextosDia || []).map(c => [c.local_id as string, c.vai_para_local_nome as string | null]));
 
     const nomes = pendentes.map(a => a.funcionario_nome);
     const { data: funcionarios, error: erroFuncs } = await db
@@ -453,10 +467,12 @@ export async function notificarColaboradoresAction(params: { empresaId: number; 
       const primeiroNome = a.funcionario_nome.split(' ')[0];
       const horarioFmt = a.horario?.slice(0, 5) || '--:--';
       const link = `${baseUrl}/api/confirmar-escala?id=${a.id}`;
-      const textoLivre = `Olá ${primeiroNome}! Sua escala de ${dataExtenso} já está definida:\n\n📍 Local: ${a.local_nome}\n🕐 Horário: ${horarioFmt}\n\n${link}\nQualquer dúvida, fale com seu encarregado ou coordenador.`;
+      const vaiPara = a.local_id ? vaiParaPorLocal.get(a.local_id) : null;
+      const localTexto = vaiPara ? `${a.local_nome} (depois: ${vaiPara})` : a.local_nome;
+      const textoLivre = `Olá ${primeiroNome}! Sua escala de ${dataExtenso} já está definida:\n\n📍 Local: ${localTexto}\n🕐 Horário: ${horarioFmt}\n\n${link}\nQualquer dúvida, fale com seu encarregado ou coordenador.`;
       const templateMeta: TemplateMeta = {
         nome: templateNome, idioma: templateIdioma,
-        parametros: [primeiroNome, dataExtenso, a.local_nome, horarioFmt, link],
+        parametros: [primeiroNome, dataExtenso, localTexto, horarioFmt, link],
       };
 
       const res = await enviarComJanela(provedor, celular, textoLivre, templateMeta);

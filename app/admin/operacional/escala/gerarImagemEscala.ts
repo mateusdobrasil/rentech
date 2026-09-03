@@ -7,7 +7,10 @@
 // customizada ainda carregando faria o desenho cair silenciosamente pro
 // fallback — com sans-serif isso nunca é um problema.
 export interface AlocacaoImg { funcionario_nome: string; horario: string; local_nome: string; }
-export interface ContextoLocalImg { local_nome: string; tipo_nome: string | null; evento: string | null; responsavel: string | null; }
+export interface ContextoLocalImg {
+  local_nome: string; tipo_nome: string | null; evento: string | null; responsavel: string | null;
+  vai_para_local_nome?: string | null;
+}
 
 const NAVY = '#0C1D4D';
 const EMERALD = '#059669';
@@ -47,25 +50,32 @@ export async function gerarImagemEscala(params: {
   locais.forEach(l => porLocal.get(l)!.sort((a, b) =>
     (a.horario || '').localeCompare(b.horario || '') || a.funcionario_nome.localeCompare(b.funcionario_nome)));
 
+  // Info do local naquele dia vira uma grade 2 colunas (não mais uma única
+  // linha de texto truncada) — antes, quando tipo+evento+responsável já
+  // enchiam a linha, o campo seguinte (ex: "🚚 Depois: X") era cortado e
+  // sumia inteiro da imagem. Cada item agora trunca sozinho, então o pior
+  // caso é um valor MUITO longo perder o final — nunca um campo inteiro.
+  interface ItemMeta { icone: string; label: string; valor: string; }
   const contextoPorLocal = new Map(contextos.map(c => [c.local_nome, c]));
-  const subtituloDoLocal = (local: string): string | null => {
+  const itensMetaDoLocal = (local: string): ItemMeta[] => {
     const c = contextoPorLocal.get(local);
-    if (!c) return null;
-    const partes = [
-      c.tipo_nome || null,
-      c.evento || null,
-      c.responsavel ? `Resp.: ${c.responsavel}` : null,
-    ].filter(Boolean);
-    return partes.length > 0 ? partes.join('  ·  ') : null;
+    if (!c) return [];
+    return [
+      c.tipo_nome ? { icone: '🏷️', label: 'Tipo', valor: c.tipo_nome } : null,
+      c.evento ? { icone: '📅', label: 'Evento', valor: c.evento } : null,
+      c.responsavel ? { icone: '👤', label: 'Resp.', valor: c.responsavel } : null,
+      c.vai_para_local_nome ? { icone: '🚚', label: 'Depois', valor: c.vai_para_local_nome } : null,
+    ].filter((x): x is ItemMeta => x !== null);
   };
 
-  const HEADER_H = 168, FOOTER_H = 56, GROUP_HEADER_H = 46, SUBTITULO_H = 24, ROW_H = 38, GROUP_GAP = 22, PAD_X = 36;
+  const HEADER_H = 168, FOOTER_H = 56, GROUP_HEADER_H = 46, META_ROW_H = 24, META_PAD_Y = 12, ROW_H = 38, GROUP_GAP = 22, PAD_X = 36;
+  const alturaMeta = (qtd: number) => qtd === 0 ? 0 : Math.ceil(qtd / 2) * META_ROW_H + META_PAD_Y * 2;
 
   const corpoH = locais.length === 0
     ? 80
     : locais.reduce((acc, l) => {
-        const temSubtitulo = subtituloDoLocal(l) !== null;
-        return acc + GROUP_HEADER_H + (temSubtitulo ? SUBTITULO_H : 0) + (porLocal.get(l)!.length * ROW_H) + GROUP_GAP;
+        const qtdMeta = itensMetaDoLocal(l).length;
+        return acc + GROUP_HEADER_H + alturaMeta(qtdMeta) + (porLocal.get(l)!.length * ROW_H) + GROUP_GAP;
       }, 0);
   const H = HEADER_H + corpoH + FOOTER_H;
 
@@ -117,7 +127,7 @@ export async function gerarImagemEscala(params: {
   } else {
     locais.forEach(local => {
       const itens = porLocal.get(local)!;
-      const subtitulo = subtituloDoLocal(local);
+      const itensMeta = itensMetaDoLocal(local);
 
       ctx.fillStyle = '#DCFCE7';
       roundRect(ctx, PAD_X, y, W - PAD_X * 2, GROUP_HEADER_H - 10, 8);
@@ -127,11 +137,32 @@ export async function gerarImagemEscala(params: {
       ctx.fillText(`\u{1F4CD} ${local}`, PAD_X + 14, y + (GROUP_HEADER_H - 10) / 2 + 6);
       y += GROUP_HEADER_H;
 
-      if (subtitulo) {
-        ctx.fillStyle = MUTED;
-        ctx.font = '600 13px sans-serif';
-        ctx.fillText(truncar(ctx, subtitulo, W - PAD_X * 2 - 14), PAD_X + 14, y);
-        y += SUBTITULO_H;
+      if (itensMeta.length > 0) {
+        const boxH = alturaMeta(itensMeta.length);
+        ctx.fillStyle = '#F1F5F9';
+        roundRect(ctx, PAD_X, y, W - PAD_X * 2, boxH - 6, 8);
+        ctx.fill();
+
+        const colGap = 14;
+        const colW = (W - PAD_X * 2 - 14 * 2 - colGap) / 2;
+        itensMeta.forEach((item, i) => {
+          const col = i % 2;
+          const linha = Math.floor(i / 2);
+          const x = PAD_X + 14 + col * (colW + colGap);
+          const baseline = y + META_PAD_Y + linha * META_ROW_H + 14;
+
+          ctx.font = '700 12px sans-serif';
+          ctx.fillStyle = MUTED;
+          const prefixo = `${item.icone} ${item.label}: `;
+          ctx.fillText(prefixo, x, baseline);
+          const prefixoW = ctx.measureText(prefixo).width;
+
+          ctx.font = '700 12px sans-serif';
+          ctx.fillStyle = INK;
+          ctx.fillText(truncar(ctx, item.valor, colW - prefixoW), x + prefixoW, baseline);
+        });
+
+        y += boxH;
       }
 
       itens.forEach((a, i) => {

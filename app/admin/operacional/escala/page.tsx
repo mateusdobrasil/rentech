@@ -64,16 +64,17 @@ const maisComum = (valores: (string | undefined)[]): string | null => {
 // ("turno:<alocacao.id>") precisam de ids de drag distintos, senão o
 // dnd-kit vê dois draggables com o mesmo id ao mesmo tempo. Sem dragId
 // (usado só no preview do DragOverlay), o card não é arrastável.
-function FuncionarioCard({ dragId, nome, cargo, arrastando, confirmado, notificado, turnos }: {
+function FuncionarioCard({ dragId, nome, cargo, arrastando, confirmado, notificado, turnos, selecionado, onClick }: {
   dragId?: string; nome: string; cargo?: string | null; arrastando?: boolean;
-  confirmado?: boolean; notificado?: boolean; turnos?: number;
+  confirmado?: boolean; notificado?: boolean; turnos?: number; selecionado?: boolean; onClick?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: dragId || `preview:${nome}` });
   return (
     <div
       ref={dragId ? setNodeRef : undefined} {...(dragId ? { ...listeners, ...attributes } : {})}
-      className={`${dragId ? 'touch-none select-none cursor-grab active:cursor-grabbing' : ''} bg-white rounded-xl border px-3 py-2 shadow-sm transition-opacity ${
-        isDragging || arrastando ? 'opacity-30 border-[#336699]' : 'border-[#E2E8F0]'
+      onClick={onClick}
+      className={`${dragId ? 'touch-none select-none cursor-grab active:cursor-grabbing' : ''} bg-white rounded-xl border-2 px-3 py-2 shadow-sm transition-all ${
+        isDragging || arrastando ? 'opacity-30 border-[#336699]' : selecionado ? 'border-[#336699] bg-blue-50 ring-2 ring-[#336699]/30' : 'border-[#E2E8F0]'
       }`}
     >
       <div className="flex items-center justify-between gap-1">
@@ -96,23 +97,52 @@ function FuncionarioCard({ dragId, nome, cargo, arrastando, confirmado, notifica
   );
 }
 
-function Pool({ funcionarios, turnosPorNome }: { funcionarios: Funcionario[]; turnosPorNome: Map<string, number> }) {
+function Pool({ funcionarios, turnosPorNome, selecionados, onSelecionar, onColocarAqui, onAlternarTodos }: {
+  funcionarios: Funcionario[]; turnosPorNome: Map<string, number>;
+  selecionados: Set<string>; onSelecionar: (dragId: string) => void; onColocarAqui: () => void;
+  onAlternarTodos: () => void;
+}) {
   const { setNodeRef, isOver } = useDroppable({ id: 'pool' });
+  // "Colocar aqui" (devolver pro pool) só faz sentido se pelo menos um dos
+  // selecionados for um turno já alocado num local — cards do próprio pool
+  // não têm pra onde "voltar".
+  const algumTurnoSelecionado = Array.from(selecionados).some(id => id.startsWith('turno:'));
+  const todosSelecionados = funcionarios.length > 0 && funcionarios.every(f => selecionados.has(`pool:${f.nome_completo}`));
   return (
     <div
       ref={setNodeRef}
-      className={`rounded-2xl border-2 p-3 mb-6 transition-colors ${isOver ? 'border-[#336699] bg-blue-50' : 'border-dashed border-[#CBD5E1] bg-white'}`}
+      className={`rounded-2xl border-2 p-3 mb-6 transition-colors ${isOver || algumTurnoSelecionado ? 'border-[#336699] bg-blue-50' : 'border-dashed border-[#CBD5E1] bg-white'}`}
     >
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wide">Colaboradores do departamento</h3>
-        <span className="text-[10px] font-bold text-gray-400">{funcionarios.length}</span>
+        <div className="flex items-center gap-2 shrink-0">
+          {funcionarios.length > 0 && (
+            <button type="button" onClick={onAlternarTodos} className="text-[10px] font-bold text-[#336699] hover:underline">
+              {todosSelecionados ? 'Limpar seleção' : 'Selecionar todos'}
+            </button>
+          )}
+          <span className="text-[10px] font-bold text-gray-400">{funcionarios.length}</span>
+        </div>
       </div>
       <p className="text-[10px] text-gray-400 mb-2">
-        Arraste até um local — dá pra arrastar a mesma pessoa mais de uma vez, pra colocar mais de um turno no dia.
+        Toque em um ou mais colaboradores e depois em &quot;Colocar aqui&quot; no local desejado, pra colocar todos de uma vez (ou arraste, se preferir um por vez). Dá pra tocar na mesma pessoa mais de uma vez, pra colocar mais de um turno no dia.
       </p>
+      {algumTurnoSelecionado && (
+        <button
+          type="button" onClick={onColocarAqui}
+          className="w-full mb-2 text-[11px] font-black uppercase tracking-wider text-white bg-[#336699] hover:bg-[#284B8C] rounded-lg py-2"
+        >
+          📥 Colocar aqui (tirar do local)
+        </button>
+      )}
       <div className="flex flex-wrap gap-2">
         {funcionarios.map(f => (
-          <FuncionarioCard key={f.nome_completo} dragId={`pool:${f.nome_completo}`} nome={f.nome_completo} cargo={f.cargo} turnos={turnosPorNome.get(f.nome_completo) || 0} />
+          <FuncionarioCard
+            key={f.nome_completo} dragId={`pool:${f.nome_completo}`} nome={f.nome_completo} cargo={f.cargo}
+            turnos={turnosPorNome.get(f.nome_completo) || 0}
+            selecionado={selecionados.has(`pool:${f.nome_completo}`)}
+            onClick={() => onSelecionar(`pool:${f.nome_completo}`)}
+          />
         ))}
         {funcionarios.length === 0 && <p className="text-[10px] text-gray-400 py-2">Nenhum colaborador nesse departamento.</p>}
       </div>
@@ -122,6 +152,7 @@ function Pool({ funcionarios, turnosPorNome }: { funcionarios: Funcionario[]; tu
 
 function LocalColuna({
   local, contexto, itens, tipos, onHorarioChange, onRemover, onContextoChange, onTipoChange, onCriarTipo, onRemoverLocalDia, salvandoId,
+  selecionados, onSelecionar, onColocarAqui,
 }: {
   local: Local; contexto: ContextoLocalDia | undefined; itens: Alocacao[]; tipos: TipoEscala[];
   onHorarioChange: (a: Alocacao, horario: string) => void; onRemover: (a: Alocacao) => void;
@@ -130,13 +161,19 @@ function LocalColuna({
   onCriarTipo: (localId: string) => void;
   onRemoverLocalDia: (localId: string) => void;
   salvandoId: string | null;
+  selecionados: Set<string>; onSelecionar: (dragId: string) => void; onColocarAqui: () => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `local:${local.id}` });
   const responsavelForaDaLista = contexto?.responsavel && !itens.some(a => a.funcionario_nome === contexto.responsavel);
+  // Não mostra "colocar aqui" se TODOS os selecionados já forem turnos
+  // desse mesmo local (daria tudo no mesmo lugar) — mas mostra se houver
+  // pelo menos um selecionado que ainda não está aqui.
+  const todosJaNesteLocal = selecionados.size > 0 && Array.from(selecionados).every(id => itens.some(a => `turno:${a.id}` === id));
+  const mostrarColocarAqui = selecionados.size > 0 && !todosJaNesteLocal;
   return (
     <div
       ref={setNodeRef}
-      className={`rounded-2xl border-2 p-3 min-h-[140px] transition-colors ${isOver ? 'border-[#336699] bg-blue-50' : 'border-dashed border-[#CBD5E1] bg-[#F8FAFC]'}`}
+      className={`rounded-2xl border-2 p-3 min-h-[140px] transition-colors ${isOver || mostrarColocarAqui ? 'border-[#336699] bg-blue-50' : 'border-dashed border-[#CBD5E1] bg-[#F8FAFC]'}`}
     >
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wide truncate">📍 {local.nome}</h3>
@@ -209,10 +246,24 @@ function LocalColuna({
         </div>
       </div>
 
+      {mostrarColocarAqui && (
+        <button
+          type="button" onClick={onColocarAqui}
+          className="w-full mb-2 text-[11px] font-black uppercase tracking-wider text-white bg-[#336699] hover:bg-[#284B8C] rounded-lg py-2"
+        >
+          📥 Colocar aqui
+        </button>
+      )}
+
       <div className="space-y-2">
         {itens.map(a => (
           <div key={a.id} className="bg-white rounded-lg border border-[#E2E8F0] p-2">
-            <FuncionarioCard dragId={`turno:${a.id}`} nome={a.funcionario_nome} cargo={a.departamento} confirmado={!!a.confirmado_em} notificado={!!a.notificado_em} />
+            <FuncionarioCard
+              dragId={`turno:${a.id}`} nome={a.funcionario_nome} cargo={a.departamento}
+              confirmado={!!a.confirmado_em} notificado={!!a.notificado_em}
+              selecionado={selecionados.has(`turno:${a.id}`)}
+              onClick={() => onSelecionar(`turno:${a.id}`)}
+            />
             <div className="flex items-center gap-2 mt-2">
               <input
                 type="time" value={a.horario?.slice(0, 5) || ''} disabled={salvandoId === a.id}
@@ -343,6 +394,14 @@ export default function EscalaPage() {
   const [carregandoEscala, setCarregandoEscala] = useState(false);
   const [salvandoId, setSalvandoId] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
+  // Alternativa ao arrastar: no celular, arrastar um card do topo até um
+  // local lá embaixo na página é pouco prático (a lista rola embaixo do
+  // dedo). Toque-para-selecionar + toque-no-destino resolve isso sem
+  // precisar de rolagem automática — guarda os mesmos ids do drag
+  // ("pool:<nome>" ou "turno:<alocacao.id>"), então reaproveita a mesma
+  // lógica de destino. É um Set pra dar pra selecionar vários de uma vez e
+  // colocar todos no mesmo local com um único toque no destino.
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
 
   const [novoLocalAberto, setNovoLocalAberto] = useState(false);
   const [novoLocalNome, setNovoLocalNome] = useState('');
@@ -430,6 +489,7 @@ export default function EscalaPage() {
 
   useEffect(() => { carregarLocais(); }, [carregarLocais]);
   useEffect(() => { carregarEscala(); }, [carregarEscala]);
+  useEffect(() => { setSelecionados(new Set()); }, [data, empresaId]);
 
   // Dias com escala do mês em exibição na aba "Escalas Montadas" — recarrega
   // ao trocar de empresa ou navegar de mês dentro do calendário.
@@ -573,7 +633,48 @@ export default function EscalaPage() {
     if (!res.ok) { toast('Erro ao remover: ' + res.erro, 'error'); carregarEscala(); }
   };
 
-  const handleDragStart = (event: DragStartEvent) => setActiveId(String(event.active.id));
+  const handleDragStart = (event: DragStartEvent) => { setActiveId(String(event.active.id)); setSelecionados(new Set()); };
+
+  // Núcleo compartilhado entre arrastar (handleDragEnd) e tocar (handleTocarDestino)
+  // — as duas interações levam ao mesmo destino, só mudam como o usuário chega lá.
+  const alocarPoolNoLocal = useCallback(async (nome: string, localId: string) => {
+    if (!empresaId) return;
+    const local = locais.find(l => l.id === localId);
+    if (!local) return;
+    const funcionario = funcionarios.find(f => f.nome_completo === nome);
+    const horario = contextos.get(localId)?.horario_padrao?.slice(0, 5)
+      || maisComum((alocacoesPorLocal.get(localId) || []).map(a => a.horario?.slice(0, 5)))
+      || '07:00';
+
+    const res = await salvarAlocacaoAction({
+      empresaId, data, funcionarioNome: nome, departamento: departamento || funcionario?.departamento || null,
+      localId, localNome: local.nome, horario, criadoPor: usuarioAtual,
+    }, accessToken);
+    if (!res.ok) { toast('Erro ao alocar: ' + res.erro, 'error'); return; }
+    setAlocacoes(prev => [...prev, res.info.alocacao]);
+  }, [empresaId, locais, funcionarios, contextos, alocacoesPorLocal, data, departamento, usuarioAtual, accessToken, toast]);
+
+  const removerTurnoParaPool = useCallback(async (alocacaoId: string) => {
+    if (!empresaId) return;
+    setAlocacoes(prev => prev.filter(a => a.id !== alocacaoId));
+    const res = await removerAlocacaoAction({ id: alocacaoId, empresaId }, accessToken);
+    if (!res.ok) { toast('Erro ao remover: ' + res.erro, 'error'); carregarEscala(); }
+  }, [empresaId, accessToken, toast, carregarEscala]);
+
+  const moverTurnoParaLocal = useCallback(async (alocacaoId: string, localId: string) => {
+    if (!empresaId) return;
+    const existente = alocacoes.find(a => a.id === alocacaoId);
+    if (!existente || existente.local_id === localId) return;
+    const local = locais.find(l => l.id === localId);
+    if (!local) return;
+
+    const res = await salvarAlocacaoAction({
+      id: alocacaoId, empresaId, data, funcionarioNome: existente.funcionario_nome, departamento: existente.departamento,
+      localId, localNome: local.nome, horario: existente.horario?.slice(0, 5) || '07:00', criadoPor: usuarioAtual,
+    }, accessToken);
+    if (!res.ok) { toast('Erro ao mover: ' + res.erro, 'error'); return; }
+    setAlocacoes(prev => prev.map(a => a.id === alocacaoId ? res.info.alocacao : a));
+  }, [empresaId, alocacoes, locais, data, usuarioAtual, accessToken, toast]);
 
   // "pool:<nome>" solto num local SEMPRE cria um turno novo (a pessoa pode
   // já ter outro(s) turno(s) hoje — ver sql/escala_multiplos_turnos.sql).
@@ -588,50 +689,60 @@ export default function EscalaPage() {
 
     if (activeIdStr.startsWith('pool:')) {
       if (!overId.startsWith('local:')) return;
-      const nome = activeIdStr.slice('pool:'.length);
-      const localId = overId.slice('local:'.length);
-      const local = locais.find(l => l.id === localId);
-      if (!local) return;
-
-      const funcionario = funcionarios.find(f => f.nome_completo === nome);
-      const horario = contextos.get(localId)?.horario_padrao?.slice(0, 5)
-        || maisComum((alocacoesPorLocal.get(localId) || []).map(a => a.horario?.slice(0, 5)))
-        || '07:00';
-
-      const res = await salvarAlocacaoAction({
-        empresaId, data, funcionarioNome: nome, departamento: departamento || funcionario?.departamento || null,
-        localId, localNome: local.nome, horario, criadoPor: usuarioAtual,
-      }, accessToken);
-      if (!res.ok) { toast('Erro ao alocar: ' + res.erro, 'error'); return; }
-      setAlocacoes(prev => [...prev, res.info.alocacao]);
+      await alocarPoolNoLocal(activeIdStr.slice('pool:'.length), overId.slice('local:'.length));
       return;
     }
 
     if (!activeIdStr.startsWith('turno:')) return;
     const alocacaoId = activeIdStr.slice('turno:'.length);
-    const existente = alocacoes.find(a => a.id === alocacaoId);
-    if (!existente) return;
 
-    if (overId === 'pool') {
-      setAlocacoes(prev => prev.filter(a => a.id !== alocacaoId));
-      const res = await removerAlocacaoAction({ id: alocacaoId, empresaId }, accessToken);
-      if (!res.ok) { toast('Erro ao remover: ' + res.erro, 'error'); carregarEscala(); }
-      return;
-    }
-
+    if (overId === 'pool') { await removerTurnoParaPool(alocacaoId); return; }
     if (!overId.startsWith('local:')) return;
-    const localId = overId.slice('local:'.length);
-    if (existente.local_id === localId) return;
-    const local = locais.find(l => l.id === localId);
-    if (!local) return;
-
-    const res = await salvarAlocacaoAction({
-      id: alocacaoId, empresaId, data, funcionarioNome: existente.funcionario_nome, departamento: existente.departamento,
-      localId, localNome: local.nome, horario: existente.horario?.slice(0, 5) || '07:00', criadoPor: usuarioAtual,
-    }, accessToken);
-    if (!res.ok) { toast('Erro ao mover: ' + res.erro, 'error'); return; }
-    setAlocacoes(prev => prev.map(a => a.id === alocacaoId ? res.info.alocacao : a));
+    await moverTurnoParaLocal(alocacaoId, overId.slice('local:'.length));
   };
+
+  // Toque-para-selecionar (vários de uma vez) + toque-no-destino: mesma
+  // lógica de destino do drag, só que sem precisar arrastar (evita o
+  // problema de arrastar por cima de conteúdo que rola, especialmente no
+  // celular) e dá pra colocar N colaboradores de uma vez no mesmo local.
+  const handleSelecionar = (dragId: string) => setSelecionados(prev => {
+    const novo = new Set(prev);
+    if (novo.has(dragId)) novo.delete(dragId); else novo.add(dragId);
+    return novo;
+  });
+
+  const handleAlternarTodosPool = () => {
+    const idsPool = poolFuncionarios.map(f => `pool:${f.nome_completo}`);
+    setSelecionados(prev => {
+      const todos = idsPool.every(id => prev.has(id));
+      if (todos) {
+        const novo = new Set(prev);
+        idsPool.forEach(id => novo.delete(id));
+        return novo;
+      }
+      return new Set([...prev, ...idsPool]);
+    });
+  };
+
+  const handleTocarDestino = async (destino: 'pool' | string) => {
+    if (selecionados.size === 0) return;
+    const ids = Array.from(selecionados);
+    setSelecionados(new Set());
+    await Promise.all(ids.map(id => {
+      if (id.startsWith('pool:')) {
+        if (destino === 'pool') return undefined;
+        return alocarPoolNoLocal(id.slice('pool:'.length), destino);
+      }
+      const alocacaoId = id.slice('turno:'.length);
+      return destino === 'pool' ? removerTurnoParaPool(alocacaoId) : moverTurnoParaLocal(alocacaoId, destino);
+    }));
+  };
+
+  const nomeFromDragId = useCallback((id: string) => {
+    if (id.startsWith('pool:')) return id.slice('pool:'.length);
+    if (id.startsWith('turno:')) return alocacoes.find(a => a.id === id.slice('turno:'.length))?.funcionario_nome || null;
+    return null;
+  }, [alocacoes]);
 
   // Deixa um local do catálogo (já cadastrado, mas ainda não usado hoje)
   // aparecer como coluna nesse dia — cria uma linha "em branco" em
@@ -780,12 +891,8 @@ export default function EscalaPage() {
     );
   }
 
-  const activeNome = (() => {
-    if (!activeId) return null;
-    if (activeId.startsWith('pool:')) return activeId.slice('pool:'.length);
-    if (activeId.startsWith('turno:')) return alocacoes.find(a => a.id === activeId.slice('turno:'.length))?.funcionario_nome || null;
-    return null;
-  })();
+  const activeNome = activeId ? nomeFromDragId(activeId) : null;
+  const nomesSelecionados = Array.from(selecionados).map(nomeFromDragId).filter((n): n is string => !!n);
 
   return (
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] pt-4 pb-16">
@@ -793,7 +900,7 @@ export default function EscalaPage() {
 
       <div className="bg-emerald-50 border-b border-emerald-200 px-4 md:px-8 py-4 flex justify-between items-center shadow-sm">
         <p className="text-emerald-800 font-medium text-sm">
-          🗓️ <strong>Escala de Trabalho</strong>. Arraste o colaborador até o local do dia.
+          🗓️ <strong>Escala de Trabalho</strong>. Toque num colaborador e depois no local (ou arraste, se preferir).
         </p>
         <button onClick={() => router.push('/admin/operacional')} className="text-[10px] md:text-xs font-black bg-white hover:bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
           ⬅ VOLTAR
@@ -893,7 +1000,11 @@ export default function EscalaPage() {
                     independente do departamento — ele só é necessário pra
                     saber quem oferecer no "pool" pra colocar gente nova. */}
                 {departamento ? (
-                  <Pool funcionarios={poolFuncionarios} turnosPorNome={turnosPorNome} />
+                  <Pool
+                    funcionarios={poolFuncionarios} turnosPorNome={turnosPorNome}
+                    selecionados={selecionados} onSelecionar={handleSelecionar} onColocarAqui={() => handleTocarDestino('pool')}
+                    onAlternarTodos={handleAlternarTodosPool}
+                  />
                 ) : (
                   <div className="rounded-2xl border-2 border-dashed border-[#CBD5E1] bg-white p-3 mb-6 text-center text-[10px] text-gray-400 font-bold uppercase tracking-wider">
                     Selecione um departamento pra adicionar novos colaboradores à escala
@@ -912,6 +1023,7 @@ export default function EscalaPage() {
                       onContextoChange={handleContextoChange} onTipoChange={handleTipoChange} onCriarTipo={criarTipoInline}
                       onRemoverLocalDia={removerLocalDoDia}
                       salvandoId={salvandoId}
+                      selecionados={selecionados} onSelecionar={handleSelecionar} onColocarAqui={() => handleTocarDestino(local.id)}
                     />
                   ))}
 
@@ -966,6 +1078,19 @@ export default function EscalaPage() {
           </>
         )}
       </div>
+
+      {/* Barra flutuante de seleção — fica fixa na tela mesmo rolando a
+          página, pra sempre lembrar quem está selecionado e dar um jeito
+          rápido de cancelar. Mostra os nomes quando são poucos, ou só a
+          contagem quando são muitos (senão a barra fica enorme). */}
+      {nomesSelecionados.length > 0 && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-[#0C1D4D] text-white rounded-full shadow-xl px-4 py-2.5 flex items-center gap-3 max-w-[92vw]">
+          <span className="text-xs font-bold truncate">
+            👤 {nomesSelecionados.length === 1 ? nomesSelecionados[0] : `${nomesSelecionados.length} selecionados`} — toque em &quot;Colocar aqui&quot; no destino
+          </span>
+          <button onClick={() => setSelecionados(new Set())} title="Cancelar seleção" className="text-white/70 hover:text-white text-xs font-black shrink-0">✕</button>
+        </div>
+      )}
     </div>
   );
 }

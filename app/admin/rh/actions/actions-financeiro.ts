@@ -419,6 +419,46 @@ export async function processarOcrAwsAction(
   }
 }
 
+// Digitação manual do valor (fallback de quando o OCR automático falha —
+// ver ocrFalhas na tela) precisa gravar em folha_documentos_contabeis.valor_ocr,
+// a MESMA coluna que processarOcrAwsAction grava. Sem isso, o valor digitado
+// só existia no estado local desta tela (bom o bastante pra montar o lote de
+// pagamento aqui), mas /admin/rh/holerite (Prévia PDF / envio pra assinatura)
+// lê valor_ocr direto do banco e continuava vendo null — o RH digitava o
+// valor, via ele entrar no lote certinho, e mesmo assim a prévia do holerite
+// dizia "ainda não foi lido (OCR)", porque de fato nunca tinha sido gravado.
+// Só atualiza se já existir uma linha do documento (nome+mês+tipo) — se não
+// existir (ex.: fonte sem PDF de contabilidade nenhum), não faz nada.
+export async function salvarValorOcrManualAction(payload: {
+  funcionarioNome: string;
+  mesReferencia: string;
+  tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS';
+  valor: number;
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', payload.funcionarioNome).maybeSingle();
+    if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
+      return { ok: false, erro: 'Você não tem permissão para editar o valor deste funcionário.' };
+    }
+
+    const { error } = await db.from('folha_documentos_contabeis')
+      .update({ valor_ocr: payload.valor, ocr_processado_em: new Date().toISOString() })
+      .eq('funcionario_nome', payload.funcionarioNome)
+      .eq('mes_referencia', payload.mesReferencia)
+      .eq('tipo', payload.tipo);
+    if (error) throw new Error(error.message);
+
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
 // ============================================================================
 // PDFs DA CONTABILIDADE
 // Devolve as páginas dos holerites em base64 para o backend despachar pra AWS.

@@ -7,7 +7,7 @@ import { supabase } from '../../../lib/supabase';
 import {
   montarLoteSalariosAction, salvarLoteAction, listarLotesAction, enviarLoteAoBancoAction,
   listarPdfsContabilidadeAction, processarOcrAwsAction, alternarAtivoLoteAction, buscarLoteAction,
-  consultarStatusAtualItauAction, buscarDetalhesOPAction
+  consultarStatusAtualItauAction, buscarDetalhesOPAction, salvarValorOcrManualAction
 } from '../../rh/actions/actions-financeiro';
 import { listarIntegracoesAction } from '../../parametros/integracao/actions';
 import { normalizarItensOP, ItemOPNormalizado } from '../../op/utils';
@@ -345,6 +345,12 @@ export default function FinanceiroPage() {
     setFontesSel(prev => prev.includes(f) ? prev.filter(x => x !== f) : [...prev, f]);
   };
 
+  // Mapa fonte (deste lote) -> tipo (folha_documentos_contabeis) pras 4
+  // fontes que vêm de documento da contabilidade lido por OCR.
+  const TIPO_DOCUMENTO_POR_FONTE: Partial<Record<FonteLote, 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS'>> = {
+    ADIANTAMENTO: 'ADIANTAMENTO', PAGAMENTO: 'HOLERITE_MENSAL', DECIMO_TERCEIRO: 'DECIMO_TERCEIRO', FERIAS: 'FERIAS',
+  };
+
   const ajustarValorLinha = (nome: string, fonte: FonteLote, valor: number) => {
     if (fonte === 'ADIANTAMENTO') setValoresAdiant(v => ({ ...v, [nome]: valor }));
     else if (fonte === 'PAGAMENTO') setValoresPagto(v => ({ ...v, [nome]: valor }));
@@ -352,6 +358,17 @@ export default function FinanceiroPage() {
     else if (fonte === 'FERIAS') setValoresFerias(v => ({ ...v, [nome]: valor }));
     setItens(prev => prev.map(i => (i.funcionario_nome === nome && i.fonte === fonte)
       ? { ...i, valor, pronto: i.metodo !== 'SEM_DADOS' && valor > 0 } : i));
+
+    // Grava também em folha_documentos_contabeis.valor_ocr — é de lá que
+    // /admin/rh/holerite lê o valor pago pela contabilidade na hora de gerar
+    // a prévia/enviar pra assinatura. Sem isso, um valor digitado manualmente
+    // aqui (quando o OCR automático falha) nunca aparecia lá.
+    const tipoDocumento = TIPO_DOCUMENTO_POR_FONTE[fonte];
+    if (tipoDocumento && valor > 0) {
+      salvarValorOcrManualAction({ funcionarioNome: nome, mesReferencia, tipo: tipoDocumento, valor }, accessToken)
+        .then(res => { if (!res.ok) toast(`Valor atualizado aqui, mas não foi possível salvar pra prévia do holerite: ${res.erro}`, 'error'); })
+        .catch(() => toast('Valor atualizado aqui, mas houve falha de conexão ao salvar pra prévia do holerite.', 'error'));
+    }
   };
 
   const alternarItemFonte = (nome: string, fonte: FonteLote) => {

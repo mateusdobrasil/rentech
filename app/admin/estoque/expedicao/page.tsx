@@ -105,6 +105,11 @@ interface ChecklistItem {
   // Unidades a mais do que o pedido original prevê (ex: pedido de 50 TVs, mas
   // enviando 53 — as 3 a mais entram como uma linha separada com extra=true).
   extra: boolean;
+  // Nº da OS de origem, preenchido só quando o item veio do "Importar Itens
+  // das OS's" (ver confirmarImportarOS) — no modo Consolidado, pode ser mais
+  // de uma OS somada na mesma linha ("1234, 5678"). null para itens do
+  // modelo padrão ou adicionados manualmente.
+  os_numero: string | null;
 }
 
 interface ModeloItem {
@@ -372,16 +377,21 @@ export default function ChecklistCargaRetorno() {
   const [importandoOS, setImportandoOS] = useState(false);
   const [itensImportadosOS, setItensImportadosOS] = useState<ItemImportadoOS[]>([]);
   const [modoConsolidadoOS, setModoConsolidadoOS] = useState(false);
+  // "Memória" de categoria por descrição de item (checklist_item_categoria_aprendida)
+  // — aprendida a cada importação confirmada, usada pra pré-selecionar a
+  // categoria certa da próxima vez que o mesmo texto de item aparecer.
+  const [categoriaAprendidaPorDescricao, setCategoriaAprendidaPorDescricao] = useState<Record<string, string>>({});
 
   // 1. Carregar Catálogo (equipamentos/categorias/eventos/gatilhos) após o acesso ser liberado
   useEffect(() => {
     if (authLoading || acessoNegado) return;
     (async () => {
-      const [resCat, resEq, resEventos, resGatilhos] = await Promise.all([
+      const [resCat, resEq, resEventos, resGatilhos, resCategoriaAprendida] = await Promise.all([
         supabase.from('categorias').select('*').order('nome', { ascending: true }),
         supabase.from('equipamentos').select('id, categoria_id, nome, ativo').order('nome', { ascending: true }),
         supabase.from('eventos_feiras').select('nome, local').not('local', 'is', null),
         supabase.from('gatilhos_acessorios').select('id, acessorio_id, acessorio_categoria_id, categoria_alvo_id, equipamento_alvo_id'),
+        supabase.from('checklist_item_categoria_aprendida').select('descricao, categoria_id'),
       ]);
       if (resCat.data) setCategorias(resCat.data);
       if (resEq.data) setEquipamentos(resEq.data);
@@ -393,6 +403,13 @@ export default function ChecklistCargaRetorno() {
           if (ev.local && !mapa[chave]) mapa[chave] = ev.local;
         });
         setMapaLocaisEventos(mapa);
+      }
+      if (resCategoriaAprendida.data) {
+        const mapa: Record<string, string> = {};
+        resCategoriaAprendida.data.forEach((r: { descricao: string; categoria_id: string | null }) => {
+          if (r.categoria_id) mapa[r.descricao] = r.categoria_id;
+        });
+        setCategoriaAprendidaPorDescricao(mapa);
       }
     })();
   }, [authLoading, acessoNegado]);
@@ -898,6 +915,13 @@ export default function ChecklistCargaRetorno() {
       const todosSaidaOk = grupo.every(i => i.saida_ok);
       const todosRetornoOk = grupo.every(i => i.retorno_ok);
 
+      // Cada linha do grupo pode já trazer mais de uma OS (item importado no
+      // modo Consolidado) — junta tudo numa lista sem repetir, senão unificar
+      // duas linhas de OS's diferentes apagava o número de uma delas.
+      const osNumerosUnificados = Array.from(new Set(
+        grupo.flatMap(i => (i.os_numero || '').split(',').map(s => s.trim()).filter(Boolean))
+      ));
+
       novaLista.push({
         ...base,
         qtd_prevista: qtdPrevistaFinal,
@@ -905,6 +929,7 @@ export default function ChecklistCargaRetorno() {
         saida_qtd: todosSaidaOk ? grupo.reduce((soma, i) => soma + (i.saida_qtd || 0), 0) : null,
         retorno_ok: todosRetornoOk,
         retorno_qtd: todosRetornoOk ? grupo.reduce((soma, i) => soma + (i.retorno_qtd || 0), 0) : null,
+        os_numero: osNumerosUnificados.length > 0 ? osNumerosUnificados.join(', ') : null,
       });
 
       grupo.forEach(i => {
@@ -1014,7 +1039,7 @@ export default function ChecklistCargaRetorno() {
 
     adicionarItensNaLista([{
       secao, equipamento_id: equipamentoId, descricao, qtd_prevista: modalAddItem.qtdPrevista,
-      saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null, extra: modalAddItem.extra,
+      saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null, extra: modalAddItem.extra, os_numero: null,
     }]);
     setModalAddItem(modalAddItemFechado);
   };
@@ -1032,7 +1057,7 @@ export default function ChecklistCargaRetorno() {
 
     const novos: Omit<ChecklistItem, 'id' | 'ordem'>[] = [{
       secao: principal.secao, equipamento_id: principal.equipamentoId, descricao: principal.descricao,
-      qtd_prevista: principal.qtd, saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null, extra: principal.extra,
+      qtd_prevista: principal.qtd, saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null, extra: principal.extra, os_numero: null,
     }];
 
     if (incluirAcessorios) {
@@ -1045,7 +1070,7 @@ export default function ChecklistCargaRetorno() {
           qtd_prevista: a.qtd,
           // Acessório de um item extra também nasce marcado como extra (ex: cabo/suporte
           // das 3 TVs a mais também não fazem parte do pedido original).
-          saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null, extra: principal.extra,
+          saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null, extra: principal.extra, os_numero: null,
         });
       });
     }
@@ -1083,9 +1108,19 @@ export default function ChecklistCargaRetorno() {
       return;
     }
 
-    // Itens já presentes no checklist não vêm pré-marcados, pra evitar duplicar
-    // ao importar mais de uma vez.
-    const descricoesAtuais = new Set(itens.map(i => i.descricao.trim().toUpperCase()));
+    // Itens já presentes no checklist não vêm pré-marcados, pra evitar
+    // reimportar a MESMA OS de novo — mas a checagem é por descrição + Nº da
+    // OS (não só descrição): duas OS's diferentes do mesmo evento podem
+    // pedir o mesmo material (ex.: "TV 55" em duas OS's distintas), e cada
+    // uma é uma necessidade separada, não duplicata uma da outra. Um item
+    // existente sem OS conhecida (adicionado manualmente, ou do modelo
+    // padrão) nunca marca "já existe" pra um item importado — texto igual
+    // por coincidência não é o mesmo pedido.
+    const chavesAtuais = new Set<string>();
+    itens.forEach(i => {
+      const desc = i.descricao.trim().toUpperCase();
+      (i.os_numero || '').split(',').map(s => s.trim()).filter(Boolean).forEach(os => chavesAtuais.add(`${desc}::${os}`));
+    });
     const linhas: ItemImportadoOS[] = [];
 
     (data || []).forEach((ficha: { numero: string; cliente: string | null; itens: string | null }) => {
@@ -1094,15 +1129,21 @@ export default function ChecklistCargaRetorno() {
         const { qtd, descricao } = parseLinhaItemOS(linhaBruta);
         if (!descricao) return;
         const descricaoUpper = up(descricao);
+        // Categoria já "aprendida" de uma importação anterior deste mesmo
+        // texto de item — se existir, vem pré-selecionada em vez de cair em
+        // DIVERSOS por padrão. Se a categoria aprendida foi excluída do
+        // catálogo depois, o mapa não tem mais essa entrada e cai no padrão.
+        const categoriaAprendida = categoriaAprendidaPorDescricao[descricaoUpper];
+        const chave = `${descricaoUpper}::${ficha.numero}`;
         linhas.push({
           key: `${ficha.numero}-${idx}`,
           ficha_numero: ficha.numero,
           ficha_cliente: ficha.cliente || '',
           descricao: descricaoUpper,
           qtd,
-          categoriaId: '',
-          selecionado: !descricoesAtuais.has(descricaoUpper),
-          jaExiste: descricoesAtuais.has(descricaoUpper),
+          categoriaId: categoriaAprendida && categorias.some(c => c.id === categoriaAprendida) ? categoriaAprendida : '',
+          selecionado: !chavesAtuais.has(chave),
+          jaExiste: chavesAtuais.has(chave),
         });
       });
     });
@@ -1197,8 +1238,8 @@ export default function ChecklistCargaRetorno() {
   // no modo Individual, um item por linha de OS selecionada.
   const confirmarImportarOS = () => {
     const selecionados = modoConsolidadoOS
-      ? itensConsolidadosOS.filter(c => c.selecionado).map(c => ({ descricao: c.descricao, qtd: c.qtdSomada, categoriaId: c.categoriaId }))
-      : itensImportadosOS.filter(i => i.selecionado && i.descricao.trim()).map(i => ({ descricao: i.descricao.trim(), qtd: i.qtd, categoriaId: i.categoriaId }));
+      ? itensConsolidadosOS.filter(c => c.selecionado).map(c => ({ descricao: c.descricao, qtd: c.qtdSomada, categoriaId: c.categoriaId, osNumero: c.osNumeros.join(', ') }))
+      : itensImportadosOS.filter(i => i.selecionado && i.descricao.trim()).map(i => ({ descricao: i.descricao.trim(), qtd: i.qtd, categoriaId: i.categoriaId, osNumero: i.ficha_numero }));
 
     if (selecionados.length === 0) { setModalImportarOS(false); return; }
 
@@ -1214,6 +1255,7 @@ export default function ChecklistCargaRetorno() {
         descricao: i.descricao,
         qtd_prevista: i.qtd,
         saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null, extra: false,
+        os_numero: i.osNumero || null,
       };
     });
 
@@ -1224,6 +1266,34 @@ export default function ChecklistCargaRetorno() {
       setor: 'OPERACIONAL',
       equipamento_nome: `${gerarNumeroExibicao(checklistAtual.numero)} — ${checklistAtual.evento_feira || checklistAtual.cliente || ''}`,
     });
+
+    // "Ensina" o sistema: toda descrição que saiu desta importação com uma
+    // categoria escolhida (pré-preenchida ou trocada manualmente) atualiza
+    // checklist_item_categoria_aprendida, pra próxima importação com o mesmo
+    // texto já vir com a categoria certa. Silencioso e não bloqueia a tela —
+    // se falhar, a importação em si já está feita, só a "memória" não pega.
+    // Dedup por descrição: no modo Individual, a mesma descrição pode
+    // aparecer em mais de uma linha desta leva (mesmo item pedido em OS's
+    // diferentes) — mandar duas linhas com a mesma chave no mesmo upsert
+    // faz o Postgres recusar com "ON CONFLICT DO UPDATE command cannot
+    // affect row a second time". Fica só a última escolha pra cada texto.
+    const aprendizadosPorDescricao = new Map<string, string>();
+    selecionados.filter(i => i.categoriaId).forEach(i => {
+      aprendizadosPorDescricao.set(i.descricao.trim().toUpperCase(), i.categoriaId);
+    });
+    const aprendizados = Array.from(aprendizadosPorDescricao.entries()).map(([descricao, categoria_id]) => ({
+      descricao, categoria_id, atualizado_em: new Date().toISOString(),
+    }));
+    if (aprendizados.length > 0) {
+      supabase.from('checklist_item_categoria_aprendida').upsert(aprendizados, { onConflict: 'descricao' })
+        .then(({ error }) => { if (error) console.error('Falha ao salvar categoria aprendida:', error.message); });
+      setCategoriaAprendidaPorDescricao(prev => {
+        const novo = { ...prev };
+        aprendizados.forEach(a => { novo[a.descricao] = a.categoria_id; });
+        return novo;
+      });
+    }
+
     setModalImportarOS(false);
     setItensImportadosOS([]);
   };
@@ -1312,6 +1382,7 @@ export default function ChecklistCargaRetorno() {
         id: i.id, checklist_id: checklistAtual.id, ordem: i.ordem, secao: i.secao,
         equipamento_id: i.equipamento_id, descricao: i.descricao, qtd_prevista: i.qtd_prevista || null,
         saida_ok: i.saida_ok, saida_qtd: i.saida_qtd, retorno_ok: i.retorno_ok, retorno_qtd: i.retorno_qtd, extra: i.extra,
+        os_numero: i.os_numero || null,
       }));
       const { error } = await supabase.from('checklist_itens').upsert(payload, { onConflict: 'id' });
       if (error) {
@@ -1326,6 +1397,7 @@ export default function ChecklistCargaRetorno() {
         checklist_id: checklistAtual.id, ordem: i.ordem, secao: i.secao,
         equipamento_id: i.equipamento_id, descricao: i.descricao, qtd_prevista: i.qtd_prevista || null,
         saida_ok: i.saida_ok, saida_qtd: i.saida_qtd, retorno_ok: i.retorno_ok, retorno_qtd: i.retorno_qtd, extra: i.extra,
+        os_numero: i.os_numero || null,
       }));
       const { error } = await supabase.from('checklist_itens').insert(payload);
       if (error) {
@@ -1779,9 +1851,11 @@ export default function ChecklistCargaRetorno() {
                             <button onClick={() => abrirChecklist(c.id)} className="bg-blue-50 text-[#336699] hover:bg-blue-100 border border-blue-200 font-bold text-[10px] uppercase px-3 py-1.5 rounded transition-colors">
                               📂 Abrir
                             </button>
-                            <button onClick={() => excluirChecklist(c)} className="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 font-bold text-[10px] uppercase px-3 py-1.5 rounded transition-colors">
-                              🗑️
-                            </button>
+                            {c.status !== 'FINALIZADO' && (
+                              <button onClick={() => excluirChecklist(c)} className="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 font-bold text-[10px] uppercase px-3 py-1.5 rounded transition-colors">
+                                🗑️
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))
@@ -2062,6 +2136,7 @@ export default function ChecklistCargaRetorno() {
                         <div key={item.id} className={`p-3 space-y-2.5 ${item.extra ? 'bg-amber-50' : ''}`}>
                           <div className="flex items-start gap-2">
                             <input type="text" className="flex-1 min-w-0 bg-transparent outline-none font-semibold uppercase text-sm" value={item.descricao} onChange={e => atualizarItem(item.id, { descricao: up(e.target.value) })} />
+                            {item.os_numero && <span className="flex-shrink-0 bg-blue-100 text-blue-700 text-[9px] font-black uppercase px-1.5 py-0.5 rounded" title="OS de origem">OS {item.os_numero}</span>}
                             {item.extra && <span className="flex-shrink-0 bg-amber-400 text-amber-900 text-[9px] font-black uppercase px-1.5 py-0.5 rounded">Extra</span>}
                             <button onClick={() => removerItem(item)} className="flex-shrink-0 text-red-500 hover:bg-red-50 rounded px-2 py-1 text-xs font-black">✕</button>
                           </div>
@@ -2109,6 +2184,7 @@ export default function ChecklistCargaRetorno() {
                             <td className="p-2">
                               <div className="flex items-center gap-1.5">
                                 <input type="text" className="flex-1 min-w-0 bg-transparent outline-none font-semibold print:font-normal uppercase" value={item.descricao} onChange={e => atualizarItem(item.id, { descricao: up(e.target.value) })} />
+                                {item.os_numero && <span className="flex-shrink-0 bg-blue-100 text-blue-700 text-[9px] font-black uppercase px-1.5 py-0.5 rounded print:bg-white print:border print:border-black" title="OS de origem">OS {item.os_numero}</span>}
                                 {item.extra && <span className="flex-shrink-0 bg-amber-400 text-amber-900 text-[9px] font-black uppercase px-1.5 py-0.5 rounded">Extra</span>}
                               </div>
                             </td>

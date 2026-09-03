@@ -334,8 +334,10 @@ export default function PainelEstoque() {
     
     // Normaliza ID: minúsculo e sem espaços (ex: "painel led" -> "painel_led")
     const idNormalizado = novaCategoria.id.trim().toLowerCase().replace(/\s+/g, '_');
-    
-    const { error } = await supabase.from('categorias').insert([{ id: idNormalizado, nome: novaCategoria.nome }]);
+    // Nome sempre em maiúsculo, pra padronizar a escrita no banco.
+    const nomeNormalizado = novaCategoria.nome.trim().toUpperCase();
+
+    const { error } = await supabase.from('categorias').insert([{ id: idNormalizado, nome: nomeNormalizado }]);
     if (error) {
       toast(`Erro: ${error.message}`, 'error');
     } else {
@@ -343,7 +345,7 @@ export default function PainelEstoque() {
         usuario_nome: usuarioAtual,
         acao: 'CRIOU CATEGORIA',
         setor: 'ESTOQUE',
-        equipamento_nome: novaCategoria.nome,
+        equipamento_nome: nomeNormalizado,
       });
       setNovaCategoria({ id: '', nome: '' });
       carregarDados();
@@ -358,13 +360,16 @@ export default function PainelEstoque() {
   const confirmarEdicaoCategoria = async () => {
     if (!editandoCategoriaId || !editandoCategoriaNome) return;
 
-    const { error } = await supabase.from('categorias').update({ nome: editandoCategoriaNome }).eq('id', editandoCategoriaId);
+    // Nome sempre em maiúsculo, pra padronizar a escrita no banco.
+    const nomeNormalizado = editandoCategoriaNome.trim().toUpperCase();
+
+    const { error } = await supabase.from('categorias').update({ nome: nomeNormalizado }).eq('id', editandoCategoriaId);
     if (!error) {
       registrarLogAuditoria({
         usuario_nome: usuarioAtual,
         acao: 'EDITOU CATEGORIA',
         setor: 'ESTOQUE',
-        equipamento_nome: editandoCategoriaNome,
+        equipamento_nome: nomeNormalizado,
       });
       setEditandoCategoriaId(null);
       carregarDados();
@@ -1050,7 +1055,7 @@ export default function PainelEstoque() {
                     placeholder="Nome de Exibição (ex: Painéis de LED)" 
                     className="w-full flex-grow p-2.5 border border-[#CBD5E1] rounded-lg outline-none focus:border-[#336699] text-xs font-semibold"
                     value={novaCategoria.nome}
-                    onChange={(e) => setNovaCategoria({ ...novaCategoria, nome: e.target.value })}
+                    onChange={(e) => setNovaCategoria({ ...novaCategoria, nome: e.target.value.toUpperCase() })}
                   />
                   <button 
                     onClick={salvarNovaCategoria}
@@ -1073,7 +1078,7 @@ export default function PainelEstoque() {
                           type="text" 
                           className="flex-grow p-2 border border-[#336699] rounded outline-none text-xs font-bold"
                           value={editandoCategoriaNome}
-                          onChange={(e) => setEditandoCategoriaNome(e.target.value)}
+                          onChange={(e) => setEditandoCategoriaNome(e.target.value.toUpperCase())}
                           autoFocus
                         />
                         <button onClick={confirmarEdicaoCategoria} className="bg-[#336699] text-white px-3 rounded text-xs font-bold">OK</button>

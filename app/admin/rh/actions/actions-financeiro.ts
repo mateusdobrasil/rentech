@@ -772,16 +772,21 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
     // pagador.conta é a conta + dígito verificador CONCATENADOS numa string
     // só (confirmado na Especificação Técnica) — não em campos separados.
     const [contaBase, dacBase] = String(cfg.conta_debito || '').split('-');
+    // A Especificação Técnica só lista "Fornecedores"/"Diversos" como domínio
+    // válido de ENTRADA para o POST /transferencias — ajustável via
+    // config.modulo_sispag se o Itaú orientar diferente pro cadastro. Testes
+    // empíricos (2026-08-27) mostraram que o Itaú reclassifica pra "CONTAS"
+    // no eco da resposta independente do que mandamos aqui — mas mantemos
+    // esse valor consistente entre pagador e recebedor pra não confundir um
+    // teste com o outro.
+    const moduloSispag: 'Fornecedores' | 'Diversos' = cfg.modulo_sispag === 'Diversos' ? 'Diversos' : 'Fornecedores';
     const pagador: PagadorSispag = {
       tipo_conta: 'CC',
       agencia: limpaNum(cfg.agencia_debito),
       conta: limpaNum(contaBase) + limpaNum(dacBase || ''),
       tipo_pessoa: 'J',
       documento: limpaNum(cfg.cnpj),
-      // A Especificação Técnica só lista "Fornecedores" como domínio válido
-      // de ENTRADA para o POST /transferencias — ajustável via
-      // config.modulo_sispag se o Itaú orientar diferente pro cadastro.
-      modulo_sispag: cfg.modulo_sispag === 'Diversos' ? 'Diversos' : 'Fornecedores',
+      modulo_sispag: moduloSispag,
     };
 
     const itens: any[] = Array.isArray(lote.itens) ? lote.itens : [];
@@ -850,9 +855,10 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
           pagador,
           // Teste empírico (2026-08-27, pedido do usuário): o eco da resposta
           // do Itaú mostra pagador.modulo_sispag="CONTAS" mesmo mandando
-          // "Fornecedores" — não documentado no schema oficial do recebedor,
-          // mas mandado mesmo assim pra ver se muda a reclassificação.
-          recebedor: { modulo_sispag: 'Fornecedores' },
+          // "Fornecedores"/"Diversos" — não documentado no schema oficial do
+          // recebedor, mas mandado mesmo assim (igual ao pagador) pra ver se
+          // muda a reclassificação.
+          recebedor: { modulo_sispag: moduloSispag },
         });
       } else if (item.banco_codigo && item.banco_agencia && item.banco_conta) {
         const ispb = ispbPorCompe(item.banco_codigo);
@@ -873,7 +879,7 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
           identificacao_recebedor: String(item.cpf || '').replace(/\D/g, ''),
           referencia_empresa, identificacao_comprovante, informacoes_entre_usuarios,
           pagador,
-          recebedor: { modulo_sispag: 'Fornecedores' },
+          recebedor: { modulo_sispag: moduloSispag },
         });
       } else {
         item.api_status = 'Erro'; item.api_erro = 'Sem chave PIX nem conta bancária cadastrada.'; item.api_enviado_em = new Date().toISOString();

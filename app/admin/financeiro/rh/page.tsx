@@ -376,6 +376,13 @@ export default function FinanceiroPage() {
       ? { ...i, pronto: i.metodo !== 'SEM_DADOS' && i.valor > 0 ? !i.pronto : false } : i));
   };
 
+  // Marca/desmarca todas as linhas de uma vez — respeita a mesma regra do
+  // toggle individual: linhas sem dados bancários ou sem valor nunca ficam
+  // "pronto", mesmo em "Marcar Todos".
+  const marcarTodos = (marcar: boolean) => {
+    setItens(prev => prev.map(i => ({ ...i, pronto: (i.metodo !== 'SEM_DADOS' && i.valor > 0) ? marcar : false })));
+  };
+
   const parseBRL = (texto: string): number => {
     const limpo = texto.replace(/[^\d,.-]/g, '').replace(/\.(?=\d{3})/g, '').replace(',', '.');
     return Number(limpo) || 0;
@@ -1097,6 +1104,15 @@ export default function FinanceiroPage() {
                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Total do lote</p>
                 <p className="text-2xl font-black text-[#0C1D4D]">{BRL(totalSelecionado)}</p>
               </div>
+            </div>
+
+            <div className="flex justify-end gap-2 mb-3">
+              <button onClick={() => marcarTodos(true)} className="text-[10px] font-black uppercase tracking-wider bg-[#E0F2FE] text-[#0369A1] border border-[#BAE6FD] px-4 py-2 rounded-lg hover:bg-[#BAE6FD] transition-colors">
+                ✓ Marcar Todos
+              </button>
+              <button onClick={() => marcarTodos(false)} className="text-[10px] font-black uppercase tracking-wider bg-gray-100 text-gray-600 border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors">
+                ✕ Desmarcar Todos
+              </button>
             </div>
 
             <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden mb-6">

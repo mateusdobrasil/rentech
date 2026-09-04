@@ -369,6 +369,12 @@ export interface ResultadoTransferenciaSispag {
   respostaBruta?: any;
 }
 
+// TESTADO E DESCARTADO (2026-09-04): o exemplo que o suporte do Itaú mandou
+// usava agencia/documento/ispb/agencia_recebedor/identificacao_recebedor
+// como número JSON sem aspas, contrariando o schema oficial (que declara
+// todos como type:"string"). Testamos exatamente isso e a API devolveu
+// HTTP 500 — confirma que o schema está certo, esses campos precisam ser
+// string mesmo.
 // Inclui uma transferência Pix por chave (DICT) no SISPAG. Não cobre QR
 // Code — não é usado hoje pela folha da empresa. Pix por dados bancários
 // (agência+conta) é enviarPixPorDadosBancarios, logo abaixo.

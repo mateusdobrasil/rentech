@@ -831,6 +831,15 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
       return digitos.length >= 12 ? `+${digitos}` : `+55${digitos}`;
     };
 
+    // TESTE EMPÍRICO (2026-09-04, sugestão do time técnico do Itaú): o
+    // schema oficial declara data_pagamento como format:"date" (só
+    // "yyyy-MM-dd", já confirmado antes) — mas o banco apontou um exemplo
+    // com datetime completo ("2022-03-21T15:03:56.000Z"). Testando esse
+    // formato mesmo achando pouco provável ser a causa do "CONTAS"/erro 870,
+    // já que é sugestão direta deles. Reverter: trocar de volta pra
+    // `data_pagamento: dataPagamentoItem` puro nos dois lugares abaixo.
+    const dataPagamentoParaEnvio = (dataYMD: string): string => `${dataYMD}T00:00:00.000Z`;
+
     let sucesso = 0, rejeitado = 0, comErro = 0;
     for (const item of pendentes) {
       const referencia_empresa = `FOLHA ${lote.mes_referencia}`.slice(0, 20);
@@ -846,10 +855,9 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
         resultado = await enviarPixPorChave({
           ambiente: ambienteItau,
           valor_pagamento: Number(item.valor || 0),
-          // Data pura "yyyy-MM-dd" — confirmado na Especificação Técnica
-          // (tamanho 10, exemplos sem horário). dataPagamento já vem nesse
-          // formato do <input type="date"> no front (ou de op.data_vencimento).
-          data_pagamento: dataPagamentoItem,
+          // Ver dataPagamentoParaEnvio acima — teste com datetime completo
+          // a pedido do Itaú, normalmente seria só "yyyy-MM-dd".
+          data_pagamento: dataPagamentoParaEnvio(dataPagamentoItem),
           chave: chavePixParaEnvio(item),
           referencia_empresa, identificacao_comprovante, informacoes_entre_usuarios,
           pagador,
@@ -864,7 +872,7 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
         resultado = await enviarPixPorDadosBancarios({
           ambiente: ambienteItau,
           valor_pagamento: Number(item.valor || 0),
-          data_pagamento: dataPagamentoItem,
+          data_pagamento: dataPagamentoParaEnvio(dataPagamentoItem),
           ispb,
           tipo_identificacao_conta: tipoContaSispag(item.banco_tipo),
           agencia_recebedor: String(item.banco_agencia).replace(/\D/g, ''),

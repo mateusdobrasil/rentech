@@ -333,19 +333,15 @@ export interface PagadorSispag {
   modulo_sispag: 'Fornecedores' | 'Diversos';
 }
 
-// O schema oficial do "recebedor" (Especificação Técnica) NÃO documenta um
-// campo modulo_sispag aqui — só existe documentado em "pagador". Incluído
-// mesmo assim a pedido do usuário (2026-08-27) como teste empírico: o eco
-// da resposta do Itaú mostra pagador.modulo_sispag="CONTAS" mesmo quando
-// mandamos "Fornecedores", então o banco parece reclassificar esse campo
-// do lado deles — testando se informar o mesmo valor também no recebedor
-// muda esse comportamento. Se a API ignorar/rejeitar, é sinal de que o
-// campo realmente não existe nesse objeto e a reclassificação é 100%
-// server-side, fora do nosso controle via payload.
-export interface RecebedorSispag {
-  modulo_sispag?: 'Fornecedores' | 'Diversos';
-}
-
+// TESTADO E DESCARTADO (2026-08-27 a 2026-09-04): chegamos a mandar
+// modulo_sispag também dentro de "recebedor" (campo não documentado no
+// schema oficial, que só declara isso em "pagador") pra ver se mudava a
+// reclassificação server-side pra "CONTAS" que o Itaú sempre devolve no eco
+// da resposta. Testado com "Fornecedores" e "Diversos" nos dois campos,
+// nas duas URLs de produção (padrão e a recomendada pelo suporte) — nenhum
+// efeito em nenhum caso, "CONTAS" sempre volta. Removido do payload por não
+// servir pra nada; a causa provável agora é outra (ver codigo_motivo "870"
+// / "ERRO NA CHAMADA AO SUB-PROGRAMA OI" observado em pagamentos rejeitados).
 export interface EnviarPixPorChaveParams {
   ambiente: AmbienteItau;
   valor_pagamento: number;
@@ -355,7 +351,6 @@ export interface EnviarPixPorChaveParams {
   identificacao_comprovante?: string;
   informacoes_entre_usuarios?: string;
   pagador: PagadorSispag;
-  recebedor?: RecebedorSispag;
 }
 
 export interface ResultadoTransferenciaSispag {
@@ -420,7 +415,6 @@ export interface EnviarPixPorDadosBancariosParams {
   identificacao_comprovante?: string;
   informacoes_entre_usuarios?: string;
   pagador: PagadorSispag;
-  recebedor?: RecebedorSispag;
 }
 
 // Inclui uma transferência Pix por dados bancários (agência+conta do

@@ -812,6 +812,20 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
     // cadastra "Conta Pagamento", por isso não há opção pra CP aqui.
     const tipoContaSispag = (bancoTipo: string | null): 'CC' | 'PP' => bancoTipo === 'POUPANCA' ? 'PP' : 'CC';
 
+    // Chave PIX tipo TELEFONE precisa estar no formato E.164 (+55DDDNUMERO)
+    // pro DICT/BACEN reconhecer — confirmado 2026-08-27: todo envio de chave
+    // telefone estava voltando "916 Chave não encontrada" porque o cadastro
+    // do funcionário (campo livre, sem máscara) guarda só os dígitos crus
+    // (ex.: "11940654025"), sem o "+55". CPF/e-mail/aleatória não têm esse
+    // problema — o valor cadastrado já é o formato que o DICT espera.
+    const chavePixParaEnvio = (item: any): string => {
+      const chave = String(item.pix_chave || '').trim();
+      if (item.pix_tipo !== 'TELEFONE' || chave.startsWith('+')) return chave;
+      const digitos = chave.replace(/\D/g, '');
+      // Já vem com código do país (55 + DDD + número = 12/13 dígitos)?
+      return digitos.length >= 12 ? `+${digitos}` : `+55${digitos}`;
+    };
+
     let sucesso = 0, rejeitado = 0, comErro = 0;
     for (const item of pendentes) {
       const referencia_empresa = `FOLHA ${lote.mes_referencia}`.slice(0, 20);
@@ -831,7 +845,7 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
           // (tamanho 10, exemplos sem horário). dataPagamento já vem nesse
           // formato do <input type="date"> no front (ou de op.data_vencimento).
           data_pagamento: dataPagamentoItem,
-          chave: item.pix_chave,
+          chave: chavePixParaEnvio(item),
           referencia_empresa, identificacao_comprovante, informacoes_entre_usuarios,
           pagador,
           // Teste empírico (2026-08-27, pedido do usuário): o eco da resposta

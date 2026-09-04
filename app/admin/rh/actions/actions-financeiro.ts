@@ -831,15 +831,11 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
       return digitos.length >= 12 ? `+${digitos}` : `+55${digitos}`;
     };
 
-    // TESTE EMPÍRICO (2026-09-04, sugestão do time técnico do Itaú): o
-    // schema oficial declara data_pagamento como format:"date" (só
-    // "yyyy-MM-dd", já confirmado antes) — mas o banco apontou um exemplo
-    // com datetime completo ("2022-03-21T15:03:56.000Z"). Testando esse
-    // formato mesmo achando pouco provável ser a causa do "CONTAS"/erro 870,
-    // já que é sugestão direta deles. Reverter: trocar de volta pra
-    // `data_pagamento: dataPagamentoItem` puro nos dois lugares abaixo.
-    const dataPagamentoParaEnvio = (dataYMD: string): string => `${dataYMD}T00:00:00.000Z`;
-
+    // TESTADO E DESCARTADO (2026-09-04): mandamos data_pagamento como
+    // datetime completo ("yyyy-MM-ddT00:00:00.000Z"), sugestão do time
+    // técnico do Itaú — a API devolveu HTTP 500 "Erro de Processamento
+    // Interno". Confirma o schema oficial (format:"date", só "yyyy-MM-dd"),
+    // que é o que dataPagamentoItem já vem formatado do front.
     let sucesso = 0, rejeitado = 0, comErro = 0;
     for (const item of pendentes) {
       const referencia_empresa = `FOLHA ${lote.mes_referencia}`.slice(0, 20);
@@ -855,9 +851,9 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
         resultado = await enviarPixPorChave({
           ambiente: ambienteItau,
           valor_pagamento: Number(item.valor || 0),
-          // Ver dataPagamentoParaEnvio acima — teste com datetime completo
-          // a pedido do Itaú, normalmente seria só "yyyy-MM-dd".
-          data_pagamento: dataPagamentoParaEnvio(dataPagamentoItem),
+          // Data pura "yyyy-MM-dd" — confirmado na Especificação Técnica
+          // (format:"date") e por teste real (datetime completo deu 500).
+          data_pagamento: dataPagamentoItem,
           chave: chavePixParaEnvio(item),
           referencia_empresa, identificacao_comprovante, informacoes_entre_usuarios,
           pagador,
@@ -872,7 +868,7 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
         resultado = await enviarPixPorDadosBancarios({
           ambiente: ambienteItau,
           valor_pagamento: Number(item.valor || 0),
-          data_pagamento: dataPagamentoParaEnvio(dataPagamentoItem),
+          data_pagamento: dataPagamentoItem,
           ispb,
           tipo_identificacao_conta: tipoContaSispag(item.banco_tipo),
           agencia_recebedor: String(item.banco_agencia).replace(/\D/g, ''),

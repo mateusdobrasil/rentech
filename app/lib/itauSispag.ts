@@ -59,6 +59,16 @@ const BASE_URL: Record<AmbienteItau, string> = {
   PRODUCAO: 'https://api.itau.com.br/sispag/v1',
 };
 
+// URL alternativa, recomendada pelo próprio suporte do Itaú (2026-09-04),
+// específica pro POST /transferencias em produção. NÃO usar pra GET
+// /pagamentos_sispag — testamos empiricamente e essa URL devolve "ERRO NA
+// CHAMADA AO SUB-PROGRAMA OI" pra toda consulta, mesmo pra pagamentos que
+// existem de verdade (confirmados via a URL de BASE_URL acima). Já
+// confirmamos que o envio por essa URL cai no mesmo backend real de sempre
+// (mesmo numero_lote sequencial, mesmo dinheiro) — só a leitura que está
+// quebrada nela.
+const BASE_URL_TRANSFERENCIAS_PRODUCAO = 'https://api.gateway.itau.com.br/sispag/v1';
+
 // mTLS só é exigido em produção — testado empiricamente que o sandbox acima
 // aceita chamadas de negócio sem certificado nenhum.
 const AMBIENTES_QUE_EXIGEM_CERTIFICADO: AmbienteItau[] = ['PRODUCAO'];
@@ -232,7 +242,16 @@ async function chamarApi(
     throw new Error(`Certificado cliente (mTLS) não configurado no servidor para o ambiente ${ambiente} — faltam ITAU_API_CERT_PEM_BASE64_${ambiente} e/ou ITAU_API_CERT_KEY_BASE64_${ambiente}. Veja solicitarCertificadoItau().`);
   }
   const token = await obterToken(ambiente);
-  const url = new URL(BASE_URL[ambiente] + path);
+  // POST /transferencias em produção usa a URL recomendada pelo Itaú
+  // especificamente pra esse endpoint (ver BASE_URL_TRANSFERENCIAS_PRODUCAO)
+  // — todo o resto (GET /pagamentos_sispag, sandbox inteiro) continua na
+  // BASE_URL de sempre, já validada. Override opcional via
+  // ITAU_API_BASE_URL_${ambiente} pra testar outra URL geral sem mexer no
+  // código, mesmo padrão do ITAU_API_TOKEN_URL.
+  const baseUrl = (path === '/transferencias' && ambiente === 'PRODUCAO')
+    ? BASE_URL_TRANSFERENCIAS_PRODUCAO
+    : (process.env[`ITAU_API_BASE_URL_${ambiente}`] || BASE_URL[ambiente]);
+  const url = new URL(baseUrl + path);
   if (init.query) {
     for (const [k, v] of Object.entries(init.query)) if (v !== undefined && v !== '') url.searchParams.set(k, v);
   }

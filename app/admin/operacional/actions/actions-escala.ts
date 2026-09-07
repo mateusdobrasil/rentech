@@ -52,6 +52,73 @@ async function autorizarEmpresa(accessToken: string, empresaId: number) {
   return { ok: true as const, perfil: acesso.perfil };
 }
 
+// "Folga autorizada" pra checagem na escala: não é uma tabela nova — junta 3
+// fontes que já existem no sistema, cada uma com sua própria tela de
+// aprovação (Férias e Afastamentos em /admin/rh/ferias-afastamentos, Folga
+// via WhatsApp/abono manual em /admin/rh/ponto e /admin/operacional/registro-ponto).
+// Só lê período/data já autorizado, não duplica cadastro. Abonos com
+// origem='AFASTAMENTO' ficam de fora aqui porque já vêm cobertos pela
+// consulta em folha_afastamentos (mesmo período, evitaria linha duplicada).
+interface FolgaItem { tipo: 'FERIAS' | 'AFASTAMENTO' | 'FOLGA'; label: string; data_inicio: string; data_fim: string; detalhe: string | null; }
+
+const LABEL_ORIGEM_ABONO: Record<string, string> = { WHATSAPP: 'Folga', MANUAL_RH: 'Abono (RH)', CSV_PONTOMAIS: 'Abono (Pontomais)' };
+
+export async function listarFolgasAction(params: { empresaId: number }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizarEmpresa(accessToken, params.empresaId);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+
+  const db = supabaseAdmin();
+  try {
+    const hoje = new Date().toISOString().slice(0, 10);
+
+    const [feriasRes, afastamentosRes, abonosRes, tiposRes] = await Promise.all([
+      db.from('folha_ferias').select('funcionario_nome, data_inicio_gozo, data_fim_gozo')
+        .eq('empresa_id', params.empresaId).eq('status', 'AGENDADA').gte('data_fim_gozo', hoje),
+      db.from('folha_afastamentos').select('funcionario_nome, data_inicio, data_fim, tipo_id')
+        .eq('empresa_id', params.empresaId).eq('status', 'ATIVO'),
+      db.from('folha_ponto_abono').select('funcionario_nome, data_abono, origem, motivo')
+        .eq('empresa_id', params.empresaId).eq('dia_todo', true).neq('origem', 'AFASTAMENTO').gte('data_abono', hoje),
+      db.from('folha_afastamento_tipos').select('id, nome'),
+    ]);
+    if (feriasRes.error) throw feriasRes.error;
+    if (afastamentosRes.error) throw afastamentosRes.error;
+    if (abonosRes.error) throw abonosRes.error;
+
+    const tipoAfastamentoPorId = new Map((tiposRes.data || []).map(t => [t.id, t.nome as string]));
+
+    const porFuncionario = new Map<string, FolgaItem[]>();
+    const add = (nome: string, item: FolgaItem) => porFuncionario.set(nome, [...(porFuncionario.get(nome) || []), item]);
+
+    (feriasRes.data || []).forEach(f => add(f.funcionario_nome, {
+      tipo: 'FERIAS', label: 'Férias', data_inicio: f.data_inicio_gozo, data_fim: f.data_fim_gozo, detalhe: null,
+    }));
+
+    // data_fim null = afastamento em aberto (sem previsão de volta) — trata
+    // como "vale até muito longe" pra sempre acusar conflito na escala,
+    // mas filtra fora quem já passou da data (status ATIVO é gravado na
+    // hora e não se atualiza sozinho com o tempo).
+    (afastamentosRes.data || [])
+      .filter(a => !a.data_fim || a.data_fim >= hoje)
+      .forEach(a => add(a.funcionario_nome, {
+        tipo: 'AFASTAMENTO', label: 'Afastamento', data_inicio: a.data_inicio, data_fim: a.data_fim || '9999-12-31',
+        detalhe: tipoAfastamentoPorId.get(a.tipo_id) || null,
+      }));
+
+    (abonosRes.data || []).forEach(a => add(a.funcionario_nome, {
+      tipo: 'FOLGA', label: LABEL_ORIGEM_ABONO[a.origem as string] || 'Folga', data_inicio: a.data_abono, data_fim: a.data_abono,
+      detalhe: a.motivo || null,
+    }));
+
+    const folgas = Array.from(porFuncionario.entries())
+      .map(([funcionario_nome, itens]) => ({ funcionario_nome, itens: itens.sort((x, y) => x.data_inicio.localeCompare(y.data_inicio)) }))
+      .sort((a, b) => a.funcionario_nome.localeCompare(b.funcionario_nome));
+
+    return { ok: true, info: { folgas } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
 export async function listarLocaisAction(params: { empresaId: number }, accessToken: string): Promise<Resultado> {
   const auth = await autorizarEmpresa(accessToken, params.empresaId);
   if (!auth.ok) return { ok: false, erro: auth.erro };

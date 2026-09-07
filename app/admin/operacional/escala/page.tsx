@@ -18,13 +18,13 @@ import {
   listarLocaisAction, criarLocalAction, listarEscalaDiaAction, salvarAlocacaoAction,
   removerAlocacaoAction, copiarEscalaAction, notificarColaboradoresAction,
   listarContextoLocaisDiaAction, salvarContextoLocalAction, removerLocalDiaAction,
-  listarDiasComEscalaAction, listarTiposAction, criarTipoAction,
+  listarDiasComEscalaAction, listarTiposAction, criarTipoAction, listarFolgasAction,
 } from '../actions/actions-escala';
 import { gerarImagemEscala } from './gerarImagemEscala';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { HubErro } from '../../../components/ui/HubStates';
-import { useToast, usePrompt } from '../../../components/ui/NotificationProvider';
+import { useToast, usePrompt, useConfirm } from '../../../components/ui/NotificationProvider';
 import logoColorido from '../../../imgs/logo.png';
 
 interface Empresa { id: number; nome: string; }
@@ -43,6 +43,8 @@ interface ContextoLocalDia {
   vai_para_local_id: string | null; vai_para_local_nome: string | null;
 }
 type CampoContexto = 'horario_padrao' | 'evento' | 'responsavel';
+interface FolgaItem { tipo: 'FERIAS' | 'AFASTAMENTO' | 'FOLGA'; label: string; data_inicio: string; data_fim: string; detalhe: string | null; }
+interface FolgaFuncionario { funcionario_nome: string; itens: FolgaItem[]; }
 
 const hojeStr = () => new Date().toISOString().slice(0, 10);
 const diaAnterior = (d: string) => {
@@ -390,10 +392,70 @@ function CalendarioEscalasMontadas({
   );
 }
 
+const BADGE_TIPO_FOLGA: Record<FolgaItem['tipo'], string> = {
+  FERIAS: 'bg-blue-50 text-blue-700 border-blue-200',
+  AFASTAMENTO: 'bg-amber-50 text-amber-700 border-amber-200',
+  FOLGA: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+};
+
+// Não é cadastro novo — só reúne o que já está autorizado em 3 telas
+// diferentes (Férias e Afastamentos em /admin/rh/ferias-afastamentos, Folga
+// via WhatsApp/abono manual em /admin/rh/ponto), pra dar visibilidade de
+// quem já tem dia de folga marcado sem precisar abrir cada módulo. É essa
+// mesma lista (via listarFolgasAction) que alimenta o aviso ao tentar
+// escalar alguém com folga.
+function FolgaPorFuncionario({ folgas, carregando }: { folgas: FolgaFuncionario[]; carregando: boolean }) {
+  const fmt = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString('pt-BR');
+  // '9999-12-31' é o sentinela de "afastamento sem previsão de volta" (ver
+  // listarFolgasAction) — mostra como "em aberto" em vez da data literal.
+  const fmtFim = (d: string) => d === '9999-12-31' ? 'em aberto' : fmt(d);
+
+  if (carregando) {
+    return <div className="text-center py-16 text-gray-400 font-bold uppercase text-sm">Carregando folgas...</div>;
+  }
+  if (folgas.length === 0) {
+    return (
+      <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-8 text-center">
+        <p className="text-gray-400 font-bold uppercase text-sm">Nenhuma folga autorizada encontrada.</p>
+        <p className="text-[11px] text-gray-400 mt-2">
+          Aparecem aqui férias agendadas, afastamentos ativos e folgas aprovadas (WhatsApp ou abono manual do RH),
+          a partir de hoje.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-4 md:p-6">
+      <p className="text-[11px] text-gray-400 mb-4">
+        Vem de Férias e Afastamentos + Folga/Abono aprovados — não cadastra nada aqui, só mostra o que já foi
+        autorizado. Ao montar a escala, colocar alguém dessa lista num dia dentro do período avisa antes de confirmar.
+      </p>
+      <div className="space-y-4">
+        {folgas.map(f => (
+          <div key={f.funcionario_nome} className="border border-[#E2E8F0] rounded-xl p-3">
+            <h3 className="text-sm font-black text-[#0C1D4D] mb-2">{f.funcionario_nome}</h3>
+            <div className="flex flex-wrap gap-2">
+              {f.itens.map((item, i) => (
+                <span key={i} className={`text-[11px] font-bold border rounded-full px-3 py-1 ${BADGE_TIPO_FOLGA[item.tipo]}`}>
+                  {item.label}{item.detalhe ? ` · ${item.detalhe}` : ''}
+                  {' — '}
+                  {item.data_inicio === item.data_fim ? fmt(item.data_inicio) : `${fmt(item.data_inicio)} a ${fmtFim(item.data_fim)}`}
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function EscalaPage() {
   const router = useRouter();
   const toast = useToast();
   const prompt = usePrompt();
+  const confirm = useConfirm();
   const { usuarioAtual, permissaoBruta, authLoading, acessoNegado, erro, tentarNovamente, accessToken } =
     usePageAccess({ nomeFallback: 'Coordenador' });
 
@@ -404,7 +466,9 @@ export default function EscalaPage() {
   const [tiposCatalogo, setTiposCatalogo] = useState<TipoEscala[]>([]);
   const [departamento, setDepartamento] = useState('');
   const [data, setData] = useState(hojeStr());
-  const [aba, setAba] = useState<'montar' | 'calendario'>('montar');
+  const [aba, setAba] = useState<'montar' | 'calendario' | 'folgas'>('montar');
+  const [folgas, setFolgas] = useState<FolgaFuncionario[]>([]);
+  const [carregandoFolgas, setCarregandoFolgas] = useState(false);
   const [mesCalendario, setMesCalendario] = useState(() => {
     const hoje = new Date();
     return { ano: hoje.getFullYear(), mes: hoje.getMonth() + 1 };
@@ -489,6 +553,29 @@ export default function EscalaPage() {
     const res = await listarLocaisAction({ empresaId }, accessToken);
     if (res.ok) setLocais(res.info.locais);
   }, [empresaId, accessToken]);
+
+  // Folgas autorizadas (Férias, Afastamentos, Folga/abono dia todo) — não é
+  // por dia, é a lista inteira de períodos futuros da empresa, carregada uma
+  // vez por empresa selecionada. A checagem de "essa pessoa tem folga NESSE
+  // dia da escala" é feita no cliente (folgaNaData), sem round-trip extra a
+  // cada tentativa de alocar.
+  const carregarFolgas = useCallback(async () => {
+    if (!empresaId) return;
+    setCarregandoFolgas(true);
+    const res = await listarFolgasAction({ empresaId }, accessToken);
+    if (res.ok) setFolgas(res.info.folgas);
+    setCarregandoFolgas(false);
+  }, [empresaId, accessToken]);
+
+  useEffect(() => { carregarFolgas(); }, [carregarFolgas]);
+
+  const folgasPorFuncionario = useMemo(() => new Map(folgas.map(f => [f.funcionario_nome, f.itens])), [folgas]);
+
+  const folgaNaData = useCallback((nome: string, dataAlvo: string): FolgaItem | null => {
+    const itens = folgasPorFuncionario.get(nome);
+    if (!itens) return null;
+    return itens.find(it => dataAlvo >= it.data_inicio && dataAlvo <= it.data_fim) || null;
+  }, [folgasPorFuncionario]);
 
   const carregarEscala = useCallback(async () => {
     if (!empresaId) return;
@@ -685,10 +772,29 @@ export default function EscalaPage() {
 
   const handleDragStart = (event: DragStartEvent) => { setActiveId(String(event.active.id)); setSelecionados(new Set()); };
 
+  // Antes de colocar alguém NOVO na escala (pool → local), avisa se a pessoa
+  // já tem folga autorizada nesse dia (Férias/Afastamento/Folga aprovada —
+  // ver listarFolgasAction) e deixa o coordenador decidir se coloca mesmo
+  // assim. Não bloqueia sozinho: é aviso, não trava — pode ser um engano no
+  // cadastro da folga, ou o coordenador pode saber de algo que o sistema não sabe.
+  const verificarFolgaAntesDeAlocar = useCallback(async (nome: string) => {
+    const folga = folgaNaData(nome, data);
+    if (!folga) return true;
+    const fmt = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString('pt-BR');
+    const fmtFim = (d: string) => d === '9999-12-31' ? 'em aberto' : fmt(d);
+    const periodo = folga.data_inicio === folga.data_fim ? fmt(folga.data_inicio) : `${fmt(folga.data_inicio)} a ${fmtFim(folga.data_fim)}`;
+    return confirm({
+      title: '⚠️ Colaborador com folga autorizada',
+      message: `${nome} tem ${folga.label}${folga.detalhe ? ` (${folga.detalhe})` : ''} autorizada em ${periodo}, incluindo esse dia.\n\nColocar na escala mesmo assim?`,
+      confirmLabel: 'Colocar mesmo assim', cancelLabel: 'Cancelar', danger: true,
+    });
+  }, [folgaNaData, data, confirm]);
+
   // Núcleo compartilhado entre arrastar (handleDragEnd) e tocar (handleTocarDestino)
   // — as duas interações levam ao mesmo destino, só mudam como o usuário chega lá.
   const alocarPoolNoLocal = useCallback(async (nome: string, localId: string) => {
     if (!empresaId) return;
+    if (!(await verificarFolgaAntesDeAlocar(nome))) return;
     const local = locais.find(l => l.id === localId);
     if (!local) return;
     const funcionario = funcionarios.find(f => f.nome_completo === nome);
@@ -702,7 +808,7 @@ export default function EscalaPage() {
     }, accessToken);
     if (!res.ok) { toast('Erro ao alocar: ' + res.erro, 'error'); return; }
     setAlocacoes(prev => [...prev, res.info.alocacao]);
-  }, [empresaId, locais, funcionarios, contextos, alocacoesPorLocal, data, departamento, usuarioAtual, accessToken, toast]);
+  }, [empresaId, locais, funcionarios, contextos, alocacoesPorLocal, data, departamento, usuarioAtual, accessToken, toast, verificarFolgaAntesDeAlocar]);
 
   const removerTurnoParaPool = useCallback(async (alocacaoId: string) => {
     if (!empresaId) return;
@@ -778,14 +884,19 @@ export default function EscalaPage() {
     if (selecionados.size === 0) return;
     const ids = Array.from(selecionados);
     setSelecionados(new Set());
-    await Promise.all(ids.map(id => {
+    // Sequencial, não Promise.all: alocarPoolNoLocal pode abrir um confirm()
+    // de folga por pessoa, e o modal de confirmação é único na tela — dois
+    // ao mesmo tempo colidiriam (o segundo sobrescreveria o primeiro antes
+    // do coordenador responder).
+    for (const id of ids) {
       if (id.startsWith('pool:')) {
-        if (destino === 'pool') return undefined;
-        return alocarPoolNoLocal(id.slice('pool:'.length), destino);
+        if (destino !== 'pool') await alocarPoolNoLocal(id.slice('pool:'.length), destino);
+        continue;
       }
       const alocacaoId = id.slice('turno:'.length);
-      return destino === 'pool' ? removerTurnoParaPool(alocacaoId) : moverTurnoParaLocal(alocacaoId, destino);
-    }));
+      if (destino === 'pool') await removerTurnoParaPool(alocacaoId);
+      else await moverTurnoParaLocal(alocacaoId, destino);
+    }
   };
 
   const nomeFromDragId = useCallback((id: string) => {
@@ -987,6 +1098,12 @@ export default function EscalaPage() {
           >
             📅 Escalas Montadas
           </button>
+          <button
+            onClick={() => setAba('folgas')} disabled={!empresaId}
+            className={`px-4 py-2.5 rounded-lg text-xs font-black uppercase tracking-wider transition-colors disabled:opacity-40 ${aba === 'folgas' ? 'bg-[#0C1D4D] text-white' : 'bg-white text-gray-500 border border-[#E2E8F0] hover:bg-[#F8FAFC]'}`}
+          >
+            🌴 Folga por Funcionário
+          </button>
         </div>
 
         {aba === 'calendario' ? (
@@ -997,6 +1114,12 @@ export default function EscalaPage() {
               data={data} mesAno={mesCalendario} diasComEscala={diasComEscala}
               onSelecionarDia={selecionarDiaCalendario} onMudarMes={(ano, mes) => setMesCalendario({ ano, mes })}
             />
+          )
+        ) : aba === 'folgas' ? (
+          !empresaId ? (
+            <div className="text-center py-16 text-gray-400 font-bold uppercase text-sm">Selecione uma empresa para ver as folgas.</div>
+          ) : (
+            <FolgaPorFuncionario folgas={folgas} carregando={carregandoFolgas} />
           )
         ) : (
           <>

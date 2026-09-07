@@ -7,7 +7,7 @@ import { HubLoading, HubPerfilNaoLocalizado, HubErro } from '../../components/ui
 import HubBackButton from '../../components/ui/HubBackButton';
 
 // Lista de módulos do hub. As permissões de cada um NÃO ficam aqui — vêm da
-// tabela folha_paginas_permissoes (gerida em /admin/permissoes), buscadas
+// tabela parametros_paginas_permissoes (gerida em /admin/permissoes), buscadas
 // pelo campo "link" (= endereco_route). Isso mantém o hub sempre em
 // sincronia com o que a própria página de destino já exige para entrar.
 const modulosComercial = [

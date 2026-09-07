@@ -8,7 +8,7 @@ import { normalizarPermissao } from '../../lib/permissoes';
 interface UsePageAccessOptions {
   /** Nome exibido quando o perfil não tem `nome` preenchido. Default: 'Usuário'. */
   nomeFallback?: string;
-  /** Rota usada para consultar `folha_paginas_permissoes`. Default: a rota atual (usePathname()) — só precisa ser passado em rotas dinâmicas (ex.: `/admin/x/[id]`). */
+  /** Rota usada para consultar `parametros_paginas_permissoes`. Default: a rota atual (usePathname()) — só precisa ser passado em rotas dinâmicas (ex.: `/admin/x/[id]`). */
   rota?: string;
   /** Executado (e aguardado) depois que o acesso é liberado, antes de soltar `authLoading`. Só necessário quando a página precisa garantir que outro carregamento termine antes de renderizar (ver rh/holerite). */
   aoAutorizar?: () => unknown;
@@ -58,7 +58,7 @@ export function usePageAccess(options: UsePageAccessOptions = {}) {
       }
 
       const { data: rotaPermissao, error: rotaError } = await supabase
-        .from('folha_paginas_permissoes').select('permissoes_permitidas').eq('endereco_route', rotaEfetiva).single();
+        .from('parametros_paginas_permissoes').select('permissoes_permitidas').eq('endereco_route', rotaEfetiva).single();
 
       if (rotaError && rotaError.code !== 'PGRST116') {
         console.error("Erro ao buscar permissão da rota:", rotaError);

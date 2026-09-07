@@ -21,7 +21,7 @@ export async function listarIntegracoesAction(accessToken: string): Promise<Resu
 
   const db = supabaseAdmin();
   try {
-    const { data, error } = await db.from('folha_integracoes').select('*').order('tipo');
+    const { data, error } = await db.from('parametros_integracoes').select('*').order('tipo');
     if (error) throw new Error(error.message);
 
     // Integração sem empresa (null) é compartilhada por todo o grupo (ex.:
@@ -214,7 +214,7 @@ export async function obterRoteamentoWhatsAppAction(accessToken: string): Promis
   const db = supabaseAdmin();
   try {
     const { data, error } = await db
-      .from('folha_integracoes')
+      .from('parametros_integracoes')
       .select('config')
       .eq('parceiro', 'WHATSAPP_ROTEAMENTO')
       .maybeSingle();
@@ -231,7 +231,7 @@ export async function salvarRoteamentoWhatsAppAction(config: ConfigRoteamentoWha
 
   const db = supabaseAdmin();
   try {
-    const { error } = await db.from('folha_integracoes').update({
+    const { error } = await db.from('parametros_integracoes').update({
       config, atualizado_em: new Date().toISOString()
     }).eq('parceiro', 'WHATSAPP_ROTEAMENTO');
     if (error) throw new Error(error.message);
@@ -281,7 +281,7 @@ export async function enviarTesteTemplateWhatsAppAction(templateNome: string, id
 
 // Quantas automações de Agendamentos e Disparos usam o canal WhatsApp hoje,
 // para dar uma ideia de uso real da integração no card. Serve tanto para o
-// card da Z-API quanto para o da Meta — o canal salvo em folha_automacoes
+// card da Z-API quanto para o da Meta — o canal salvo em parametros_automacoes
 // é genérico ("WhatsApp"), não por provedor.
 export async function estatisticasZapiAction(accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
@@ -290,7 +290,7 @@ export async function estatisticasZapiAction(accessToken: string): Promise<Resul
   const db = supabaseAdmin();
   try {
     const { data, error } = await db
-      .from('folha_automacoes')
+      .from('parametros_automacoes')
       .select('ativo, canais, ultima_execucao')
       .contains('canais', ['WhatsApp']);
     if (error) throw new Error(error.message);
@@ -327,7 +327,7 @@ export async function salvarIntegracaoAction(payload: {
 
   const db = supabaseAdmin();
   try {
-    const { error } = await db.from('folha_integracoes').update({
+    const { error } = await db.from('parametros_integracoes').update({
       ativo: payload.ativo, ambiente: payload.ambiente, config: payload.config || {},
       empresa_id: payload.empresaId ?? null,
       atualizado_em: new Date().toISOString()

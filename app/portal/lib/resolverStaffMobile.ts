@@ -3,7 +3,7 @@
 // resolverMotorista.ts (checklist de veículo): sem ramo PORTAL, porque
 // Checklist de Carga não tem equivalente a folha_funcionarios.pode_dirigir,
 // é sempre "equipe" (Frota/OPERACIONAL, mesma população que já usa o
-// Checklist de Veículo). Autoriza contra folha_paginas_permissoes (mesma
+// Checklist de Veículo). Autoriza contra parametros_paginas_permissoes (mesma
 // tabela que já controla acesso de rota no /admin) — nunca confia no gate
 // client-side (a aba escondida no app é só UI).
 import { supabaseAdmin } from '../../lib/supabase';

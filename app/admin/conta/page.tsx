@@ -8,7 +8,7 @@ import { registrarLogAuditoria } from '../../actions';
 import { Analytics } from "@vercel/analytics/next";
 
 // Página aberta a QUALQUER usuário autenticado — de propósito não checa
-// folha_paginas_permissoes (diferente das demais páginas do /admin). Um
+// parametros_paginas_permissoes (diferente das demais páginas do /admin). Um
 // usuário recém-criado, ainda sem nenhum módulo liberado, precisa conseguir
 // trocar a senha provisória mesmo assim.
 export default function MinhaConta() {

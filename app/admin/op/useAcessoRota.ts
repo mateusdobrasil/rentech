@@ -47,7 +47,7 @@ export function useAcessoRota(rota: string): AcessoRota {
 
       const [perfilRes, rotaRes] = await Promise.all([
         supabase.from('perfis_usuarios').select('*').eq('id', session.user.id).single(),
-        supabase.from('folha_paginas_permissoes').select('permissoes_permitidas').eq('endereco_route', rota).single(),
+        supabase.from('parametros_paginas_permissoes').select('permissoes_permitidas').eq('endereco_route', rota).single(),
       ]);
 
       if (!ativo) return;

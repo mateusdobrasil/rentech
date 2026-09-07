@@ -70,7 +70,7 @@ export default function Home() {
   useEffect(() => {
     const fetchConfig = async () => {
       try {
-        const { data, error } = await supabase.from('site_config').select('*').eq('id', 1).single();
+        const { data, error } = await supabase.from('parametros_site_config').select('*').eq('id', 1).single();
         if (data && !error) {
           setConfig(data);
         }

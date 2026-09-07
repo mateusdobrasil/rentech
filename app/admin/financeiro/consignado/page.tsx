@@ -35,10 +35,10 @@ export default function GestaoDeConsignado() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Três fontes possíveis para a mesma tabela: o retrato persistido em
-  // folha_consignados (padrão ao abrir a tela), consulta ao vivo via API
+  // financeiro_consignados (padrão ao abrir a tela), consulta ao vivo via API
   // (exige certificado digital, ainda não configurado) ou importação manual
   // do arquivo baixado no Portal Emprega Brasil (usável hoje). As duas
-  // últimas gravam em folha_consignados e disparam aviso de novo empréstimo.
+  // últimas gravam em financeiro_consignados e disparam aviso de novo empréstimo.
   const [fonte, setFonte] = useState<'BANCO' | 'API' | 'ARQUIVO'>('BANCO');
   const [competenciaArquivo, setCompetenciaArquivo] = useState<string | null>(null);
   const [nomeArquivoImportado, setNomeArquivoImportado] = useState<string | null>(null);
@@ -51,7 +51,7 @@ export default function GestaoDeConsignado() {
   });
 
   // Carga padrão ao abrir a tela: o último retrato gravado em
-  // folha_consignados (sem chamar API nem exigir arquivo nenhum).
+  // financeiro_consignados (sem chamar API nem exigir arquivo nenhum).
   const carregarPersistido = async () => {
     setLoading(true);
     setErro(null);

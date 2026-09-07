@@ -7,7 +7,7 @@ import ModuleGrid from '../components/ui/ModuleGrid';
 import { HubLoading, HubPerfilNaoLocalizado, HubErro } from '../components/ui/HubStates';
 
 // Estrutura dos módulos do sistema. As permissões de cada um NÃO ficam mais
-// aqui — vêm da tabela folha_paginas_permissoes (gerida em /admin/parametros/permissoes),
+// aqui — vêm da tabela parametros_paginas_permissoes (gerida em /admin/parametros/permissoes),
 // buscadas pelo campo "link" (= endereco_route). Isso mantém o hub sempre em
 // sincronia com o que a própria página de destino já exige para entrar.
 const MODULOS_SISTEMA = [

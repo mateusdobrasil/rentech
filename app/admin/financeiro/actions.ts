@@ -4,7 +4,7 @@
 // Agregações para o dashboard de Relatórios do hub Financeiro
 // (/admin/financeiro/relatorios) — consolida as três frentes que hoje vivem
 // sob este hub: Ordens de Pagamento (op_ordens_pagamento), Lotes de
-// Pagamento (folha_lotes_pagamento) e Crédito Consignado (folha_consignados).
+// Pagamento (financeiro_lotes_pagamento) e Crédito Consignado (financeiro_consignados).
 // Todo o cálculo acontece aqui (server-side) para a página só desenhar.
 import { supabaseAdmin } from '../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../lib/serverAuth';
@@ -142,7 +142,7 @@ export async function buscarRelatorioFinanceiroAction(payload: { mesReferencia: 
     // LOTES DE PAGAMENTO
     // ============================================================
     const { data: lotesRaw, error: lotesErr } = await db
-      .from('folha_lotes_pagamento')
+      .from('financeiro_lotes_pagamento')
       .select('mes_referencia, status, valor_total, qtd_pagamentos, criado_em, tipo_lote, nome_lote, empresa_id, itens')
       .order('criado_em', { ascending: false });
     if (lotesErr) throw new Error(lotesErr.message);
@@ -199,7 +199,7 @@ export async function buscarRelatorioFinanceiroAction(payload: { mesReferencia: 
     // mensal: cada contrato é uma linha viva, atualizada a cada importação).
     // ============================================================
     const [{ data: consignadosRaw, error: consErr }, { data: funcionariosRaw, error: funcErr }] = await Promise.all([
-      db.from('folha_consignados').select('cpf, instituicao_nome, valor_parcela, importado_em').eq('ativo', true),
+      db.from('financeiro_consignados').select('cpf, instituicao_nome, valor_parcela, importado_em').eq('ativo', true),
       db.from('folha_funcionarios').select('cpf, empresa_id, ativo')
     ]);
     if (consErr) throw new Error(consErr.message);

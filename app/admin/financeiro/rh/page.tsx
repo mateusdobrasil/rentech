@@ -153,7 +153,7 @@ export default function FinanceiroPage() {
   const [elegiveisContabilidade, setElegiveisContabilidade] = useState<{ nome_completo: string; tipo_contrato: string }[]>([]);
 
   // Aba "Retorno API Itaú" — consulta o que foi persistido em
-  // folha_lotes_pagamento.itens por enviarLoteAoBancoAction, item a item.
+  // financeiro_lotes_pagamento.itens por enviarLoteAoBancoAction, item a item.
   const [abaAtiva, setAbaAtiva] = useState<'lotes' | 'retorno_itau'>('lotes');
   const [loteRetornoId, setLoteRetornoId] = useState<number | null>(null);
   const [itensRetorno, setItensRetorno] = useState<ItemLote[]>([]);

@@ -12,7 +12,7 @@ import {
 //
 // Wrapper fino em cima das Server Actions que já existem pra Aprovações de
 // Ponto (app/admin/rh/actions/actions-ponto-whatsapp.ts) — elas mesmas já se
-// validam contra folha_paginas_permissoes, não precisa de resolvedor novo.
+// validam contra parametros_paginas_permissoes, não precisa de resolvedor novo.
 // Chamar uma Server Action a partir de uma Route Handler (código de
 // servidor chamando código de servidor) não cruza a fronteira que "use
 // server" protege — isso só importa pra client components.

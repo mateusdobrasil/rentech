@@ -30,7 +30,7 @@ import {
 const ROTA = '/admin/financeiro/consignado';
 
 // ============================================================================
-// CARREGAMENTO PADRÃO DA TELA — último retrato persistido em folha_consignados
+// CARREGAMENTO PADRÃO DA TELA — último retrato persistido em financeiro_consignados
 // ============================================================================
 export async function listarConsignadosPersistidosAction(accessToken: string): Promise<ResultadoConsignado> {
   const acesso = await validarAcesso(accessToken, ROTA);
@@ -42,7 +42,7 @@ export async function listarConsignadosPersistidosAction(accessToken: string): P
     const funcionarios = await buscarFuncionariosAtivos(empresasPermitidas);
 
     let q = db
-      .from('folha_consignados')
+      .from('financeiro_consignados')
       .select('*')
       .eq('ativo', true);
     if (empresasPermitidas) q = q.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);

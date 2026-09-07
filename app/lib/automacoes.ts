@@ -1,4 +1,4 @@
-// Disparo de WhatsApp para automações cadastradas em folha_automacoes (tela
+// Disparo de WhatsApp para automações cadastradas em parametros_automacoes (tela
 // Agendamentos e Disparos). Antes de enviar, respeita o "disjuntor" (`ativo`),
 // o canal, a lista de `destinatarios` (vazio = todos os funcionários ativos
 // com celular; com nomes = só eles) e usa o template salvo em `mensagem`,
@@ -67,7 +67,7 @@ interface LinhaAutomacaoWhatsApp {
 
 const CAMPOS_AUTOMACAO_WHATSAPP = 'chave, ativo, canais, destinatarios, mensagem, provedor_whatsapp, meta_template_nome, meta_template_idioma, meta_template_variaveis, publico_dinamico, empresa_id';
 
-// Dispara uma linha de folha_automacoes já carregada — reaproveitado tanto
+// Dispara uma linha de parametros_automacoes já carregada — reaproveitado tanto
 // pelo disparo por `chave` (motor de Cron, que já sabe a chave exata) quanto
 // pelo disparo por `evento_sistema` (que pode casar 0, 1 ou várias linhas).
 async function executarDisparoWhatsApp(db: ReturnType<typeof supabaseAdmin>, automacao: LinhaAutomacaoWhatsApp, contexto: Record<string, string | number>): Promise<ResultadoDisparoAutomacao> {
@@ -129,12 +129,12 @@ async function executarDisparoWhatsApp(db: ReturnType<typeof supabaseAdmin>, aut
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
 
-  await db.from('folha_automacoes').update({ ultima_execucao: new Date().toISOString() }).eq('chave', automacao.chave);
+  await db.from('parametros_automacoes').update({ ultima_execucao: new Date().toISOString() }).eq('chave', automacao.chave);
 
   // Log agregado desta execução, usado pelos contadores "Enviados este mês"
   // na tela Agendamentos e Disparos.
   if (disparos > 0) {
-    await db.from('folha_automacoes_envios').insert({ chave: automacao.chave, canal: 'WhatsApp', quantidade: disparos });
+    await db.from('parametros_automacoes_envios').insert({ chave: automacao.chave, canal: 'WhatsApp', quantidade: disparos });
   }
 
   return { disparado: true, disparos, erros };
@@ -147,7 +147,7 @@ export async function dispararAutomacaoWhatsApp(chave: string, contexto: Record<
   const db = supabaseAdmin();
 
   const { data: automacao } = await db
-    .from('folha_automacoes')
+    .from('parametros_automacoes')
     .select(CAMPOS_AUTOMACAO_WHATSAPP)
     .eq('chave', chave)
     .maybeSingle();
@@ -164,7 +164,7 @@ export async function dispararAutomacoesPorEventoWhatsApp(eventoSistema: string,
   const db = supabaseAdmin();
 
   const { data: automacoes } = await db
-    .from('folha_automacoes')
+    .from('parametros_automacoes')
     .select(CAMPOS_AUTOMACAO_WHATSAPP)
     .eq('tipo', 'WEBHOOK')
     .eq('evento_sistema', eventoSistema)
@@ -246,16 +246,16 @@ async function executarDisparoEmail(db: ReturnType<typeof supabaseAdmin>, automa
     }
   }
 
-  await db.from('folha_automacoes').update({ ultima_execucao: new Date().toISOString() }).eq('chave', automacao.chave);
+  await db.from('parametros_automacoes').update({ ultima_execucao: new Date().toISOString() }).eq('chave', automacao.chave);
   if (disparos > 0) {
-    await db.from('folha_automacoes_envios').insert({ chave: automacao.chave, canal: 'E-mail', quantidade: disparos });
+    await db.from('parametros_automacoes_envios').insert({ chave: automacao.chave, canal: 'E-mail', quantidade: disparos });
   }
 
   return { disparado: true, disparos, erros };
 }
 
 // Irmã de dispararAutomacaoWhatsApp para o canal "E-mail" — o checkbox de
-// E-mail já existia na tela Agendamentos e Disparos, mas nada em folha_automacoes
+// E-mail já existia na tela Agendamentos e Disparos, mas nada em parametros_automacoes
 // de fato disparava e-mail (só o WhatsApp). Mesma leitura de configuração
 // (ativo/canais/destinatarios/mensagem), mesmo `contexto`/placeholders, único
 // canal muda: usa `folha_funcionarios.email` em vez de `celular`, e envia via
@@ -268,7 +268,7 @@ export async function dispararAutomacaoEmail(chave: string, contexto: Record<str
   const db = supabaseAdmin();
 
   const { data: automacao } = await db
-    .from('folha_automacoes')
+    .from('parametros_automacoes')
     .select(CAMPOS_AUTOMACAO_EMAIL)
     .eq('chave', chave)
     .maybeSingle();
@@ -283,7 +283,7 @@ export async function dispararAutomacoesPorEventoEmail(eventoSistema: string, co
   const db = supabaseAdmin();
 
   const { data: automacoes } = await db
-    .from('folha_automacoes')
+    .from('parametros_automacoes')
     .select(CAMPOS_AUTOMACAO_EMAIL)
     .eq('tipo', 'WEBHOOK')
     .eq('evento_sistema', eventoSistema)

@@ -83,7 +83,7 @@ export default function GestaoConteudo() {
 
   // 2. Carregar dados do banco
   const carregarConfiguracoes = async () => {
-    const { data, error } = await supabase.from('site_config').select('*').eq('id', 1).single();
+    const { data, error } = await supabase.from('parametros_site_config').select('*').eq('id', 1).single();
     if (data && !error) {
       setConfig(prev => ({ ...prev, ...data }));
     }
@@ -133,7 +133,7 @@ export default function GestaoConteudo() {
   // 4. Salvar alterações textuais e caminhos de imagem
   const salvarConfiguracoes = async () => {
     setLoading(true);
-    const { error } = await supabase.from('site_config').upsert({ ...config, id: 1 });
+    const { error } = await supabase.from('parametros_site_config').upsert({ ...config, id: 1 });
     
     if (error) {
       setDialog({ open: true, title: 'Erro de Conexão', msg: error.message, isError: true });

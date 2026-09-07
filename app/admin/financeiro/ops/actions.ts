@@ -57,7 +57,7 @@ export async function conciliarOpsComContasPagarAction(accessToken: string): Pro
     const contas: { descricao: string | null }[] = [];
     for (let offset = 0; ; offset += TAMANHO_PAGINA) {
       const { data: lote, error: erroContas } = await db
-        .from('contas_pagar')
+        .from('financeiro_contas_pagar')
         .select('descricao')
         .eq('quitado', true)
         .not('descricao', 'is', null)

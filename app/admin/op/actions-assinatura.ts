@@ -38,7 +38,7 @@ async function validarAcesso(accessToken: string) {
 // ============================================================================
 // LISTAR — todas as OPs + o registro de controle de assinatura de cada uma
 // (quando existir). A visibilidade é "ver todas": esta tela é restrita pela
-// própria permissão de rota (folha_paginas_permissoes), como o painel
+// própria permissão de rota (parametros_paginas_permissoes), como o painel
 // equivalente do RH.
 // ============================================================================
 export async function listarAssinaturasOPAction(payload: { accessToken: string }): Promise<Resultado> {

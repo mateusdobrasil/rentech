@@ -2,7 +2,7 @@
 
 // app/admin/ExigirMFA.tsx
 // Camada extra de proteção usada pelo app/admin/layout.tsx para TODAS as
-// páginas do admin — o layout consulta folha_paginas_permissoes.requer_2fa
+// páginas do admin — o layout consulta parametros_paginas_permissoes.requer_2fa
 // para a rota atual (configurável em /admin/parametros/permissoes, aba
 // "Permissão 2FA") e repassa aqui via prop `ativo`. Exige 2FA (TOTP) do
 // Supabase Auth além do login + permissão de rota que já protegem as demais

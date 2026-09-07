@@ -5,7 +5,7 @@
 // (2º fator, já que CPF sozinho não é segredo) -> definição de senha -> conta
 // criada em auth.users + vínculo em portal_funcionarios_auth.
 //
-// Identidade do portal é mantida SEPARADA de perfis_usuarios/folha_paginas_permissoes
+// Identidade do portal é mantida SEPARADA de perfis_usuarios/parametros_paginas_permissoes
 // (sistema de permissões do admin) de propósito: um bug aqui nunca deve virar
 // acesso administrativo.
 import crypto from 'crypto';
@@ -46,14 +46,14 @@ interface ConfigAutomacaoOtp {
 // ============================================================================
 // ENVIO DO CÓDIGO — configuração (provedor Z-API/Meta + Template de Autenticação
 // da Meta, quando aprovado) vem do card "Portal Acesso OTP" em
-// /admin/agendamentos (tabela folha_automacoes), igual a qualquer outra
+// /admin/agendamentos (tabela parametros_automacoes), igual a qualquer outra
 // automação de WhatsApp do sistema. Sem o card criado ainda, cai no padrão
 // (provedor PADRAO + mensagem de texto livre abaixo) — nada quebra.
 // ============================================================================
 async function enviarCodigoAcessoWhatsApp(celular: string, codigo: string): Promise<{ ok: boolean; erro?: string }> {
   const db = supabaseAdmin();
   const { data: automacao } = await db
-    .from('folha_automacoes')
+    .from('parametros_automacoes')
     .select('ativo, mensagem, provedor_whatsapp, meta_template_nome, meta_template_idioma, meta_template_variaveis')
     .eq('chave', CHAVE_AUTOMACAO_OTP)
     .maybeSingle<ConfigAutomacaoOtp>();

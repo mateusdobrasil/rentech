@@ -8,7 +8,7 @@
 // O app mobile tem duas identidades possíveis (ver mobile/context/AuthContext.tsx):
 // conta de equipe (perfis_usuarios, cargo normalizado) ou conta de colaborador
 // via Portal (portal_funcionarios_auth, CPF). Quem de STAFF pode usar a aba
-// Frota é decidido em folha_paginas_permissoes (rota virtual '/mobile/frota',
+// Frota é decidido em parametros_paginas_permissoes (rota virtual '/mobile/frota',
 // gerida em /admin/parametros/permissoes → Páginas — mesma tabela que já
 // controla acesso de rota no /admin, ver possuiAcessoRota em serverAuth.ts),
 // não um array fixo aqui. Isso é só UI/servidor mobile — não existe RLS nesta

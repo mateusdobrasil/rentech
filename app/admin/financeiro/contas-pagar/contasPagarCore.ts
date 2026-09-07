@@ -146,7 +146,7 @@ export async function sincronizarContasPagarCore(opcoes: SincronizarContasPagarO
     let processados = 0;
     for (let i = 0; i < registros.length; i += TAMANHO_LOTE) {
       const lote = registros.slice(i, i + TAMANHO_LOTE);
-      const { error } = await db.from('contas_pagar').upsert(lote, { onConflict: 'p2s_oid' });
+      const { error } = await db.from('financeiro_contas_pagar').upsert(lote, { onConflict: 'p2s_oid' });
       if (error) throw new Error(error.message);
       processados += lote.length;
     }

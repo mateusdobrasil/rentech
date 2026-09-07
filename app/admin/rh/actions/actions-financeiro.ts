@@ -583,7 +583,7 @@ export async function salvarLoteAction(payload: {
     const empresasDoLote = new Set(prontos.map(i => i.empresa_id).filter((v): v is number => v != null));
     const empresaIdLote = empresasDoLote.size === 1 ? [...empresasDoLote][0] : null;
 
-    const { data, error } = await db.from('folha_lotes_pagamento').insert({
+    const { data, error } = await db.from('financeiro_lotes_pagamento').insert({
       parceiro: payload.parceiro,
       mes_referencia: payload.mesReferencia,
       tipo_lote: payload.tipoLote,
@@ -612,7 +612,7 @@ export async function listarLotesAction(payload: { mesReferencia?: string }, acc
     // Inclui "itens" só pra filtrar por empresa quando o lote não tem
     // empresa_id próprio (histórico anterior à coluna, ou lote misto) — nunca
     // vai pro cliente (removido no map final); a tela só usa as colunas de resumo.
-    let q = db.from('folha_lotes_pagamento')
+    let q = db.from('financeiro_lotes_pagamento')
       .select('id, parceiro, mes_referencia, tipo_lote, nome_lote, data_pagamento, empresa_id, qtd_pagamentos, valor_total, status, ativo, criado_por, criado_em, itens')
       .order('criado_em', { ascending: false });
     if (payload.mesReferencia) q = q.eq('mes_referencia', payload.mesReferencia);
@@ -651,7 +651,7 @@ export async function buscarLoteAction(payload: { loteId: number }, accessToken:
 
   const db = supabaseAdmin();
   try {
-    const { data, error } = await db.from('folha_lotes_pagamento')
+    const { data, error } = await db.from('financeiro_lotes_pagamento')
       .select('id, nome_lote, tipo_lote, mes_referencia, itens')
       .eq('id', payload.loteId).maybeSingle();
     if (error) throw new Error(error.message);
@@ -692,7 +692,7 @@ export async function alternarAtivoLoteAction(payload: {
 
   const db = supabaseAdmin();
   try {
-    const { data: lote, error: buscaErr } = await db.from('folha_lotes_pagamento')
+    const { data: lote, error: buscaErr } = await db.from('financeiro_lotes_pagamento')
       .select('nome_lote, tipo_lote, mes_referencia, itens').eq('id', payload.loteId).maybeSingle();
     if (buscaErr) throw new Error(buscaErr.message);
     if (!lote) return { ok: false, erro: 'Lote não encontrado.' };
@@ -709,7 +709,7 @@ export async function alternarAtivoLoteAction(payload: {
       }
     }
 
-    const { error } = await db.from('folha_lotes_pagamento').update({ ativo: payload.ativo }).eq('id', payload.loteId);
+    const { error } = await db.from('financeiro_lotes_pagamento').update({ ativo: payload.ativo }).eq('id', payload.loteId);
     if (error) throw new Error(error.message);
 
     await registrarLogAuditoria({
@@ -740,7 +740,7 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
 
   const db = supabaseAdmin();
   try {
-    const { data: lote, error: loteErr } = await db.from('folha_lotes_pagamento')
+    const { data: lote, error: loteErr } = await db.from('financeiro_lotes_pagamento')
       .select('id, parceiro, mes_referencia, tipo_lote, itens, status').eq('id', payload.loteId).maybeSingle();
     if (loteErr) throw new Error(loteErr.message);
     if (!lote) return { ok: false, erro: 'Lote não encontrado.' };
@@ -755,7 +755,7 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
       };
     }
 
-    const { data: integ } = await db.from('folha_integracoes')
+    const { data: integ } = await db.from('parametros_integracoes')
       .select('ativo, ambiente, config, empresa_id').eq('parceiro', 'ITAU').maybeSingle();
     if (!integ?.ativo) {
       return { ok: false, erro: 'A integração com o Itaú ainda não está ativa. Ative em Integrações → ⚙ Configurar antes de enviar. O lote está salvo e pode ser exportado.' };
@@ -839,7 +839,7 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
     // A idempotência por api_status só protege entre execuções sequenciais.
     // O update condicional abaixo é atômico no Postgres: só uma execução
     // consegue marcar ENVIANDO, a outra recebe 0 linhas e para aqui.
-    const { data: travou, error: travaErr } = await db.from('folha_lotes_pagamento')
+    const { data: travou, error: travaErr } = await db.from('financeiro_lotes_pagamento')
       .update({ status: 'ENVIANDO' })
       .eq('id', payload.loteId).neq('status', 'ENVIANDO')
       .select('id');
@@ -992,13 +992,13 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
       // de verdade ao banco — grava o que já foi processado (senão o lote
       // ficaria dizendo "não enviado" com dinheiro já em trânsito) e libera a
       // trava, que senão deixaria o lote preso em ENVIANDO pra sempre.
-      await db.from('folha_lotes_pagamento')
+      await db.from('financeiro_lotes_pagamento')
         .update({ itens, status: sucesso > 0 ? 'ENVIADO' : 'ERRO' }).eq('id', payload.loteId);
       throw erroLoop;
     }
 
     const novoStatus = sucesso > 0 ? 'ENVIADO' : 'ERRO';
-    const { error: updErr } = await db.from('folha_lotes_pagamento')
+    const { error: updErr } = await db.from('financeiro_lotes_pagamento')
       .update({ itens, status: novoStatus }).eq('id', payload.loteId);
     if (updErr) throw new Error(updErr.message);
 
@@ -1019,7 +1019,7 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
 }
 
 // ============================================================================
-// CONSULTAR STATUS ATUAL NO ITAÚ — o api_status salvo em folha_lotes_pagamento
+// CONSULTAR STATUS ATUAL NO ITAÚ — o api_status salvo em financeiro_lotes_pagamento
 // fica congelado no momento do envio (ex.: "Sucesso" só significa "aceito
 // pela API", não "pago de fato"). Pagamentos SISPAG passam por aprovação
 // manual no Itaú Empresas antes de serem efetivados, então o status real só
@@ -1054,7 +1054,7 @@ export async function consultarStatusAtualItauAction(payload: { idPagamentoSispa
 // pagador.
 async function contextoEnvioItau(): Promise<{ ok: true; ambiente: 'SANDBOX' | 'PRODUCAO' } | { ok: false; erro: string }> {
   const db = supabaseAdmin();
-  const { data: integ } = await db.from('folha_integracoes')
+  const { data: integ } = await db.from('parametros_integracoes')
     .select('ativo, ambiente').eq('parceiro', 'ITAU').maybeSingle();
   if (!integ) return { ok: false, erro: 'Integração com o Itaú não encontrada (ver Integrações).' };
   if (!integ.ativo) return { ok: false, erro: 'A integração com o Itaú não está ativa (ver Integrações → ⚙ Configurar).' };
@@ -1095,7 +1095,7 @@ export async function reabrirItemParaReenvioAction(
     const ctx = await contextoEnvioItau();
     if (!ctx.ok) return { ok: false, erro: ctx.erro };
 
-    const { data: lote, error: loteErr } = await db.from('folha_lotes_pagamento')
+    const { data: lote, error: loteErr } = await db.from('financeiro_lotes_pagamento')
       .select('id, mes_referencia, itens, status').eq('id', payload.loteId).maybeSingle();
     if (loteErr) throw new Error(loteErr.message);
     if (!lote) return { ok: false, erro: 'Lote não encontrado.' };
@@ -1152,7 +1152,7 @@ export async function reabrirItemParaReenvioAction(
     }
 
     const aindaTemSucesso = itens.some(i => STATUS_PIX_SUCESSO.includes(i.api_status));
-    const { error: updErr } = await db.from('folha_lotes_pagamento')
+    const { error: updErr } = await db.from('financeiro_lotes_pagamento')
       .update({ itens, status: aindaTemSucesso ? lote.status : 'GERADO' })
       .eq('id', payload.loteId);
     if (updErr) throw new Error(updErr.message);

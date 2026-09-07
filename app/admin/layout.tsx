@@ -10,7 +10,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const router = useRouter();
   const pathname = usePathname();
   const [isAuthorized, setIsAuthorized] = useState(false);
-  // Exigência de 2FA por rota (folha_paginas_permissoes.requer_2fa, editável
+  // Exigência de 2FA por rota (parametros_paginas_permissoes.requer_2fa, editável
   // em /admin/parametros/permissoes → aba "Permissão 2FA"). Fica centralizado
   // aqui no layout para valer automaticamente em toda página nova do admin,
   // sem precisar instrumentar cada page.tsx individualmente.
@@ -88,7 +88,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       }
 
       const { data, error } = await supabase
-        .from('folha_paginas_permissoes')
+        .from('parametros_paginas_permissoes')
         .select('requer_2fa')
         .eq('endereco_route', pathname)
         .single();

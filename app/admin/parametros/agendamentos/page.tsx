@@ -16,7 +16,7 @@ import { useToast } from '../../../components/ui/NotificationProvider';
 import { supabase } from '../../../lib/supabase';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
-// Tipos de Automação (RotinaAutomacaoDB vem de ./actions, refletindo a tabela folha_automacoes)
+// Tipos de Automação (RotinaAutomacaoDB vem de ./actions, refletindo a tabela parametros_automacoes)
 
 export default function GestaoAgendamentos() {
   const router = useRouter();
@@ -63,7 +63,7 @@ export default function GestaoAgendamentos() {
   const [rotinas, setRotinas] = useState<RotinaAutomacaoDB[]>([]);
   const [rotinasLoading, setRotinasLoading] = useState(true);
 
-  // Carrega as automações reais da tabela folha_automacoes
+  // Carrega as automações reais da tabela parametros_automacoes
   const carregarRotinas = async () => {
     const res = await listarAutomacoesAction(accessToken);
     if (!res.ok) {
@@ -231,7 +231,7 @@ export default function GestaoAgendamentos() {
   };
 
   // Função para alternar o status da rotina (Ligar/Desligar).
-  // Atualiza otimisticamente e grava em folha_automacoes: é essa coluna `ativo`
+  // Atualiza otimisticamente e grava em parametros_automacoes: é essa coluna `ativo`
   // que o Cron consulta antes de disparar, então isto realmente liga/desliga o envio.
   const toggleStatus = async (id: number, ativoAtual: boolean) => {
     const novoStatus = !ativoAtual;
@@ -344,7 +344,7 @@ export default function GestaoAgendamentos() {
         ) : rotinasVisiveis.length === 0 ? (
           <div className="text-center py-16 text-sm text-gray-400 font-medium">
             {rotinas.length === 0
-              ? <>Nenhuma automação cadastrada em <code>folha_automacoes</code> ainda.</>
+              ? <>Nenhuma automação cadastrada em <code>parametros_automacoes</code> ainda.</>
               : 'Nenhuma automação para esta empresa.'}
           </div>
         ) : (

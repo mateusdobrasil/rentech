@@ -175,7 +175,7 @@ O sistema normaliza o texto de permissão cadastrado no perfil do usuário (tabe
 | `EDITOR` | "EDIT" |
 | `USUARIO` | qualquer coisa que não se encaixe acima (padrão) |
 
-A gestão de quem tem qual permissão é feita na tela **Permissões** (seção 7.3), que lê a tabela `setores_permissao` no Supabase.
+A gestão de quem tem qual permissão é feita na tela **Permissões** (seção 7.3), que lê a tabela `parametros_setores_permissao` no Supabase.
 
 ---
 
@@ -202,7 +202,7 @@ Acesso: `/admin` (requer login). O layout comum (`app/admin/layout.tsx`) confere
 `/admin/estoque` — cadastro e gestão de equipamentos (categorias e itens) da locadora.
 
 ### 7.3 Permissões de usuários
-`/admin/permissoes` — gestão de usuários, papéis e setores (tabela `setores_permissao`). É aqui que se define quem é ADMINISTRADOR, FINANCEIRO, OPERACIONAL etc.
+`/admin/permissoes` — gestão de usuários, papéis e setores (tabela `parametros_setores_permissao`). É aqui que se define quem é ADMINISTRADOR, FINANCEIRO, OPERACIONAL etc.
 
 ### 7.4 Log de auditoria
 `/admin/log` — visualizador do histórico de ações do sistema (tabela `logs_auditoria`): logins, acessos, disparos de automação, mudanças de status de OP, etc. Praticamente toda ação sensível do sistema grava um registro aqui via `registrarLogAuditoria`.
@@ -217,9 +217,9 @@ Acesso: `/admin` (requer login). O layout comum (`app/admin/layout.tsx`) confere
 `/admin/freelance` — revisão dos cadastros enviados pelo formulário público `/freelance`.
 
 ### 7.8 Integrações
-`/admin/integracao` — tela de status das integrações externas: cadastro de parceiros/bancos/assinatura eletrônica (tabela `folha_integracoes`), verificação se o token da Autentique está configurado (com estatísticas de uso) e status das conexões de WhatsApp (Z-API e Meta Cloud API, com estatísticas de envio). **Nunca expõe segredos**, apenas indicadores (configurado/não configurado, contadores).
+`/admin/integracao` — tela de status das integrações externas: cadastro de parceiros/bancos/assinatura eletrônica (tabela `parametros_integracoes`), verificação se o token da Autentique está configurado (com estatísticas de uso) e status das conexões de WhatsApp (Z-API e Meta Cloud API, com estatísticas de envio). **Nunca expõe segredos**, apenas indicadores (configurado/não configurado, contadores).
 
-**WhatsApp: Z-API vs Meta Cloud API.** O sistema suporta os dois provedores ao mesmo tempo, com um roteamento (linha `WHATSAPP_ROTEAMENTO` em `folha_integracoes`, lida/gravada por `obterRoteamentoWhatsAppAction`/`salvarRoteamentoWhatsAppAction` e aplicada por `resolverProvedor` em `app/lib/whatsapp.ts`) que decide qual API é usada em cada frente:
+**WhatsApp: Z-API vs Meta Cloud API.** O sistema suporta os dois provedores ao mesmo tempo, com um roteamento (linha `WHATSAPP_ROTEAMENTO` em `parametros_integracoes`, lida/gravada por `obterRoteamentoWhatsAppAction`/`salvarRoteamentoWhatsAppAction` e aplicada por `resolverProvedor` em `app/lib/whatsapp.ts`) que decide qual API é usada em cada frente:
 - **Envio** — mensagens dos nós de agendadores/lembretes (`app/lib/automacoes.ts`).
 - **Recebimento** — mensagens dos colaboradores/funcionários no fluxo de Ponto via WhatsApp; controla qual dos dois webhooks (`app/api/webhooks/zapi-ponto` ou `app/api/webhooks/meta-ponto`) efetivamente processa a conversa (o outro responde `ignorado: true` sem agir).
 - **Modo Global** — um único provedor vale para envio e recebimento; no modo Independente, cada um pode usar um provedor diferente.
@@ -232,16 +232,16 @@ Credenciais da Meta Cloud API (variáveis de ambiente, nunca lidas/gravadas pela
 
 **Texto livre vs Message Templates (HSM) na Meta.** A Meta só entrega mensagens de texto livre business-iniciado dentro de uma janela de 24h que abre quando o destinatário manda mensagem — fora dela, a API aceita a chamada (devolve um `wamid`) mas a mensagem nunca chega, e a falha só aparece depois via webhook de status (não na resposta síncrona). Isso afeta:
 - **Notificações de aprovação/rejeição de ponto** (`notificarPontoWhatsApp` em `app/lib/whatsapp.ts`, chamada por `aprovarSolicitacaoAction`/`rejeitarSolicitacaoAction` em `actions-ponto-whatsapp.ts`): resolvido — a tabela `folha_whatsapp_janela` guarda a última mensagem recebida por celular (atualizada a cada mensagem processada em `processarMensagemPontoWhatsApp`, dos dois webhooks); se a janela estiver aberta, manda texto livre; senão, usa um dos dois Message Templates cadastrados no Business Manager: `ponto_solicitacao_aprovada` (`"O RH aprovou {{1}} referente a {{2}}."`) e `ponto_solicitacao_rejeitada` (`"O RH não aprovou {{1}} referente a {{2}}. Motivo: {{3}}. Fale com o RH se tiver dúvidas."`), categoria Utility, idioma pt_BR.
-- **Automações de Agendamentos e Disparos** (`dispararAutomacaoWhatsApp` em `app/lib/automacoes.ts`): cada automação tem, opcionalmente, um Message Template mapeado (campos `meta_template_nome`/`meta_template_idioma`/`meta_template_variaveis` em `folha_automacoes`, editáveis na tela de Agendamentos e Disparos). Mesma lógica de janela: se aberta, texto livre; senão, o template configurado (se houver — sem template, tenta texto livre mesmo assim, melhor esforço). Templates mapeados hoje: `lembrete_ponto_entrada` (automação `lembrete-ponto`), `lembrete_ponto_saida` (`lembrete-ponto2`), `frota_documentos_vencidos` (`frota-vencimentos`), `documentos_vencidos_rh` (`documentos-vencidos`), todos categoria Utility usando só `{{primeiro_nome}}`; `aniversariante_dia` (automação "Aniversariante do Dia", categoria **Marketing** — exige opt-in do destinatário, ver nota abaixo) usando `{{1}}=primeiro_nome`; e `aniversariante_semana` (automação `aniversariantes-da-semana`) usando `{{1}}=lista` — todos idioma pt_BR.
+- **Automações de Agendamentos e Disparos** (`dispararAutomacaoWhatsApp` em `app/lib/automacoes.ts`): cada automação tem, opcionalmente, um Message Template mapeado (campos `meta_template_nome`/`meta_template_idioma`/`meta_template_variaveis` em `parametros_automacoes`, editáveis na tela de Agendamentos e Disparos). Mesma lógica de janela: se aberta, texto livre; senão, o template configurado (se houver — sem template, tenta texto livre mesmo assim, melhor esforço). Templates mapeados hoje: `lembrete_ponto_entrada` (automação `lembrete-ponto`), `lembrete_ponto_saida` (`lembrete-ponto2`), `frota_documentos_vencidos` (`frota-vencimentos`), `documentos_vencidos_rh` (`documentos-vencidos`), todos categoria Utility usando só `{{primeiro_nome}}`; `aniversariante_dia` (automação "Aniversariante do Dia", categoria **Marketing** — exige opt-in do destinatário, ver nota abaixo) usando `{{1}}=primeiro_nome`; e `aniversariante_semana` (automação `aniversariantes-da-semana`) usando `{{1}}=lista` — todos idioma pt_BR.
 
   **Status (28/07/2026): os 8 templates acima estão "Em análise" no Business Manager, nenhum aprovado ainda.** Enquanto isso, qualquer disparo fora da janela de 24h falha silenciosamente (erro só aparece em `erros` na resposta do `/api/cron/motor` ou via webhook de status) — assim que cada um for aprovado/rejeitado pela Meta, passa a valer normalmente sem precisar mudar código.
 
 **Provedor por automação.** Além do interruptor global (Envio/Recebimento/Global), cada automação pode fixar seu próprio provedor via o campo `provedor_whatsapp` (`'PADRAO' | 'ZAPI' | 'META'`, seletor na tela de Agendamentos e Disparos) — `'PADRAO'` segue o global (`resolverProvedor('ENVIO')`), os outros dois forçam aquele provedor específico só para essa automação, ignorando o global. Resolvido por `resolverProvedorAutomacao` em `app/lib/whatsapp.ts`; útil para testar/fixar uma automação num provedor sem afetar as demais.
 
-**Público dinâmico — Aniversariantes do dia.** Além dos destinatários fixos ("Todos os funcionários ativos" / lista selecionada), uma automação pode marcar o público "🎂 Aniversariantes do dia (funcionários)" (campo `publico_dinamico = 'ANIVERSARIANTES_FUNCIONARIOS'` em `folha_automacoes`). Nesse modo, `destinatarios` é ignorado e `dispararAutomacaoWhatsApp` (`app/lib/automacoes.ts`) recalcula a cada execução quem faz aniversário no dia, comparando mês/dia de `folha_funcionarios.data_nascimento` (ano ignorado) com a data atual em America/Sao_Paulo — só entram funcionários ativos com celular e data de nascimento cadastrados em RH → Funcionários. O restante do disparo (template, provedor, Message Template da Meta) funciona igual a qualquer outra automação. Como aniversário cai em qualquer dia da semana, configure `dias_semana` cobrindo os 7 dias.
+**Público dinâmico — Aniversariantes do dia.** Além dos destinatários fixos ("Todos os funcionários ativos" / lista selecionada), uma automação pode marcar o público "🎂 Aniversariantes do dia (funcionários)" (campo `publico_dinamico = 'ANIVERSARIANTES_FUNCIONARIOS'` em `parametros_automacoes`). Nesse modo, `destinatarios` é ignorado e `dispararAutomacaoWhatsApp` (`app/lib/automacoes.ts`) recalcula a cada execução quem faz aniversário no dia, comparando mês/dia de `folha_funcionarios.data_nascimento` (ano ignorado) com a data atual em America/Sao_Paulo — só entram funcionários ativos com celular e data de nascimento cadastrados em RH → Funcionários. O restante do disparo (template, provedor, Message Template da Meta) funciona igual a qualquer outra automação. Como aniversário cai em qualquer dia da semana, configure `dias_semana` cobrindo os 7 dias.
 
 ### 7.9 Agendamentos e disparos (automações WhatsApp)
-`/admin/agendamentos` — CRUD de automações de disparo de WhatsApp (tabela `folha_automacoes`), que podem ser do tipo:
+`/admin/agendamentos` — CRUD de automações de disparo de WhatsApp (tabela `parametros_automacoes`), que podem ser do tipo:
 - **CRON**: disparadas automaticamente em horário programado (verificado a cada 5 min pela rota `/api/cron/motor`, seção 8);
 - **WEBHOOK**: disparadas por evento.
 

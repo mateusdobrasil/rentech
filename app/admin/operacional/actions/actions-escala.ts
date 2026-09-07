@@ -10,7 +10,7 @@ import { resolverProvedor, enviarComJanela, type TemplateMeta } from '../../../l
 
 const ROTA = '/admin/operacional/escala';
 
-// Identificador da automação em folha_automacoes (ver
+// Identificador da automação em parametros_automacoes (ver
 // sql/agendamento_escala_notificacao.sql) — registrada lá só pra aparecer no
 // painel de /admin/parametros/agendamentos, contar nas estatísticas de envio
 // e virar um kill-switch real (campo `ativo`) do botão "Notificar
@@ -477,7 +477,7 @@ export async function notificarColaboradoresAction(params: { empresaId: number; 
   const db = supabaseAdmin();
   try {
     const { data: automacao } = await db
-      .from('folha_automacoes')
+      .from('parametros_automacoes')
       .select('ativo, canais, meta_template_nome, meta_template_idioma')
       .eq('chave', ESCALA_AUTOMACAO_CHAVE)
       .maybeSingle();
@@ -556,9 +556,9 @@ export async function notificarColaboradoresAction(params: { empresaId: number; 
     // alimenta o contador "WhatsApp Enviados este mês" e o "Última Execução"
     // do card em /admin/parametros/agendamentos.
     if (enviados > 0) {
-      await db.from('folha_automacoes_envios').insert({ chave: ESCALA_AUTOMACAO_CHAVE, canal: 'WhatsApp', quantidade: enviados });
+      await db.from('parametros_automacoes_envios').insert({ chave: ESCALA_AUTOMACAO_CHAVE, canal: 'WhatsApp', quantidade: enviados });
     }
-    await db.from('folha_automacoes').update({ ultima_execucao: new Date().toISOString() }).eq('chave', ESCALA_AUTOMACAO_CHAVE);
+    await db.from('parametros_automacoes').update({ ultima_execucao: new Date().toISOString() }).eq('chave', ESCALA_AUTOMACAO_CHAVE);
 
     return { ok: true, info: { enviados, semCelular, falhas, jaNotificados } };
   } catch (e: any) {

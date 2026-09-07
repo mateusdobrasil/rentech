@@ -33,7 +33,7 @@ export async function GET(request: Request) {
   const db = supabaseAdmin();
 
   const { data: card } = await db
-    .from('folha_automacoes')
+    .from('parametros_automacoes')
     .select('ativo')
     .eq('chave', CHAVE_CARD_CONTROLE)
     .maybeSingle();
@@ -60,7 +60,7 @@ export async function GET(request: Request) {
     }
   }
 
-  await db.from('folha_automacoes').update({ ultima_execucao: new Date().toISOString() }).eq('chave', CHAVE_CARD_CONTROLE);
+  await db.from('parametros_automacoes').update({ ultima_execucao: new Date().toISOString() }).eq('chave', CHAVE_CARD_CONTROLE);
 
   return NextResponse.json({ success: true, executado: true, resultados });
 }

@@ -67,7 +67,7 @@ export interface NovaOPData {
 // para chamá-las diretamente pulando toda a checagem de permissão que só
 // existia na tela (useEffect). Agora cada action abaixo recebe o access_token
 // da sessão Supabase do chamador e revalida, aqui no servidor, contra a mesma
-// tabela folha_paginas_permissoes que já controlava o acesso às páginas.
+// tabela parametros_paginas_permissoes que já controlava o acesso às páginas.
 // ============================================================================
 interface PerfilValidado {
   id: string;
@@ -110,7 +110,7 @@ export async function obterPerfilValidado(accessToken: string): Promise<PerfilVa
 
 export async function possuiAcessoRota(permissaoNormalizada: string, rota: string): Promise<boolean> {
   const { data } = await supabaseAdmin
-    .from('folha_paginas_permissoes')
+    .from('parametros_paginas_permissoes')
     .select('permissoes_permitidas')
     .eq('endereco_route', rota)
     .single();

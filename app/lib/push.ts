@@ -1,7 +1,7 @@
 // app/lib/push.ts
 // Envio de push notification do app mobile — espelha o padrão já existente
 // de notificarPontoWhatsApp/enviarWhatsApp (app/lib/whatsapp.ts): evento
-// direto do app, sempre liga, sem configuração em folha_automacoes (essa
+// direto do app, sempre liga, sem configuração em parametros_automacoes (essa
 // tabela é pra campanhas configuráveis, não pra notificação de evento).
 //
 // Usa o serviço de push da própria Expo (exp.host) — não precisa de

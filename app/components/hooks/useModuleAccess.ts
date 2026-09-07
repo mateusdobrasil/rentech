@@ -38,7 +38,7 @@ export function useModuleAccess(modulos: ModuloCard[]) {
 
       const [perfilRes, permissoesRes] = await Promise.all([
         supabase.from('perfis_usuarios').select('nome, email, permissao').eq('id', session.user.id).single(),
-        supabase.from('folha_paginas_permissoes').select('endereco_route, permissoes_permitidas')
+        supabase.from('parametros_paginas_permissoes').select('endereco_route, permissoes_permitidas')
           .in('endereco_route', modulos.map(m => m.link))
       ]);
 

@@ -277,7 +277,7 @@ export default function VisualizacaoFrota() {
     if (authLoading || acessoNegado) return;
     async function verificarPodeGerenciar() {
       const { data: rotaControle } = await supabase
-        .from('folha_paginas_permissoes').select('permissoes_permitidas').eq('endereco_route', ROTA_CONTROLE).single();
+        .from('parametros_paginas_permissoes').select('permissoes_permitidas').eq('endereco_route', ROTA_CONTROLE).single();
       const permissoesControle = rotaControle?.permissoes_permitidas || [];
       setPodeGerenciar(permissoesControle.includes(permissaoNormalizada));
     }

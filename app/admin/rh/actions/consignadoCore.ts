@@ -237,7 +237,7 @@ export async function persistirConsignacoesEDetectarNovos(registros: any[], orig
   if (linhas.length === 0) return 0;
 
   const { data: existentes, error: erroSelect } = await db
-    .from('folha_consignados')
+    .from('financeiro_consignados')
     .select('cpf, instituicao_codigo, contrato');
   if (erroSelect) throw new Error(erroSelect.message);
 
@@ -245,20 +245,20 @@ export async function persistirConsignacoesEDetectarNovos(registros: any[], orig
   const novos = linhas.filter(l => !chavesExistentes.has(`${l.cpf}|${l.instituicao_codigo}|${l.contrato}`));
 
   const { error: erroUpsert } = await db
-    .from('folha_consignados')
+    .from('financeiro_consignados')
     .upsert(linhas, { onConflict: 'cpf,instituicao_codigo,contrato' });
   if (erroUpsert) throw new Error(erroUpsert.message);
 
   const chavesDoLote = new Set(linhas.map(l => `${l.cpf}|${l.instituicao_codigo}|${l.contrato}`));
   const { data: ativosAtuais } = await db
-    .from('folha_consignados')
+    .from('financeiro_consignados')
     .select('id, cpf, instituicao_codigo, contrato')
     .eq('ativo', true);
   const idsParaDesativar = (ativosAtuais || [])
     .filter(a => !chavesDoLote.has(`${a.cpf}|${a.instituicao_codigo}|${a.contrato}`))
     .map(a => a.id);
   if (idsParaDesativar.length > 0) {
-    await db.from('folha_consignados').update({ ativo: false }).in('id', idsParaDesativar);
+    await db.from('financeiro_consignados').update({ ativo: false }).in('id', idsParaDesativar);
   }
 
   if (novos.length > 0) {

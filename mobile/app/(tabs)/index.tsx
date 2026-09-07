@@ -44,7 +44,7 @@ interface Pendencia {
 }
 
 // Metadados de exibição dos 4 módulos condicionais (frota/carga/ponto/op) —
-// QUEM acessa cada um vem de calcularModulosAcessiveis() (folha_paginas_permissoes),
+// QUEM acessa cada um vem de calcularModulosAcessiveis() (parametros_paginas_permissoes),
 // nunca mais hardcoded por cargo aqui. Aparecem como card mesmo quando não
 // couberam como aba (ver README: "Máximo 5 abas. O que não cabe vira card
 // na tela Início.").
@@ -243,7 +243,7 @@ export default function Inicio() {
       ];
     }
     // Assinaturas/Folha não são rotas /mobile/... controladas por
-    // folha_paginas_permissoes — são um atalho editorial pra quem já
+    // parametros_paginas_permissoes — são um atalho editorial pra quem já
     // acessa Ponto ou OP (mesmo público de RH/Financeiro/Diretoria). A
     // página web de destino se autovalida de qualquer forma.
     if (temPontoOuOp) {

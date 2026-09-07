@@ -40,7 +40,7 @@ export async function GET(request: Request) {
 
   try {
     const { data: card } = await db
-      .from('folha_automacoes')
+      .from('parametros_automacoes')
       .select('ativo')
       .eq('chave', CHAVE_CARD_CONTROLE)
       .maybeSingle();
@@ -52,7 +52,7 @@ export async function GET(request: Request) {
     const competencia = competenciaAtualBR();
     const resultado = await listarConsignados(competencia);
 
-    await db.from('folha_automacoes').update({ ultima_execucao: new Date().toISOString() }).eq('chave', CHAVE_CARD_CONTROLE);
+    await db.from('parametros_automacoes').update({ ultima_execucao: new Date().toISOString() }).eq('chave', CHAVE_CARD_CONTROLE);
 
     if (!resultado.ok) {
       return NextResponse.json({ success: false, competencia, erro: resultado.erro }, { status: 500 });

@@ -14,7 +14,7 @@ interface PainelEstoque {
 }
 
 // Lista de módulos do hub. As permissões de cada um NÃO ficam mais aqui —
-// vêm da tabela folha_paginas_permissoes (gerida em /admin/parametros/permissoes),
+// vêm da tabela parametros_paginas_permissoes (gerida em /admin/parametros/permissoes),
 // buscadas pelo campo "link" (= endereco_route). Isso mantém o hub sempre
 // em sincronia com o que a própria página de destino já exige para entrar.
 //

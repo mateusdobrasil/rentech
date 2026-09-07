@@ -1,7 +1,7 @@
 'use server';
 
 // Server actions da tela de Agendamentos e Disparos, com service role.
-// A tabela folha_automacoes é o "disjuntor": o Cron (app/api/cron/*) lê o
+// A tabela parametros_automacoes é o "disjuntor": o Cron (app/api/cron/*) lê o
 // campo `ativo` antes de disparar qualquer mensagem. Desligar aqui impede
 // o envio sem precisar mexer em código ou na Vercel.
 import { supabaseAdmin } from '../../../lib/supabase';
@@ -83,7 +83,7 @@ export async function listarAutomacoesAction(accessToken: string): Promise<Resul
   const db = supabaseAdmin();
   try {
     const { data, error } = await db
-      .from('folha_automacoes')
+      .from('parametros_automacoes')
       .select('*')
       .order('id', { ascending: true });
     if (error) throw new Error(error.message);
@@ -134,7 +134,7 @@ export async function alternarStatusAutomacaoAction(id: number, ativo: boolean, 
 
   const db = supabaseAdmin();
   try {
-    const { error } = await db.from('folha_automacoes').update({ ativo }).eq('id', id);
+    const { error } = await db.from('parametros_automacoes').update({ ativo }).eq('id', id);
     if (error) throw new Error(error.message);
     return { ok: true };
   } catch (e: any) {
@@ -162,7 +162,7 @@ async function gerarChaveUnica(db: ReturnType<typeof supabaseAdmin>, nome: strin
   let candidata = base;
   let sufixo = 2;
   while (true) {
-    const { data } = await db.from('folha_automacoes').select('id').eq('chave', candidata).maybeSingle();
+    const { data } = await db.from('parametros_automacoes').select('id').eq('chave', candidata).maybeSingle();
     if (!data) return candidata;
     candidata = `${base}-${sufixo}`;
     sufixo++;
@@ -204,7 +204,7 @@ export async function criarAutomacaoAction(payload: FormAutomacao, accessToken: 
   try {
     const chave = await gerarChaveUnica(db, nome);
     const gatilho = payload.tipo === 'CRON' ? formatarGatilhoCron(payload.horario, payload.dias_semana) : (payload.gatilho?.trim() || null);
-    const { error } = await db.from('folha_automacoes').insert({
+    const { error } = await db.from('parametros_automacoes').insert({
       chave,
       nome,
       descricao: payload.descricao?.trim() || null,
@@ -254,7 +254,7 @@ export async function atualizarAutomacaoAction(id: number, payload: FormAutomaca
 
   try {
     const gatilho = payload.tipo === 'CRON' ? formatarGatilhoCron(payload.horario, payload.dias_semana) : (payload.gatilho?.trim() || null);
-    const { error } = await db.from('folha_automacoes').update({
+    const { error } = await db.from('parametros_automacoes').update({
       nome,
       descricao: payload.descricao?.trim() || null,
       tipo: payload.tipo,
@@ -281,7 +281,7 @@ export async function atualizarAutomacaoAction(id: number, payload: FormAutomaca
   }
 }
 
-// Soma real de disparos deste mês, por canal, a partir de folha_automacoes_envios
+// Soma real de disparos deste mês, por canal, a partir de parametros_automacoes_envios
 // (substitui os números fixos "1.240" / "450" que existiam antes).
 export async function contarEnviosMesAction(accessToken: string): Promise<Resultado<{ whatsapp: number; email: number }>> {
   const acesso = await validarAcesso(accessToken, ROTA);
@@ -292,7 +292,7 @@ export async function contarEnviosMesAction(accessToken: string): Promise<Result
     const agora = new Date();
     const inicioMes = new Date(Date.UTC(agora.getFullYear(), agora.getMonth(), 1)).toISOString();
     const { data, error } = await db
-      .from('folha_automacoes_envios')
+      .from('parametros_automacoes_envios')
       .select('canal, quantidade')
       .gte('criado_em', inicioMes);
     if (error) throw new Error(error.message);
@@ -320,7 +320,7 @@ export async function excluirAutomacaoAction(id: number, accessToken: string): P
 
   const db = supabaseAdmin();
   try {
-    const { error } = await db.from('folha_automacoes').delete().eq('id', id);
+    const { error } = await db.from('parametros_automacoes').delete().eq('id', id);
     if (error) throw new Error(error.message);
     return { ok: true };
   } catch (e: any) {

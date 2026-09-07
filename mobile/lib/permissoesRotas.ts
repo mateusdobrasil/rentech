@@ -1,6 +1,6 @@
 // mobile/lib/permissoesRotas.ts
 // Quem pode ver cada aba condicional do app (Frota/Carga/Ponto/OP) vem de
-// folha_paginas_permissoes — mesma tabela que já controla acesso de rota no
+// parametros_paginas_permissoes — mesma tabela que já controla acesso de rota no
 // /admin, editável em /admin/parametros/permissoes → aba "Páginas" — em vez
 // de um array fixo no código. Rotas virtuais '/mobile/...' cadastradas por
 // sql/frota_mobile_permissao.sql; ajustar quem acessa cada aba é só editar
@@ -45,7 +45,7 @@ export function calcularModulosAcessiveis(
 export async function carregarPermissoesRotas(): Promise<Record<string, string[]>> {
   try {
     const { data, error } = await supabase
-      .from('folha_paginas_permissoes')
+      .from('parametros_paginas_permissoes')
       .select('endereco_route, permissoes_permitidas')
       .in('endereco_route', ROTAS_MOBILE);
     if (error) throw error;

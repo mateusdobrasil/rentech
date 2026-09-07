@@ -10,7 +10,7 @@ export default function TabsLayout() {
   const autenticado = !!session;
   const [permissoesRotas, setPermissoesRotas] = useState<Record<string, string[]>>({});
 
-  // Contas PORTAL não passam por folha_paginas_permissoes (é regra de cargo
+  // Contas PORTAL não passam por parametros_paginas_permissoes (é regra de cargo
   // de equipe) — Frota pra elas é liberada à parte por pode_dirigir, ver
   // calcularModulosAcessiveis(). Só busca essa tabela pra contas STAFF.
   useEffect(() => {

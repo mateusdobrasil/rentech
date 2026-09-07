@@ -171,6 +171,11 @@ export default function IntegracaoFinanceiraPage() {
   const [totalResultado, setTotalResultado] = useState<string | null>(null);
   const [jaConsultou, setJaConsultou] = useState(false);
   const [paginacao, setPaginacao] = useState({ paginaAtual: 0, totalPaginas: 1, totalItens: 0, tamanhoPagina: 20 });
+  // true = a action já trouxe TODAS as páginas e ordenou o conjunto inteiro
+  // (mais recentes primeiro), então quem pagina daqui pra frente é a tela.
+  // false = resultado grande demais pra agregar; a paginação continua sendo a
+  // da API e a ordenação vale só dentro de cada página (a tela avisa).
+  const [ordemCompleta, setOrdemCompleta] = useState(true);
   // Filtro escolhido no momento da última consulta — usado só pra conferir a
   // resposta (ver codigoDoStatusTexto), não pra refazer a busca.
   const [statusConsultado, setStatusConsultado] = useState<FiltrosConsultaItau['status']>(undefined);
@@ -198,6 +203,7 @@ export default function IntegracaoFinanceiraPage() {
       setResultados(res.info.itens || []);
       setTotalResultado(res.info.total ?? null);
       setStatusConsultado(filtros.status);
+      setOrdemCompleta(res.info.ordemCompleta !== false);
       setPaginacao({
         paginaAtual: res.info.paginaAtual ?? pagina,
         totalPaginas: res.info.totalPaginas ?? 1,
@@ -208,6 +214,13 @@ export default function IntegracaoFinanceiraPage() {
     } finally {
       setConsultando(false);
     }
+  };
+
+  // Com o conjunto inteiro já em mãos, virar página é só recortar o array —
+  // sem ida ao Itaú. Só o modo não-agregado precisa reconsultar.
+  const irParaPagina = (pagina: number) => {
+    if (ordemCompleta) setPaginacao(p => ({ ...p, paginaAtual: pagina }));
+    else consultar(pagina);
   };
 
   const verDetalhe = async (idPagamento: string) => {
@@ -340,10 +353,19 @@ export default function IntegracaoFinanceiraPage() {
             {jaConsultou && (() => {
               // Confere a resposta contra o filtro pedido — ver
               // codigoDoStatusTexto. Sem filtro (Todos), mostra tudo.
-              const visiveis = !statusConsultado || statusConsultado === 'TD'
+              const filtrados = !statusConsultado || statusConsultado === 'TD'
                 ? resultados
                 : resultados.filter(p => codigoDoStatusTexto(p.status || '') === statusConsultado);
-              const ocultos = resultados.length - visiveis.length;
+              const ocultos = resultados.length - filtrados.length;
+              // No modo agregado a fatia da página sai daqui, do conjunto
+              // inteiro já ordenado; no outro, o recorte veio pronto da API.
+              const totalPaginas = ordemCompleta
+                ? Math.max(1, Math.ceil(filtrados.length / paginacao.tamanhoPagina))
+                : paginacao.totalPaginas;
+              const paginaAtual = Math.max(0, Math.min(paginacao.paginaAtual, totalPaginas - 1));
+              const visiveis = ordemCompleta
+                ? filtrados.slice(paginaAtual * paginacao.tamanhoPagina, (paginaAtual + 1) * paginacao.tamanhoPagina)
+                : filtrados;
               return (
               <div className="pt-3 border-t border-gray-100 mt-2">
                 {/* Mostra o total REAL (pagination.totalElements) e não só o
@@ -351,13 +373,19 @@ export default function IntegracaoFinanceiraPage() {
                     que havia mais, e dava a impressão de "pagamento sumiu". */}
                 <p className="text-[11px] text-gray-500 font-bold mb-2">
                   {paginacao.totalItens} pagamento(s) encontrado(s){totalResultado ? ` · Total: ${BRL(totalResultado)}` : ''}
-                  {paginacao.totalPaginas > 1 && (
-                    <span className="text-gray-400"> · mostrando {visiveis.length} (página {paginacao.paginaAtual + 1} de {paginacao.totalPaginas})</span>
+                  {totalPaginas > 1 && (
+                    <span className="text-gray-400"> · mostrando {visiveis.length} (página {paginaAtual + 1} de {totalPaginas})</span>
                   )}
+                  <span className="text-gray-400"> · mais recentes primeiro</span>
                 </p>
                 {ocultos > 0 && (
                   <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-2 font-bold">
-                    ⚠ {ocultos} pagamento(s) desta página foram ocultados por não corresponderem ao status filtrado — a API do Itaú devolveu itens fora do filtro pedido.
+                    ⚠ {ocultos} pagamento(s) {ordemCompleta ? '' : 'desta página '}foram ocultados por não corresponderem ao status filtrado — a API do Itaú devolveu itens fora do filtro pedido.
+                  </p>
+                )}
+                {!ordemCompleta && paginacao.totalPaginas > 1 && (
+                  <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-2 font-bold">
+                    ⚠ Resultado grande demais ({paginacao.totalPaginas} páginas) para ordenar por completo — aqui a ordem de mais recentes primeiro vale só dentro de cada página. Estreite o período para ver os pagamentos realmente mais recentes no topo.
                   </p>
                 )}
                 {visiveis.length === 0 ? (
@@ -403,21 +431,21 @@ export default function IntegracaoFinanceiraPage() {
                       </tbody>
                     </table>
 
-                    {paginacao.totalPaginas > 1 && (
+                    {totalPaginas > 1 && (
                       <div className="flex items-center justify-between gap-3 pt-3 mt-2 border-t border-gray-100">
                         <button
-                          onClick={() => consultar(paginacao.paginaAtual - 1)}
-                          disabled={consultando || paginacao.paginaAtual <= 0}
+                          onClick={() => irParaPagina(paginaAtual - 1)}
+                          disabled={consultando || paginaAtual <= 0}
                           className="text-[10px] font-black bg-[#F8FAFC] border border-gray-300 text-gray-600 hover:bg-gray-100 px-3 py-1.5 rounded-lg uppercase tracking-wider disabled:opacity-40"
                         >
                           ← Anterior
                         </button>
                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                          Página {paginacao.paginaAtual + 1} de {paginacao.totalPaginas}
+                          Página {paginaAtual + 1} de {totalPaginas}
                         </span>
                         <button
-                          onClick={() => consultar(paginacao.paginaAtual + 1)}
-                          disabled={consultando || paginacao.paginaAtual + 1 >= paginacao.totalPaginas}
+                          onClick={() => irParaPagina(paginaAtual + 1)}
+                          disabled={consultando || paginaAtual + 1 >= totalPaginas}
                           className="text-[10px] font-black bg-[#F8FAFC] border border-gray-300 text-gray-600 hover:bg-gray-100 px-3 py-1.5 rounded-lg uppercase tracking-wider disabled:opacity-40"
                         >
                           Próxima →

@@ -13,7 +13,7 @@ import { useToast } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 // Setores de permissão: antes era uma lista fixa aqui no código, agora vem
-// do banco (tabela setores_permissao) e pode ser gerida na aba "Setores".
+// do banco (tabela parametros_setores_permissao) e pode ser gerida na aba "Setores".
 type NivelPermissao = string;
 
 interface Setor {
@@ -251,7 +251,7 @@ export default function GestaoPermissoes() {
   // ============================================================================
   const carregarPaginas = async () => {
     try {
-      const { data, error } = await supabase.from('folha_paginas_permissoes').select('*').order('nome_pagina');
+      const { data, error } = await supabase.from('parametros_paginas_permissoes').select('*').order('nome_pagina');
       if (error) throw error;
       if (data) setPaginas(data as PaginaPermissao[]);
     } catch (error) {
@@ -282,10 +282,10 @@ export default function GestaoPermissoes() {
 
       let error;
       if (editandoPaginaId) {
-        const { error: err } = await supabase.from('folha_paginas_permissoes').update(payload).eq('id', editandoPaginaId);
+        const { error: err } = await supabase.from('parametros_paginas_permissoes').update(payload).eq('id', editandoPaginaId);
         error = err;
       } else {
-        const { error: err } = await supabase.from('folha_paginas_permissoes').insert([payload]);
+        const { error: err } = await supabase.from('parametros_paginas_permissoes').insert([payload]);
         error = err;
       }
 
@@ -322,7 +322,7 @@ export default function GestaoPermissoes() {
     
     setLoading(true);
     try {
-      const { error } = await supabase.from('folha_paginas_permissoes').delete().eq('id', id);
+      const { error } = await supabase.from('parametros_paginas_permissoes').delete().eq('id', id);
       if (error) throw error;
       
       mostrarFeedback('Mapeamento de rota removido.', 'success');
@@ -342,7 +342,7 @@ export default function GestaoPermissoes() {
   const alternar2FA = async (p: PaginaPermissao) => {
     const novoValor = !p.requer_2fa;
     try {
-      const { error } = await supabase.from('folha_paginas_permissoes').update({ requer_2fa: novoValor }).eq('id', p.id);
+      const { error } = await supabase.from('parametros_paginas_permissoes').update({ requer_2fa: novoValor }).eq('id', p.id);
       if (error) throw error;
 
       registrarLogAuditoria({
@@ -365,7 +365,7 @@ export default function GestaoPermissoes() {
   // ============================================================================
   const carregarSetores = async () => {
     try {
-      const { data, error } = await supabase.from('setores_permissao').select('*').order('nome');
+      const { data, error } = await supabase.from('parametros_setores_permissao').select('*').order('nome');
       if (error) throw error;
       if (data) setSetores(data as Setor[]);
     } catch (error) {
@@ -380,7 +380,7 @@ export default function GestaoPermissoes() {
 
     setSalvandoSetor(true);
     try {
-      const { error } = await supabase.from('setores_permissao').insert([{ nome }]);
+      const { error } = await supabase.from('parametros_setores_permissao').insert([{ nome }]);
       if (error) {
         if (error.code === '23505') throw new Error('Esse setor já está cadastrado.');
         throw error;
@@ -414,7 +414,7 @@ export default function GestaoPermissoes() {
     if (!confirm(`Remover o setor "${setor.nome}"?${aviso}`)) return;
 
     try {
-      const { error } = await supabase.from('setores_permissao').delete().eq('id', setor.id);
+      const { error } = await supabase.from('parametros_setores_permissao').delete().eq('id', setor.id);
       if (error) throw error;
 
       registrarLogAuditoria({

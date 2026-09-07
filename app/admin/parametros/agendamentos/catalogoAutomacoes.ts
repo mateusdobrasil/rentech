@@ -1,5 +1,5 @@
 // Catálogos fixos usados pela tela Agendamentos e Disparos (fonte_dados e
-// evento_sistema de folha_automacoes). Ficam num módulo à parte — sem
+// evento_sistema de parametros_automacoes). Ficam num módulo à parte — sem
 // "use server" — porque actions.ts é um arquivo de Server Actions e só pode
 // exportar funções async; um `const` (valor em runtime) exportado de lá
 // quebra o build ("A 'use server' file can only export async functions").

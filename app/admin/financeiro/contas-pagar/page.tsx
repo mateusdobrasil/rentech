@@ -74,7 +74,7 @@ export default function ContasPagarPage() {
       setGridErro('');
 
       let query = supabase
-        .from('contas_pagar')
+        .from('financeiro_contas_pagar')
         .select('id, descricao, fornecedor, centro, valor, data_vencimento, quitado, forma_pagamento', { count: 'exact' })
         .order('data_vencimento', { ascending: true, nullsFirst: false })
         .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);

@@ -1,5 +1,5 @@
 // Validação de sessão+permissão para Server Actions. Mesma tabela/lógica que já
-// gateia a UI (folha_paginas_permissoes + normalizarPermissao) — a UI escondia o
+// gateia a UI (parametros_paginas_permissoes + normalizarPermissao) — a UI escondia o
 // botão, mas a Server Action por trás dele aceitava a chamada de qualquer sessão
 // válida. Isso fecha esse buraco no lado que realmente importa: o servidor.
 import { supabaseAdmin } from './supabase';
@@ -41,7 +41,7 @@ export async function obterPerfilValidado(accessToken: string): Promise<PerfilVa
 export async function possuiAcessoRota(permissaoNormalizada: string, rota: string): Promise<boolean> {
   const admin = supabaseAdmin();
   const { data } = await admin
-    .from('folha_paginas_permissoes')
+    .from('parametros_paginas_permissoes')
     .select('permissoes_permitidas')
     .eq('endereco_route', rota)
     .single();
@@ -60,7 +60,7 @@ export async function listarPerfisComAcessoRota(rota: string): Promise<{ id: str
   const admin = supabaseAdmin();
 
   const { data: permissaoRow } = await admin
-    .from('folha_paginas_permissoes')
+    .from('parametros_paginas_permissoes')
     .select('permissoes_permitidas')
     .eq('endereco_route', rota)
     .maybeSingle();

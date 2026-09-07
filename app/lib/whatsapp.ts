@@ -1,5 +1,5 @@
 // Roteador de WhatsApp: decide se um envio/recebimento usa Z-API ou a Meta
-// Cloud API, com base no config salvo em folha_integracoes (parceiro
+// Cloud API, com base no config salvo em parametros_integracoes (parceiro
 // 'WHATSAPP_ROTEAMENTO', tela /admin/integracao). Uso exclusivo em código
 // de servidor.
 //
@@ -36,7 +36,7 @@ function normalizarProvedor(valor: unknown): ProvedorWhatsApp {
 export async function resolverProvedor(escopo: EscopoWhatsApp): Promise<ProvedorWhatsApp> {
   const db = supabaseAdmin();
   const { data } = await db
-    .from('folha_integracoes')
+    .from('parametros_integracoes')
     .select('config')
     .eq('parceiro', 'WHATSAPP_ROTEAMENTO')
     .maybeSingle();
@@ -108,7 +108,7 @@ export async function enviarWhatsApp(celular: string, mensagem: string): Promise
 
 export type ProvedorAutomacao = 'PADRAO' | 'ZAPI' | 'META';
 
-// Override por automação (campo folha_automacoes.provedor_whatsapp):
+// Override por automação (campo parametros_automacoes.provedor_whatsapp):
 // 'PADRAO' segue o interruptor global de Envio; 'ZAPI'/'META' força aquele
 // provedor específico, ignorando o global — usado quando se quer testar ou
 // fixar uma automação num provedor sem afetar as demais.

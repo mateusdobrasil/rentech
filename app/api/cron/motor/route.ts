@@ -61,7 +61,7 @@ export async function GET(request: Request) {
 
   try {
     const { data: automacoes, error } = await db
-      .from('folha_automacoes')
+      .from('parametros_automacoes')
       .select('chave, nome, horario, dias_semana, ultima_execucao, fonte_dados')
       .eq('tipo', 'CRON')
       .eq('ativo', true)

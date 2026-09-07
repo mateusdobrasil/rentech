@@ -7,7 +7,8 @@ import { supabase } from '../../../lib/supabase';
 import {
   montarLoteSalariosAction, salvarLoteAction, listarLotesAction, enviarLoteAoBancoAction,
   listarPdfsContabilidadeAction, processarOcrAwsAction, alternarAtivoLoteAction, buscarLoteAction,
-  consultarStatusAtualItauAction, buscarDetalhesOPAction, salvarValorOcrManualAction
+  consultarStatusAtualItauAction, buscarDetalhesOPAction, salvarValorOcrManualAction,
+  reabrirItemParaReenvioAction
 } from '../../rh/actions/actions-financeiro';
 import { listarIntegracoesAction } from '../../parametros/integracao/actions';
 import { normalizarItensOP, ItemOPNormalizado } from '../../op/utils';
@@ -33,6 +34,26 @@ const fmtMesBR = (m: string) => { const [a, mm] = m.split('-'); return `${mm}/${
 // mesmo "Enviar ao banco") não podem entrar nos exports CNAB manuais, senão
 // pagam em dobro.
 const STATUS_JA_PAGO_VIA_API = ['Sucesso', 'Sucesso (pre-autorizado)'];
+
+// A API do Itaú usa DOIS formatos diferentes de motivo de recusa, conforme o
+// endpoint (confirmado nos schemas oficiais "motivoRecusa" e
+// "listaMotivoRejeicao"):
+//   POST /transferencias        -> motivo_recusa:   [{ codigo, nome }]
+//   GET  /pagamentos_sispag/{id} -> motivo_rejeicao: [{ codigo_motivo, descricao_motivo }]
+// Antes a tela só lia `nome`, então o motivo do endpoint de consulta aparecia
+// em branco — foi assim que o "870 - ERRO NA CHAMADA AO SUB-PROGRAMA OI"
+// passou despercebido na UI. Este helper aceita os dois e mostra o código.
+const fmtMotivos = (motivos: any[] | null | undefined): string => {
+  if (!Array.isArray(motivos) || motivos.length === 0) return '';
+  return motivos
+    .map((m: any) => {
+      const codigo = m?.codigo ?? m?.codigo_motivo ?? '';
+      const descricao = m?.nome ?? m?.descricao_motivo ?? '';
+      return [codigo, descricao].filter(Boolean).join(' - ');
+    })
+    .filter(Boolean)
+    .join('; ');
+};
 
 interface Integracao {
   id: number; parceiro: string; nome_exibicao: string; tipo: string;
@@ -139,6 +160,7 @@ export default function FinanceiroPage() {
   const [carregandoRetorno, setCarregandoRetorno] = useState(false);
   const [detalheBrutoItem, setDetalheBrutoItem] = useState<ItemLote | null>(null);
   const [consultandoStatusId, setConsultandoStatusId] = useState<string | null>(null);
+  const [reabrindoId, setReabrindoId] = useState<string | null>(null);
   const [statusAtual, setStatusAtual] = useState<{ item: ItemLote; ambiente: string; pagamento: any } | null>(null);
 
   // Popup "ver" de uma OP incluída no lote (fonte 'OP') — mostra os dados da
@@ -803,6 +825,28 @@ export default function FinanceiroPage() {
     }
   };
 
+  // "Sucesso" na inclusão não garante pagamento: se o Itaú recusar/expirar
+  // depois, o item ficaria travado (o envio pula itens com sucesso e a OP /
+  // rescisão fica marcada como paga). Reabrir devolve tudo pro estado "a
+  // enviar" — a action confirma na API do Itaú que falhou mesmo antes.
+  const reabrirItem = async (item: ItemLote) => {
+    if (!item.api_cod_pagamento || !loteRetornoId) return;
+    if (!confirm(`Reabrir o pagamento de ${item.funcionario_nome} para reenvio?\n\nSó funciona se o Itaú confirmar que o pagamento falhou de vez (Não Efetuado, Rejeitado, Cancelado ou Estornado). O item volta a entrar no próximo "Enviar ao banco", e OP/rescisão volta a constar como não paga.`)) return;
+    setReabrindoId(item.api_cod_pagamento);
+    try {
+      const res = await reabrirItemParaReenvioAction(
+        { loteId: loteRetornoId, idPagamentoSispag: item.api_cod_pagamento, usuarioNome: usuarioAtual },
+        accessToken
+      );
+      if (!res.ok) { toast(res.erro || 'Não foi possível reabrir.', 'error'); return; }
+      toast(`Pagamento de ${res.info.funcionario} reaberto (estava "${res.info.statusItau}" no Itaú). Ele volta no próximo envio do lote.`, 'success');
+      carregar();
+      carregarRetornoLote(loteRetornoId);
+    } finally {
+      setReabrindoId(null);
+    }
+  };
+
   const abrirDetalhesOP = async (opId: string) => {
     setModalOP({ open: true, carregando: true, op: null, erro: null });
     const res = await buscarDetalhesOPAction({ opId }, accessToken);
@@ -849,6 +893,9 @@ export default function FinanceiroPage() {
     const mapa: Record<string, string> = {
       RASCUNHO: 'bg-gray-100 text-gray-500',
       GERADO: 'bg-blue-100 text-blue-700',
+      // Estado transitório da trava contra envio simultâneo — ver
+      // enviarLoteAoBancoAction. Se ficar preso aqui, algo estourou no meio.
+      ENVIANDO: 'bg-indigo-100 text-indigo-700',
       ENVIADO: 'bg-amber-100 text-amber-700',
       PROCESSADO: 'bg-emerald-100 text-emerald-700',
       ERRO: 'bg-slate-100 text-slate-700'
@@ -1364,8 +1411,8 @@ export default function FinanceiroPage() {
                         </td>
                         <td className="p-3 text-[11px] text-gray-600">
                           {item.api_erro && <span className="text-red-600 font-bold">{item.api_erro}</span>}
-                          {item.api_motivo_recusa && item.api_motivo_recusa.length > 0 && (
-                            <span className="text-red-600">{item.api_motivo_recusa.map(m => m.nome).filter(Boolean).join('; ')}</span>
+                          {fmtMotivos(item.api_motivo_recusa) && (
+                            <span className="text-red-600">{fmtMotivos(item.api_motivo_recusa)}</span>
                           )}
                         </td>
                         <td className="p-3 text-[11px] text-gray-500">{item.api_enviado_em ? fmtDataHora(item.api_enviado_em) : '—'}</td>
@@ -1376,8 +1423,13 @@ export default function FinanceiroPage() {
                             </button>
                           )}
                           {item.api_resposta_bruta && (
-                            <button onClick={() => setDetalheBrutoItem(item)} className="text-[10px] font-black text-[#1E40AF] hover:underline uppercase">
+                            <button onClick={() => setDetalheBrutoItem(item)} className="text-[10px] font-black text-[#1E40AF] hover:underline uppercase mr-2">
                               Ver JSON
+                            </button>
+                          )}
+                          {item.api_cod_pagamento && (
+                            <button onClick={() => reabrirItem(item)} disabled={reabrindoId === item.api_cod_pagamento} className="text-[10px] font-black text-amber-700 hover:underline uppercase disabled:opacity-50">
+                              {reabrindoId === item.api_cod_pagamento ? '⏳...' : '♻ Reabrir'}
                             </button>
                           )}
                         </td>
@@ -1428,8 +1480,8 @@ export default function FinanceiroPage() {
                     <p><span className="text-gray-400">Favorecido:</span> <strong>{p.nome_favorecido || '—'}</strong></p>
                     <p><span className="text-gray-400">Banco favorecido:</span> {p.nome_banco_favorecido || '—'} · Ag {p.numero_agencia_favorecido || '—'} · C/C {p.numero_conta_favorecido || '—'}</p>
                     <p><span className="text-gray-400">Valor:</span> <strong>{BRL(Number(p.valor_pagamento) || 0)}</strong></p>
-                    {p.motivo_rejeicao && p.motivo_rejeicao.length > 0 && (
-                      <p className="text-red-600"><span className="text-gray-400">Motivo:</span> {p.motivo_rejeicao.map((m: any) => m.nome).filter(Boolean).join('; ')}</p>
+                    {fmtMotivos(p.motivo_rejeicao) && (
+                      <p className="text-red-600"><span className="text-gray-400">Motivo:</span> <strong>{fmtMotivos(p.motivo_rejeicao)}</strong></p>
                     )}
                   </div>
                 );

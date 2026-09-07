@@ -79,6 +79,13 @@ export async function consultarPagamentosItauAction(filtros: FiltrosConsultaItau
     const ctx = await resolverContextoItau(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     if (!ctx.ok) return { ok: false, erro: ctx.erro };
 
+    // Em produção o Itaú exige as duas datas — sem elas devolve 400 dizendo
+    // "o campo data_inicial é obrigatório". Barra aqui com mensagem clara em
+    // vez de deixar o erro cru do banco chegar na tela.
+    if (!filtros.dataInicial || !filtros.dataFinal) {
+      return { ok: false, erro: 'Informe a data inicial e a data final — a API do Itaú exige as duas na consulta.' };
+    }
+
     const { status, ok, data } = await consultarPagamentosSispag({
       ambiente: ctx.ambiente,
       agenciaOperacao: ctx.agenciaOperacao,
@@ -99,7 +106,22 @@ export async function consultarPagamentosItauAction(filtros: FiltrosConsultaItau
     // {"data":{"itens":[...],"total":"998.99"},"pagination":{...}}) —
     // confirmado por curl direto contra o sandbox (2026-08-07), diferente do
     // que a Especificação Técnica dava a entender.
-    return { ok: true, info: { itens: data?.data?.itens || [], total: data?.data?.total ?? null, ambiente: ctx.ambiente } };
+    // `pagination` era descartado aqui, então a tela mostrava só a 1ª página
+    // (20 itens) sem avisar que existiam mais — em produção já vimos
+    // totalElements 68 / totalPages 4. Agora vai pra UI paginar de verdade.
+    const paginacao = data?.pagination || {};
+    return {
+      ok: true,
+      info: {
+        itens: data?.data?.itens || [],
+        total: data?.data?.total ?? null,
+        ambiente: ctx.ambiente,
+        paginaAtual: Number(paginacao.page ?? 0),
+        totalPaginas: Number(paginacao.totalPages ?? paginacao.total_pages ?? 1),
+        totalItens: Number(paginacao.totalElements ?? paginacao.total_elements ?? (data?.data?.itens || []).length),
+        tamanhoPagina: Number(paginacao.pageSize ?? paginacao.page_size ?? 20),
+      },
+    };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

@@ -97,6 +97,23 @@ const STATUS_COR: Record<string, string> = {
   NE: 'bg-red-100 text-red-600',
 };
 
+// O filtro vai pra API como código (AE/EF/NE), mas a API devolve o status por
+// EXTENSO ("Efetuado", "Pendente de autorização", "Não Efetuado"). Nunca
+// conseguimos confirmar se ela realmente honra o filtro (o sandbox ignora:
+// devolve a mesma lista pra qualquer valor). Este mapa faz a conferência do
+// lado do cliente pra tela nunca mostrar linha que contradiz o filtro
+// escolhido — se a API filtrar certo, não muda nada; se ignorar, a tela
+// continua coerente e avisa quantas linhas escondeu.
+const semAcento = (s: string) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+const codigoDoStatusTexto = (statusTexto: string): 'AE' | 'EF' | 'NE' | null => {
+  const s = semAcento(statusTexto);
+  if (!s) return null;
+  if (s.startsWith('nao efetuado') || s.includes('rejeitad') || s.includes('cancelad') || s.includes('estornad')) return 'NE';
+  if (s.startsWith('efetuad')) return 'EF';
+  if (s.includes('pendente') || s.includes('a efetuar') || s.includes('agendad') || s.includes('autorizac')) return 'AE';
+  return null;
+};
+
 interface ItemPagamentoItau {
   id_pagamento?: string;
   numero_lote?: string;
@@ -153,6 +170,10 @@ export default function IntegracaoFinanceiraPage() {
   const [resultados, setResultados] = useState<ItemPagamentoItau[]>([]);
   const [totalResultado, setTotalResultado] = useState<string | null>(null);
   const [jaConsultou, setJaConsultou] = useState(false);
+  const [paginacao, setPaginacao] = useState({ paginaAtual: 0, totalPaginas: 1, totalItens: 0, tamanhoPagina: 20 });
+  // Filtro escolhido no momento da última consulta — usado só pra conferir a
+  // resposta (ver codigoDoStatusTexto), não pra refazer a busca.
+  const [statusConsultado, setStatusConsultado] = useState<FiltrosConsultaItau['status']>(undefined);
 
   const [detalheId, setDetalheId] = useState<string | null>(null);
   const [detalhe, setDetalhe] = useState<any | null>(null);
@@ -168,13 +189,21 @@ export default function IntegracaoFinanceiraPage() {
     if (statusRes.ok) setStatusItauApi(statusRes.info);
   };
 
-  const consultar = async () => {
+  // `pagina` é 0-based, igual ao que a API do Itaú devolve em pagination.page.
+  const consultar = async (pagina = 0) => {
     setConsultando(true);
     try {
-      const res = await consultarPagamentosItauAction(filtros, accessToken);
+      const res = await consultarPagamentosItauAction({ ...filtros, page: pagina }, accessToken);
       if (!res.ok) { toast(res.erro || 'Não foi possível consultar.', 'error'); setResultados([]); setTotalResultado(null); return; }
       setResultados(res.info.itens || []);
       setTotalResultado(res.info.total ?? null);
+      setStatusConsultado(filtros.status);
+      setPaginacao({
+        paginaAtual: res.info.paginaAtual ?? pagina,
+        totalPaginas: res.info.totalPaginas ?? 1,
+        totalItens: res.info.totalItens ?? (res.info.itens || []).length,
+        tamanhoPagina: res.info.tamanhoPagina ?? 20,
+      });
       setJaConsultou(true);
     } finally {
       setConsultando(false);
@@ -303,17 +332,35 @@ export default function IntegracaoFinanceiraPage() {
                   <option value="Lote">Por lote</option>
                 </select>
               </div>
-              <button onClick={consultar} disabled={consultando} className="text-xs font-black bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-5 py-2.5 rounded-lg uppercase tracking-wider disabled:opacity-50">
+              <button onClick={() => consultar(0)} disabled={consultando} className="text-xs font-black bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-5 py-2.5 rounded-lg uppercase tracking-wider disabled:opacity-50">
                 {consultando ? '⏳ Consultando...' : '🔎 Consultar'}
               </button>
             </div>
 
-            {jaConsultou && (
+            {jaConsultou && (() => {
+              // Confere a resposta contra o filtro pedido — ver
+              // codigoDoStatusTexto. Sem filtro (Todos), mostra tudo.
+              const visiveis = !statusConsultado || statusConsultado === 'TD'
+                ? resultados
+                : resultados.filter(p => codigoDoStatusTexto(p.status || '') === statusConsultado);
+              const ocultos = resultados.length - visiveis.length;
+              return (
               <div className="pt-3 border-t border-gray-100 mt-2">
+                {/* Mostra o total REAL (pagination.totalElements) e não só o
+                    tamanho da página — antes a tela exibia 20 de 68 sem avisar
+                    que havia mais, e dava a impressão de "pagamento sumiu". */}
                 <p className="text-[11px] text-gray-500 font-bold mb-2">
-                  {resultados.length} pagamento(s) encontrado(s){totalResultado ? ` · Total: ${BRL(totalResultado)}` : ''}
+                  {paginacao.totalItens} pagamento(s) encontrado(s){totalResultado ? ` · Total: ${BRL(totalResultado)}` : ''}
+                  {paginacao.totalPaginas > 1 && (
+                    <span className="text-gray-400"> · mostrando {visiveis.length} (página {paginacao.paginaAtual + 1} de {paginacao.totalPaginas})</span>
+                  )}
                 </p>
-                {resultados.length === 0 ? (
+                {ocultos > 0 && (
+                  <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-2 font-bold">
+                    ⚠ {ocultos} pagamento(s) desta página foram ocultados por não corresponderem ao status filtrado — a API do Itaú devolveu itens fora do filtro pedido.
+                  </p>
+                )}
+                {visiveis.length === 0 ? (
                   <p className="text-xs text-gray-400 italic py-4 text-center">Nenhum pagamento encontrado para os filtros informados.</p>
                 ) : (
                   <div className="overflow-x-auto">
@@ -331,7 +378,7 @@ export default function IntegracaoFinanceiraPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {resultados.map((p, idx) => (
+                        {visiveis.map((p, idx) => (
                           <tr key={p.id_pagamento || idx} className="border-b border-gray-100 hover:bg-[#F8FAFC]">
                             <td className="py-2 pr-3 font-bold">{p.nome_favorecido || p.nome_beneficiario || '—'}</td>
                             <td className="py-2 pr-3 font-bold">{BRL(p.valor_pagamento)}</td>
@@ -355,10 +402,33 @@ export default function IntegracaoFinanceiraPage() {
                         ))}
                       </tbody>
                     </table>
+
+                    {paginacao.totalPaginas > 1 && (
+                      <div className="flex items-center justify-between gap-3 pt-3 mt-2 border-t border-gray-100">
+                        <button
+                          onClick={() => consultar(paginacao.paginaAtual - 1)}
+                          disabled={consultando || paginacao.paginaAtual <= 0}
+                          className="text-[10px] font-black bg-[#F8FAFC] border border-gray-300 text-gray-600 hover:bg-gray-100 px-3 py-1.5 rounded-lg uppercase tracking-wider disabled:opacity-40"
+                        >
+                          ← Anterior
+                        </button>
+                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                          Página {paginacao.paginaAtual + 1} de {paginacao.totalPaginas}
+                        </span>
+                        <button
+                          onClick={() => consultar(paginacao.paginaAtual + 1)}
+                          disabled={consultando || paginacao.paginaAtual + 1 >= paginacao.totalPaginas}
+                          className="text-[10px] font-black bg-[#F8FAFC] border border-gray-300 text-gray-600 hover:bg-gray-100 px-3 py-1.5 rounded-lg uppercase tracking-wider disabled:opacity-40"
+                        >
+                          Próxima →
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            )}
+              );
+            })()}
           </div>
         </>)}
       </div>

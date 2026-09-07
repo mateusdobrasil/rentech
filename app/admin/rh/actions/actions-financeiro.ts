@@ -741,9 +741,12 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
   const db = supabaseAdmin();
   try {
     const { data: lote, error: loteErr } = await db.from('folha_lotes_pagamento')
-      .select('id, parceiro, mes_referencia, tipo_lote, itens').eq('id', payload.loteId).maybeSingle();
+      .select('id, parceiro, mes_referencia, tipo_lote, itens, status').eq('id', payload.loteId).maybeSingle();
     if (loteErr) throw new Error(loteErr.message);
     if (!lote) return { ok: false, erro: 'Lote não encontrado.' };
+    if (lote.status === 'ENVIANDO') {
+      return { ok: false, erro: 'Este lote já está sendo enviado neste momento. Aguarde terminar e atualize a tela.' };
+    }
 
     if (lote.parceiro !== 'ITAU') {
       return {
@@ -753,7 +756,7 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
     }
 
     const { data: integ } = await db.from('folha_integracoes')
-      .select('ativo, ambiente, config').eq('parceiro', 'ITAU').maybeSingle();
+      .select('ativo, ambiente, config, empresa_id').eq('parceiro', 'ITAU').maybeSingle();
     if (!integ?.ativo) {
       return { ok: false, erro: 'A integração com o Itaú ainda não está ativa. Ative em Integrações → ⚙ Configurar antes de enviar. O lote está salvo e pode ser exportado.' };
     }
@@ -795,12 +798,29 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
     // usuário logado enxerga — mesma revalidação de buscarLoteAction, mas
     // aqui bloqueando o próprio envio, não só a leitura.
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const resolverEmpresaItem = await construirResolvedorEmpresa(db, itens);
+    const empresaDoItem = (i: any) => (i.empresa_id !== undefined && i.empresa_id !== null ? i.empresa_id : resolverEmpresaItem(i));
     let itensElegiveis = itens;
     if (empresasPermitidas) {
-      const resolverEmpresa = await construirResolvedorEmpresa(db, itens);
-      itensElegiveis = itens.filter((i: any) =>
-        empresaPermitida(empresasPermitidas, i.empresa_id !== undefined ? i.empresa_id : resolverEmpresa(i))
-      );
+      itensElegiveis = itens.filter((i: any) => empresaPermitida(empresasPermitidas, empresaDoItem(i)));
+    }
+
+    // A conta de débito (pagador) é a da integração ITAÚ, que pertence a UMA
+    // empresa. Com multi-empresa, um lote misto poderia pagar funcionário de
+    // outra empresa saindo do caixa desta — dinheiro certo, CNPJ errado.
+    // Bloqueia só quando dá pra afirmar: item e integração com empresa_id
+    // preenchidos e diferentes (item legado sem empresa_id continua passando,
+    // pra não travar lote antigo).
+    const itensDeOutraEmpresa = integ.empresa_id == null ? [] : itensElegiveis.filter((i: any) => {
+      const empresaItem = empresaDoItem(i);
+      return empresaItem != null && empresaItem !== integ.empresa_id;
+    });
+    if (itensDeOutraEmpresa.length > 0) {
+      const nomes = [...new Set(itensDeOutraEmpresa.map((i: any) => i.funcionario_nome))].slice(0, 5).join(', ');
+      return {
+        ok: false,
+        erro: `Este lote tem ${itensDeOutraEmpresa.length} pagamento(s) de funcionários de OUTRA empresa (${nomes}${itensDeOutraEmpresa.length > 5 ? '…' : ''}), mas a conta de débito configurada no Itaú pertence a uma empresa diferente. Monte um lote por empresa para não pagar pelo CNPJ errado.`
+      };
     }
 
     // 'TED' aqui só indica "sem chave PIX cadastrada, mas tem conta" — desde
@@ -809,6 +829,23 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
     const pendentes = itensElegiveis.filter(i => i.pronto && (i.metodo === 'PIX' || i.metodo === 'TED') && !STATUS_PIX_SUCESSO.includes(i.api_status));
     if (pendentes.length === 0) {
       return { ok: false, erro: 'Nenhum pagamento pendente de envio neste lote (já enviados com sucesso, sem PIX/conta bancária cadastrados, ou fora das empresas que você tem permissão para pagar).' };
+    }
+
+    // TRAVA CONTRA ENVIO SIMULTÂNEO. O loop abaixo leva ~1s por item (um lote
+    // de 19 levou 18s) e só grava os itens no fim — sem trava, dois cliques
+    // concorrentes (duas abas, duas pessoas do financeiro) leriam o mesmo
+    // estado inicial, os DOIS mandariam os pagamentos ao banco e o segundo
+    // write sobrescreveria o primeiro: pagamento em dobro, de dinheiro real.
+    // A idempotência por api_status só protege entre execuções sequenciais.
+    // O update condicional abaixo é atômico no Postgres: só uma execução
+    // consegue marcar ENVIANDO, a outra recebe 0 linhas e para aqui.
+    const { data: travou, error: travaErr } = await db.from('folha_lotes_pagamento')
+      .update({ status: 'ENVIANDO' })
+      .eq('id', payload.loteId).neq('status', 'ENVIANDO')
+      .select('id');
+    if (travaErr) throw new Error(travaErr.message);
+    if (!travou || travou.length === 0) {
+      return { ok: false, erro: 'Este lote já está sendo enviado neste momento (por você em outra aba, ou por outra pessoa). Aguarde o envio terminar e atualize a tela antes de tentar de novo.' };
     }
 
     // CORRENTE/POUPANCA (domínio do cadastro do funcionário) -> CC/PP
@@ -831,16 +868,39 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
       return digitos.length >= 12 ? `+${digitos}` : `+55${digitos}`;
     };
 
+    // Texto livre que vai pro SISPAG (comprovante/mensagem ao recebedor) sem
+    // acento nem caractere especial. O backend do SISPAG é mainframe — o
+    // próprio Itaú devolve os nomes já sem acento ("RENTECH LOCACAO DE
+    // EQUIPAME...") — e a exportação CNAB daqui já fazia essa limpeza
+    // (formataTexto em /admin/financeiro/rh); só o caminho da API mandava o
+    // texto cru. Hoje 2 funcionários têm acento no nome (ISMAEL DAMIÃO,
+    // GILMASIO ELISBÃO), então isso já valia pra folha real.
+    const textoSispag = (s: string, limite: number): string =>
+      String(s || '')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^A-Za-z0-9 .,\-/#]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, limite);
+
+    // agencia_recebedor tem maxLength 4 no schema. Hoje nenhum funcionário
+    // tem agência maior que isso, mas um cadastro novo com dígito verificador
+    // junto (ex.: "1234-5") viraria 5 dígitos e estouraria o campo — corta nos
+    // 4 primeiros, que é a agência de fato.
+    const agenciaSispag = (v: string) => String(v || '').replace(/\D/g, '').slice(0, 4);
+
     // TESTADO E DESCARTADO (2026-09-04): mandamos data_pagamento como
     // datetime completo ("yyyy-MM-ddT00:00:00.000Z"), sugestão do time
     // técnico do Itaú — a API devolveu HTTP 500 "Erro de Processamento
     // Interno". Confirma o schema oficial (format:"date", só "yyyy-MM-dd"),
     // que é o que dataPagamentoItem já vem formatado do front.
     let sucesso = 0, rejeitado = 0, comErro = 0;
+    try {
     for (const item of pendentes) {
-      const referencia_empresa = `FOLHA ${lote.mes_referencia}`.slice(0, 20);
-      const identificacao_comprovante = `Pagamento - ${item.funcionario_nome}`.slice(0, 100);
-      const informacoes_entre_usuarios = `Pagamento de ${item.fonte_rotulo || 'folha'} - ${lote.mes_referencia}`;
+      // referencia_empresa: maxLength 20 no schema oficial.
+      const referencia_empresa = textoSispag(`FOLHA ${lote.mes_referencia}`, 20);
+      const identificacao_comprovante = textoSispag(`Pagamento - ${item.funcionario_nome}`, 100);
+      const informacoes_entre_usuarios = textoSispag(`Pagamento de ${item.fonte_rotulo || 'folha'} - ${lote.mes_referencia}`, 100);
       // Itens de OP usam a própria data de vencimento (item.dataPagamento),
       // nunca a data digitada na tela de montagem do lote — ver
       // montarLoteSalariosAction, onde esse campo é preenchido só pra OP.
@@ -871,7 +931,7 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
           data_pagamento: dataPagamentoItem,
           ispb,
           tipo_identificacao_conta: tipoContaSispag(item.banco_tipo),
-          agencia_recebedor: String(item.banco_agencia).replace(/\D/g, ''),
+          agencia_recebedor: agenciaSispag(item.banco_agencia),
           conta_recebedor: String(item.banco_conta).replace(/\D/g, ''),
           tipo_de_identificacao_do_recebedor: 'F',
           identificacao_recebedor: String(item.cpf || '').replace(/\D/g, ''),
@@ -927,6 +987,15 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
         }
       }
     }
+    } catch (erroLoop: any) {
+      // Se estourar no meio do loop, alguns itens já podem ter sido enviados
+      // de verdade ao banco — grava o que já foi processado (senão o lote
+      // ficaria dizendo "não enviado" com dinheiro já em trânsito) e libera a
+      // trava, que senão deixaria o lote preso em ENVIANDO pra sempre.
+      await db.from('folha_lotes_pagamento')
+        .update({ itens, status: sucesso > 0 ? 'ENVIADO' : 'ERRO' }).eq('id', payload.loteId);
+      throw erroLoop;
+    }
 
     const novoStatus = sucesso > 0 ? 'ENVIADO' : 'ERRO';
     const { error: updErr } = await db.from('folha_lotes_pagamento')
@@ -962,20 +1031,139 @@ export async function consultarStatusAtualItauAction(payload: { idPagamentoSispa
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
-  const db = supabaseAdmin();
   try {
-    const { data: integ } = await db.from('folha_integracoes')
-      .select('ambiente').eq('parceiro', 'ITAU').maybeSingle();
-    const ambienteItau: 'SANDBOX' | 'PRODUCAO' = integ?.ambiente === 'PRODUCAO' ? 'PRODUCAO' : 'SANDBOX';
+    const ctx = await contextoEnvioItau();
+    if (!ctx.ok) return { ok: false, erro: ctx.erro };
 
-    const { status, ok, data } = await consultarPagamentoSispag(ambienteItau, payload.idPagamentoSispag);
+    const { status, ok, data } = await consultarPagamentoSispag(ctx.ambiente, payload.idPagamentoSispag);
     if (!ok) {
       return { ok: false, erro: `Consulta rejeitada pela API do Itaú (HTTP ${status}): ${data?.mensagem || 'sem detalhe.'}` };
     }
     // Mesmo embrulho extra "data" dos outros endpoints do SISPAG — ver nota
     // em app/admin/financeiro/integracao/actions.ts.
     const pagamento = data?.data ?? data;
-    return { ok: true, info: { ambiente: ambienteItau, pagamento } };
+    return { ok: true, info: { ambiente: ctx.ambiente, pagamento } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// Ambiente + validações da integração ITAÚ, compartilhado pelas ações que
+// falam com a API (consulta de status e reabertura de item). O envio do lote
+// faz as mesmas checagens inline porque precisa também do `config` pro
+// pagador.
+async function contextoEnvioItau(): Promise<{ ok: true; ambiente: 'SANDBOX' | 'PRODUCAO' } | { ok: false; erro: string }> {
+  const db = supabaseAdmin();
+  const { data: integ } = await db.from('folha_integracoes')
+    .select('ativo, ambiente').eq('parceiro', 'ITAU').maybeSingle();
+  if (!integ) return { ok: false, erro: 'Integração com o Itaú não encontrada (ver Integrações).' };
+  if (!integ.ativo) return { ok: false, erro: 'A integração com o Itaú não está ativa (ver Integrações → ⚙ Configurar).' };
+  const ambiente: 'SANDBOX' | 'PRODUCAO' = integ.ambiente === 'PRODUCAO' ? 'PRODUCAO' : 'SANDBOX';
+  if (!credenciaisItauConfiguradas(ambiente)) {
+    return { ok: false, erro: `Credenciais da API do Itaú não configuradas no servidor para o ambiente ${ambiente}.` };
+  }
+  return { ok: true, ambiente };
+}
+
+// ============================================================================
+// REABRIR ITEM PARA REENVIO — conserta a armadilha do "Sucesso" que não é
+// pagamento: `api_status: 'Sucesso'` só diz que a API aceitou a inclusão, mas
+// o pagamento ainda pode ser recusado/expirar depois no Itaú (já aconteceu:
+// lotes inteiros viraram "Não Efetuado / Pagamento expirado"). Quando isso
+// acontecia, o item ficava preso pra sempre:
+//   - enviarLoteAoBancoAction pula itens com api_status de sucesso;
+//   - montarLoteSalariosAction exclui OP/rescisão com pago_em preenchido.
+// Ou seja: ninguém recebia e o sistema mostrava "pago". Esta ação desfaz esse
+// estado, mas SÓ depois de confirmar na API do Itaú que o pagamento realmente
+// falhou — nunca com base no que está salvo no nosso banco, pra não haver
+// risco de reabrir (e repagar) algo que na verdade foi efetivado.
+// ============================================================================
+const semAcento = (s: string) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+// Só estes status contam como "falhou de vez" e liberam o reenvio. Qualquer
+// outro (inclusive "Pendente de autorização" e "Efetuado") bloqueia.
+const STATUS_ITAU_FALHA = ['nao efetuado', 'rejeitado', 'cancelado', 'estornado'];
+
+export async function reabrirItemParaReenvioAction(
+  payload: { loteId: number; idPagamentoSispag: string; usuarioNome: string },
+  accessToken: string
+): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const ctx = await contextoEnvioItau();
+    if (!ctx.ok) return { ok: false, erro: ctx.erro };
+
+    const { data: lote, error: loteErr } = await db.from('folha_lotes_pagamento')
+      .select('id, mes_referencia, itens, status').eq('id', payload.loteId).maybeSingle();
+    if (loteErr) throw new Error(loteErr.message);
+    if (!lote) return { ok: false, erro: 'Lote não encontrado.' };
+
+    const itens: any[] = Array.isArray(lote.itens) ? lote.itens : [];
+    const item = itens.find(i => i.api_cod_pagamento === payload.idPagamentoSispag);
+    if (!item) return { ok: false, erro: 'Pagamento não encontrado neste lote.' };
+
+    // Confere o estado REAL no banco antes de liberar qualquer reenvio.
+    const { ok, status, data } = await consultarPagamentoSispag(ctx.ambiente, payload.idPagamentoSispag);
+    if (!ok) {
+      return { ok: false, erro: `Não foi possível confirmar o status atual no Itaú (HTTP ${status}) — reabertura cancelada por segurança.` };
+    }
+    const dadosPagamento = (data?.data ?? data)?.dados_pagamento;
+    const statusItau = String(dadosPagamento?.status || '');
+    if (!STATUS_ITAU_FALHA.includes(semAcento(statusItau))) {
+      return {
+        ok: false,
+        erro: `O Itaú informa que este pagamento está como "${statusItau || 'desconhecido'}" — só é possível reabrir pagamentos que falharam de vez (Não Efetuado, Rejeitado, Cancelado ou Estornado). Se ele ainda está pendente de autorização, aprove ou cancele no Itaú Empresas primeiro.`
+      };
+    }
+
+    // Guarda a tentativa anterior antes de limpar, pra não perder o rastro do
+    // que foi enviado (inclusive o motivo real da falha).
+    item.api_tentativas_anteriores = [
+      ...(Array.isArray(item.api_tentativas_anteriores) ? item.api_tentativas_anteriores : []),
+      {
+        api_status: item.api_status ?? null,
+        api_cod_pagamento: item.api_cod_pagamento ?? null,
+        api_numero_lote: item.api_numero_lote ?? null,
+        api_enviado_em: item.api_enviado_em ?? null,
+        api_erro: item.api_erro ?? null,
+        status_final_itau: statusItau,
+        motivo_final_itau: dadosPagamento?.motivo_rejeicao ?? null,
+        reaberto_em: new Date().toISOString(),
+        reaberto_por: payload.usuarioNome,
+      },
+    ];
+    item.api_status = null;
+    item.api_cod_pagamento = null;
+    item.api_numero_lote = null;
+    item.api_motivo_recusa = null;
+    item.api_erro = null;
+    item.api_enviado_em = null;
+    item.api_resposta_bruta = null;
+
+    // Devolve OP/rescisão pro estado "a pagar" — sem isso elas continuariam
+    // marcadas como pagas e nunca voltariam a aparecer num lote novo.
+    if (item.fonte === 'RESCISAO' && item.rescisaoId) {
+      await db.from('folha_rescisoes').update({ pago_em: null, pago_lote_id: null }).eq('id', item.rescisaoId);
+    }
+    if (item.fonte === 'OP' && item.opId) {
+      await db.from('op_ordens_pagamento').update({ pago_em: null, pago_lote_id: null }).eq('id', item.opId);
+    }
+
+    const aindaTemSucesso = itens.some(i => STATUS_PIX_SUCESSO.includes(i.api_status));
+    const { error: updErr } = await db.from('folha_lotes_pagamento')
+      .update({ itens, status: aindaTemSucesso ? lote.status : 'GERADO' })
+      .eq('id', payload.loteId);
+    if (updErr) throw new Error(updErr.message);
+
+    await registrarLogAuditoria({
+      usuario_nome: payload.usuarioNome,
+      acao: `REABERTURA DE PAGAMENTO PARA REENVIO (LOTE #${payload.loteId}, ${item.funcionario_nome}, ${payload.idPagamentoSispag}): status no Itaú era "${statusItau}"`,
+      setor: 'FINANCEIRO / RH'
+    });
+
+    return { ok: true, info: { statusItau, funcionario: item.funcionario_nome } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

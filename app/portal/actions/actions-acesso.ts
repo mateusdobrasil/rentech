@@ -12,6 +12,7 @@ import crypto from 'crypto';
 import { supabaseAdmin } from '../../lib/supabase';
 import { resolverProvedorAutomacao, enviarComJanela, type ProvedorAutomacao, type TemplateMeta } from '../../lib/whatsapp';
 import { somenteDigitos, cpfValido, emailSinteticoPortal } from '../lib/cpf';
+import { carregarNomesEmpresas, nomeEmpresaPara } from '../../lib/empresa';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -32,7 +33,10 @@ const MSG_GENERICA = 'Se os dados informados estiverem corretos, um código de v
 // do nome) pra poder escolher o provedor (Z-API/Meta) e, depois de aprovado,
 // o Template de Autenticação da Meta, sem precisar mexer em código.
 const CHAVE_AUTOMACAO_OTP = 'portal-acesso-otp';
-const MENSAGEM_PADRAO_OTP = 'RENTECH: seu código de acesso ao Portal do Funcionário é {{codigo}}. Válido por 10 minutos. Não compartilhe este código.';
+// Sem citar empresa: este texto só entra se o card do OTP não existir ou não
+// tiver mensagem, e aí não há empresa confiável pra citar. A mensagem real
+// (card "Portal Acesso OTP") usa {{empresa}}.
+const MENSAGEM_PADRAO_OTP = 'Seu código de acesso ao Portal do Funcionário é {{codigo}}. Válido por 10 minutos. Não compartilhe este código.';
 
 interface ConfigAutomacaoOtp {
   ativo: boolean;
@@ -41,6 +45,7 @@ interface ConfigAutomacaoOtp {
   meta_template_nome: string | null;
   meta_template_idioma: string | null;
   meta_template_variaveis: string[] | null;
+  empresa_id: number | null;
 }
 
 // ============================================================================
@@ -50,11 +55,11 @@ interface ConfigAutomacaoOtp {
 // automação de WhatsApp do sistema. Sem o card criado ainda, cai no padrão
 // (provedor PADRAO + mensagem de texto livre abaixo) — nada quebra.
 // ============================================================================
-async function enviarCodigoAcessoWhatsApp(celular: string, codigo: string): Promise<{ ok: boolean; erro?: string }> {
+async function enviarCodigoAcessoWhatsApp(celular: string, codigo: string, empresaId: number | null): Promise<{ ok: boolean; erro?: string }> {
   const db = supabaseAdmin();
   const { data: automacao } = await db
     .from('parametros_automacoes')
-    .select('ativo, mensagem, provedor_whatsapp, meta_template_nome, meta_template_idioma, meta_template_variaveis')
+    .select('ativo, mensagem, provedor_whatsapp, meta_template_nome, meta_template_idioma, meta_template_variaveis, empresa_id')
     .eq('chave', CHAVE_AUTOMACAO_OTP)
     .maybeSingle<ConfigAutomacaoOtp>();
 
@@ -62,7 +67,13 @@ async function enviarCodigoAcessoWhatsApp(celular: string, codigo: string): Prom
     return { ok: false, erro: 'Envio de código por WhatsApp está temporariamente desativado. Tente novamente mais tarde.' };
   }
 
-  const vars: Record<string, string> = { codigo };
+  // {{empresa}} cita a empresa do próprio funcionário — quem é da AlfaLight
+  // não deve receber um código "da Rentech".
+  const empresas = await carregarNomesEmpresas(db);
+  const vars: Record<string, string> = {
+    codigo,
+    empresa: nomeEmpresaPara(empresas, empresaId, automacao?.empresa_id ?? null),
+  };
   const texto = (automacao?.mensagem || MENSAGEM_PADRAO_OTP).replace(/\{\{(\w+)\}\}/g, (m, chave) => vars[chave] ?? m);
 
   const provedor = await resolverProvedorAutomacao((automacao?.provedor_whatsapp as ProvedorAutomacao) || 'PADRAO');
@@ -119,7 +130,7 @@ export async function solicitarAcessoAction(payload: { cpf: string }): Promise<R
     // formatação garantida) e não há índice funcional para buscar direto.
     const { data: candidatos } = await db
       .from('folha_funcionarios')
-      .select('nome_completo, cpf, celular')
+      .select('nome_completo, cpf, celular, empresa_id')
       .eq('ativo', true)
       .not('cpf', 'is', null);
 
@@ -144,7 +155,7 @@ export async function solicitarAcessoAction(payload: { cpf: string }): Promise<R
           expira_em: expiraEm,
         });
 
-        await enviarCodigoAcessoWhatsApp(funcionario.celular, codigo);
+        await enviarCodigoAcessoWhatsApp(funcionario.celular, codigo, funcionario.empresa_id ?? null);
       }
     }
 

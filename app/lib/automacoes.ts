@@ -6,6 +6,7 @@
 import nodemailer from 'nodemailer';
 import { supabaseAdmin } from './supabase';
 import { resolverProvedorAutomacao, enviarComJanela, type ProvedorAutomacao, type TemplateMeta } from './whatsapp';
+import { carregarNomesEmpresas, nomeEmpresaPara } from './empresa';
 
 interface ResultadoDisparoAutomacao {
   disparado: boolean; // false se a automação está desativada, sem canal WhatsApp ou sem mensagem configurada
@@ -29,26 +30,34 @@ function hojeNoBrasil(): Date {
 // empresaId (opcional): quando a automação está presa a uma empresa, restringe
 // os aniversariantes a ela — funcionário sem empresa definida (histórico)
 // continua entrando, mesmo critério usado no resto do sistema.
-async function listarAniversariantesFuncionarios(db: ReturnType<typeof supabaseAdmin>, empresaId: number | null): Promise<{ nome_completo: string; celular: string }[]> {
+async function listarAniversariantesFuncionarios(db: ReturnType<typeof supabaseAdmin>, empresaId: number | null): Promise<Destinatario[]> {
   const hoje = hojeNoBrasil();
   const mes = hoje.getMonth();
   const dia = hoje.getDate();
 
   let query = db
     .from('folha_funcionarios')
-    .select('nome_completo, celular, data_nascimento')
+    .select('nome_completo, celular, data_nascimento, empresa_id')
     .eq('ativo', true)
     .not('celular', 'is', null)
     .not('data_nascimento', 'is', null);
   if (empresaId) query = query.or(`empresa_id.is.null,empresa_id.eq.${empresaId}`);
   const { data } = await query;
 
-  return ((data || []) as { nome_completo: string; celular: string; data_nascimento: string }[])
+  return ((data || []) as (Destinatario & { data_nascimento: string })[])
     .filter(f => {
       const nascimento = new Date(`${f.data_nascimento}T00:00:00`);
       return nascimento.getMonth() === mes && nascimento.getDate() === dia;
     })
-    .map(f => ({ nome_completo: f.nome_completo, celular: f.celular }));
+    .map(f => ({ nome_completo: f.nome_completo, celular: f.celular, empresa_id: f.empresa_id }));
+}
+
+// `empresa_id` acompanha o destinatário pra que {{empresa}} na mensagem (e o
+// parâmetro correspondente no Message Template) cite a empresa DELE.
+interface Destinatario {
+  nome_completo: string;
+  celular: string;
+  empresa_id: number | null;
 }
 
 interface LinhaAutomacaoWhatsApp {
@@ -78,7 +87,7 @@ async function executarDisparoWhatsApp(db: ReturnType<typeof supabaseAdmin>, aut
     return { disparado: false, disparos: 0, erros: ['Automação sem mensagem configurada.'] };
   }
 
-  let funcionarios: { nome_completo: string; celular: string }[];
+  let funcionarios: Destinatario[];
   if (automacao.publico_dinamico === 'ANIVERSARIANTES_FUNCIONARIOS') {
     // Destinatários calculados a cada execução — `destinatarios` não se aplica aqui.
     funcionarios = await listarAniversariantesFuncionarios(db, automacao.empresa_id);
@@ -86,7 +95,7 @@ async function executarDisparoWhatsApp(db: ReturnType<typeof supabaseAdmin>, aut
     const destinatarios: string[] = automacao.destinatarios || [];
     let query = db
       .from('folha_funcionarios')
-      .select('nome_completo, celular')
+      .select('nome_completo, celular, empresa_id')
       .eq('ativo', true)
       .not('celular', 'is', null);
 
@@ -101,7 +110,7 @@ async function executarDisparoWhatsApp(db: ReturnType<typeof supabaseAdmin>, aut
     }
 
     const { data } = await query;
-    funcionarios = (data || []) as { nome_completo: string; celular: string }[];
+    funcionarios = (data || []) as Destinatario[];
   }
 
   // Resolve o provedor (Z-API ou Meta) uma única vez antes do loop — evita
@@ -110,10 +119,19 @@ async function executarDisparoWhatsApp(db: ReturnType<typeof supabaseAdmin>, aut
   // pode fixar Z-API ou Meta explicitamente, ignorando o global.
   const provedor = await resolverProvedorAutomacao((automacao.provedor_whatsapp as ProvedorAutomacao) || 'PADRAO');
 
+  // Uma leitura só pro lote inteiro — {{empresa}} sai da empresa de cada
+  // destinatário (ver nomeEmpresaPara), não de um nome fixo no texto.
+  const empresas = await carregarNomesEmpresas(db);
+
   let disparos = 0;
   const erros: string[] = [];
   for (const f of funcionarios) {
-    const vars: Record<string, string | number> = { primeiro_nome: f.nome_completo.split(' ')[0], nome_completo: f.nome_completo, ...contexto };
+    const vars: Record<string, string | number> = {
+      primeiro_nome: f.nome_completo.split(' ')[0],
+      nome_completo: f.nome_completo,
+      empresa: nomeEmpresaPara(empresas, f.empresa_id, automacao.empresa_id),
+      ...contexto,
+    };
     const texto = preencherTemplate(automacao.mensagem, vars);
 
     // Template da Meta (se configurado) — os parâmetros variam por
@@ -207,14 +225,14 @@ async function executarDisparoEmail(db: ReturnType<typeof supabaseAdmin>, automa
   }
 
   const destinatarios: string[] = automacao.destinatarios || [];
-  let query = db.from('folha_funcionarios').select('nome_completo, email').eq('ativo', true).not('email', 'is', null);
+  let query = db.from('folha_funcionarios').select('nome_completo, email, empresa_id').eq('ativo', true).not('email', 'is', null);
   if (destinatarios.length > 0) {
     query = query.in('nome_completo', destinatarios);
   } else if (automacao.empresa_id) {
     query = query.or(`empresa_id.is.null,empresa_id.eq.${automacao.empresa_id}`);
   }
   const { data } = await query;
-  const funcionarios = (data || []) as { nome_completo: string; email: string }[];
+  const funcionarios = (data || []) as { nome_completo: string; email: string; empresa_id: number | null }[];
 
   if (funcionarios.length === 0) {
     return { disparado: true, disparos: 0, erros: [] };
@@ -227,10 +245,17 @@ async function executarDisparoEmail(db: ReturnType<typeof supabaseAdmin>, automa
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
   });
 
+  const empresas = await carregarNomesEmpresas(db);
+
   let disparos = 0;
   const erros: string[] = [];
   for (const f of funcionarios) {
-    const vars: Record<string, string | number> = { primeiro_nome: f.nome_completo.split(' ')[0], nome_completo: f.nome_completo, ...contexto };
+    const vars: Record<string, string | number> = {
+      primeiro_nome: f.nome_completo.split(' ')[0],
+      nome_completo: f.nome_completo,
+      empresa: nomeEmpresaPara(empresas, f.empresa_id, automacao.empresa_id),
+      ...contexto,
+    };
     const texto = preencherTemplate(automacao.mensagem, vars);
 
     try {

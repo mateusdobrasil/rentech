@@ -5,7 +5,6 @@
 // campo `ativo` antes de disparar qualquer mensagem. Desligar aqui impede
 // o envio sem precisar mexer em código ou na Vercel.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { verificarConexaoZapi } from '../../../lib/zapi';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { FONTES_DADOS_DISPONIVEIS, EVENTOS_SISTEMA_DISPONIVEIS } from './catalogoAutomacoes';
 
@@ -306,14 +305,6 @@ export async function contarEnviosMesAction(accessToken: string): Promise<Result
 }
 
 // Checagem ao vivo da conexão da Z-API (substitui o badge fixo "Conectado").
-export async function verificarStatusZapiAction(accessToken: string): Promise<Resultado<{ conectado: boolean; detalhe?: string }>> {
-  const acesso = await validarAcesso(accessToken, ROTA);
-  if (!acesso.ok) return { ok: false, erro: acesso.message };
-
-  const resultado = await verificarConexaoZapi();
-  return { ok: true, data: resultado };
-}
-
 export async function excluirAutomacaoAction(id: number, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };

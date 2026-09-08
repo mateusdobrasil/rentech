@@ -6,7 +6,7 @@ import { Analytics } from "@vercel/analytics/next";
 import {
   listarAutomacoesAction, alternarStatusAutomacaoAction,
   criarAutomacaoAction, atualizarAutomacaoAction, excluirAutomacaoAction,
-  listarFuncionariosParaAutomacaoAction, contarEnviosMesAction, verificarStatusZapiAction,
+  listarFuncionariosParaAutomacaoAction, contarEnviosMesAction,
   type RotinaAutomacaoDB, type FormAutomacao, type FuncionarioParaAutomacao
 } from './actions';
 import { FONTES_DADOS_DISPONIVEIS, EVENTOS_SISTEMA_DISPONIVEIS } from './catalogoAutomacoes';
@@ -17,6 +17,63 @@ import { supabase } from '../../../lib/supabase';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 // Tipos de Automação (RotinaAutomacaoDB vem de ./actions, refletindo a tabela parametros_automacoes)
+
+// Automação sem empresa (null) é "de todas" — continua aparecendo independente
+// do filtro, mesmo critério usado no resto do sistema.
+const filtrarPorEmpresa = (rotinas: RotinaAutomacaoDB[], empresaId: number | null) =>
+  !empresaId ? rotinas : rotinas.filter(r => r.empresa_id == null || r.empresa_id === empresaId);
+
+// PRÓXIMO DISPARO — calculado a partir das rotinas que a tela já carregou,
+// sem ida ao servidor. Só entram as CRON ativas com horário: WEBHOOK dispara
+// por evento do sistema, não por relógio.
+const DIAS_CURTOS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+const DIAS_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MINUTOS_NO_DIA = 24 * 60;
+const MINUTOS_NA_SEMANA = 7 * MINUTOS_NO_DIA;
+
+// Os crons rodam em America/Sao_Paulo, então o relógio do navegador daria
+// resposta errada pra quem abrir a tela de outro fuso.
+function agoraEmSaoPaulo() {
+  const partes = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date());
+  const valor = (tipo: string) => partes.find(p => p.type === tipo)?.value || '';
+  const diaSemana = DIAS_EN.indexOf(valor('weekday'));
+  // hour12:false devolve '24' à meia-noite em algumas engines
+  const hora = Number(valor('hour')) % 24;
+  return {
+    diaSemana: diaSemana < 0 ? new Date().getDay() : diaSemana,
+    minutosDoDia: hora * 60 + Number(valor('minute')),
+  };
+}
+
+function proximoDisparoDe(rotinas: RotinaAutomacaoDB[]): { nome: string; horario: string; quando: string } | null {
+  const { diaSemana, minutosDoDia } = agoraEmSaoPaulo();
+  let melhor: { nome: string; horario: string; espera: number } | null = null;
+
+  for (const r of rotinas) {
+    if (!r.ativo || r.tipo !== 'CRON' || !r.horario) continue;
+    const [h, m] = r.horario.split(':').map(Number);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) continue;
+    const alvo = h * 60 + m;
+    // Sem dias marcados, trata como todo dia — mesma leitura do disparo.
+    const dias = r.dias_semana?.length ? r.dias_semana : [0, 1, 2, 3, 4, 5, 6];
+    for (const dia of dias) {
+      let espera = ((dia - diaSemana + 7) % 7) * MINUTOS_NO_DIA + (alvo - minutosDoDia);
+      if (espera < 0) espera += MINUTOS_NA_SEMANA; // já passou hoje: cai na semana que vem
+      if (!melhor || espera < melhor.espera) melhor = { nome: r.nome, horario: r.horario, espera };
+    }
+  }
+  if (!melhor) return null;
+
+  const diasAdiante = Math.floor((minutosDoDia + melhor.espera) / MINUTOS_NO_DIA);
+  const quando = melhor.espera < 60 ? `em ${Math.max(1, Math.round(melhor.espera))} min`
+    : diasAdiante === 0 ? 'hoje'
+    : diasAdiante === 1 ? 'amanhã'
+    : DIAS_CURTOS[(diaSemana + diasAdiante) % 7];
+
+  return { nome: melhor.nome, horario: melhor.horario, quando };
+}
 
 export default function GestaoAgendamentos() {
   const router = useRouter();
@@ -78,24 +135,26 @@ export default function GestaoAgendamentos() {
     if (accessToken) carregarRotinas();
   }, [accessToken]);
 
-  // Automação sem empresa (null) é "de todas" — continua aparecendo
-  // independente do filtro, mesmo critério usado no resto do sistema.
-  const rotinasVisiveis = !filtroEmpresa ? rotinas : rotinas.filter(r => r.empresa_id == null || r.empresa_id === filtroEmpresa);
+  const rotinasVisiveis = filtrarPorEmpresa(rotinas, filtroEmpresa);
 
-  // Contadores reais de envio (mês corrente) e status ao vivo da Z-API —
-  // antes eram números/badge fixos no código.
+  // Contadores reais de envio (mês corrente) — antes eram números fixos no código.
   const [enviosMes, setEnviosMes] = useState<{ whatsapp: number; email: number } | null>(null);
-  const [statusZapi, setStatusZapi] = useState<{ conectado: boolean; detalhe?: string } | null>(null);
-  const [statusZapiLoading, setStatusZapiLoading] = useState(true);
 
   useEffect(() => {
     if (!accessToken) return;
     contarEnviosMesAction(accessToken).then(res => { if (res.ok) setEnviosMes(res.data || { whatsapp: 0, email: 0 }); });
-    verificarStatusZapiAction(accessToken).then(res => {
-      if (res.ok) setStatusZapi(res.data || { conectado: false });
-      setStatusZapiLoading(false);
-    });
   }, [accessToken]);
+
+  // Próximo disparo agendado. Fica em estado (e não calculado no render) porque
+  // depende do relógio: o intervalo mantém o "em X min" andando sozinho.
+  const [proximoDisparo, setProximoDisparo] = useState<{ nome: string; horario: string; quando: string } | null>(null);
+
+  useEffect(() => {
+    const atualizar = () => setProximoDisparo(proximoDisparoDe(filtrarPorEmpresa(rotinas, filtroEmpresa)));
+    atualizar();
+    const timer = setInterval(atualizar, 60_000);
+    return () => clearInterval(timer);
+  }, [rotinas, filtroEmpresa]);
 
   // Funcionários ativos disponíveis para seleção como destinatários (agrupados por cargo,
   // já que não existe uma coluna de "departamento" na tabela de funcionários).
@@ -289,7 +348,7 @@ export default function GestaoAgendamentos() {
           <div>
             <h1 className="text-2xl font-black text-[#0C1D4D] uppercase tracking-wider">Agendamentos e Disparos</h1>
             <p className="text-[#64748B] text-sm font-medium mt-1">
-              Gerencie lembretes via Z-API (WhatsApp) e e-mails disparados automaticamente.
+              Gerencie lembretes via WhatsApp e e-mails disparados automaticamente.
             </p>
           </div>
           <div className="flex items-center gap-2 w-full md:w-auto">
@@ -324,14 +383,17 @@ export default function GestaoAgendamentos() {
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">E-mails Enviados</p>
             <p className="text-2xl font-black text-[#336699]">{enviosMes === null ? '…' : enviosMes.email} <span className="text-[10px] text-gray-400 font-medium">este mês</span></p>
           </div>
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0] border-l-4 border-l-gray-400">
-            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Status Z-API</p>
-            {statusZapiLoading ? (
-              <p className="text-sm font-black text-gray-400 mt-2">Verificando...</p>
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0] border-l-4 border-l-[#7C3AED]">
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Próximo Disparo</p>
+            {proximoDisparo === null ? (
+              <p className="text-sm font-black text-gray-400 mt-2">Nenhum agendado</p>
             ) : (
-              <p className={`text-sm font-black mt-2 px-3 py-1 rounded-lg inline-block ${statusZapi?.conectado ? 'text-[#16A34A] bg-green-50' : 'text-red-600 bg-red-50'}`} title={statusZapi?.detalhe}>
-                {statusZapi?.conectado ? '✅ Conectado' : '⛔ Desconectado'}
-              </p>
+              <>
+                <p className="text-2xl font-black text-[#7C3AED]">
+                  {proximoDisparo.horario} <span className="text-[10px] text-gray-400 font-medium">{proximoDisparo.quando}</span>
+                </p>
+                <p className="text-[10px] text-gray-500 font-bold truncate" title={proximoDisparo.nome}>{proximoDisparo.nome}</p>
+              </>
             )}
           </div>
         </div>
@@ -543,7 +605,7 @@ export default function GestaoAgendamentos() {
                   {modalAutomacao.form.evento_sistema ? (
                     <p className="text-[10px] text-[#94A3B8] mt-1">
                       Variáveis disponíveis: {EVENTOS_SISTEMA_DISPONIVEIS.find(ev => ev.valor === modalAutomacao.form.evento_sistema)?.variaveis.map(v => <code key={v} className="mr-1">{`{{${v}}}`}</code>)}
-                      {' '}(além de <code>{'{{primeiro_nome}}'}</code>/<code>{'{{nome_completo}}'}</code> do destinatário). Pode haver mais de uma automação para o mesmo evento.
+                      {' '}(além de <code>{'{{primeiro_nome}}'}</code>/<code>{'{{nome_completo}}'}</code>/<code>{'{{empresa}}'}</code> do destinatário). Pode haver mais de uma automação para o mesmo evento.
                     </p>
                   ) : (
                     <p className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mt-1">
@@ -563,7 +625,7 @@ export default function GestaoAgendamentos() {
                   placeholder={'Olá, *{{primeiro_nome}}*! Não esqueça de bater o ponto.'}
                 />
                 <p className="text-[10px] text-[#94A3B8] mt-1">
-                  Placeholders disponíveis: <code>{'{{primeiro_nome}}'}</code> e <code>{'{{nome_completo}}'}</code> sempre; mais as variáveis da Fonte de Dados ou do Evento do Sistema escolhidos acima, se houver.
+                  Placeholders disponíveis: <code>{'{{primeiro_nome}}'}</code>, <code>{'{{nome_completo}}'}</code> e <code>{'{{empresa}}'}</code> sempre; mais as variáveis da Fonte de Dados ou do Evento do Sistema escolhidos acima, se houver. <code>{'{{empresa}}'}</code> resolve o nome curto da empresa do próprio destinatário.
                 </p>
               </div>
 
@@ -678,7 +740,7 @@ export default function GestaoAgendamentos() {
                           ...modalAutomacao.form,
                           publico_dinamico: 'ANIVERSARIANTES_FUNCIONARIOS',
                           destinatarios: [],
-                          mensagem: modalAutomacao.form.mensagem || '🎉 Feliz aniversário, {{primeiro_nome}}! Toda a equipe Rentech deseja um dia incrível! 🎂',
+                          mensagem: modalAutomacao.form.mensagem || '🎉 Feliz aniversário, {{primeiro_nome}}! Toda a equipe {{empresa}} deseja um dia incrível! 🎂',
                         }
                       })}
                     />

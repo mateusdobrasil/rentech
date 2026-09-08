@@ -20,12 +20,17 @@ const fmtData = (dataStr: string) => new Date(`${dataStr}T00:00:00`).toLocaleDat
 
 // Retorna null se nenhum veículo ativo estiver com CRLV ou seguro vencido —
 // nesse caso o motor não deve disparar mensagem nenhuma.
-export async function montarContextoFrotaVencida(): Promise<ContextoFrotaVencida | null> {
+// empresaId (opcional): a empresa escolhida no card da automação — a lista se
+// restringe a ela, com veículo sem empresa definida (histórico) ainda entrando,
+// mesmo critério do resto do sistema.
+export async function montarContextoFrotaVencida(empresaId: number | null = null): Promise<ContextoFrotaVencida | null> {
   const db = supabaseAdmin();
-  const { data: veiculos } = await db
+  let query = db
     .from('frota_veiculos')
     .select('apelido, placa, status, crlv_vencimento, seguro_vigencia_fim')
     .neq('status', 'INATIVO');
+  if (empresaId) query = query.or(`empresa_id.is.null,empresa_id.eq.${empresaId}`);
+  const { data: veiculos } = await query;
 
   const agora = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
   agora.setHours(0, 0, 0, 0);

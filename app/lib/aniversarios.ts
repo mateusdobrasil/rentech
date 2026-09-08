@@ -35,13 +35,19 @@ const fmtData = (d: Date) => d.toLocaleDateString('pt-BR', { day: '2-digit', mon
 
 // Retorna null se ninguém da equipe ativa faz aniversário na semana (Seg a
 // Dom) que contém hoje — nesse caso o motor não deve disparar mensagem nenhuma.
-export async function montarContextoAniversariantesSemana(): Promise<ContextoAniversariantesSemana | null> {
+// empresaId (opcional): quando a automação está presa a uma empresa, a lista
+// se restringe a ela — funcionário sem empresa definida (histórico) continua
+// entrando, mesmo critério de listarAniversariantesFuncionarios em
+// app/lib/automacoes.ts e do resto do sistema.
+export async function montarContextoAniversariantesSemana(empresaId: number | null = null): Promise<ContextoAniversariantesSemana | null> {
   const db = supabaseAdmin();
-  const { data: funcionarios } = await db
+  let query = db
     .from('folha_funcionarios')
     .select('nome_completo, data_nascimento')
     .eq('ativo', true)
     .not('data_nascimento', 'is', null);
+  if (empresaId) query = query.or(`empresa_id.is.null,empresa_id.eq.${empresaId}`);
+  const { data: funcionarios } = await query;
 
   const semanaPorMesDia = new Map(diasDaSemana(hojeNoBrasil()).map(d => [mesDia(d), d]));
 

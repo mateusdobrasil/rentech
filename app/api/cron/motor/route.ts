@@ -12,19 +12,23 @@ import { montarContextoAniversariantesSemana } from '../../../lib/aniversarios';
 // Agendamentos e Disparos — em vez de pela `chave` (que é só um slug gerado
 // do nome digitado na criação, e não deveria carregar significado funcional).
 // Se a função devolver null, o motor pula essa automação sem disparar nada.
-const FONTES_DADOS: Record<string, () => Promise<Record<string, string | number> | null>> = {
-  FROTA_VENCIMENTOS: async () => {
-    const resultado = await montarContextoFrotaVencida();
+//
+// `empresaId` é a empresa escolhida no card da automação (null = todas). Toda
+// fonte precisa respeitá-la, senão o conteúdo enviado mistura empresas mesmo
+// com o card preso a uma.
+const FONTES_DADOS: Record<string, (empresaId: number | null) => Promise<Record<string, string | number> | null>> = {
+  FROTA_VENCIMENTOS: async (empresaId) => {
+    const resultado = await montarContextoFrotaVencida(empresaId);
     if (!resultado) return null;
     return { lista: resultado.lista, quantidade: resultado.quantidade };
   },
-  DOCUMENTOS_VENCIDOS: async () => {
-    const resultado = await montarContextoDocumentosVencidos();
+  DOCUMENTOS_VENCIDOS: async (empresaId) => {
+    const resultado = await montarContextoDocumentosVencidos(empresaId);
     if (!resultado) return null;
     return { lista: resultado.lista, quantidade: resultado.quantidade };
   },
-  ANIVERSARIANTES_SEMANA: async () => {
-    const resultado = await montarContextoAniversariantesSemana();
+  ANIVERSARIANTES_SEMANA: async (empresaId) => {
+    const resultado = await montarContextoAniversariantesSemana(empresaId);
     if (!resultado) return null;
     return { lista: resultado.lista, quantidade: resultado.quantidade };
   }
@@ -62,7 +66,7 @@ export async function GET(request: Request) {
   try {
     const { data: automacoes, error } = await db
       .from('parametros_automacoes')
-      .select('chave, nome, horario, dias_semana, ultima_execucao, fonte_dados')
+      .select('chave, nome, horario, dias_semana, ultima_execucao, fonte_dados, empresa_id')
       .eq('tipo', 'CRON')
       .eq('ativo', true)
       .eq('horario', horarioAtual);
@@ -86,7 +90,7 @@ export async function GET(request: Request) {
       let contexto: Record<string, string | number> = {};
       const montarContexto = automacao.fonte_dados ? FONTES_DADOS[automacao.fonte_dados] : null;
       if (montarContexto) {
-        const contextoEspecial = await montarContexto();
+        const contextoEspecial = await montarContexto(automacao.empresa_id ?? null);
         if (!contextoEspecial) continue; // nada a reportar hoje, não dispara
         contexto = contextoEspecial;
       }

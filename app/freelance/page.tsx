@@ -236,7 +236,7 @@ export default function CadastroFreelance() {
               Privacidade e LGPD
             </h2>
             <p className="text-[#64748B] text-sm font-medium mb-4 text-justify leading-relaxed">
-              Para integrar o nosso Banco de Talentos, a <strong>Rentech Locadora</strong> precisa de recolher os seus dados pessoais sensíveis (como Nome, CPF, Contatos e Chave PIX).
+              Para integrar o nosso Banco de Talentos, a <strong>{nomeEmpresaRegras}</strong> precisa de recolher os seus dados pessoais sensíveis (como Nome, CPF, Contatos e Chave PIX).
             </p>
             <p className="text-[#64748B] text-sm font-medium mb-8 text-justify leading-relaxed">
               Garantimos que as suas informações serão armazenadas com segurança e utilizadas <strong>exclusivamente</strong> para fins de escalação de equipe, contatos operacionais e pagamentos de diárias, em total conformidade com a Lei Geral de Proteção de Dados (Lei nº 13.709/2018).

@@ -10,6 +10,7 @@ import { enviarComProvedor, type ProvedorWhatsApp } from '../../../lib/whatsapp'
 import { enviarWhatsAppMetaTemplate } from '../../../lib/metaWhatsapp';
 import { statusCredenciaisP2s, testarConexao as testarConexaoP2s, type AmbienteP2s } from '../../../lib/p2s';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
+import { registrarLogAuditoria } from '../../../actions';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -235,6 +236,13 @@ export async function salvarRoteamentoWhatsAppAction(config: ConfigRoteamentoWha
       config, atualizado_em: new Date().toISOString()
     }).eq('parceiro', 'WHATSAPP_ROTEAMENTO');
     if (error) throw new Error(error.message);
+
+    registrarLogAuditoria({
+      usuario_nome: acesso.perfil.nome,
+      acao: `ALTEROU ROTEAMENTO DE WHATSAPP: modo ${config.modo}, envio ${config.provedor_envio}, recebimento ${config.provedor_recebimento}`,
+      setor: 'PARÂMETROS / INTEGRAÇÕES',
+    });
+
     return { ok: true };
   } catch (e: any) {
     return { ok: false, erro: e.message };
@@ -259,7 +267,16 @@ export async function enviarTesteWhatsAppAction(provedor: ProvedorWhatsApp, celu
   // provedor aceitou a mensagem, não que o WhatsApp já entregou no aparelho;
   // é o que dá pra conferir de fato (ex: o wamid da Meta) quando o "ok"
   // sozinho não explica por que a mensagem não chegou.
-  return res.ok ? { ok: true, info: { detalhe: res.detalhe } } : { ok: false, erro: res.erro };
+  if (res.ok) {
+    registrarLogAuditoria({
+      usuario_nome: acesso.perfil.nome,
+      acao: `ENVIOU MENSAGEM DE TESTE (${provedor === 'META' ? 'META CLOUD API' : 'Z-API'})`,
+      setor: 'PARÂMETROS / INTEGRAÇÕES',
+      equipamento_nome: celularLimpo,
+    });
+    return { ok: true, info: { detalhe: res.detalhe } };
+  }
+  return { ok: false, erro: res.erro };
 }
 
 // Testa um Message Template da Meta diretamente (sem passar pelo roteamento
@@ -276,7 +293,16 @@ export async function enviarTesteTemplateWhatsAppAction(templateNome: string, id
 
   const listaParametros = (parametros || '').split(',').map(s => s.trim()).filter(Boolean);
   const res = await enviarWhatsAppMetaTemplate(celularLimpo, templateNome.trim(), idioma.trim() || 'en_US', listaParametros, botaoCodigo?.trim() || undefined);
-  return res.ok ? { ok: true, info: { detalhe: res.detalhe } } : { ok: false, erro: res.erro };
+  if (res.ok) {
+    registrarLogAuditoria({
+      usuario_nome: acesso.perfil.nome,
+      acao: `ENVIOU TEMPLATE DE TESTE (META CLOUD API): ${templateNome.trim()}`,
+      setor: 'PARÂMETROS / INTEGRAÇÕES',
+      equipamento_nome: celularLimpo,
+    });
+    return { ok: true, info: { detalhe: res.detalhe } };
+  }
+  return { ok: false, erro: res.erro };
 }
 
 // Quantas automações de Agendamentos e Disparos usam o canal WhatsApp hoje,
@@ -333,6 +359,13 @@ export async function salvarIntegracaoAction(payload: {
       atualizado_em: new Date().toISOString()
     }).eq('parceiro', payload.parceiro);
     if (error) throw new Error(error.message);
+
+    registrarLogAuditoria({
+      usuario_nome: acesso.perfil.nome,
+      acao: `CONFIGUROU INTEGRAÇÃO ${payload.parceiro}: ${payload.ativo ? 'ativa' : 'inativa'}, ambiente ${payload.ambiente}`,
+      setor: 'PARÂMETROS / INTEGRAÇÕES',
+    });
+
     return { ok: true };
   } catch (e: any) {
     return { ok: false, erro: e.message };

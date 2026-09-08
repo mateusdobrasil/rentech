@@ -107,15 +107,13 @@ export async function GET(request: Request) {
         }
       }
 
+      // O log de auditoria deste disparo agora é gravado dentro de
+      // executarDisparoWhatsApp (app/lib/automacoes.ts) — cobre também o
+      // disparo por evento (Nova OP, Folga, Consignado), que antes não
+      // tinha log nenhum. Gravar aqui de novo duplicaria a mesma execução.
       const resultado = await dispararAutomacaoWhatsApp(automacao.chave, contexto);
       if (resultado.disparado) {
         executadas.push({ chave: automacao.chave, disparos: resultado.disparos, erros: resultado.erros });
-        await db.from('logs_auditoria').insert([{
-          usuario_nome: 'SISTEMA (CRON)',
-          acao: `DISPARO AUTOMÁTICO — ${automacao.nome}`,
-          setor: 'OP',
-          equipamento_nome: `Enviado para ${resultado.disparos}. Falhas: ${resultado.erros.length}`
-        }]);
       }
     }
 

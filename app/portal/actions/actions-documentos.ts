@@ -132,7 +132,7 @@ export async function urlMeuHoleriteAction(accessToken: string, payload: { id: n
       return { ok: false, erro: 'Holerite não encontrado.' };
     }
 
-    return baixarAssinado({ funcionarioNome: holerite.funcionario_nome, mesReferencia: holerite.mes_referencia });
+    return baixarAssinado({ funcionarioNome: holerite.funcionario_nome, mesReferencia: holerite.mes_referencia, solicitadoPor: holerite.funcionario_nome });
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

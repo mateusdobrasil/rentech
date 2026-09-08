@@ -7,6 +7,7 @@ import nodemailer from 'nodemailer';
 import { supabaseAdmin } from './supabase';
 import { resolverProvedorAutomacao, enviarComJanela, type ProvedorAutomacao, type TemplateMeta } from './whatsapp';
 import { carregarNomesEmpresas, nomeEmpresaPara } from './empresa';
+import { registrarLogAuditoria } from '../actions';
 
 interface ResultadoDisparoAutomacao {
   disparado: boolean; // false se a automação está desativada, sem canal WhatsApp ou sem mensagem configurada
@@ -154,6 +155,19 @@ async function executarDisparoWhatsApp(db: ReturnType<typeof supabaseAdmin>, aut
   if (disparos > 0) {
     await db.from('parametros_automacoes_envios').insert({ chave: automacao.chave, canal: 'WhatsApp', quantidade: disparos });
   }
+
+  // Um log só por execução (não um por destinatário) — evita inundar
+  // logs_auditoria numa automação de massa (ex.: aniversariantes) e cobre os
+  // dois caminhos de disparo (CRON e por evento) num lugar só, já que ambos
+  // passam por aqui. Antes só o CRON gravava (inline em
+  // app/api/cron/motor/route.ts); disparo por evento (Nova OP, Folga,
+  // Consignado) nunca tinha log nenhum.
+  registrarLogAuditoria({
+    usuario_nome: 'AUTOMAÇÃO',
+    acao: `DISPAROU AUTOMAÇÃO WHATSAPP (${provedor}): ${automacao.chave}`,
+    setor: 'PARÂMETROS / AUTOMAÇÕES',
+    equipamento_nome: `${disparos} enviado(s), ${erros.length} falha(s)`,
+  });
 
   return { disparado: true, disparos, erros };
 }

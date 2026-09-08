@@ -9,6 +9,7 @@
 // endpoint de Server Action alcançável direto por RPC sem nenhuma das duas
 // checagens acima.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { registrarLogAuditoria } from '../../../actions';
 import { autentiqueConsultarDocumento } from '../../../lib/autentique';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
@@ -22,6 +23,10 @@ function slug(s: string): string {
 
 export async function baixarAssinado(payload: {
   funcionarioNome: string; mesReferencia: string;
+  // Quem pediu o download — RH manda o próprio nome (sessão admin), o Portal
+  // manda o nome do funcionário dono do documento (sessão dele mesmo). Só
+  // usado para o log de auditoria; opcional porque nem toda chamada precisa.
+  solicitadoPor?: string;
 }): Promise<Resultado> {
   const db = supabaseAdmin();
   try {
@@ -65,6 +70,16 @@ export async function baixarAssinado(payload: {
 
     const { data: urlData, error: urlErr } = await db.storage.from(BUCKET_DOCS).createSignedUrl(pathArquivado, 60 * 10);
     if (urlErr || !urlData?.signedUrl) return { ok: false, erro: 'Falha ao gerar o link do arquivo.' };
+
+    // Só loga quando chegou até aqui de fato falando com a Autentique — a
+    // saída antecipada lá em cima (arquivo já em cache no nosso Storage) não
+    // chama a API de novo, então não é uma "ação" da integração em si.
+    registrarLogAuditoria({
+      usuario_nome: payload.solicitadoPor || payload.funcionarioNome,
+      acao: 'BAIXOU DOCUMENTO ASSINADO (AUTENTIQUE)',
+      setor: 'RECURSOS HUMANOS',
+      equipamento_nome: `${payload.funcionarioNome} — ${payload.mesReferencia}`,
+    });
 
     return { ok: true, info: { url: urlData.signedUrl } };
   } catch (e: any) {

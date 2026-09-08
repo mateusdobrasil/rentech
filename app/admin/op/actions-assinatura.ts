@@ -167,7 +167,20 @@ export async function consultarAssinaturaOPAction(payload: { opId: string; acces
 
   const db = supabaseAdmin();
   try {
-    return await consultarEAtualizar(db, payload.opId);
+    const { data: antes } = await db.from('op_assinaturas').select('status').eq('op_id', payload.opId).maybeSingle();
+    const r = await consultarEAtualizar(db, payload.opId);
+    // Pula log quando o novo status é ASSINADO: finalizarAssinaturaOP (chamada
+    // de dentro de consultarEAtualizar) já grava "RECIBO ASSINADO DIGITALMENTE"
+    // com mais detalhe — logar aqui de novo seria duplicar a mesma transição.
+    if (r.ok && r.info?.status && r.info.status !== antes?.status && r.info.status !== 'ASSINADO') {
+      registrarLogAuditoria({
+        usuario_nome: acesso.perfil.nome,
+        acao: `ATUALIZOU STATUS DE ASSINATURA DE OP (AUTENTIQUE): ${antes?.status || '—'} → ${r.info.status}`,
+        setor: 'OP',
+        equipamento_id: payload.opId,
+      });
+    }
+    return r;
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
@@ -198,7 +211,19 @@ export async function atualizarTodasAssinaturasOPAction(payload: { accessToken: 
       const r = await consultarEAtualizar(db, p.op_id);
       if (r.ok) {
         atualizados++;
-        if (r.info?.status && r.info.status !== antes) mudancas.push(`OP ${p.op_id}: ${antes} → ${r.info.status}`);
+        if (r.info?.status && r.info.status !== antes) {
+          mudancas.push(`OP ${p.op_id}: ${antes} → ${r.info.status}`);
+          // Mesma regra do fallback pontual: ASSINADO já é logado por
+          // finalizarAssinaturaOP, não duplica aqui.
+          if (r.info.status !== 'ASSINADO') {
+            registrarLogAuditoria({
+              usuario_nome: acesso.perfil.nome,
+              acao: `ATUALIZOU STATUS DE ASSINATURA DE OP (AUTENTIQUE): ${antes || '—'} → ${r.info.status}`,
+              setor: 'OP',
+              equipamento_id: p.op_id,
+            });
+          }
+        }
       }
     }
 

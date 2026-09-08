@@ -1042,6 +1042,13 @@ export async function consultarStatusAtualItauAction(payload: { idPagamentoSispa
     // Mesmo embrulho extra "data" dos outros endpoints do SISPAG — ver nota
     // em app/admin/financeiro/integracao/actions.ts.
     const pagamento = data?.data ?? data;
+
+    registrarLogAuditoria({
+      usuario_nome: acesso.perfil.nome,
+      acao: `CONSULTOU STATUS ATUAL NO ITAÚ (SISPAG ${payload.idPagamentoSispag})`,
+      setor: 'FINANCEIRO / RH',
+    });
+
     return { ok: true, info: { ambiente: ctx.ambiente, pagamento } };
   } catch (e: any) {
     return { ok: false, erro: e.message };

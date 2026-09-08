@@ -18,7 +18,45 @@ interface LogEntry {
   equipamento_nome: string | null;
 }
 
+// Uma linha por execução de sincronização com o PrimeStart (ver
+// app/lib/syncLog.ts) — cada "sincronização" é, na prática, uma chamada de
+// leitura (GET) na API do P2S buscando o que mudou desde o último cursor.
+interface IntegracaoLogEntry {
+  id: number;
+  integracao: string;
+  ambiente: 'SANDBOX' | 'PRODUCAO';
+  tipo: 'completa' | 'incremental';
+  cursor_desde: string | null;
+  cursor_ate: string | null;
+  registros_encontrados: number | null;
+  registros_processados: number | null;
+  status: 'sucesso' | 'erro';
+  erro: string | null;
+  iniciado_em: string;
+  finalizado_em: string | null;
+}
+
 const PAGE_SIZE = 75;
+
+const INTEGRACOES = ['produtos', 'parceiros', 'colaboradores', 'fichas_reserva', 'eventos_feiras', 'contas_pagar'];
+
+const INTEGRACAO_LABEL: Record<string, string> = {
+  produtos: '📦 Produtos',
+  parceiros: '🤝 Parceiros',
+  colaboradores: '👤 Colaboradores',
+  fichas_reserva: '📋 Fichas de Reserva',
+  eventos_feiras: '🎪 Eventos/Feiras',
+  contas_pagar: '💰 Contas a Pagar',
+};
+
+function formatarDataHoraCompleta(iso: string | null) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('pt-BR', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    timeZone: 'America/Sao_Paulo',
+  });
+}
 
 const SETORES = ['ACESSO', 'OP', 'ESTOQUE', 'FREELANCE', 'CONTEÚDO', 'PERMISSÕES'];
 
@@ -52,6 +90,8 @@ export default function PainelAuditoria() {
   const router = useRouter();
   const { authLoading, acessoNegado, erro, tentarNovamente, permissaoBruta } = usePageAccess();
 
+  const [abaAtiva, setAbaAtiva] = useState<'acoes' | 'integracoes'>('acoes');
+
   // Estados dos Dados
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -63,6 +103,16 @@ export default function PainelAuditoria() {
   const [filtroSetor, setFiltroSetor] = useState('');
   const [filtroData, setFiltroData] = useState('');
   const [filtroEmpresa, setFiltroEmpresa] = useState<number | null>(null);
+
+  // Aba "Chamadas de API" (integracoes_sync_log)
+  const [logsIntegracao, setLogsIntegracao] = useState<IntegracaoLogEntry[]>([]);
+  const [loadingIntegracao, setLoadingIntegracao] = useState(false);
+  const [totalCountIntegracao, setTotalCountIntegracao] = useState(0);
+  const [hasMoreIntegracao, setHasMoreIntegracao] = useState(false);
+  const [filtroIntegracao, setFiltroIntegracao] = useState('');
+  const [filtroAmbienteIntegracao, setFiltroAmbienteIntegracao] = useState('');
+  const [filtroStatusIntegracao, setFiltroStatusIntegracao] = useState('');
+  const [filtroDataIntegracao, setFiltroDataIntegracao] = useState('');
 
   // logs_auditoria não guarda empresa_id (é um trilho de auditoria que cobre
   // ações sem uma empresa clara, ex.: alterar permissão de outro usuário) —
@@ -151,10 +201,54 @@ export default function PainelAuditoria() {
 
   useEffect(() => {
     // Só carrega os logs se a autenticação estiver concluída e aprovada
-    if (!authLoading && !acessoNegado) {
+    if (!authLoading && !acessoNegado && abaAtiva === 'acoes') {
       carregarLogs(true, []);
     }
-  }, [authLoading, acessoNegado, filtroSetor, filtroData, buscaAplicada, filtroEmpresa, nomesPorEmpresa]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [authLoading, acessoNegado, abaAtiva, filtroSetor, filtroData, buscaAplicada, filtroEmpresa, nomesPorEmpresa]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const carregarLogsIntegracao = useCallback(async (reset: boolean, currentLogs: IntegracaoLogEntry[]) => {
+    setLoadingIntegracao(true);
+    const offset = reset ? 0 : currentLogs.length;
+
+    let query = supabase
+      .from('integracoes_sync_log')
+      .select('*', { count: 'exact' })
+      .order('iniciado_em', { ascending: false })
+      .range(offset, offset + PAGE_SIZE - 1);
+
+    if (filtroIntegracao) query = query.eq('integracao', filtroIntegracao);
+    if (filtroAmbienteIntegracao) query = query.eq('ambiente', filtroAmbienteIntegracao);
+    if (filtroStatusIntegracao) query = query.eq('status', filtroStatusIntegracao);
+    if (filtroDataIntegracao) {
+      query = query
+        .gte('iniciado_em', `${filtroDataIntegracao}T00:00:00`)
+        .lte('iniciado_em', `${filtroDataIntegracao}T23:59:59`);
+    }
+
+    const { data, count, error } = await query;
+
+    if (!error && data) {
+      setLogsIntegracao(prev => reset ? data : [...prev, ...data]);
+      setTotalCountIntegracao(count ?? 0);
+      setHasMoreIntegracao(data.length === PAGE_SIZE);
+    }
+    setLoadingIntegracao(false);
+  }, [filtroIntegracao, filtroAmbienteIntegracao, filtroStatusIntegracao, filtroDataIntegracao]);
+
+  useEffect(() => {
+    if (!authLoading && !acessoNegado && abaAtiva === 'integracoes') {
+      carregarLogsIntegracao(true, []);
+    }
+  }, [authLoading, acessoNegado, abaAtiva, filtroIntegracao, filtroAmbienteIntegracao, filtroStatusIntegracao, filtroDataIntegracao]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const limparFiltrosIntegracao = () => {
+    setFiltroIntegracao('');
+    setFiltroAmbienteIntegracao('');
+    setFiltroStatusIntegracao('');
+    setFiltroDataIntegracao('');
+  };
+
+  const temFiltroIntegracao = filtroIntegracao || filtroAmbienteIntegracao || filtroStatusIntegracao || filtroDataIntegracao;
 
   const limparFiltros = () => {
     setBusca('');
@@ -212,6 +306,20 @@ export default function PainelAuditoria() {
         </button>
       </div>
 
+      {/* ABAS */}
+      <div className="px-4 md:px-8 pt-4 flex-shrink-0">
+        <div className="flex bg-white p-1 rounded-xl border border-[#E2E8F0] w-fit shadow-sm gap-1">
+          <button onClick={() => setAbaAtiva('acoes')} className={`px-4 md:px-5 py-2.5 text-[11px] md:text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'acoes' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>
+            🔍 Ações do Sistema
+          </button>
+          <button onClick={() => setAbaAtiva('integracoes')} className={`px-4 md:px-5 py-2.5 text-[11px] md:text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'integracoes' ? 'bg-[#336699] text-white shadow-sm' : 'text-[#64748B] hover:text-[#336699]'}`}>
+            🔌 Chamadas de API
+          </button>
+        </div>
+      </div>
+
+      {abaAtiva === 'acoes' && (
+      <>
       {/* MÉTRICAS */}
       <div className="px-4 md:px-8 pt-6 pb-2 flex-shrink-0">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
@@ -396,6 +504,196 @@ export default function PainelAuditoria() {
           )}
         </div>
       </div>
+      </>
+      )}
+
+      {abaAtiva === 'integracoes' && (
+      <>
+      {/* MÉTRICAS */}
+      <div className="px-4 md:px-8 pt-6 pb-2 flex-shrink-0">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+          <div className="bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#0C1D4D]">
+            <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Total de Chamadas</p>
+            <p className="text-2xl font-black text-[#0C1D4D] mt-1">{totalCountIntegracao.toLocaleString('pt-BR')}</p>
+          </div>
+          <div className="bg-white p-4 rounded-xl shadow-sm border-l-4 border-purple-500">
+            <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Carregadas</p>
+            <p className="text-2xl font-black text-purple-600 mt-1">{logsIntegracao.length.toLocaleString('pt-BR')}</p>
+          </div>
+          <div className="bg-white p-4 rounded-xl shadow-sm border-l-4 border-[#336699] md:col-span-2">
+            <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Filtros Activos</p>
+            <p className="text-sm font-black text-[#336699] mt-1 truncate">
+              {temFiltroIntegracao
+                ? [
+                    filtroIntegracao && `Integração: ${INTEGRACAO_LABEL[filtroIntegracao] || filtroIntegracao}`,
+                    filtroAmbienteIntegracao && `Ambiente: ${filtroAmbienteIntegracao}`,
+                    filtroStatusIntegracao && `Status: ${filtroStatusIntegracao}`,
+                    filtroDataIntegracao && `Data: ${filtroDataIntegracao}`,
+                  ].filter(Boolean).join(' | ')
+                : 'Nenhum — exibindo todas as chamadas'}
+            </p>
+          </div>
+        </div>
+
+        {/* FILTROS */}
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col lg:flex-row gap-3 items-stretch lg:items-center">
+          <select
+            value={filtroIntegracao}
+            onChange={e => setFiltroIntegracao(e.target.value)}
+            className="p-2.5 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] outline-none focus:border-[#336699] bg-white lg:w-52 shrink-0"
+          >
+            <option value="">Todas as integrações</option>
+            {INTEGRACOES.map(i => (
+              <option key={i} value={i}>{INTEGRACAO_LABEL[i] || i}</option>
+            ))}
+          </select>
+
+          <select
+            value={filtroAmbienteIntegracao}
+            onChange={e => setFiltroAmbienteIntegracao(e.target.value)}
+            className="p-2.5 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] outline-none focus:border-[#336699] bg-white lg:w-40 shrink-0"
+          >
+            <option value="">Todos os ambientes</option>
+            <option value="SANDBOX">Sandbox</option>
+            <option value="PRODUCAO">Produção</option>
+          </select>
+
+          <select
+            value={filtroStatusIntegracao}
+            onChange={e => setFiltroStatusIntegracao(e.target.value)}
+            className="p-2.5 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] outline-none focus:border-[#336699] bg-white lg:w-36 shrink-0"
+          >
+            <option value="">Todos os status</option>
+            <option value="sucesso">✅ Sucesso</option>
+            <option value="erro">❌ Erro</option>
+          </select>
+
+          <input
+            type="date"
+            value={filtroDataIntegracao}
+            onChange={e => setFiltroDataIntegracao(e.target.value)}
+            className="p-2.5 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] outline-none focus:border-[#336699] lg:w-44 shrink-0"
+          />
+
+          {temFiltroIntegracao && (
+            <button
+              onClick={limparFiltrosIntegracao}
+              className="px-4 py-2.5 bg-red-50 border border-red-200 text-red-500 font-bold text-xs uppercase tracking-wider rounded-lg hover:bg-red-100 transition-colors shrink-0"
+            >
+              ✕ Limpar
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* TABELA */}
+      <div className="px-4 md:px-8 py-4 flex-grow overflow-hidden flex flex-col">
+        <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto">
+          <table className="w-full text-left border-collapse min-w-[900px]">
+            <thead className="bg-[#0C1D4D] sticky top-0 z-10">
+              <tr className="text-white text-[10px] uppercase tracking-wider font-bold">
+                <th className="p-4 w-44">Iniciado em</th>
+                <th className="p-4">Integração</th>
+                <th className="p-4 w-28 text-center">Ambiente</th>
+                <th className="p-4 w-28 text-center">Tipo</th>
+                <th className="p-4 w-24 text-center">Status</th>
+                <th className="p-4 w-32 text-right">Encontrados</th>
+                <th className="p-4 w-32 text-right">Processados</th>
+                <th className="p-4">Detalhe</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#E2E8F0] text-xs">
+              {loadingIntegracao && logsIntegracao.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="text-center py-16 text-[#94A3B8] font-bold text-sm">
+                    Carregando registos...
+                  </td>
+                </tr>
+              ) : logsIntegracao.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="text-center py-16 text-[#94A3B8] font-bold text-sm">
+                    Nenhuma chamada encontrada para os filtros selecionados.
+                  </td>
+                </tr>
+              ) : (
+                logsIntegracao.map(log => (
+                  <tr key={log.id} className="hover:bg-[#F8FAFC] transition-colors">
+                    <td className="p-4 whitespace-nowrap">
+                      <span className="text-[#64748B] font-semibold font-mono text-[11px]">
+                        {formatarDataHoraCompleta(log.iniciado_em)}
+                      </span>
+                    </td>
+
+                    <td className="p-4">
+                      <span className="font-black text-[#0C1D4D] block">
+                        {INTEGRACAO_LABEL[log.integracao] || log.integracao}
+                      </span>
+                    </td>
+
+                    <td className="p-4 text-center">
+                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-[9px] font-black tracking-wider border whitespace-nowrap ${log.ambiente === 'PRODUCAO' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>
+                        {log.ambiente}
+                      </span>
+                    </td>
+
+                    <td className="p-4 text-center">
+                      <span className="text-[#64748B] font-bold uppercase text-[10px]">{log.tipo}</span>
+                    </td>
+
+                    <td className="p-4 text-center">
+                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[9px] font-black tracking-wider border whitespace-nowrap ${log.status === 'sucesso' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-100 text-red-700 border-red-200'}`}>
+                        {log.status === 'sucesso' ? '✅' : '❌'} {log.status}
+                      </span>
+                    </td>
+
+                    <td className="p-4 text-right font-mono text-[#64748B]">{log.registros_encontrados ?? '—'}</td>
+                    <td className="p-4 text-right font-mono text-[#64748B]">{log.registros_processados ?? '—'}</td>
+
+                    <td className="p-4">
+                      {log.status === 'erro' ? (
+                        <span className="text-red-600 font-medium block truncate max-w-[320px]" title={log.erro ?? ''}>
+                          {log.erro ?? '—'}
+                        </span>
+                      ) : (
+                        <span className="text-[#94A3B8] font-mono text-[10px] block truncate max-w-[320px]">
+                          {log.cursor_desde || log.cursor_ate
+                            ? `Cursor: ${log.cursor_desde ?? '—'} → ${log.cursor_ate ?? '—'}`
+                            : '—'}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* LOAD MORE */}
+        <div className="pt-4 flex justify-center items-center gap-4 pb-4">
+          {hasMoreIntegracao && !loadingIntegracao && (
+            <button
+              onClick={() => carregarLogsIntegracao(false, logsIntegracao)}
+              className="px-8 py-3 bg-[#0C1D4D] hover:bg-[#284B8C] text-white font-black text-xs uppercase tracking-widest rounded-xl shadow-md transition-colors"
+            >
+              Carregar Mais Registos
+            </button>
+          )}
+          {loadingIntegracao && logsIntegracao.length > 0 && (
+            <div className="flex items-center gap-3 text-[#64748B] font-semibold text-sm">
+              <div className="w-5 h-5 border-2 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin" />
+              Carregando...
+            </div>
+          )}
+          {!hasMoreIntegracao && logsIntegracao.length > 0 && !loadingIntegracao && (
+            <p className="text-[11px] text-[#94A3B8] font-bold uppercase tracking-widest">
+              Todas as {totalCountIntegracao.toLocaleString('pt-BR')} chamadas carregadas
+            </p>
+          )}
+        </div>
+      </div>
+      </>
+      )}
     </div>
   );
 }

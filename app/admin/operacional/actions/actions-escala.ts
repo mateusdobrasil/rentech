@@ -7,6 +7,7 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { resolverProvedor, enviarComJanela, type TemplateMeta } from '../../../lib/whatsapp';
+import { registrarLogAuditoria } from '../../../actions';
 
 const ROTA = '/admin/operacional/escala';
 
@@ -559,6 +560,14 @@ export async function notificarColaboradoresAction(params: { empresaId: number; 
       await db.from('parametros_automacoes_envios').insert({ chave: ESCALA_AUTOMACAO_CHAVE, canal: 'WhatsApp', quantidade: enviados });
     }
     await db.from('parametros_automacoes').update({ ultima_execucao: new Date().toISOString() }).eq('chave', ESCALA_AUTOMACAO_CHAVE);
+
+    // Um log só por clique em "Notificar Colaboradores" (não um por
+    // funcionário) — mesmo critério do disparo de automações em massa.
+    registrarLogAuditoria({
+      usuario_nome: auth.perfil.nome,
+      acao: `NOTIFICOU ESCALA POR WHATSAPP (${params.data}): ${enviados} enviado(s), ${falhas.length} falha(s)`,
+      setor: 'OPERACIONAL',
+    });
 
     return { ok: true, info: { enviados, semCelular, falhas, jaNotificados } };
   } catch (e: any) {

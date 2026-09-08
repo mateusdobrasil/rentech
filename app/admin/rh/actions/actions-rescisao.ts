@@ -785,6 +785,14 @@ export async function enviarRescisaoParaAssinaturaAction(payload: {
     }, { onConflict: 'funcionario_nome,mes_referencia' });
     if (upsertErr) throw new Error(`Documento criado na Autentique (${doc.docId}), mas falha ao gravar o controle: ${upsertErr.message}`);
 
+    registrarLogAuditoria({
+      usuario_nome: payload.usuarioNome || 'Sistema',
+      acao: 'ENVIOU TRCT DE RESCISÃO PARA ASSINATURA (AUTENTIQUE)',
+      setor: 'RECURSOS HUMANOS',
+      equipamento_id: String(payload.id),
+      equipamento_nome: r.funcionario_nome,
+    });
+
     return { ok: true, info: { docId: doc.docId, link: doc.linkAssinatura, sandbox: payload.sandbox } };
   } catch (e: any) {
     return { ok: false, erro: e.message };

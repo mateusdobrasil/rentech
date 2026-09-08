@@ -8,6 +8,7 @@
 // serve para conciliação/auditoria. Cliente HTTP real em app/lib/itauSispag.ts.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
+import { registrarLogAuditoria } from '../../../actions';
 import {
   consultarPagamentosSispag, consultarPagamentoSispag, credenciaisItauConfiguradas,
   type AmbienteItau,
@@ -175,6 +176,15 @@ export async function consultarPagamentosItauAction(filtros: FiltrosConsultaItau
 
     const primeira = await buscarPaginaItau(ctx, filtros, filtros.page ?? 0);
 
+    // Um log só por chamada desta action, não por página buscada — uma
+    // consulta agregada pode disparar até MAX_PAGINAS_AGREGADAS requisições
+    // reais ao Itaú, e isso é implementação, não uma "ação" nova cada vez.
+    registrarLogAuditoria({
+      usuario_nome: acesso.perfil.nome,
+      acao: `CONSULTOU PAGAMENTOS NO ITAÚ (${filtros.dataInicial} a ${filtros.dataFinal})`,
+      setor: 'FINANCEIRO / RH',
+    });
+
     // Cabe agregar: busca o resto e devolve tudo ordenado de uma vez, com a
     // paginação passando a ser responsabilidade da tela.
     if (primeira.totalPaginas > 1 && primeira.totalPaginas <= MAX_PAGINAS_AGREGADAS) {
@@ -236,6 +246,13 @@ export async function consultarPagamentoItauAction(idPagamentoSispag: string, ac
     if (!ok) {
       return { ok: false, erro: `Consulta rejeitada pela API do Itaú (HTTP ${status}).` };
     }
+
+    registrarLogAuditoria({
+      usuario_nome: acesso.perfil.nome,
+      acao: `CONSULTOU PAGAMENTO NO ITAÚ (SISPAG ${idPagamentoSispag})`,
+      setor: 'FINANCEIRO / RH',
+    });
+
     // Mesmo embrulho extra "data" do endpoint de listagem, ver nota acima.
     return { ok: true, info: { pagamento: data?.data ?? data, ambiente: ctx.ambiente } };
   } catch (e: any) {

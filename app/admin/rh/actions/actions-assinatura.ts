@@ -9,6 +9,7 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
+import { registrarLogAuditoria } from '../../../actions';
 import { autentiqueCriarDocumento, autentiqueConsultarDocumento } from '../../../lib/autentique';
 import { gerarHoleritePdf } from '../../../lib/gerarHoleritePdf';
 import { gerarEspelhoPontoPdf, RegistroPontoDia } from '../../../lib/gerarEspelhoPontoPdf';
@@ -375,6 +376,13 @@ export async function enviarDocumentoAvulsoAction(payload: {
     }, { onConflict: 'funcionario_nome,mes_referencia' });
     if (error) throw new Error(`Documento criado na Autentique (${doc.docId}), mas falha ao gravar o controle: ${error.message}`);
 
+    registrarLogAuditoria({
+      usuario_nome: enviadoPor || 'Sistema',
+      acao: `ENVIOU DOCUMENTO AVULSO PARA ASSINATURA (AUTENTIQUE): ${tituloDocumento}`,
+      setor: 'RECURSOS HUMANOS',
+      equipamento_nome: funcionarioNome,
+    });
+
     return { ok: true, info: { docId: doc.docId, link: doc.linkAssinatura, sandbox } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
@@ -541,6 +549,13 @@ export async function enviarHoleriteAssinaturaAction(payload: {
       atualizado_em: new Date().toISOString()
     }, { onConflict: 'funcionario_nome,mes_referencia' });
     if (error) throw new Error(`Documento criado na Autentique (${doc.docId}), mas falha ao gravar o controle: ${error.message}`);
+
+    registrarLogAuditoria({
+      usuario_nome: enviadoPor || 'Sistema',
+      acao: `ENVIOU HOLERITE PARA ASSINATURA (AUTENTIQUE): ${mesReferencia}`,
+      setor: 'RECURSOS HUMANOS',
+      equipamento_nome: funcionarioNome,
+    });
 
     return { ok: true, info: { docId: doc.docId, link: doc.linkAssinatura, sandbox, anexados } };
   } catch (e: any) {
@@ -849,7 +864,7 @@ export async function baixarAssinadoAction(payload: {
     return { ok: false, erro: 'Você não tem permissão para acessar este documento.' };
   }
 
-  return baixarAssinado(payload);
+  return baixarAssinado({ ...payload, solicitadoPor: acesso.perfil.nome });
 }
 
 // ============================================================================
@@ -865,7 +880,7 @@ export async function consultarAssinaturaAction(payload: {
   try {
     const { data: ctrl } = await db
       .from('folha_holerite_assinaturas')
-      .select('autentique_doc_id, empresa_id')
+      .select('autentique_doc_id, empresa_id, status')
       .eq('funcionario_nome', payload.funcionarioNome)
       .eq('mes_referencia', payload.mesReferencia)
       .maybeSingle();
@@ -884,6 +899,18 @@ export async function consultarAssinaturaAction(payload: {
     const rejeitou = !!assinatura?.rejected?.created_at;
 
     const novoStatus = rejeitou ? 'REJEITADO' : assinou ? 'ASSINADO' : visualizou ? 'VISUALIZADO' : 'ENVIADO';
+
+    // Só grava log quando o status realmente muda — atualizarTodasAssinaturasAction
+    // chama isto em loop pra cada pendência do mês, e logar toda consulta sem
+    // mudança nenhuma poluiria o log de auditoria sem informação nova.
+    if (novoStatus !== ctrl.status) {
+      registrarLogAuditoria({
+        usuario_nome: acesso.perfil.nome,
+        acao: `ATUALIZOU STATUS DE ASSINATURA (AUTENTIQUE): ${ctrl.status || '—'} → ${novoStatus}`,
+        setor: 'RECURSOS HUMANOS',
+        equipamento_nome: `${payload.funcionarioNome} — ${payload.mesReferencia}`,
+      });
+    }
 
     await db.from('folha_holerite_assinaturas').update({
       status: novoStatus,

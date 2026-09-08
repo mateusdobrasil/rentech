@@ -6,7 +6,7 @@
 // agrega, num só round-trip, números que hoje só apareciam depois de entrar
 // em cada módulo.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -28,16 +28,33 @@ export async function painelOperacionalAction(accessToken: string): Promise<Resu
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
 
-    const [veiculosRes, checklistsVeiculosRes, folgasRes] = await Promise.all([
-      db.from('frota_veiculos')
-        .select('crlv_vencimento, ipva_vencimento, seguro_vigencia_fim, locacao_vigencia_fim, propriedade')
-        .eq('exibir_na_frota', true),
-      // Checklist de Veículos (saída/retorno, preenchido pelo motorista no
-      // Portal) — "aberto" é uma saída sem retorno ainda (status EM_ANDAMENTO),
-      // mesma contagem já usada em app/admin/operacional/frota/page.tsx.
-      db.from('frota_checklists').select('id', { count: 'exact', head: true }).eq('status', 'EM_ANDAMENTO'),
-      db.from('folha_ponto_whatsapp_solicitacoes').select('id', { count: 'exact', head: true }).eq('tipo', 'FOLGA_DIA').eq('status', 'PENDENTE'),
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const filtroEmpresa = <T,>(q: T): T => {
+      if (!empresasPermitidas) return q;
+      // Linha sem empresa (legado) continua visível, igual à política de RLS
+      // (mesmo critério de empresaPermitida em app/lib/serverAuth.ts).
+      return (q as any).or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+    };
+
+    const [veiculosRes, folgasRes] = await Promise.all([
+      filtroEmpresa(db.from('frota_veiculos')
+        .select('id, crlv_vencimento, ipva_vencimento, seguro_vigencia_fim, locacao_vigencia_fim, propriedade')
+        .eq('exibir_na_frota', true)),
+      filtroEmpresa(db.from('folha_ponto_whatsapp_solicitacoes').select('id').eq('tipo', 'FOLGA_DIA').eq('status', 'PENDENTE')),
     ]);
+
+    // Checklist de Veículos (saída/retorno, preenchido pelo motorista no
+    // Portal) — "aberto" é uma saída sem retorno ainda (status EM_ANDAMENTO),
+    // mesma contagem já usada em app/admin/operacional/frota/page.tsx.
+    // frota_checklists não tem empresa_id próprio — filtra pelos veículos que
+    // já estão no escopo da empresa (mesma lógica de frota/page.tsx).
+    const veiculoIdsEscopo = (veiculosRes.data || []).map(v => v.id);
+    const checklistsVeiculosAbertos = empresasPermitidas && veiculoIdsEscopo.length === 0
+      ? 0
+      : (await (empresasPermitidas
+          ? db.from('frota_checklists').select('id', { count: 'exact', head: true }).eq('status', 'EM_ANDAMENTO').in('veiculo_id', veiculoIdsEscopo)
+          : db.from('frota_checklists').select('id', { count: 'exact', head: true }).eq('status', 'EM_ANDAMENTO')
+        )).count || 0;
 
     // Pior situação por veículo — CRLV, IPVA, e Seguro ou Locação conforme a
     // propriedade — mesma regra de getUrgenciaVeiculo (frota/page.tsx), só
@@ -58,8 +75,8 @@ export async function painelOperacionalAction(accessToken: string): Promise<Resu
       info: {
         documentosVencidos,
         documentosVencendo,
-        checklistsVeiculosAbertos: checklistsVeiculosRes.count || 0,
-        folgasPendentes: folgasRes.count || 0,
+        checklistsVeiculosAbertos,
+        folgasPendentes: (folgasRes.data || []).length,
       }
     };
   } catch (e: any) {

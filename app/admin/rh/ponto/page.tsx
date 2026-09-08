@@ -81,6 +81,16 @@ export default function GestaoDePonto() {
       : empresasCatalogo.filter(e => (empresasPermitidas || []).includes(e.id)),
     [empresasCatalogo, empresasPermitidas]);
 
+  // Só uma empresa disponível pro usuário: trava o filtro nela (o seletor
+  // nem aparece nesse caso — ver empresasCatalogoVisivel.length > 1 abaixo).
+  // Sem isto, filtroEmpresa ficava em 'TODAS' e a aba Registro de Ponto
+  // (Dia a Dia) — que só respeita o filtroEmpresaId recebido via prop —
+  // mostrava colaboradores de todas as empresas, mesma lógica já usada em
+  // /admin/operacional/registro-ponto.
+  useEffect(() => {
+    if (empresasCatalogoVisivel.length === 1) setFiltroEmpresa(String(empresasCatalogoVisivel[0].id));
+  }, [empresasCatalogoVisivel]);
+
   const nomeEmpresa = (id: number | null | undefined) =>
     id == null ? '—' : (empresasCatalogo.find(e => e.id === id)?.nome || 'Empresa removida');
 

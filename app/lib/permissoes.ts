@@ -23,7 +23,18 @@ export const normalizarPermissao = (permissaoBruta: string): string => {
   if (p.includes('EDIT')) return 'EDITOR';
   if (p.includes('GESTOR')) return 'GESTORES';
 
-  // PADRÃO
+  // 4. QUALQUER OUTRO SETOR (ex.: RH, COMERCIAL, FROTA) — os setores são
+  // cadastrados livremente em parametros_setores_permissao e usados como
+  // valor literal tanto em perfis_usuarios.permissao quanto nos checkboxes
+  // de permissoes_permitidas em /admin/parametros/permissoes. Nomes que não
+  // batem com nenhum apelido fuzzy acima (ex.: "RH" não contém nenhuma das
+  // substrings testadas) precisam passar intactos, senão caem no balde
+  // 'USUARIO' e nunca batem com o setor que o admin de fato liberou pra rota
+  // — foi o que aconteceu com um usuário RH que ficou com "Acesso Restrito"
+  // em /admin mesmo com /admin/rh liberado pro setor "RH".
+  if (p) return p;
+
+  // PADRÃO (sem cargo definido)
   return 'USUARIO';
 };
 

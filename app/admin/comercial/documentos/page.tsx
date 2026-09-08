@@ -9,6 +9,7 @@ import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
 import { supabase } from '../../../lib/supabase';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 
 const fmtTamanho = (b: number | null) => {
   if (!b) return '—';
@@ -223,13 +224,9 @@ export default function ComercialDocumentosPage() {
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-black text-[#0C1D4D] text-[13px] uppercase">{doc.categoria}</span>
                   {badgeValidade(doc.statusValidade)}
-                  {doc.empresa_id ? (
-                    <span className="text-[9px] font-black bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full uppercase">
-                      🏢 {empresasCatalogo.find(e => e.id === doc.empresa_id)?.nome || '?'}
-                    </span>
-                  ) : (
-                    <span className="text-[9px] font-black bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full uppercase">⚠ Sem empresa</span>
-                  )}
+                  <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${corSeloEmpresa(doc.empresa_id)}`}>
+                    {doc.empresa_id ? `🏢 ${empresasCatalogo.find(e => e.id === doc.empresa_id)?.nome || '?'}` : '🌐 Todas as empresas'}
+                  </span>
                 </div>
                 {doc.titulo && <p className="text-[11px] text-gray-600">{doc.titulo}</p>}
                 <p className="text-[10px] text-gray-400">

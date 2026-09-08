@@ -683,15 +683,9 @@ export default function DocumentosPage() {
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-black text-[#0C1D4D] text-[13px] uppercase">{doc.categoria}</span>
                   {badgeValidade(doc.statusValidade)}
-                  {doc.empresa_id ? (
-                    <span className="text-[9px] font-black bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full uppercase">
-                      🏢 {empresasCatalogo.find(e => e.id === doc.empresa_id)?.nome || '?'}
-                    </span>
-                  ) : (
-                    <span className="text-[9px] font-black bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full uppercase">
-                      ⚠ Sem empresa
-                    </span>
-                  )}
+                  <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${corSeloEmpresa(doc.empresa_id)}`}>
+                    {doc.empresa_id ? `🏢 ${empresasCatalogo.find(e => e.id === doc.empresa_id)?.nome || '?'}` : '🌐 Todas as empresas'}
+                  </span>
                 </div>
                 {doc.titulo && <p className="text-[11px] text-gray-600">{doc.titulo}</p>}
                 <p className="text-[10px] text-gray-400">

@@ -12,6 +12,8 @@ import {
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 
 interface RegraRH {
   id?: string;
@@ -31,15 +33,22 @@ interface RegraRH {
   so_documental: boolean;
   recebe_fechamento: boolean;
   recebe_holerite: boolean;
+  // Diária por dia excedente: cada dia com ponto além de dias_base_mes paga uma
+  // diária, no valor da ficha do funcionário (folha_funcionarios.diaria_extra).
+  paga_dias_excedentes: boolean;
+  dias_base_mes: number | null;
 }
 
 interface ItemCatalogo { id: number; nome: string; recebe_fechamento?: boolean | null; recebe_holerite?: boolean | null; }
-interface Feriado { id: number; data_feriado: string; descricao: string | null; }
+// empresa_id null = feriado de todas as empresas (nacional/estadual). Preenchido
+// = municipal, vale só para quem é daquela empresa: a Rentech fica em São
+// Paulo/SP e a Alfa Light em Osasco/SP.
+interface Feriado { id: number; data_feriado: string; descricao: string | null; empresa_id: number | null; }
 
 export default function ParametrosRH() {
   const router = useRouter();
   const toast = useToast();
-  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
 
   const [regras, setRegras] = useState<RegraRH[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,7 +68,7 @@ export default function ParametrosRH() {
 
   // Feriados (folha_feriados)
   const [feriados, setFeriados] = useState<Feriado[]>([]);
-  const [novoFeriado, setNovoFeriado] = useState<{ data_feriado: string; descricao: string }>({ data_feriado: '', descricao: '' });
+  const [novoFeriado, setNovoFeriado] = useState<{ data_feriado: string; descricao: string; empresa_id: number | null }>({ data_feriado: '', descricao: '', empresa_id: null });
   const [feriadoEditando, setFeriadoEditando] = useState<Feriado | null>(null);
   const [salvandoFeriado, setSalvandoFeriado] = useState(false);
 
@@ -83,10 +92,42 @@ export default function ParametrosRH() {
     recebe_holerite_contabilidade: true,
     so_documental: false,
     recebe_fechamento: true,
-    recebe_holerite: true
+    recebe_holerite: true,
+    paga_dias_excedentes: false,
+    dias_base_mes: null
   };
   
   const [form, setForm] = useState<RegraRH>(formPadrao);
+
+  // Empresas visíveis para o usuário — só o Administrador global cadastra
+  // feriado "de todas"; os demais ficam presos ao vínculo em
+  // perfis_usuarios_empresas, igual ao resto do sistema (a action confere de novo).
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const podeCadastrarParaTodas = ehAdministradorGlobal(permissaoBruta);
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(data || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) { setEmpresasPermitidas(null); return; }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasVisiveis = empresasPermitidas === null
+    ? empresasCatalogo
+    : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id));
+
+  const nomeEmpresa = (id: number | null) =>
+    id === null ? 'Todas as empresas' : (empresasCatalogo.find(e => e.id === id)?.nome || 'Empresa removida');
 
   useEffect(() => {
     if (!authLoading && !acessoNegado) { carregarRegras(); carregarCatalogos(); carregarFeriados(); }
@@ -118,10 +159,13 @@ export default function ParametrosRH() {
     try {
       const res = await salvarFeriadoAction({
         data_feriado: novoFeriado.data_feriado,
-        descricao: novoFeriado.descricao
+        descricao: novoFeriado.descricao,
+        empresa_id: novoFeriado.empresa_id
       }, accessToken);
       if (!res.ok) throw new Error(res.erro);
-      setNovoFeriado({ data_feriado: '', descricao: '' });
+      // Mantém a empresa escolhida: cadastrar vários feriados seguidos da mesma
+      // cidade é o caso comum (calendário municipal do ano inteiro).
+      setNovoFeriado({ data_feriado: '', descricao: '', empresa_id: novoFeriado.empresa_id });
       carregarFeriados();
     } catch (e: any) {
       toast('Erro ao adicionar feriado: ' + e.message, 'error');
@@ -139,7 +183,8 @@ export default function ParametrosRH() {
       const res = await salvarFeriadoAction({
         id: feriadoEditando.id,
         data_feriado: feriadoEditando.data_feriado,
-        descricao: feriadoEditando.descricao || ''
+        descricao: feriadoEditando.descricao || '',
+        empresa_id: feriadoEditando.empresa_id
       }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setFeriadoEditando(null);
@@ -154,6 +199,7 @@ export default function ParametrosRH() {
   const excluirFeriado = async (f: Feriado) => {
     if (!confirm(
       `Excluir o feriado ${formatarDataBR(f.data_feriado)}${f.descricao ? ` (${f.descricao})` : ''}?\n\n` +
+      `Aplica-se a: ${nomeEmpresa(f.empresa_id)}.\n\n` +
       `Atenção: espelhos de ponto e holerites EM ABERTO deste dia serão recalculados como dia útil. Folhas já fechadas não mudam.`
     )) return;
 
@@ -260,7 +306,9 @@ export default function ParametrosRH() {
         recebe_holerite_contabilidade: r.recebe_holerite_contabilidade ?? true,
         so_documental: r.so_documental ?? false,
         recebe_fechamento: r.recebe_fechamento ?? true,
-        recebe_holerite: r.recebe_holerite ?? true
+        recebe_holerite: r.recebe_holerite ?? true,
+        paga_dias_excedentes: r.paga_dias_excedentes ?? false,
+        dias_base_mes: r.dias_base_mes ?? null
       })));
     }
     setLoading(false);
@@ -281,6 +329,14 @@ export default function ParametrosRH() {
   // ==========================================================================
   const validarRegra = (r: RegraRH): string | null => {
     if (!r.nome_regra) return 'O nome da regra é obrigatório.';
+    if (r.paga_dias_excedentes) {
+      if (!r.dias_base_mes || r.dias_base_mes <= 0) {
+        return 'Informe a quantidade de dias que o funcionário deve trabalhar no mês (base para a diária por dia excedente).';
+      }
+      if (r.dias_base_mes > 31) {
+        return 'A base de dias no mês não pode passar de 31.';
+      }
+    }
     if (!r.calcula_extras_padrao) return null; // Contrato fechado: extras não se aplicam
     if (r.tipo_pagamento_fds === 'VALOR_DIARIA') {
       // Modelo por diária: percentuais não se aplicam, só o valor da diária importa
@@ -411,6 +467,9 @@ export default function ParametrosRH() {
             <p className="text-xs text-[#64748B] mb-5">
               Dias cadastrados aqui contam como <strong>carga zero</strong>: horas trabalhadas neles pagam extra de dom/feriado (ou diária), e não geram falta. Espelho de ponto e holerites em aberto recalculam automaticamente.
             </p>
+            <p className="text-xs text-[#64748B] mb-5">
+              Use <strong>Todas as empresas</strong> para feriado nacional ou estadual. Feriado <strong>municipal</strong> deve ficar preso à empresa da cidade — a Rentech fica em São Paulo/SP e a Alfa Light em Osasco/SP, então o feriado de uma cidade não pode zerar a carga de quem trabalha na outra.
+            </p>
 
             {/* ADICIONAR */}
             <div className="flex flex-col sm:flex-row gap-2 mb-6 bg-amber-50 border border-amber-200 p-4 rounded-xl">
@@ -427,6 +486,17 @@ export default function ParametrosRH() {
                   placeholder="Ex: NATAL, ANIVERSÁRIO DA CIDADE..."
                   className="w-full p-2.5 border border-amber-300 rounded-lg text-sm font-bold uppercase bg-white"
                 />
+              </div>
+              <div className="flex-shrink-0">
+                <label className="block text-[10px] font-bold text-amber-700 uppercase mb-1">Aplica-se a</label>
+                <select
+                  value={novoFeriado.empresa_id ?? ''}
+                  onChange={e => setNovoFeriado({ ...novoFeriado, empresa_id: e.target.value ? Number(e.target.value) : null })}
+                  className="p-2.5 border border-amber-300 rounded-lg text-sm font-bold bg-white w-full sm:w-auto"
+                >
+                  {podeCadastrarParaTodas && <option value="">🌐 Todas as empresas</option>}
+                  {empresasVisiveis.map(e => <option key={e.id} value={e.id}>🏭 {e.nome}</option>)}
+                </select>
               </div>
               <div className="flex items-end">
                 <button onClick={adicionarFeriado} disabled={salvandoFeriado} className="bg-amber-600 text-white font-black text-xs uppercase px-6 py-3 rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50 w-full sm:w-auto">
@@ -450,6 +520,14 @@ export default function ParametrosRH() {
                       placeholder="Descrição"
                       className="flex-grow p-2 border border-blue-300 rounded-lg text-sm font-bold uppercase bg-white w-full"
                     />
+                    <select
+                      value={feriadoEditando.empresa_id ?? ''}
+                      onChange={e => setFeriadoEditando({ ...feriadoEditando, empresa_id: e.target.value ? Number(e.target.value) : null })}
+                      className="p-2 border border-blue-300 rounded-lg text-sm font-bold bg-white"
+                    >
+                      {podeCadastrarParaTodas && <option value="">🌐 Todas as empresas</option>}
+                      {empresasVisiveis.map(e => <option key={e.id} value={e.id}>🏭 {e.nome}</option>)}
+                    </select>
                     <div className="flex gap-2">
                       <button onClick={salvarEdicaoFeriado} disabled={salvandoFeriado} className="bg-[#16A34A] text-white font-black text-[10px] uppercase px-4 py-2 rounded-lg hover:bg-[#15803D] disabled:opacity-50">Salvar</button>
                       <button onClick={() => setFeriadoEditando(null)} className="bg-gray-200 text-gray-600 font-black text-[10px] uppercase px-4 py-2 rounded-lg hover:bg-gray-300">Cancelar</button>
@@ -461,6 +539,9 @@ export default function ParametrosRH() {
                       <span className="font-black text-[#0C1D4D] text-sm">{formatarDataBR(f.data_feriado)}</span>
                       <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-black uppercase">{diaSemanaFeriado(f.data_feriado)}</span>
                       <span className="text-xs font-bold text-gray-600 uppercase">{f.descricao || '—'}</span>
+                      <span className={`text-[9px] px-2 py-0.5 rounded font-black uppercase ${corSeloEmpresa(f.empresa_id)}`}>
+                        {f.empresa_id === null ? '🌐 Todas' : `🏭 ${nomeEmpresa(f.empresa_id)}`}
+                      </span>
                     </div>
                     <div className="flex gap-1">
                       <button onClick={() => setFeriadoEditando(f)} disabled={salvandoFeriado} className="text-[#336699] font-bold text-xs hover:bg-blue-50 px-3 py-1 rounded disabled:opacity-40">✏️ Editar</button>
@@ -702,6 +783,37 @@ export default function ParametrosRH() {
                 </div>
               </div>
               <p className="text-[9px] font-bold text-gray-400 mt-2 uppercase">"Recebe fechamento/holerite" é o padrão do contrato — o cargo e a ficha do funcionário podem sobrescrever isso.</p>
+            </div>
+
+            {/* DIÁRIA BÔNUS — paga por dia trabalhado acima da base do mês */}
+            <div className={`border-2 p-5 rounded-xl ${form.paga_dias_excedentes ? 'border-violet-300 bg-violet-50/50' : 'border-gray-200'}`}>
+              <label className="flex items-center gap-3 font-black text-sm text-[#0C1D4D] cursor-pointer uppercase tracking-wider">
+                <input type="checkbox" checked={form.paga_dias_excedentes}
+                  onChange={e => setForm({ ...form, paga_dias_excedentes: e.target.checked, dias_base_mes: e.target.checked ? (form.dias_base_mes ?? 26) : null })}
+                  className="w-4 h-4 flex-shrink-0 accent-violet-600" />
+                Paga diária bônus?
+              </label>
+
+              {form.paga_dias_excedentes ? (
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-violet-700 uppercase mb-1">Dias a trabalhar no mês</label>
+                    <input type="number" min="1" max="31" value={form.dias_base_mes ?? ''}
+                      onChange={e => setForm({ ...form, dias_base_mes: e.target.value ? Number(e.target.value) : null })}
+                      className="w-full p-2.5 border border-violet-300 rounded-lg text-sm font-black text-violet-700 bg-white" />
+                    <p className="text-[9px] font-bold text-violet-600 mt-1 uppercase">Cada dia trabalhado acima disso paga uma diária</p>
+                  </div>
+                  <div className="flex items-end">
+                    <p className="text-[10px] font-bold text-violet-700 uppercase leading-relaxed p-2.5 bg-white border border-violet-200 rounded-lg w-full">
+                      💡 O valor vem do campo <strong>Diária Bônus</strong> da ficha de cada funcionário. Conta todo dia com ponto registrado, inclusive sábado, domingo e feriado. Este crédito <strong>soma</strong> ao que já é pago de hora extra ou diária de fim de semana.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[9px] font-bold text-gray-400 mt-1 uppercase pl-7">
+                  Ex.: base de 26 dias — quem trabalhar 29 recebe 3 diárias
+                </p>
+              )}
             </div>
 
             {/* BENEFÍCIOS VR / VT */}

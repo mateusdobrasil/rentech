@@ -10,6 +10,7 @@ import { listarAssinaturasAction } from '../actions/actions-assinatura';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
+import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
 
 // ============================================================================
 // UTILITÁRIOS (mesmas fórmulas do holerite, para os números baterem)
@@ -51,12 +52,19 @@ interface RegraContrato {
   tipo_pagamento_fds: 'HORA_PERCENTUAL' | 'VALOR_DIARIA';
   percentual_extra_dom_fer: number; valor_diaria_fds: number; desconta_faltas: boolean;
   direito_vr?: boolean; direito_vt?: boolean; modalidade_beneficio?: 'POR_DIA' | 'VALOR_FECHADO';
+  // Diária por dia excedente — mesma regra do holerite (ver montarDadosHolerite
+  // em app/admin/rh/holerite/page.tsx).
+  paga_dias_excedentes?: boolean; dias_base_mes?: number | null;
 }
 interface FuncionarioFin {
   nome_completo: string; cargo: string; tipo_contrato: string; ativo: boolean;
   recebe_transporte: boolean; valor_transporte: number;
   recebe_refeicao: boolean; valor_refeicao: number;
   salario_folha: number; salario_contrato: number; valor_diaria: number; valor_adiantamento: number;
+  // Diária por dia excedente — ver montarDadosHolerite no holerite.
+  diaria_extra?: number;
+  // Empresa do funcionário: define quais feriados municipais valem para ele.
+  empresa_id?: number | null;
 }
 interface Desconto { funcionario_nome?: string; descricao: string; tipo: 'FIXO' | 'PARCELADO'; parcelas: number; mes_inicio: string; mes_fim: string; valor_parcela: number; }
 interface Bonus { funcionario_nome?: string; descricao: string; recorrencia: 'MENSAL' | 'UNICO'; mes_referencia: string; valor: number; }
@@ -89,11 +97,15 @@ const apurarPonto = (
   dataAdmissao?: string | null, dataDesligamento?: string | null
 ) => {
   let mins60 = 0, mins100 = 0, diasFds = 0, minsTrabalhadosTotal = 0, qtdVr = 0, qtdVt = 0;
+  // Dias com trabalho de fato, em qualquer dia da semana — base da diária por
+  // dia excedente. Abono não conta.
+  let diasTrabalhados = 0;
 
   Object.entries(dias).forEach(([dataIso, v]) => {
     const diaSemana = getDiaSemana(dataIso);
     const isFeriado = feriados.includes(dataIso);
     const abonEfetivo = (isFeriado || diaSemana === 0 || diaSemana === 6) ? 0 : v.abonados;
+    if (v.trabalhados > 0) diasTrabalhados++;
     minsTrabalhadosTotal += v.trabalhados + abonEfetivo;
 
     if (isFeriado || diaSemana === 0) {
@@ -126,7 +138,7 @@ const apurarPonto = (
     }
   }
 
-  return { mins60, mins100, diasFds, faltas, minsTrabalhadosTotal, qtdVr, qtdVt };
+  return { mins60, mins100, diasFds, faltas, minsTrabalhadosTotal, qtdVr, qtdVt, diasTrabalhados };
 };
 
 // ============================================================================
@@ -135,7 +147,7 @@ const apurarPonto = (
 const calcularFinanceiro = (
   func: FuncionarioFin, regras: Record<string, RegraContrato>,
   descontosFunc: Desconto[], bonusFunc: Bonus[],
-  ap: { mins60: number; mins100: number; diasFds: number; faltas: number; qtdVr: number; qtdVt: number }, mesRef: string
+  ap: { mins60: number; mins100: number; diasFds: number; faltas: number; qtdVr: number; qtdVt: number; diasTrabalhados: number }, mesRef: string
 ) => {
   const regra = regras[func.tipo_contrato] || { ...REGRA_PADRAO, nome_regra: func.tipo_contrato || 'PADRÃO' };
   const salarioBaseCalculo = func.salario_folha > 0 ? func.salario_folha : func.salario_contrato;
@@ -170,11 +182,17 @@ const calcularFinanceiro = (
   // Acerto de VR/VT por falta: 1 diária descontada por dia de falta (conforme direito)
   const descontoBeneficios = ((regra as any).direito_vr ? ap.faltas * diariaVr : 0) + ((regra as any).direito_vt ? ap.faltas * diariaVt : 0);
 
+  // Diária por dia excedente: cada dia com ponto acima da base do contrato paga
+  // uma diária, no valor da ficha. Soma aos extras, não substitui.
+  const diasBase = regra.paga_dias_excedentes ? (regra.dias_base_mes ?? 0) : 0;
+  const diasExcedentes = diasBase > 0 ? Math.max(0, ap.diasTrabalhados - diasBase) : 0;
+  const totalDiariasExcedentes = diasExcedentes * (func.diaria_extra || 0);
+
   const baseFaltas = func.salario_contrato > 0 ? func.salario_contrato : func.salario_folha;
   const diasFaltas = regra.desconta_faltas ? ap.faltas : 0;
   const valorDescontoFaltas = diasFaltas > 0 ? (baseFaltas / 30) * diasFaltas : 0;
 
-  const totalCreditos = salarioBaseExibido + complemento + totalBonus + totalExtra60 + totalExtra100 + totalDiarias + totalAdicionais;
+  const totalCreditos = salarioBaseExibido + complemento + totalBonus + totalExtra60 + totalExtra100 + totalDiarias + totalDiariasExcedentes + totalAdicionais;
   const totalDebitos = func.valor_adiantamento + totalDesc + valorDescontoFaltas + descontoBeneficios;
   const liquido = totalCreditos - totalDebitos;
 
@@ -361,7 +379,7 @@ export default function RelatoriosRH() {
         supabase.from('folha_holerites').select('funcionario_nome, dados').eq('mes_referencia', mesAno),
         supabase.from('folha_ponto_diaria').select('funcionario_nome, data_registro, minutos_trabalhados').gte('data_registro', dataInicio).lte('data_registro', dataFim),
         supabase.from('folha_ponto_abono').select('funcionario_nome, data_abono, minutos_abonados').gte('data_abono', dataInicio).lte('data_abono', dataFim),
-        supabase.from('folha_feriados').select('data_feriado')
+        supabase.from('folha_feriados').select('*')
       ]);
 
       // Mapa de regras
@@ -372,11 +390,14 @@ export default function RelatoriosRH() {
           percentual_extra_semana: r.percentual_extra_semana ?? 60, percentual_extra_sabado: r.percentual_extra_sabado ?? 60,
           tipo_pagamento_fds: r.tipo_pagamento_fds === 'HORA_100' ? 'HORA_PERCENTUAL' : (r.tipo_pagamento_fds || 'HORA_PERCENTUAL'),
           percentual_extra_dom_fer: r.percentual_extra_dom_fer ?? 100, valor_diaria_fds: r.valor_diaria_fds ?? 0, desconta_faltas: r.desconta_faltas,
-          direito_vr: r.direito_vr ?? false, direito_vt: r.direito_vt ?? false, modalidade_beneficio: r.modalidade_beneficio || 'POR_DIA'
+          direito_vr: r.direito_vr ?? false, direito_vt: r.direito_vt ?? false, modalidade_beneficio: r.modalidade_beneficio || 'POR_DIA',
+          paga_dias_excedentes: r.paga_dias_excedentes ?? false, dias_base_mes: r.dias_base_mes ?? null
         };
       });
 
-      const feriados = (fData || []).map(f => f.data_feriado);
+      // Feriado municipal vale só pra empresa daquela cidade — cada funcionário
+      // resolve a própria lista na hora de apurar.
+      const indiceFeriados = indexarFeriados(fData);
 
       // Agrupa ponto + abono por funcionário/dia
       const porFunc: Record<string, Record<string, { trabalhados: number; abonados: number }>> = {};
@@ -407,7 +428,7 @@ export default function RelatoriosRH() {
       };
 
       const resultado: LinhaRelatorio[] = (funcs || []).filter(trabalhouNoMes).map((f: FuncionarioFin) => {
-        const ap = apurarPonto(porFunc[f.nome_completo] || {}, feriados, mesAno, (f as any).data_admissao, (f as any).data_desligamento);
+        const ap = apurarPonto(porFunc[f.nome_completo] || {}, [...feriadosDaEmpresa(indiceFeriados, f.empresa_id ?? null)], mesAno, (f as any).data_admissao, (f as any).data_desligamento);
         const fechado = !!fechPorFunc[f.nome_completo];
 
         // Se a folha está fechada, usa os totais congelados; senão calcula ao vivo

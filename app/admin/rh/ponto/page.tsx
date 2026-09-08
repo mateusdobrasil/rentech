@@ -19,6 +19,7 @@ import logoColorido from '../../../../app/imgs/logo.png';
 import { useToast, useConfirm, usePrompt } from '../../../components/ui/NotificationProvider';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
+import { indexarFeriados, ehFeriado, type IndiceFeriados } from '../../../lib/feriados';
 
 interface RegistroDiario {
   id?: string;
@@ -54,7 +55,10 @@ export default function GestaoDePonto() {
 
   const [registros, setRegistros] = useState<RegistroDiario[]>([]);
   const [abonos, setAbonos] = useState<Abono[]>([]);
-  const [feriadosGlobais, setFeriadosGlobais] = useState<string[]>([]);
+  // Índice de feriados: o municipal vale só pra empresa daquela cidade
+  // (Rentech em São Paulo/SP, Alfa Light em Osasco/SP), então a lista efetiva
+  // depende de qual funcionário está sendo apurado.
+  const [indiceFeriados, setIndiceFeriados] = useState<IndiceFeriados>(() => indexarFeriados([]));
   const [loading, setLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -91,7 +95,7 @@ export default function GestaoDePonto() {
   const [listaFuncionariosAtivos, setListaFuncionariosAtivos] = useState<string[]>([]);
   // Mesmos funcionários, com admissão/desligamento — usado só para calcular
   // faltas do mês (mesma regra de apurarPonto() em /admin/rh/holerite).
-  const [funcionariosAtivosDetalhe, setFuncionariosAtivosDetalhe] = useState<{ nome_completo: string; data_admissao: string | null; data_desligamento: string | null }[]>([]);
+  const [funcionariosAtivosDetalhe, setFuncionariosAtivosDetalhe] = useState<{ nome_completo: string; data_admissao: string | null; data_desligamento: string | null; empresa_id?: number | null }[]>([]);
   const [manualFuncionario, setManualFuncionario] = useState('');
   const [manualData, setManualData] = useState('');
   const [manualE1, setManualE1] = useState('');
@@ -135,7 +139,7 @@ export default function GestaoDePonto() {
     // Só entra nos controles de ponto quem bate ponto pelo WhatsApp — quem
     // tem essa opção desligada na ficha não gera batida nenhuma por aqui,
     // então não faz sentido aparecer nos seletores nem na apuração de faltas.
-    supabase.from('folha_funcionarios').select('nome_completo, data_admissao, data_desligamento').eq('ativo', true).eq('ponto_whatsapp_ativo', true).order('nome_completo')
+    supabase.from('folha_funcionarios').select('nome_completo, data_admissao, data_desligamento, empresa_id').eq('ativo', true).eq('ponto_whatsapp_ativo', true).order('nome_completo')
       .then(({ data }) => {
         setListaFuncionariosAtivos((data || []).map(f => f.nome_completo));
         setFuncionariosAtivosDetalhe(data || []);
@@ -194,9 +198,8 @@ export default function GestaoDePonto() {
     setLoading(true);
 
     // Busca Feriados Dinâmicos do Banco
-    const { data: fData, error: erroFeriados } = await supabase.from('folha_feriados').select('data_feriado');
-    const feriadosList = fData ? fData.map(f => f.data_feriado) : [];
-    setFeriadosGlobais(feriadosList);
+    const { data: fData, error: erroFeriados } = await supabase.from('folha_feriados').select('*');
+    setIndiceFeriados(indexarFeriados(fData));
 
     const mesAno = mesAnoAlvo || mesAnoSelecionado;
     const [ano, mes] = mesAno.split('-');
@@ -282,16 +285,23 @@ export default function GestaoDePonto() {
     return new Date(parseInt(partes[0], 10), parseInt(partes[1], 10) - 1, parseInt(partes[2], 10)).getDay();
   };
 
+  // Empresa de cada funcionário, para resolver quais feriados valem para ele.
+  const empresaPorFuncionario = new Map(
+    funcionariosAtivosDetalhe.map(f => [f.nome_completo, f.empresa_id ?? null])
+  );
+  const ehFeriadoPara = (dataIso: string, nome: string) =>
+    ehFeriado(indiceFeriados, dataIso, empresaPorFuncionario.get(nome) ?? null);
+
   // Dia não útil (sábado, domingo ou feriado) tem carga horária zero:
   // abono nesses dias não gera crédito de horas.
-  const isDiaNaoUtil = (dataIso: string, feriados: string[]) => {
+  const isDiaNaoUtil = (dataIso: string, nome: string) => {
     const diaSemana = getDiaSemana(dataIso);
-    return diaSemana === 0 || diaSemana === 6 || feriados.includes(dataIso);
+    return diaSemana === 0 || diaSemana === 6 || ehFeriadoPara(dataIso, nome);
   };
 
-  const minutosAbonadosEfetivos = (abono: { minutos_abonados: number } | undefined, dataIso: string) => {
+  const minutosAbonadosEfetivos = (abono: { minutos_abonados: number } | undefined, dataIso: string, nome: string) => {
     if (!abono) return 0;
-    return isDiaNaoUtil(dataIso, feriadosGlobais) ? 0 : abono.minutos_abonados;
+    return isDiaNaoUtil(dataIso, nome) ? 0 : abono.minutos_abonados;
   };
 
   // Parser de CSV que respeita aspas, campos vazios, vírgulas e
@@ -690,7 +700,7 @@ export default function GestaoDePonto() {
         if (!mapa[nome]) return;
 
         const diaSemana = getDiaSemana(dataRegistro);
-        const isFeriado = feriadosGlobais.includes(dataRegistro);
+        const isFeriado = ehFeriadoPara(dataRegistro, nome);
         const is100 = diaSemana === 0 || diaSemana === 6 || isFeriado;
 
         // Em dia não útil a carga é zero, então abono não gera crédito de horas
@@ -714,7 +724,7 @@ export default function GestaoDePonto() {
     });
 
     return Object.values(mapa).sort((a, b) => a.nome.localeCompare(b.nome));
-  }, [registros, abonos, feriadosGlobais]);
+  }, [registros, abonos, indiceFeriados, funcionariosAtivosDetalhe]);
 
   const funcionariosUnicos = useMemo(() => [...new Set([...registros.map(r => r.funcionario_nome), ...abonos.map(a => a.funcionario_nome)])].sort(), [registros, abonos]);
 
@@ -791,7 +801,7 @@ export default function GestaoDePonto() {
         if (f.data_desligamento && dataIso > f.data_desligamento) continue;
 
         const diaSemana = dataObj.getDay();
-        if (diaSemana === 0 || diaSemana === 6 || feriadosGlobais.includes(dataIso)) continue;
+        if (diaSemana === 0 || diaSemana === 6 || ehFeriadoPara(dataIso, f.nome_completo)) continue;
 
         const reg = mapaDias[`${f.nome_completo}|${dataIso}`];
         const presente = reg && (reg.trabalhados > 0 || reg.abonados > 0);
@@ -1001,13 +1011,13 @@ export default function GestaoDePonto() {
         
         dias.forEach(({ registroDoDia, abonoDoDia, dataIso }) => {
             const minutosTrabalhados = registroDoDia?.minutos_trabalhados || 0;
-            const minutosAbonados = minutosAbonadosEfetivos(abonoDoDia, dataIso);
+            const minutosAbonados = minutosAbonadosEfetivos(abonoDoDia, dataIso, nome);
             const minutosTotaisDoDia = minutosTrabalhados + minutosAbonados;
 
             totalTrabalhado += minutosTotaisDoDia;
 
             const diaSemana = getDiaSemana(dataIso);
-            const isFeriado = feriadosGlobais.includes(dataIso);
+            const isFeriado = ehFeriadoPara(dataIso, nome);
             const is100 = diaSemana === 0 || diaSemana === 6 || isFeriado;
             
             const cargaHorariaMinutos = is100 ? 0 : 480;
@@ -1054,11 +1064,11 @@ export default function GestaoDePonto() {
               {todosOsDiasDoMes.map(({ dataIso, registroDoDia, abonoDoDia }, idx) => {
                 const dataFormatada = dataIso.split('-').reverse().join('/');
                 const diaSemana = getDiaSemana(dataIso);
-                const isFeriado = feriadosGlobais.includes(dataIso);
+                const isFeriado = ehFeriadoPara(dataIso, nome);
                 const is100 = diaSemana === 0 || diaSemana === 6 || isFeriado;
 
                 const minutosTrabalhados = registroDoDia?.minutos_trabalhados || 0;
-                const minutosAbonados = minutosAbonadosEfetivos(abonoDoDia, dataIso);
+                const minutosAbonados = minutosAbonadosEfetivos(abonoDoDia, dataIso, nome);
                 const minutosTotaisDoDia = minutosTrabalhados + minutosAbonados;
 
                 const e1 = registroDoDia?.entrada_1;
@@ -1575,7 +1585,7 @@ export default function GestaoDePonto() {
                     </thead>
                     <tbody className="divide-y divide-[#E2E8F0]">
                       {abonosOrdenados.map((a, idx) => {
-                        const diaNaoUtil = isDiaNaoUtil(a.data_abono, feriadosGlobais);
+                        const diaNaoUtil = isDiaNaoUtil(a.data_abono, a.funcionario_nome);
                         return (
                           <tr key={a.id || idx} className="hover:bg-[#F8FAFC] transition-colors">
                             <td className="p-4 font-black text-[#0C1D4D]">{a.funcionario_nome}</td>

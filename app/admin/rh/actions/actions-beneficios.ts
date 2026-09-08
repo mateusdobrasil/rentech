@@ -6,6 +6,7 @@
 // exibido junto no painel, para não duplicar a fonte da verdade.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
+import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -39,13 +40,6 @@ function diasUteisNoPeriodo(ano: number, mes: number, feriados: Set<string>, ini
     uteis++;
   }
   return uteis;
-}
-
-async function contarDiasUteis(db: ReturnType<typeof supabaseAdmin>, mesAno: string): Promise<number> {
-  const [ano, mes] = mesAno.split('-').map(Number);
-  const { data: fers } = await db.from('folha_feriados').select('data_feriado');
-  const feriados = new Set((fers || []).map(f => f.data_feriado));
-  return diasUteisNoPeriodo(ano, mes, feriados);
 }
 
 // ============================================================================
@@ -85,22 +79,25 @@ export async function calcularBeneficiosMes(db: ReturnType<typeof supabaseAdmin>
   const ultimoNum = new Date(ano, mes, 0).getDate();
   const ultimoDoMes = `${ano}-${String(mes).padStart(2, '0')}-${String(ultimoNum).padStart(2, '0')}`;
 
-  const { data: fers } = await db.from('folha_feriados').select('data_feriado');
-  const feriados = new Set((fers || []).map(f => f.data_feriado));
+  const { data: fers } = await db.from('folha_feriados').select('*');
+  const indiceFeriados = indexarFeriados(fers);
 
-  // Dias úteis do mês cheio (referência para quem trabalhou o mês todo)
-  const diasUteisMes = diasUteisNoPeriodo(ano, mes, feriados);
+  // Dias úteis do mês cheio (referência para quem trabalhou o mês todo).
+  // Usa só os feriados gerais: este número é único no retorno, e o municipal
+  // varia por empresa (Rentech em São Paulo/SP, Alfa Light em Osasco/SP). O
+  // cálculo de cada funcionário, abaixo, usa os feriados da empresa dele.
+  const diasUteisMes = diasUteisNoPeriodo(ano, mes, indiceFeriados.gerais);
 
   // Datas de admissão/desligamento e status de cada funcionário. empresaIds
   // (null = sem restrição) exclui da fonte quem está fora do escopo do
   // usuário logado — como diasUteisTrabalhados() só reconhece nomes
   // presentes aqui, o filtro se propaga naturalmente pros itens calculados.
   let qFuncs = db.from('folha_funcionarios')
-    .select('nome_completo, data_admissao, data_desligamento, ativo');
+    .select('nome_completo, data_admissao, data_desligamento, ativo, empresa_id');
   if (empresaIds) qFuncs = qFuncs.in('empresa_id', empresaIds);
   const { data: funcs } = await qFuncs;
-  const dadosFunc: Record<string, { adm: string | null; deslig: string | null; ativo: boolean }> = {};
-  (funcs || []).forEach(f => { dadosFunc[f.nome_completo] = { adm: f.data_admissao, deslig: f.data_desligamento, ativo: f.ativo !== false }; });
+  const dadosFunc: Record<string, { adm: string | null; deslig: string | null; ativo: boolean; empresaId: number | null }> = {};
+  (funcs || []).forEach(f => { dadosFunc[f.nome_completo] = { adm: f.data_admissao, deslig: f.data_desligamento, ativo: f.ativo !== false, empresaId: f.empresa_id ?? null }; });
 
   // Dias úteis trabalhados no mês por funcionário (respeitando admissão/desligamento)
   const diasUteisTrabalhados = (nome: string): number => {
@@ -114,7 +111,7 @@ export async function calcularBeneficiosMes(db: ReturnType<typeof supabaseAdmin>
     if (!d.ativo && !(d.deslig && d.deslig.slice(0, 7) >= mesAno)) return 0;
     const inicio = (d.adm && d.adm > primeiroDoMes) ? d.adm : null;
     const fim = (d.deslig && d.deslig < ultimoDoMes) ? d.deslig : null;
-    return diasUteisNoPeriodo(ano, mes, feriados, inicio, fim);
+    return diasUteisNoPeriodo(ano, mes, feriadosDaEmpresa(indiceFeriados, d.empresaId), inicio, fim);
   };
 
   const { data: beneficios } = await db.from('folha_beneficios')

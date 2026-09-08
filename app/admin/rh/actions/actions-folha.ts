@@ -219,13 +219,16 @@ export async function salvarDadosSalariaisAction(payload: {
   valor_transporte: number;
   valor_adiantamento: number;
   valor_premio_diaria_viagem: number;
+  // Diária paga por dia trabalhado acima da base do contrato (regra
+  // paga_dias_excedentes em folha_parametros).
+  diaria_extra: number;
   usuarioNome: string;
 }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcessoQualquerRota(accessToken);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
-  const { funcionarioNome, salario_folha, salario_contrato, valor_refeicao, valor_transporte, valor_adiantamento, valor_premio_diaria_viagem, usuarioNome } = payload;
+  const { funcionarioNome, salario_folha, salario_contrato, valor_refeicao, valor_transporte, valor_adiantamento, valor_premio_diaria_viagem, diaria_extra, usuarioNome } = payload;
 
   if (!funcionarioNome) return { ok: false, erro: 'Funcionário não informado.' };
 
@@ -244,7 +247,8 @@ export async function salvarDadosSalariaisAction(payload: {
         valor_refeicao: Number(valor_refeicao) || 0,
         valor_transporte: Number(valor_transporte) || 0,
         valor_adiantamento: Number(valor_adiantamento) || 0,
-        valor_premio_diaria_viagem: Number(valor_premio_diaria_viagem) || 0
+        valor_premio_diaria_viagem: Number(valor_premio_diaria_viagem) || 0,
+        diaria_extra: Number(diaria_extra) || 0
       })
       .eq('nome_completo', funcionarioNome);
     if (error) throw new Error(`Falha ao gravar os dados salariais: ${error.message}`);

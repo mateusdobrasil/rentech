@@ -7,6 +7,7 @@
 // - grava o controle em folha_holerite_assinaturas (service role)
 // - chama o cliente da Autentique (lib/autentique)
 import { supabaseAdmin } from '../../../lib/supabase';
+import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { autentiqueCriarDocumento, autentiqueConsultarDocumento } from '../../../lib/autentique';
 import { gerarHoleritePdf } from '../../../lib/gerarHoleritePdf';
@@ -101,7 +102,10 @@ async function gerarEspelhoPontoBytes(
   mesReferencia: string,
   dataAdmissao?: string | null,
   dataDesligamento?: string | null,
-  empresaNome: string = 'RENTECH'
+  empresaNome: string = 'RENTECH',
+  // Feriado municipal vale só para a empresa daquela cidade — sem isto, o
+  // espelho de quem é de Osasco zeraria a carga num feriado de São Paulo.
+  empresaId: number | null = null
 ): Promise<Uint8Array | null> {
   const [ano, mes] = mesReferencia.split('-');
   const dataInicio = `${ano}-${mes}-01`;
@@ -116,7 +120,7 @@ async function gerarEspelhoPontoBytes(
       .select('data_abono, minutos_abonados, motivo')
       .eq('funcionario_nome', funcionarioNome)
       .gte('data_abono', dataInicio).lte('data_abono', dataFim),
-    db.from('folha_feriados').select('data_feriado')
+    db.from('folha_feriados').select('*')
   ]);
 
   if ((!pontoData || pontoData.length === 0) && (!abonoData || abonoData.length === 0)) return null;
@@ -145,7 +149,7 @@ async function gerarEspelhoPontoBytes(
     cpf,
     mesReferencia,
     registros: Object.values(porDia),
-    feriados: (fData || []).map((f: any) => f.data_feriado),
+    feriados: [...feriadosDaEmpresa(indexarFeriados(fData), empresaId)],
     dataAdmissao,
     dataDesligamento,
     empresaNome
@@ -267,10 +271,11 @@ async function gerarReciboBytes(
   valor: number,
   formaPagamento: string,
   detalhamento: { descricao: string; valor: number }[],
-  empresaNome: string = 'RENTECH'
+  empresaNome: string = 'RENTECH',
+  empresaId: number | null = null
 ): Promise<Uint8Array> {
   const [{ data: fData }, { itens: beneficios, mesReferenciaBeneficio }] = await Promise.all([
-    db.from('folha_feriados').select('data_feriado'),
+    db.from('folha_feriados').select('*'),
     buscarBeneficiosMesSeguinte(db, funcionarioNome, mesReferencia)
   ]);
   return gerarReciboPdf({
@@ -279,7 +284,7 @@ async function gerarReciboBytes(
     mesReferencia,
     valor,
     formaPagamento,
-    feriados: (fData || []).map((f: any) => f.data_feriado),
+    feriados: [...feriadosDaEmpresa(indexarFeriados(fData), empresaId)],
     empresaNome,
     detalhamento,
     beneficios,
@@ -479,7 +484,7 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     // 4b) Espelho de ponto do mês (batidas + abonos), se houver registro.
     const espelhoBytes = await gerarEspelhoPontoBytes(
       db, funcionarioNome, cpfLimpo || func?.cpf || null, mesReferencia,
-      func?.data_admissao, func?.data_desligamento, nomeEmpresa
+      func?.data_admissao, func?.data_desligamento, nomeEmpresa, func?.empresa_id ?? null
     );
 
     // 4c) Anexa os documentos da contabilidade que existirem no Storage.
@@ -495,7 +500,7 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     // 4d) Recibo de pagamento — sempre o ÚLTIMO arquivo do pacote.
     const formaPagamento = deduzirFormaPagamento(func);
     const reciboBytes = await gerarReciboBytes(
-      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento, detalhamentoRecibo, nomeEmpresa
+      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento, detalhamentoRecibo, nomeEmpresa, func?.empresa_id ?? null
     );
 
     // Ordem: nosso resumo (se houver) → espelho de ponto → adiantamento → holerite mensal → recibo.
@@ -739,7 +744,7 @@ export async function previaDocumentoAssinaturaAction(payload: {
 
     const espelhoBytes = await gerarEspelhoPontoBytes(
       db, funcionarioNome, func?.cpf || null, mesReferencia,
-      func?.data_admissao, func?.data_desligamento, nomeEmpresa
+      func?.data_admissao, func?.data_desligamento, nomeEmpresa, func?.empresa_id ?? null
     );
 
     const adiantamento = await baixarAnexoContabil(db, mesReferencia, 'ADIANTAMENTO', funcionarioNome);
@@ -747,7 +752,7 @@ export async function previaDocumentoAssinaturaAction(payload: {
 
     const formaPagamento = deduzirFormaPagamento(func);
     const reciboBytes = await gerarReciboBytes(
-      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento, detalhamentoRecibo, nomeEmpresa
+      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento, detalhamentoRecibo, nomeEmpresa, func?.empresa_id ?? null
     );
 
     const partes = [resumoBytes, espelhoBytes, adiantamento, holeriteMensal, reciboBytes].filter((p): p is Uint8Array => !!p);

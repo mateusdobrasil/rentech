@@ -3,7 +3,7 @@
 // app/admin/rh/parametros/actions-parametros.ts (ajuste o caminho conforme a localização)
 // Server actions para as gravações da tela de Parâmetros, com service role.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -19,23 +19,45 @@ const calcularMesFim = (mesInicio: string, parcelas: number) => {
 // ============================================================================
 // FERIADOS
 // ============================================================================
+// empresaId null = feriado de TODAS as empresas (nacional/estadual);
+// preenchido = municipal, vale só para os funcionários daquela empresa.
 export async function salvarFeriadoAction(payload: {
-  id?: number; data_feriado: string; descricao: string | null;
+  id?: number; data_feriado: string; descricao: string | null; empresa_id?: number | null;
 }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
   const { id, data_feriado, descricao } = payload;
+  const empresaId = payload.empresa_id ?? null;
   if (!data_feriado) return { ok: false, erro: 'Informe a data do feriado.' };
 
+  // Quem só enxerga uma empresa não pode cadastrar feriado para outra, nem
+  // marcar como "todas" — mesma régua do resto do sistema.
+  const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+  if (empresasPermitidas !== null && (empresaId === null || !empresasPermitidas.includes(empresaId))) {
+    return { ok: false, erro: 'Você não tem permissão para cadastrar feriado para esta empresa.' };
+  }
+
   try {
-    const dados = { data_feriado, descricao: (descricao || '').toUpperCase().trim() || null };
+    const dados = {
+      data_feriado,
+      descricao: (descricao || '').toUpperCase().trim() || null,
+      empresa_id: empresaId,
+    };
     const { error } = id
       ? await db.from('folha_feriados').update(dados).eq('id', id)
       : await db.from('folha_feriados').insert(dados);
     if (error) {
-      if (error.code === '23505') return { ok: false, erro: `A data ${data_feriado.split('-').reverse().join('/')} já está cadastrada como feriado.` };
+      if (error.code === '23505') {
+        const dataBR = data_feriado.split('-').reverse().join('/');
+        return {
+          ok: false,
+          erro: empresaId === null
+            ? `A data ${dataBR} já está cadastrada como feriado de todas as empresas.`
+            : `A data ${dataBR} já está cadastrada como feriado desta empresa.`,
+        };
+      }
       throw new Error(error.message);
     }
     return { ok: true };
@@ -126,6 +148,19 @@ export async function salvarRegraAction(payload: {
   const regra = { ...payload.regra, nome_regra: nomeNormalizado };
   delete regra.id;
   const { nomeOriginal } = payload;
+
+  // Espelha a CHECK do banco (folha_parametros_dias_base_mes_check) com uma
+  // mensagem legível: sem base de dias, a regra pagaria diária por TODO dia
+  // trabalhado do mês.
+  if (regra.paga_dias_excedentes) {
+    const dias = Number(regra.dias_base_mes);
+    if (!Number.isFinite(dias) || dias <= 0 || dias > 31) {
+      return { ok: false, erro: 'Informe a quantidade de dias a trabalhar no mês (de 1 a 31) para a diária por dia excedente.' };
+    }
+    regra.dias_base_mes = dias;
+  } else {
+    regra.dias_base_mes = null;
+  }
 
   try {
     const estaRenomeando = nomeOriginal !== null && nomeOriginal !== nomeNormalizado;

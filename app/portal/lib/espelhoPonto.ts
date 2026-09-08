@@ -7,6 +7,7 @@
 // Handler, daí a extração pra cá.
 import { supabaseAdmin } from '../../lib/supabase';
 import { RegistroPontoDia } from '../../lib/gerarEspelhoPontoPdf';
+import { indexarFeriados, feriadosDaEmpresa } from '../../lib/feriados';
 
 export interface EspelhoDoMes {
   cpf: string | null;
@@ -36,7 +37,9 @@ export async function montarEspelhoDoMes(
       .select('data_abono, minutos_abonados, motivo')
       .eq('funcionario_nome', funcionarioNome)
       .gte('data_abono', dataInicio).lte('data_abono', dataFim),
-    db.from('folha_feriados').select('data_feriado'),
+    // select('*') traz empresa_id: feriado municipal só vale pra empresa dele
+    // (Rentech em São Paulo/SP, Alfa Light em Osasco/SP).
+    db.from('folha_feriados').select('*'),
   ]);
 
   const porDia: Record<string, RegistroPontoDia> = {};
@@ -72,7 +75,7 @@ export async function montarEspelhoDoMes(
     dataAdmissao: func?.data_admissao || null,
     dataDesligamento: func?.data_desligamento || null,
     registros: Object.values(porDia),
-    feriados: (fData || []).map((f: { data_feriado: string }) => f.data_feriado),
+    feriados: [...feriadosDaEmpresa(indexarFeriados(fData), func?.empresa_id ?? null)],
     empresaNome,
   };
 }

@@ -15,6 +15,7 @@ import logoColorido from '../../../../app/imgs/logo.png';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
+import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
 
 // Utilitários
 const formatCurrency = (value: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
@@ -153,6 +154,11 @@ interface RegraContrato {
   // holerite (lido por OCR) ao recibo. Não confundir com salario_folha, que é
   // só um valor de referência para cálculo de hora, não um "recebe ou não".
   recebe_holerite_contabilidade: boolean;
+  // Diária por dia excedente: cada dia com ponto além de dias_base_mes paga uma
+  // diária (valor vem de folha_funcionarios.diaria_extra). Soma ao que já é
+  // pago de hora extra / diária de fim de semana, não substitui.
+  paga_dias_excedentes: boolean;
+  dias_base_mes: number | null;
 }
 
 interface FuncionarioFin {
@@ -161,6 +167,10 @@ interface FuncionarioFin {
   recebe_refeicao: boolean; valor_refeicao: number;
   salario_folha: number; salario_contrato: number;
   valor_diaria: number; valor_adiantamento: number; valor_premio_diaria_viagem: number;
+  // Valor pago por dia trabalhado acima da base do contrato (regra
+  // paga_dias_excedentes). Campo próprio: não confundir com
+  // valor_premio_diaria_viagem nem com o valor_diaria antigo da ficha.
+  diaria_extra: number;
   data_admissao: string | null; data_desligamento: string | null;
   data_nascimento: string | null; cpf: string | null; celular: string | null; email: string | null;
   banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null;
@@ -174,6 +184,7 @@ interface Bonus { id?: string; funcionario_nome?: string; descricao: string; rec
 interface DadosHolerite {
   minutosExtras60: number; minutosExtras100: number; diasTrabalhadosFds: number;
   totalExtra60: number; totalExtra100: number; totalDiariasFdsFechada: number;
+  diasTrabalhados: number; diasExcedentes: number; valorDiariaExcedente: number; totalDiariasExcedentes: number;
   diasFaltas: number; valorDescontoFaltas: number;
   salarioBaseExibido: number; complementoContratoExibido: number; avosSalario: number;
   bonusAtivos: Bonus[]; descontosAtivos: Desconto[];
@@ -214,7 +225,8 @@ const REGRA_PADRAO: RegraContrato = {
   percentual_extra_sabado: 60, tipo_pagamento_fds: 'HORA_PERCENTUAL', percentual_extra_dom_fer: 100,
   valor_diaria_fds: 0, desconta_faltas: true,
   direito_vr: false, direito_vt: false, modalidade_beneficio: 'POR_DIA', so_documental: false,
-  recebe_holerite_contabilidade: true
+  recebe_holerite_contabilidade: true,
+  paga_dias_excedentes: false, dias_base_mes: null
 };
 
 // ============================================================================
@@ -229,10 +241,15 @@ const apurarPonto = (
 ) => {
   let mins60 = 0; let mins100 = 0; let diasFds = 0;
   let qtdVr = 0; let qtdVt = 0;
+  // Dias em que houve trabalho de fato, em qualquer dia da semana — base da
+  // regra de diária por dia excedente. Abono não conta: o funcionário não
+  // esteve lá.
+  let diasTrabalhados = 0;
 
   Object.entries(dias).forEach(([dataIso, v]) => {
     const diaSemana = getDiaSemana(dataIso);
     const isFeriado = feriados.includes(dataIso);
+    if (v.trabalhados > 0) diasTrabalhados++;
 
     if (isFeriado || diaSemana === 0) {
       if (v.trabalhados > 0) {
@@ -278,7 +295,7 @@ const apurarPonto = (
     }
   }
 
-  return { mins60, mins100, diasFds, faltas, qtdVr, qtdVt };
+  return { mins60, mins100, diasFds, faltas, qtdVr, qtdVt, diasTrabalhados };
 };
 
 // ============================================================================
@@ -328,7 +345,7 @@ const montarDadosHolerite = (
   regras: Record<string, RegraContrato>,
   descontosFunc: Desconto[],
   bonusFunc: Bonus[],
-  apuracao: { mins60: number; mins100: number; diasFds: number; faltas: number; qtdVr: number; qtdVt: number },
+  apuracao: { mins60: number; mins100: number; diasFds: number; faltas: number; qtdVr: number; qtdVt: number; diasTrabalhados: number },
   mesRef: string
 ): DadosHolerite => {
   const regra = regras[func.tipo_contrato] || { ...REGRA_PADRAO, nome_regra: func.tipo_contrato || 'PADRÃO' };
@@ -389,6 +406,15 @@ const montarDadosHolerite = (
   const totalVt = qtdVt * diariaVt;
   const totalAdicionais = totalVr + totalVt;
 
+  // DIÁRIA POR DIA EXCEDENTE — cada dia trabalhado acima da base definida no
+  // contrato paga uma diária, no valor da ficha do funcionário. Ex.: base 26,
+  // trabalhou 29 → 3 diárias. Crédito à parte: soma ao que já é pago de hora
+  // extra e de diária de fim de semana.
+  const diasBase = regra.paga_dias_excedentes ? (regra.dias_base_mes ?? 0) : 0;
+  const diasExcedentes = diasBase > 0 ? Math.max(0, apuracao.diasTrabalhados - diasBase) : 0;
+  const valorDiariaExcedente = func.diaria_extra || 0;
+  const totalDiariasExcedentes = diasExcedentes * valorDiariaExcedente;
+
   const baseFaltas = func.salario_contrato > 0 ? func.salario_contrato : func.salario_folha;
   const diasFaltas = regra.desconta_faltas ? apuracao.faltas : 0;
   const valorDescontoFaltas = diasFaltas > 0 ? (baseFaltas / 30) * diasFaltas : 0;
@@ -397,13 +423,14 @@ const montarDadosHolerite = (
   const descontoVtFaltas = (regra.desconta_faltas && regra.direito_vt ? apuracao.faltas : 0) * diariaVt;
   const totalDescontoBeneficios = descontoVrFaltas + descontoVtFaltas;
 
-  const totalCreditos = salarioBaseExibido + complementoContratoExibido + totalBonusGrid + totalExtra60 + totalExtra100 + totalDiariasFdsFechada + totalAdicionais;
+  const totalCreditos = salarioBaseExibido + complementoContratoExibido + totalBonusGrid + totalExtra60 + totalExtra100 + totalDiariasFdsFechada + totalDiariasExcedentes + totalAdicionais;
   const totalDebitos = func.valor_adiantamento + totalDescontosGrid + valorDescontoFaltas + totalDescontoBeneficios;
   const valorLiquidoReceber = totalCreditos - totalDebitos;
 
   return {
     minutosExtras60: apuracao.mins60, minutosExtras100: apuracao.mins100, diasTrabalhadosFds: apuracao.diasFds,
     totalExtra60, totalExtra100, totalDiariasFdsFechada,
+    diasTrabalhados: apuracao.diasTrabalhados, diasExcedentes, valorDiariaExcedente, totalDiariasExcedentes,
     diasFaltas, valorDescontoFaltas,
     salarioBaseExibido, complementoContratoExibido, avosSalario,
     bonusAtivos, descontosAtivos,
@@ -502,6 +529,14 @@ const HoleriteDoc = ({ nome, dados, mesRef, fechamento }: {
                 )
               )}
 
+              {v.totalDiariasExcedentes > 0 && (
+                <tr>
+                  <td className="p-1">DIÁRIAS BÔNUS</td>
+                  <td className="p-1 border-x border-gray-300 text-center">{v.diasExcedentes}D</td>
+                  <td className="p-1 text-right">{formatCurrency(v.totalDiariasExcedentes)}</td>
+                </tr>
+              )}
+
               {v.bonusAtivos.map((b, i) => (
                 <tr key={`bonus-${i}`}>
                   <td className="p-1 truncate uppercase">{b.descricao}</td>
@@ -585,7 +620,8 @@ const HoleriteDoc = ({ nome, dados, mesRef, fechamento }: {
 const extrairDadosSalariais = (f: FuncionarioFin | null) => f ? {
   salario_folha: f.salario_folha, salario_contrato: f.salario_contrato,
   valor_refeicao: f.valor_refeicao, valor_transporte: f.valor_transporte,
-  valor_adiantamento: f.valor_adiantamento, valor_premio_diaria_viagem: f.valor_premio_diaria_viagem
+  valor_adiantamento: f.valor_adiantamento, valor_premio_diaria_viagem: f.valor_premio_diaria_viagem,
+  diaria_extra: f.diaria_extra
 } : null;
 
 export default function HoleritePage() {
@@ -637,7 +673,7 @@ export default function HoleritePage() {
   [lote, regrasContrato]);
 
   const [fechamentoSelecionado, setFechamentoSelecionado] = useState<Fechamento | null>(null);
-  const [apuracaoSelecionado, setApuracaoSelecionado] = useState({ mins60: 0, mins100: 0, diasFds: 0, faltas: 0, qtdVr: 0, qtdVt: 0 });
+  const [apuracaoSelecionado, setApuracaoSelecionado] = useState({ mins60: 0, mins100: 0, diasFds: 0, faltas: 0, qtdVr: 0, qtdVt: 0, diasTrabalhados: 0 });
   const [formSelecionado, setFormSelecionado] = useState<FuncionarioFin | null>(null);
   const [descontosSelecionado, setDescontosSelecionado] = useState<Desconto[]>([]);
   const [bonusSelecionado, setBonusSelecionado] = useState<Bonus[]>([]);
@@ -697,7 +733,9 @@ export default function HoleritePage() {
           direito_vr: r.direito_vr ?? false, direito_vt: r.direito_vt ?? false,
           modalidade_beneficio: r.modalidade_beneficio || 'POR_DIA',
           so_documental: r.so_documental ?? false,
-          recebe_holerite_contabilidade: r.recebe_holerite_contabilidade ?? true
+          recebe_holerite_contabilidade: r.recebe_holerite_contabilidade ?? true,
+          paga_dias_excedentes: r.paga_dias_excedentes ?? false,
+          dias_base_mes: r.dias_base_mes ?? null
         };
       });
       setRegrasContrato(mapaRegras);
@@ -721,10 +759,12 @@ export default function HoleritePage() {
     }
 
     const [{ data: pontoData }, { data: abonoData }, { data: fData }] = await Promise.all([
-      queryPonto, queryAbono, supabase.from('folha_feriados').select('data_feriado')
+      queryPonto, queryAbono, supabase.from('folha_feriados').select('*')
     ]);
 
-    const feriados = fData ? fData.map(f => f.data_feriado) : [];
+    // Índice, e não lista: o feriado municipal só vale pra empresa daquela
+    // cidade, então cada funcionário resolve a lista dele na hora de apurar.
+    const indiceFeriados = indexarFeriados(fData);
 
     const porFuncionario: Record<string, Record<string, RegistroDiaPonto>> = {};
     (pontoData || []).forEach(p => {
@@ -742,7 +782,7 @@ export default function HoleritePage() {
       porFuncionario[a.funcionario_nome][a.data_abono].abonados = a.minutos_abonados;
     });
 
-    return { porFuncionario, feriados };
+    return { porFuncionario, indiceFeriados };
   };
 
   const carregarDetalhes = async (nome: string, mesAno: string) => {
@@ -772,8 +812,8 @@ export default function HoleritePage() {
       .eq('funcionario_nome', nome).eq('mes_referencia', mesAno).maybeSingle();
     setFechamentoSelecionado(fechData || null);
 
-    const { porFuncionario, feriados } = await buscarPontoDoMes(mesAno, nome);
-    setApuracaoSelecionado(apurarPonto(porFuncionario[nome] || {}, feriados, mesAno, funcData.data_admissao, funcData.data_desligamento));
+    const { porFuncionario, indiceFeriados } = await buscarPontoDoMes(mesAno, nome);
+    setApuracaoSelecionado(apurarPonto(porFuncionario[nome] || {}, [...feriadosDaEmpresa(indiceFeriados, funcData.empresa_id ?? null)], mesAno, funcData.data_admissao, funcData.data_desligamento));
 
     setLoading(false);
   };
@@ -804,6 +844,7 @@ export default function HoleritePage() {
         valor_transporte: formSelecionado.valor_transporte,
         valor_adiantamento: formSelecionado.valor_adiantamento,
         valor_premio_diaria_viagem: formSelecionado.valor_premio_diaria_viagem,
+        diaria_extra: formSelecionado.diaria_extra,
         usuarioNome: usuarioAtual
       }, accessToken);
       if (!resSalarial.ok) throw new Error(resSalarial.erro);
@@ -941,7 +982,7 @@ export default function HoleritePage() {
         .map(f => {
           const regra = regrasContrato[f.tipo_contrato];
           const soDocumental = regra?.so_documental === true;
-          const apuracao = apurarPonto(ponto.porFuncionario[f.nome_completo] || {}, ponto.feriados, mesAno, f.data_admissao, f.data_desligamento);
+          const apuracao = apurarPonto(ponto.porFuncionario[f.nome_completo] || {}, [...feriadosDaEmpresa(ponto.indiceFeriados, f.empresa_id ?? null)], mesAno, f.data_admissao, f.data_desligamento);
           const dados = montarDadosHolerite(
             f, regrasContrato,
             descPorFunc[f.nome_completo] || [],
@@ -1374,6 +1415,13 @@ export default function HoleritePage() {
                       </div>
                     )}
                     <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Prêmio por Diária de Viagem</label><InputMoeda value={formSelecionado.valor_premio_diaria_viagem} onChange={v => setFormSelecionado({...formSelecionado, valor_premio_diaria_viagem: v})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-[#16A34A]" /></div>
+                    {regraAtiva?.paga_dias_excedentes && (
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Diária Bônus</label>
+                        <InputMoeda value={formSelecionado.diaria_extra} onChange={v => setFormSelecionado({...formSelecionado, diaria_extra: v})} className="w-full p-2 border border-violet-300 rounded text-sm font-bold text-violet-700" />
+                        <p className="text-[9px] font-bold text-violet-600 mt-0.5 uppercase">Pago por dia acima de {regraAtiva?.dias_base_mes}d no mês</p>
+                      </div>
+                    )}
                     <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Adiantamento (Dia 20)</label><InputMoeda value={formSelecionado.valor_adiantamento} onChange={v => setFormSelecionado({...formSelecionado, valor_adiantamento: v})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-red-600" /></div>
                   </div>
                 </div>

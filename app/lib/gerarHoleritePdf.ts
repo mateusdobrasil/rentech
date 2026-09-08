@@ -23,6 +23,9 @@ export interface DadosHoleritePdf {
   minutosExtras60: number; minutosExtras100: number;
   totalExtra60: number; totalExtra100: number; totalDiariasFdsFechada: number;
   diasTrabalhadosFds: number;
+  // Diária por dia trabalhado acima da base do contrato (regra paga_dias_excedentes).
+  // Opcionais: holerite fechado ANTES da regra existir não tem esses campos no snapshot.
+  diasExcedentes?: number; valorDiariaExcedente?: number; totalDiariasExcedentes?: number;
   diasFaltas: number; valorDescontoFaltas: number;
   salarioBaseExibido: number; complementoContratoExibido: number; avosSalario?: number;
   bonusAtivos: { descricao: string; recorrencia: string; valor: number }[];
@@ -31,7 +34,7 @@ export interface DadosHoleritePdf {
   qtdVr: number; qtdVt: number; diariaVr: number; diariaVt: number;
   totalVr: number; totalVt: number;
   descontoVrFaltas: number; descontoVtFaltas: number;
-  regra: { tipo_pagamento_fds: string; percentual_extra_semana: number; percentual_extra_dom_fer: number; desconta_faltas: boolean };
+  regra: { tipo_pagamento_fds: string; percentual_extra_semana: number; percentual_extra_dom_fer: number; desconta_faltas: boolean; dias_base_mes?: number | null };
   cargo: string; tipoContrato: string; ativo: boolean;
   totalCreditos: number; totalDebitos: number; valorLiquidoReceber: number;
 }
@@ -157,6 +160,9 @@ export async function gerarHoleritePdf(p: GerarPdfParams): Promise<Uint8Array> {
     if (v.totalExtra100 > 0) creditos.push([`HORA EXTRA ${v.regra.percentual_extra_dom_fer}% (DOM/FERIADO)`, hhmm(v.minutosExtras100), v.totalExtra100]);
   } else if (v.totalDiariasFdsFechada > 0) {
     creditos.push(['DIÁRIAS DE FIM DE SEMANA / APOIO', `${v.diasTrabalhadosFds}D`, v.totalDiariasFdsFechada]);
+  }
+  if ((v.totalDiariasExcedentes || 0) > 0) {
+    creditos.push(['DIÁRIAS BÔNUS', `${v.diasExcedentes}D`, v.totalDiariasExcedentes || 0]);
   }
   v.bonusAtivos.forEach(b => creditos.push([b.descricao.toUpperCase().slice(0, 30), b.recorrencia === 'MENSAL' ? 'FIXO' : 'PRÊMIO', b.valor]));
   if (v.totalVr > 0) creditos.push([`VALE REFEIÇÃO (VR)`, `${v.qtdVr} ${v.qtdVr === 1 ? 'DIA' : 'DIAS'}`, v.totalVr]);

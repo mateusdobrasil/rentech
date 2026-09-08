@@ -346,7 +346,11 @@ const montarDadosHolerite = (
   descontosFunc: Desconto[],
   bonusFunc: Bonus[],
   apuracao: { mins60: number; mins100: number; diasFds: number; faltas: number; qtdVr: number; qtdVt: number; diasTrabalhados: number },
-  mesRef: string
+  mesRef: string,
+  // Valor unitário do VR/VT vindo da Gestão de Benefícios (folha_beneficios) —
+  // fonte única, para o RH não redigitar na ficha. O contrato ainda governa QUEM
+  // tem direito ao extra (direito_vr/direito_vt) e a modalidade (÷30 ou não).
+  beneficios: { vr: number; vt: number } = { vr: 0, vt: 0 }
 ): DadosHolerite => {
   const regra = regras[func.tipo_contrato] || { ...REGRA_PADRAO, nome_regra: func.tipo_contrato || 'PADRÃO' };
 
@@ -396,8 +400,8 @@ const montarDadosHolerite = (
   const totalDescontosGrid = descontosAtivos.reduce((acc, curr) => acc + curr.valor_parcela, 0);
 
   const modalidade = regra.modalidade_beneficio;
-  const diariaVr = modalidade === 'VALOR_FECHADO' ? (func.valor_refeicao / 30) : func.valor_refeicao;
-  const diariaVt = modalidade === 'VALOR_FECHADO' ? (func.valor_transporte / 30) : func.valor_transporte;
+  const diariaVr = modalidade === 'VALOR_FECHADO' ? (beneficios.vr / 30) : beneficios.vr;
+  const diariaVt = modalidade === 'VALOR_FECHADO' ? (beneficios.vt / 30) : beneficios.vt;
 
   const qtdVr = regra.direito_vr ? apuracao.qtdVr : 0;
   const qtdVt = regra.direito_vt ? apuracao.qtdVt : 0;
@@ -617,9 +621,30 @@ const HoleriteDoc = ({ nome, dados, mesRef, fechamento }: {
   );
 };
 
+// Valor unitário de VR/VT por funcionário, vindo da Gestão de Benefícios —
+// fonte única desses valores (o RH cadastra só lá). Tipos 6 = VALE REFEIÇÃO,
+// 7 = VALE TRANSPORTE em folha_beneficio_tipos.
+const TIPO_BENEFICIO_VR = 6;
+const TIPO_BENEFICIO_VT = 7;
+
+const buscarBeneficiosVrVt = async (): Promise<Record<string, { vr: number; vt: number }>> => {
+  const { data } = await supabase
+    .from('folha_beneficios')
+    .select('funcionario_nome, tipo_id, valor_mensal')
+    .eq('ativo', true)
+    .in('tipo_id', [TIPO_BENEFICIO_VR, TIPO_BENEFICIO_VT]);
+
+  const mapa: Record<string, { vr: number; vt: number }> = {};
+  (data || []).forEach(b => {
+    const atual = (mapa[b.funcionario_nome] ||= { vr: 0, vt: 0 });
+    if (b.tipo_id === TIPO_BENEFICIO_VR) atual.vr = Number(b.valor_mensal) || 0;
+    else atual.vt = Number(b.valor_mensal) || 0;
+  });
+  return mapa;
+};
+
 const extrairDadosSalariais = (f: FuncionarioFin | null) => f ? {
   salario_folha: f.salario_folha, salario_contrato: f.salario_contrato,
-  valor_refeicao: f.valor_refeicao, valor_transporte: f.valor_transporte,
   valor_adiantamento: f.valor_adiantamento, valor_premio_diaria_viagem: f.valor_premio_diaria_viagem,
   diaria_extra: f.diaria_extra
 } : null;
@@ -632,6 +657,7 @@ export default function HoleritePage() {
   const [loadingLote, setLoadingLote] = useState(false);
 
   const [regrasContrato, setRegrasContrato] = useState<Record<string, RegraContrato>>({});
+  const [beneficiosVrVt, setBeneficiosVrVt] = useState<Record<string, { vr: number; vt: number }>>({});
   const [funcionarioSelecionado, setFuncionarioSelecionado] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'BONUS_DESCONTOS' | 'HOLERITES'>('HOLERITES');
 
@@ -705,7 +731,13 @@ export default function HoleritePage() {
   // recarregamento da página.
   const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({
     nomeFallback: 'Equipe RH',
-    aoAutorizar: () => Promise.all([carregarRegras(), carregarListaFuncionarios()])
+    // Os benefícios entram aqui pelo mesmo motivo das regras: se o lote for
+    // calculado antes deles chegarem, o VR/VT sai zerado no demonstrativo.
+    aoAutorizar: () => Promise.all([
+      carregarRegras(),
+      carregarListaFuncionarios(),
+      buscarBeneficiosVrVt().then(setBeneficiosVrVt),
+    ])
   });
 
   useEffect(() => {
@@ -840,8 +872,6 @@ export default function HoleritePage() {
         funcionarioNome: funcionarioSelecionado,
         salario_folha: formSelecionado.salario_folha,
         salario_contrato: formSelecionado.salario_contrato,
-        valor_refeicao: formSelecionado.valor_refeicao,
-        valor_transporte: formSelecionado.valor_transporte,
         valor_adiantamento: formSelecionado.valor_adiantamento,
         valor_premio_diaria_viagem: formSelecionado.valor_premio_diaria_viagem,
         diaria_extra: formSelecionado.diaria_extra,
@@ -987,7 +1017,7 @@ export default function HoleritePage() {
             f, regrasContrato,
             descPorFunc[f.nome_completo] || [],
             bonusPorFunc[f.nome_completo] || [],
-            apuracao, mesAno
+            apuracao, mesAno, beneficiosVrVt[f.nome_completo] || { vr: 0, vt: 0 }
           );
           return { func: f, dados, fechamento: fechPorFunc[f.nome_completo] || null, statusAssinatura: assinPorFunc[f.nome_completo] || null, soDocumental };
         });
@@ -1232,9 +1262,10 @@ export default function HoleritePage() {
   };
 
   const dadosSelecionado = formSelecionado
-    ? montarDadosHolerite(formSelecionado, regrasContrato, descontosSelecionado, bonusSelecionado, apuracaoSelecionado, mesReferencia)
+    ? montarDadosHolerite(formSelecionado, regrasContrato, descontosSelecionado, bonusSelecionado, apuracaoSelecionado, mesReferencia, beneficiosVrVt[formSelecionado.nome_completo] || { vr: 0, vt: 0 })
     : null;
   const regraAtiva = dadosSelecionado?.regra || null;
+  const beneficioSelecionado = (formSelecionado && beneficiosVrVt[formSelecionado.nome_completo]) || { vr: 0, vt: 0 };
   const salarioBaseCalculo = formSelecionado ? (formSelecionado.salario_folha > 0 ? formSelecionado.salario_folha : formSelecionado.salario_contrato) : 0;
   const valorHoraBase = salarioBaseCalculo / 220;
 
@@ -1383,15 +1414,20 @@ export default function HoleritePage() {
                             {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' ? 'Valor Fechado (÷30)' : 'Por Dia'}
                           </span>
                         </div>
+                        {/* Somente leitura: o valor é cadastrado na Gestão de Benefícios
+                            e apenas espelhado aqui, para o RH não ter que manter dois
+                            campos (era a fonte de divergência entre as telas). */}
                         <div className="grid grid-cols-2 gap-4">
                           {regraAtiva.direito_vr && (
                             <div>
                               <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">
                                 {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' ? 'VR — Valor do Mês' : 'VR — Diária'}
                               </label>
-                              <InputMoeda value={formSelecionado.valor_refeicao} onChange={v => setFormSelecionado({...formSelecionado, valor_refeicao: v})} className="w-full p-2 border border-blue-200 rounded text-sm" />
-                              {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' && formSelecionado.valor_refeicao > 0 && (
-                                <p className="text-[9px] font-bold text-blue-600 mt-0.5 uppercase">Diária: {formatCurrency(formSelecionado.valor_refeicao / 30)}</p>
+                              <div className="w-full p-2 border border-blue-200 rounded text-sm font-bold bg-white text-[#0C1D4D]">
+                                {formatCurrency(beneficioSelecionado.vr)}
+                              </div>
+                              {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' && beneficioSelecionado.vr > 0 && (
+                                <p className="text-[9px] font-bold text-blue-600 mt-0.5 uppercase">Diária: {formatCurrency(beneficioSelecionado.vr / 30)}</p>
                               )}
                             </div>
                           )}
@@ -1400,14 +1436,23 @@ export default function HoleritePage() {
                               <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">
                                 {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' ? 'VT — Valor do Mês' : 'VT — Diária'}
                               </label>
-                              <InputMoeda value={formSelecionado.valor_transporte} onChange={v => setFormSelecionado({...formSelecionado, valor_transporte: v})} className="w-full p-2 border border-blue-200 rounded text-sm" />
-                              {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' && formSelecionado.valor_transporte > 0 && (
-                                <p className="text-[9px] font-bold text-blue-600 mt-0.5 uppercase">Diária: {formatCurrency(formSelecionado.valor_transporte / 30)}</p>
+                              <div className="w-full p-2 border border-blue-200 rounded text-sm font-bold bg-white text-[#0C1D4D]">
+                                {formatCurrency(beneficioSelecionado.vt)}
+                              </div>
+                              {regraAtiva.modalidade_beneficio === 'VALOR_FECHADO' && beneficioSelecionado.vt > 0 && (
+                                <p className="text-[9px] font-bold text-blue-600 mt-0.5 uppercase">Diária: {formatCurrency(beneficioSelecionado.vt / 30)}</p>
                               )}
                             </div>
                           )}
                         </div>
-                        <p className="text-[9px] text-blue-500 font-medium mt-2 uppercase">Os valores são gerados por dia trabalhado conforme a jornada. Configure o direito e a modalidade no Motor de Regras.</p>
+                        {beneficioSelecionado.vr === 0 && beneficioSelecionado.vt === 0 && (
+                          <p className="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-2 uppercase">
+                            ⚠ Sem VR/VT cadastrado em RH → Benefícios para este funcionário. Nada de extra será pago.
+                          </p>
+                        )}
+                        <p className="text-[9px] text-blue-500 font-medium mt-2 uppercase">
+                          Valores vêm de <button type="button" onClick={() => router.push('/admin/rh/beneficios')} className="underline font-black">RH → Benefícios</button> (fonte única). Aqui geram apenas o EXTRA por jornada: sábado, domingo, feriado ou hora extra acima de 3h. Direito e modalidade no Motor de Regras.
+                        </p>
                       </div>
                     ) : (
                       <div className="col-span-2 bg-gray-50 p-3 rounded-lg border border-gray-200 text-[10px] font-bold text-gray-400 uppercase text-center">

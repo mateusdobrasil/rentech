@@ -147,7 +147,10 @@ const apurarPonto = (
 const calcularFinanceiro = (
   func: FuncionarioFin, regras: Record<string, RegraContrato>,
   descontosFunc: Desconto[], bonusFunc: Bonus[],
-  ap: { mins60: number; mins100: number; diasFds: number; faltas: number; qtdVr: number; qtdVt: number; diasTrabalhados: number }, mesRef: string
+  ap: { mins60: number; mins100: number; diasFds: number; faltas: number; qtdVr: number; qtdVt: number; diasTrabalhados: number }, mesRef: string,
+  // Valor unitário de VR/VT vem da Gestão de Benefícios (fonte única), igual ao
+  // holerite. O contrato governa só o direito e a modalidade.
+  beneficios: { vr: number; vt: number } = { vr: 0, vt: 0 }
 ) => {
   const regra = regras[func.tipo_contrato] || { ...REGRA_PADRAO, nome_regra: func.tipo_contrato || 'PADRÃO' };
   const salarioBaseCalculo = func.salario_folha > 0 ? func.salario_folha : func.salario_contrato;
@@ -173,8 +176,8 @@ const calcularFinanceiro = (
 
   // VR/VT por evento (regra 4): direito e modalidade da regra, valores da ficha
   const modalidade = (regra as any).modalidade_beneficio || 'POR_DIA';
-  const diariaVr = modalidade === 'VALOR_FECHADO' ? (func.valor_refeicao / 30) : func.valor_refeicao;
-  const diariaVt = modalidade === 'VALOR_FECHADO' ? (func.valor_transporte / 30) : func.valor_transporte;
+  const diariaVr = modalidade === 'VALOR_FECHADO' ? (beneficios.vr / 30) : beneficios.vr;
+  const diariaVt = modalidade === 'VALOR_FECHADO' ? (beneficios.vt / 30) : beneficios.vt;
   const totalVr = ((regra as any).direito_vr ? ap.qtdVr : 0) * diariaVr;
   const totalVt = ((regra as any).direito_vt ? ap.qtdVt : 0) * diariaVt;
   const totalAdicionais = totalVr + totalVt;
@@ -370,7 +373,7 @@ export default function RelatoriosRH() {
 
       const [
         { data: funcs }, { data: regrasData }, { data: descs }, { data: bons },
-        { data: fechs }, { data: pontoData }, { data: abonoData }, { data: fData }
+        { data: fechs }, { data: pontoData }, { data: abonoData }, { data: fData }, { data: benData }
       ] = await Promise.all([
         supabase.from('folha_funcionarios').select('*').eq('ativo', true).order('nome_completo'),
         supabase.from('folha_parametros').select('*'),
@@ -379,7 +382,9 @@ export default function RelatoriosRH() {
         supabase.from('folha_holerites').select('funcionario_nome, dados').eq('mes_referencia', mesAno),
         supabase.from('folha_ponto_diaria').select('funcionario_nome, data_registro, minutos_trabalhados').gte('data_registro', dataInicio).lte('data_registro', dataFim),
         supabase.from('folha_ponto_abono').select('funcionario_nome, data_abono, minutos_abonados').gte('data_abono', dataInicio).lte('data_abono', dataFim),
-        supabase.from('folha_feriados').select('*')
+        supabase.from('folha_feriados').select('*'),
+        // VR/VT vêm da Gestão de Benefícios (tipos 6 e 7), mesma fonte do holerite
+        supabase.from('folha_beneficios').select('funcionario_nome, tipo_id, valor_mensal').eq('ativo', true).in('tipo_id', [6, 7])
       ]);
 
       // Mapa de regras
@@ -398,6 +403,13 @@ export default function RelatoriosRH() {
       // Feriado municipal vale só pra empresa daquela cidade — cada funcionário
       // resolve a própria lista na hora de apurar.
       const indiceFeriados = indexarFeriados(fData);
+
+      const beneficiosVrVt: Record<string, { vr: number; vt: number }> = {};
+      (benData || []).forEach(b => {
+        const atual = (beneficiosVrVt[b.funcionario_nome] ||= { vr: 0, vt: 0 });
+        if (b.tipo_id === 6) atual.vr = Number(b.valor_mensal) || 0;
+        else atual.vt = Number(b.valor_mensal) || 0;
+      });
 
       // Agrupa ponto + abono por funcionário/dia
       const porFunc: Record<string, Record<string, { trabalhados: number; abonados: number }>> = {};
@@ -437,7 +449,7 @@ export default function RelatoriosRH() {
           const snap = fechPorFunc[f.nome_completo];
           totalCreditos = snap.totalCreditos; totalDebitos = snap.totalDebitos; liquido = snap.valorLiquidoReceber;
         } else {
-          const fin = calcularFinanceiro(f, regras, descPorFunc[f.nome_completo] || [], bonusPorFunc[f.nome_completo] || [], ap, mesAno);
+          const fin = calcularFinanceiro(f, regras, descPorFunc[f.nome_completo] || [], bonusPorFunc[f.nome_completo] || [], ap, mesAno, beneficiosVrVt[f.nome_completo] || { vr: 0, vt: 0 });
           totalCreditos = fin.totalCreditos; totalDebitos = fin.totalDebitos; liquido = fin.liquido;
         }
 

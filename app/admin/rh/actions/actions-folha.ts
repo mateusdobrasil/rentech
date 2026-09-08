@@ -215,8 +215,9 @@ export async function salvarDadosSalariaisAction(payload: {
   funcionarioNome: string;
   salario_folha: number;
   salario_contrato: number;
-  valor_refeicao: number;
-  valor_transporte: number;
+  // VR/VT saíram daqui: o valor é cadastrado só em RH → Benefícios
+  // (folha_beneficios) e o holerite lê de lá. As colunas valor_refeicao /
+  // valor_transporte continuam na tabela apenas como histórico.
   valor_adiantamento: number;
   valor_premio_diaria_viagem: number;
   // Diária paga por dia trabalhado acima da base do contrato (regra
@@ -228,7 +229,7 @@ export async function salvarDadosSalariaisAction(payload: {
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
-  const { funcionarioNome, salario_folha, salario_contrato, valor_refeicao, valor_transporte, valor_adiantamento, valor_premio_diaria_viagem, diaria_extra, usuarioNome } = payload;
+  const { funcionarioNome, salario_folha, salario_contrato, valor_adiantamento, valor_premio_diaria_viagem, diaria_extra, usuarioNome } = payload;
 
   if (!funcionarioNome) return { ok: false, erro: 'Funcionário não informado.' };
 
@@ -244,8 +245,6 @@ export async function salvarDadosSalariaisAction(payload: {
       .update({
         salario_folha: Number(salario_folha) || 0,
         salario_contrato: Number(salario_contrato) || 0,
-        valor_refeicao: Number(valor_refeicao) || 0,
-        valor_transporte: Number(valor_transporte) || 0,
         valor_adiantamento: Number(valor_adiantamento) || 0,
         valor_premio_diaria_viagem: Number(valor_premio_diaria_viagem) || 0,
         diaria_extra: Number(diaria_extra) || 0

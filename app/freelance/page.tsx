@@ -67,6 +67,14 @@ export default function CadastroFreelance() {
     comentarios: ''
   });
 
+  // Nome exibido nas Regras e Normas de Trabalho e na declaração de aceite —
+  // deriva de formData.empresa_id (o campo "Empresa de Cadastro" já validado
+  // e usado no envio), não da detecção por domínio direto: assim o texto
+  // sempre acompanha a empresa que de fato vai receber o cadastro, mesmo se
+  // um dia a trava por domínio for relaxada. Enquanto ainda carrega, cai em
+  // "Rentech" (domínio padrão, cobre a maior parte do tráfego).
+  const nomeEmpresaRegras = empresas.find(e => String(e.id) === formData.empresa_id)?.nome || 'Rentech';
+
   // Recarrega o catálogo de setores/níveis toda vez que a empresa escolhida
   // muda — e limpa as respostas já dadas, já que a lista de setores muda.
   useEffect(() => {
@@ -411,11 +419,11 @@ export default function CadastroFreelance() {
                   <li>O Freelancer deverá chegar com <strong>15 minutos de antecedência</strong> no local combinado.</li>
                   <li>Atrasos superiores a 1 hora poderão gerar desconto proporcional na diária ou substituição do profissional.</li>
                   <li>Caso precise sair antes do horário previsto, o profissional deverá solicitar autorização prévia.</li>
-                  <li>A Rentech <strong>não paga dobra de diária</strong>. Horas excedentes serão tratadas como adicional de horas conforme política interna.</li>
+                  <li>A {nomeEmpresaRegras} <strong>não paga dobra de diária</strong>. Horas excedentes serão tratadas como adicional de horas conforme política interna.</li>
                   <li>Os pagamentos ocorrerão em até <strong>5 dias úteis</strong> após o encerramento do evento.</li>
-                  <li><strong>Não é permitido</strong> orientar, corrigir, prometer entregas, negociar ou emitir opiniões técnicas, comerciais ou operacionais diretamente com o cliente. Toda a comunicação deve ser direcionada ao líder ou responsável da Rentech no local.</li>
+                  <li><strong>Não é permitido</strong> orientar, corrigir, prometer entregas, negociar ou emitir opiniões técnicas, comerciais ou operacionais diretamente com o cliente. Toda a comunicação deve ser direcionada ao líder ou responsável da {nomeEmpresaRegras} no local.</li>
                   <li>Ao finalizar o seu horário, é obrigatório solicitar ao responsável no evento se vai continuar a trabalhar ou se será liberado.</li>
-                  <li>É <strong>proibido o uso de uniforme de outra empresa</strong>. Caso a Rentech não disponibilize uniforme, o profissional deve apresentar-se com uma t-shirt preta lisa.</li>
+                  <li>É <strong>proibido o uso de uniforme de outra empresa</strong>. Caso a {nomeEmpresaRegras} não disponibilize uniforme, o profissional deve apresentar-se com uma t-shirt preta lisa.</li>
                   <li><strong>Uso Obrigatório:</strong> Bota de segurança e Capacete (EPIs).</li>
                   <li>Zelar pelos equipamentos da empresa (danos por uso inadequado ou negligência serão descontados).</li>
                 </ul>
@@ -423,7 +431,7 @@ export default function CadastroFreelance() {
               <label className="flex items-start gap-3 cursor-pointer p-4 border border-[#E2E8F0] rounded-xl hover:bg-[#F8FAFC] transition-colors">
                 <input type="checkbox" required className="mt-1 w-5 h-5 accent-[#336699] cursor-pointer shrink-0" />
                 <span className="text-sm font-bold text-[#0C1D4D] leading-tight">
-                  Declaro que li, compreendi e concordo integralmente com todas as regras operacionais e de prestação de serviços estabelecidas pela Rentech.
+                  Declaro que li, compreendi e concordo integralmente com todas as regras operacionais e de prestação de serviços estabelecidas pela {nomeEmpresaRegras}.
                 </span>
               </label>
             </div>
@@ -436,7 +444,7 @@ export default function CadastroFreelance() {
             )}
 
             <button type="submit" disabled={loading || !lgpdAceita || !formData.empresa_id} className="w-full bg-[#336699] hover:bg-[#284B8C] text-white p-4 rounded-xl font-black text-sm uppercase tracking-widest transition-all shadow-md disabled:opacity-50 mt-6">
-              {loading ? 'A Enviar Cadastro...' : 'Enviar Cadastro Rentech'}
+              {loading ? 'A Enviar Cadastro...' : 'Enviar Cadastro'}
             </button>
 
           </form>

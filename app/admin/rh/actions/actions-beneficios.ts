@@ -496,7 +496,7 @@ export async function painelBeneficiosAction(accessToken: string): Promise<Resul
 
     // Funcionários ativos
     let qFuncs = db.from('folha_funcionarios')
-      .select('nome_completo, tipo_contrato, cargo')
+      .select('nome_completo, tipo_contrato, cargo, empresa_id')
       .eq('ativo', true).order('nome_completo');
     if (empresasPermitidas) qFuncs = qFuncs.in('empresa_id', empresasPermitidas);
     const { data: funcs } = await qFuncs;
@@ -532,6 +532,7 @@ export async function painelBeneficiosAction(accessToken: string): Promise<Resul
         nome: f.nome_completo,
         cargo: f.cargo,
         contrato: f.tipo_contrato,
+        empresaId: f.empresa_id ?? null,
         beneficiosFixos: fixos,
         totalFixos,
         temVariavel,

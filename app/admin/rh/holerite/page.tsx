@@ -16,6 +16,7 @@ import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
 import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 // Utilitários
 const formatCurrency = (value: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
@@ -176,6 +177,8 @@ interface FuncionarioFin {
   banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null;
   pix_tipo: string | null; pix_chave: string | null;
   recebe_fechamento: boolean | null; recebe_holerite: boolean | null;
+  // Empresa do funcionário: isolamento entre Rentech e Alfa Light nesta tela.
+  empresa_id: number | null;
 }
 
 interface Desconto { id?: string; funcionario_nome?: string; descricao: string; tipo: 'FIXO' | 'PARCELADO'; parcelas: number; mes_inicio: string; mes_fim: string; valor_parcela: number; }
@@ -664,6 +667,12 @@ export default function HoleritePage() {
   const [listaFuncionarios, setListaFuncionarios] = useState<FuncionarioFin[]>([]);
   const [buscaGrid, setBuscaGrid] = useState('');
   const [filtroContrato, setFiltroContrato] = useState('TODOS');
+  // Restrição por empresa: só quem é literalmente 'Administrador' vê todas
+  // (ehAdministradorGlobal). Os demais ficam nas empresas às quais estão
+  // vinculados em perfis_usuarios_empresas — mesmo critério de /admin/rh/funcionario.
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null | undefined>(undefined);
+  const [filtroEmpresa, setFiltroEmpresa] = useState<string>('TODAS');
 
   const [lote, setLote] = useState<ItemLote[]>([]);
   const [enviandoAssinatura, setEnviandoAssinatura] = useState<string | null>(null);
@@ -684,19 +693,26 @@ export default function HoleritePage() {
     });
   };
 
+  // O lote já vem restrito às empresas que o usuário pode ver. loteEscopo aplica
+  // por cima a empresa ESCOLHIDA no filtro — as ações em massa (fechar folha,
+  // enviar assinatura, imprimir) usam este, para agir só sobre o que está na tela.
+  const loteEscopo = useMemo(() =>
+    filtroEmpresa === 'TODAS' ? lote : lote.filter(item => String(item.func.empresa_id) === filtroEmpresa),
+    [lote, filtroEmpresa]);
+
   const loteFiltrado = useMemo(() => {
     const termo = buscaHolerite.trim().toLowerCase();
-    if (!termo) return lote;
-    return lote.filter(item => item.func.nome_completo.toLowerCase().includes(termo));
-  }, [lote, buscaHolerite]);
+    if (!termo) return loteEscopo;
+    return loteEscopo.filter(item => item.func.nome_completo.toLowerCase().includes(termo));
+  }, [loteEscopo, buscaHolerite]);
 
   // Funcionários elegíveis à separação de holerite (contrato com a flag
   // recebe_holerite_contabilidade ligada), em ordem alfabética — base da
   // pré-associação por ordem em SepararHolerites.
-  const elegiveisContabilidade = useMemo(() => lote
+  const elegiveisContabilidade = useMemo(() => loteEscopo
     .filter(item => regrasContrato[item.func.tipo_contrato]?.recebe_holerite_contabilidade ?? true)
     .map(item => ({ nome_completo: item.func.nome_completo, tipo_contrato: item.func.tipo_contrato })),
-  [lote, regrasContrato]);
+  [loteEscopo, regrasContrato]);
 
   const [fechamentoSelecionado, setFechamentoSelecionado] = useState<Fechamento | null>(null);
   const [apuracaoSelecionado, setApuracaoSelecionado] = useState({ mins60: 0, mins100: 0, diasFds: 0, faltas: 0, qtdVr: 0, qtdVt: 0, diasTrabalhados: 0 });
@@ -729,7 +745,7 @@ export default function HoleritePage() {
   // diária, CLT mostrando salário base que a regra manda esconder). Como
   // dependia de qual fetch vencia a corrida, o resultado mudava a cada
   // recarregamento da página.
-  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({
+  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({
     nomeFallback: 'Equipe RH',
     // Os benefícios entram aqui pelo mesmo motivo das regras: se o lote for
     // calculado antes deles chegarem, o VR/VT sai zerado no demonstrativo.
@@ -741,8 +757,27 @@ export default function HoleritePage() {
   });
 
   useEffect(() => {
-    if (!authLoading) carregarLote(mesReferencia);
-  }, [mesReferencia, authLoading]);
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(data || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) { setEmpresasPermitidas(null); return; }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  useEffect(() => {
+    // empresasPermitidas === undefined: ainda resolvendo. Sem esta guarda o lote
+    // seria montado sem restrição e mostraria funcionários de outra empresa até
+    // o próximo render.
+    if (!authLoading && empresasPermitidas !== undefined) carregarLote(mesReferencia);
+  }, [mesReferencia, authLoading, empresasPermitidas]);
 
   const carregarListaFuncionarios = async () => {
     const { data } = await supabase.from('folha_funcionarios').select('*').order('nome_completo');
@@ -824,6 +859,15 @@ export default function HoleritePage() {
       .from('folha_funcionarios').select('*').eq('nome_completo', nome).single();
     if (funcError || !funcData) {
       toast(`Não foi possível carregar a ficha de ${nome}: ${funcError?.message || 'registro não encontrado'}`, 'error');
+      setLoading(false);
+      return;
+    }
+    // Barreira final: a lista lateral já é filtrada, mas o nome também chega por
+    // seleção anterior/estado. Sem isto, um funcionário de outra empresa ainda
+    // abriria com salário e descontos visíveis.
+    if (empresasPermitidas && !empresasPermitidas.includes(funcData.empresa_id)) {
+      toast('Você não tem permissão para ver os dados deste funcionário.', 'error');
+      setFuncionarioSelecionado(null);
       setLoading(false);
       return;
     }
@@ -923,21 +967,38 @@ export default function HoleritePage() {
     setDescontosSelecionado(novosDescontos);
   };
 
+  // Quem o usuário PODE ver (permissão). O filtroEmpresa abaixo é só a escolha
+  // dele dentro desse conjunto.
+  const funcVisiveis = useMemo(() =>
+    empresasPermitidas === null
+      ? listaFuncionarios
+      : empresasPermitidas === undefined
+        ? []
+        : listaFuncionarios.filter(f => f.empresa_id != null && empresasPermitidas.includes(f.empresa_id)),
+    [listaFuncionarios, empresasPermitidas]);
+
+  const empresasCatalogoVisivel = useMemo(() =>
+    empresasPermitidas === null
+      ? empresasCatalogo
+      : empresasCatalogo.filter(e => (empresasPermitidas || []).includes(e.id)),
+    [empresasCatalogo, empresasPermitidas]);
+
   const contratosDisponiveis = useMemo(() => {
     const set = new Set<string>();
-    listaFuncionarios.forEach(f => { if (f.tipo_contrato) set.add(f.tipo_contrato); });
+    funcVisiveis.forEach(f => { if (f.tipo_contrato) set.add(f.tipo_contrato); });
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [listaFuncionarios]);
+  }, [funcVisiveis]);
 
   const funcFiltrados = useMemo(() =>
-    listaFuncionarios
+    funcVisiveis
       .filter(f => f.nome_completo.toLowerCase().includes(buscaGrid.toLowerCase()))
       .filter(f => filtroContrato === 'TODOS' || f.tipo_contrato === filtroContrato)
+      .filter(f => filtroEmpresa === 'TODAS' || String(f.empresa_id) === filtroEmpresa)
       .sort((a, b) => {
         if (a.ativo !== b.ativo) return a.ativo ? -1 : 1;
         return a.nome_completo.localeCompare(b.nome_completo);
       }),
-    [listaFuncionarios, buscaGrid, filtroContrato]);
+    [funcVisiveis, buscaGrid, filtroContrato, filtroEmpresa]);
 
   const descontosComIndice = useMemo(() => descontosSelecionado.map((d, idx) => {
     let quitado = false;
@@ -958,7 +1019,12 @@ export default function HoleritePage() {
   const carregarLote = async (mesAno: string) => {
     setLoadingLote(true);
     try {
-      const { data: funcs, error: erroFuncs } = await supabase.from('folha_funcionarios').select('*').eq('ativo', true).order('nome_completo');
+      let queryFuncs = supabase.from('folha_funcionarios').select('*').eq('ativo', true).order('nome_completo');
+      // Isolamento por empresa direto na origem: tudo que deriva do lote (ações
+      // em massa de fechamento e assinatura, contadores, impressão) fica correto
+      // por consequência.
+      if (empresasPermitidas) queryFuncs = queryFuncs.in('empresa_id', empresasPermitidas);
+      const { data: funcs, error: erroFuncs } = await queryFuncs;
       // Descontos parcelados e bônus recorrentes dependem do histórico inteiro
       // do funcionário pra calcular se já quitaram/encerraram (não dá pra
       // filtrar por mês) — mas só interessam os funcionários ativos que
@@ -1031,8 +1097,8 @@ export default function HoleritePage() {
   };
 
   const fecharFolhaTodos = async () => {
-    const abertos = lote.filter(l => !l.fechamento && !l.soDocumental);
-    const jaFechados = lote.length - abertos.length;
+    const abertos = loteEscopo.filter(l => !l.fechamento && !l.soDocumental);
+    const jaFechados = loteEscopo.length - abertos.length;
 
     if (abertos.length === 0) {
       toast('Todos os funcionários deste mês já estão com a folha fechada.', 'info');
@@ -1141,7 +1207,7 @@ export default function HoleritePage() {
   };
 
   const reabrirFolhaTodos = async () => {
-    const fechados = lote.filter(l => l.fechamento);
+    const fechados = loteEscopo.filter(l => l.fechamento);
     if (fechados.length === 0) {
       toast('Nenhuma folha fechada neste mês para reabrir.', 'info');
       return;
@@ -1235,7 +1301,7 @@ export default function HoleritePage() {
   };
 
   const enviarAssinaturaTodos = async () => {
-    const fechadosNaoAssinados = lote.filter(l => l.fechamento && l.statusAssinatura !== 'ASSINADO' && l.statusAssinatura !== 'ENVIADO' && l.statusAssinatura !== 'VISUALIZADO');
+    const fechadosNaoAssinados = loteEscopo.filter(l => l.fechamento && l.statusAssinatura !== 'ASSINADO' && l.statusAssinatura !== 'ENVIADO' && l.statusAssinatura !== 'VISUALIZADO');
     if (fechadosNaoAssinados.length === 0) {
       toast('Não há holerites fechados pendentes de envio neste mês.', 'info');
       return;
@@ -1269,7 +1335,7 @@ export default function HoleritePage() {
   const salarioBaseCalculo = formSelecionado ? (formSelecionado.salario_folha > 0 ? formSelecionado.salario_folha : formSelecionado.salario_contrato) : 0;
   const valorHoraBase = salarioBaseCalculo / 220;
 
-  const totalFechados = lote.filter(l => l.fechamento).length;
+  const totalFechados = loteEscopo.filter(l => l.fechamento).length;
 
   if (authLoading) {
     return (
@@ -1347,7 +1413,7 @@ export default function HoleritePage() {
           {/* LISTAGEM LATERAL */}
           <aside className="w-full lg:w-80 flex-shrink-0 space-y-4">
             <div className="bg-[#0C1D4D] p-5 rounded-2xl shadow-md text-white">
-              <h2 className="font-black uppercase tracking-wider mb-4">Equipe Rentech</h2>
+              <h2 className="font-black uppercase tracking-wider mb-4">Equipe</h2>
               <input
                 type="text" placeholder="Buscar nome..." value={buscaGrid} onChange={e => setBuscaGrid(e.target.value)}
                 className="w-full p-2.5 rounded-lg text-sm text-white bg-[#1E3A6E] outline-none font-bold placeholder:text-blue-200"
@@ -1359,9 +1425,18 @@ export default function HoleritePage() {
                 <option value="TODOS">Todos os contratos</option>
                 {contratosDisponiveis.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
-              {filtroContrato !== 'TODOS' && (
+              {empresasCatalogoVisivel.length > 1 && (
+                <select
+                  value={filtroEmpresa} onChange={e => setFiltroEmpresa(e.target.value)}
+                  className="w-full mt-2 p-2.5 rounded-lg text-sm text-white bg-[#1E3A6E] outline-none font-bold cursor-pointer"
+                >
+                  <option value="TODAS">Todas as empresas</option>
+                  {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                </select>
+              )}
+              {(filtroContrato !== 'TODOS' || filtroEmpresa !== 'TODAS') && (
                 <p className="text-[10px] text-blue-200 font-bold mt-2 uppercase tracking-wider">
-                  {funcFiltrados.length} de {listaFuncionarios.length} — filtrado por contrato
+                  {funcFiltrados.length} de {funcVisiveis.length} — filtrado
                 </p>
               )}
             </div>
@@ -1596,15 +1671,32 @@ export default function HoleritePage() {
           <div className="bg-[#0C1D4D] p-5 rounded-2xl shadow-md text-white">
             <h2 className="font-black uppercase tracking-wider mb-1">Folha do Mês</h2>
             <p className="text-[11px] text-blue-200 font-bold mb-4">
-              {lote.length} funcionário(s) ativo(s) • {totalFechados} fechado(s)
+              {loteEscopo.length} funcionário(s) ativo(s) • {totalFechados} fechado(s)
             </p>
             <label className="block text-[10px] font-black text-blue-200 uppercase mb-1">Competência</label>
             <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="w-full p-2.5 rounded-lg text-sm text-white bg-[#1E3A6E] outline-none font-bold" />
+            {empresasCatalogoVisivel.length > 1 && (
+              <>
+                <label className="block text-[10px] font-black text-blue-200 uppercase mb-1 mt-3">Empresa</label>
+                <select
+                  value={filtroEmpresa} onChange={e => setFiltroEmpresa(e.target.value)}
+                  className="w-full p-2.5 rounded-lg text-sm text-white bg-[#1E3A6E] outline-none font-bold cursor-pointer"
+                >
+                  <option value="TODAS">Todas as empresas</option>
+                  {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                </select>
+                {filtroEmpresa !== 'TODAS' && (
+                  <p className="text-[10px] text-amber-300 font-bold mt-2 uppercase tracking-wider">
+                    ⚠ As ações em lote abaixo valem só para esta empresa
+                  </p>
+                )}
+              </>
+            )}
           </div>
 
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0] space-y-2">
             <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-xs border-b border-[#E2E8F0] pb-2 mb-1">Ações em Lote</h3>
-            <button onClick={fecharFolhaTodos} disabled={loadingLote || lote.length === 0} className="w-full bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">
+            <button onClick={fecharFolhaTodos} disabled={loadingLote || loteEscopo.length === 0} className="w-full bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">
               🔒 Fechar Folha do Mês (Todos)
             </button>
             {totalFechados > 0 && (
@@ -1612,8 +1704,8 @@ export default function HoleritePage() {
                 🔓 Reabrir Todos ({totalFechados})
               </button>
             )}
-            <button onClick={() => window.print()} disabled={lote.length === 0} className="w-full bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
-              🖨️ Imprimir Todos ({lote.length} páginas)
+            <button onClick={() => window.print()} disabled={loteEscopo.length === 0} className="w-full bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-2.5 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
+              🖨️ Imprimir Todos ({loteEscopo.length} páginas)
             </button>
           </div>
 
@@ -1672,7 +1764,7 @@ export default function HoleritePage() {
             <div className="w-full max-w-5xl bg-white border-2 border-dashed border-gray-300 rounded-2xl p-16 text-center text-gray-400 font-bold uppercase tracking-wider print:hidden">
               Montando os holerites do mês...
             </div>
-          ) : lote.length === 0 ? (
+          ) : loteEscopo.length === 0 ? (
             <div className="w-full max-w-5xl bg-white border-2 border-dashed border-gray-300 rounded-2xl p-16 text-center text-gray-400 font-bold uppercase tracking-wider print:hidden">
               Nenhum funcionário ativo encontrado.
             </div>

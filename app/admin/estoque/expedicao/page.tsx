@@ -635,11 +635,17 @@ export default function ChecklistCargaRetorno() {
     // passa a considerar a data_inicial/data_final da própria ficha.
     (async () => {
       const hojeISO = new Date().toISOString().slice(0, 10);
-      const { data } = await supabase
+      let query = supabase
         .from('fichas_reserva')
         .select('endereco_entrega, endereco_estande, data_entrega, data_inicial, data_final, empresa_id')
         .ilike('evento_feira', ev.nome)
-        .gte('data_inicial', hojeISO)
+        .gte('data_inicial', hojeISO);
+      // eventos_feiras é catálogo compartilhado entre empresas (sem RLS) — um
+      // mesmo nome de evento pode ter fichas de Rentech E AlfaLight. Restringe
+      // às empresas que o usuário pode enxergar para não detectar/gravar uma
+      // empresa fora do que ele tem permissão de escolher no select abaixo.
+      if (empresasPermitidas !== null) query = query.in('empresa_id', empresasPermitidas);
+      const { data } = await query
         .order('data_inicial', { ascending: true })
         .limit(10);
 

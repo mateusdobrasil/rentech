@@ -16,6 +16,8 @@ import {
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
+import { corSeloEmpresa } from '../../../lib/coresEmpresa';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 const fmtTamanho = (b: number | null) => {
   if (!b) return '—';
@@ -35,6 +37,7 @@ interface Documento {
 }
 interface LinhaPainel {
   nome: string; cargo: string; totalDocs: number; vencidos: number; vencendo: number; semDocumentos: boolean;
+  empresaId?: number | null;
 }
 
 interface CategoriaEmpresa { id: number; nome: string; exige_validade: boolean; }
@@ -72,7 +75,7 @@ export default function DocumentosPage() {
   const [enviando, setEnviando] = useState(false);
   const upRef = useRef<HTMLInputElement>(null);
 
-  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
   const toast = useToast();
 
   // Restrição por empresa (multi-empresa): resolvida no servidor a partir de
@@ -81,17 +84,44 @@ export default function DocumentosPage() {
   // depende de nada calculado aqui no client.
   const [empresasCatalogo, setEmpresasCatalogo] = useState<EmpresaCatalogo[]>([]);
 
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+
   useEffect(() => {
     if (authLoading || acessoNegado) return;
     async function inicializar() {
       const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
       setEmpresasCatalogo(empresasData || []);
 
+      // Cosmético: as actions já restringem os DADOS no servidor, isto é só
+      // pra não oferecer no dropdown uma empresa que o usuário não enxerga.
+      if (!ehAdministradorGlobal(permissaoBruta)) {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          const { data: vinculos } = await supabase
+            .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+          setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+        }
+      }
+
       carregar(accessToken);
       carregarEmpresa(accessToken);
     }
     inicializar();
-  }, [authLoading, acessoNegado, accessToken]);
+  }, [authLoading, acessoNegado, accessToken, permissaoBruta]);
+
+  const empresasCatalogoVisivel = useMemo(() =>
+    empresasPermitidas === null
+      ? empresasCatalogo
+      : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id)),
+    [empresasCatalogo, empresasPermitidas]);
+
+  const nomeEmpresa = (id: number | null | undefined) =>
+    id == null ? '—' : (empresasCatalogo.find(e => e.id === id)?.nome || 'Empresa removida');
+
+  // Filtro visual da aba "Funcionários" — as linhas já vêm restritas ao que o
+  // usuário pode ver (painelDocumentosAction filtra no servidor); isto é só a
+  // escolha ADICIONAL de qual empresa ver, útil pro Administrador global.
+  const [filtroEmpresaFunc, setFiltroEmpresaFunc] = useState('TODAS');
 
   // Preview
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -311,10 +341,22 @@ export default function DocumentosPage() {
     if (cats.ok) setCategorias(cats.info.categorias);
   };
 
-  const filtradas = useMemo(() => linhas
+  const linhasEscopo = useMemo(() =>
+    filtroEmpresaFunc === 'TODAS' ? linhas : linhas.filter(l => String(l.empresaId) === filtroEmpresaFunc),
+    [linhas, filtroEmpresaFunc]);
+
+  const totaisEscopo = useMemo(() => ({
+    funcionarios: linhasEscopo.length,
+    semDocumentos: linhasEscopo.filter(l => l.semDocumentos).length,
+    totalDocs: linhasEscopo.reduce((s, l) => s + l.totalDocs, 0),
+    vencidos: linhasEscopo.reduce((s, l) => s + l.vencidos, 0),
+    vencendo: linhasEscopo.reduce((s, l) => s + l.vencendo, 0)
+  }), [linhasEscopo]);
+
+  const filtradas = useMemo(() => linhasEscopo
     .filter(l => l.nome.toLowerCase().includes(busca.toLowerCase()))
     .filter(l => filtro === 'TODOS' || (filtro === 'SEM' ? l.semDocumentos : (l.vencidos > 0 || l.vencendo > 0))),
-    [linhas, busca, filtro]);
+    [linhasEscopo, busca, filtro]);
 
   const isImagem = (mime: string | null) => mime?.startsWith('image/');
   const isPdf = (mime: string | null) => mime === 'application/pdf';
@@ -390,23 +432,23 @@ export default function DocumentosPage() {
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
           <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 text-center">
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Funcionários</p>
-            <p className="text-2xl font-black text-[#0C1D4D]">{totais.funcionarios}</p>
+            <p className="text-2xl font-black text-[#0C1D4D]">{totaisEscopo.funcionarios}</p>
           </div>
           <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 text-center">
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Total de documentos</p>
-            <p className="text-2xl font-black text-[#336699]">{totais.totalDocs}</p>
+            <p className="text-2xl font-black text-[#336699]">{totaisEscopo.totalDocs}</p>
           </div>
           <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 text-center">
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Sem documentos</p>
-            <p className={`text-2xl font-black ${totais.semDocumentos > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{totais.semDocumentos}</p>
+            <p className={`text-2xl font-black ${totaisEscopo.semDocumentos > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{totaisEscopo.semDocumentos}</p>
           </div>
           <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 text-center">
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Vencendo (30d)</p>
-            <p className={`text-2xl font-black ${totais.vencendo > 0 ? 'text-amber-600' : 'text-gray-300'}`}>{totais.vencendo}</p>
+            <p className={`text-2xl font-black ${totaisEscopo.vencendo > 0 ? 'text-amber-600' : 'text-gray-300'}`}>{totaisEscopo.vencendo}</p>
           </div>
           <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 text-center">
             <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Vencidos</p>
-            <p className={`text-2xl font-black ${totais.vencidos > 0 ? 'text-red-600' : 'text-gray-300'}`}>{totais.vencidos}</p>
+            <p className={`text-2xl font-black ${totaisEscopo.vencidos > 0 ? 'text-red-600' : 'text-gray-300'}`}>{totaisEscopo.vencidos}</p>
           </div>
         </div>
 
@@ -421,6 +463,12 @@ export default function DocumentosPage() {
                 </button>
               ))}
             </div>
+            {empresasCatalogoVisivel.length > 1 && (
+              <select value={filtroEmpresaFunc} onChange={e => setFiltroEmpresaFunc(e.target.value)} className="p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]">
+                <option value="TODAS">🏭 Todas as empresas</option>
+                {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+              </select>
+            )}
           </div>
           <button onClick={() => setMostrarCats(!mostrarCats)} className="text-[10px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-4 py-2.5 rounded-lg uppercase tracking-wider">⚙ Categorias</button>
         </div>
@@ -469,6 +517,11 @@ export default function DocumentosPage() {
                       <td className="p-3">
                         <span className="font-black text-[#0C1D4D] block">{l.nome}</span>
                         <span className="text-[10px] text-gray-400 font-bold uppercase">{l.cargo || '—'}</span>
+                        {empresasCatalogoVisivel.length > 1 && (
+                          <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase inline-block mt-0.5 ${corSeloEmpresa(l.empresaId)}`}>
+                            🏭 {nomeEmpresa(l.empresaId)}
+                          </span>
+                        )}
                       </td>
                       <td className="p-3 text-center font-black text-[#336699]">{l.totalDocs}</td>
                       <td className="p-3 text-center">
@@ -521,7 +574,7 @@ export default function DocumentosPage() {
             <input type="text" placeholder="Buscar documento..." value={buscaEmpresa} onChange={e => setBuscaEmpresa(e.target.value)} className="p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />
             <select value={filtroEmpresaId} onChange={e => setFiltroEmpresaId(e.target.value)} className="p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]">
               <option value="TODAS">Todas as empresas</option>
-              {empresasCatalogo.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+              {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
             </select>
             <div className="flex bg-gray-100 p-1 rounded-xl">
               {(['TODOS', 'PENDENCIAS'] as const).map(f => (
@@ -569,7 +622,7 @@ export default function DocumentosPage() {
                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Empresa (CNPJ)</label>
                 <select value={upEmpresaEmpresa} onChange={e => setUpEmpresaEmpresa(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold bg-white">
                   <option value="">— Selecione —</option>
-                  {empresasCatalogo.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                  {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
                 </select>
               </div>
               <div>

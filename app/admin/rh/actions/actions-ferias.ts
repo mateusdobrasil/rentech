@@ -87,7 +87,7 @@ export async function painelFeriasAction(accessToken: string): Promise<Resultado
 
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     let qFuncs = db.from('folha_funcionarios')
-      .select('nome_completo, cargo, departamento, ativo').order('nome_completo');
+      .select('nome_completo, cargo, departamento, ativo, empresa_id').order('nome_completo');
     if (empresasPermitidas) qFuncs = qFuncs.in('empresa_id', empresasPermitidas);
     const { data: funcs } = await qFuncs;
 
@@ -117,6 +117,7 @@ export async function painelFeriasAction(accessToken: string): Promise<Resultado
         const periodosFunc = porFunc[f.nome_completo] || [];
         return {
           nome: f.nome_completo, cargo: f.cargo, departamento: f.departamento, ativo: f.ativo,
+          empresaId: f.empresa_id ?? null,
           periodos: periodosFunc,
           temVencida: periodosFunc.some(p => p.vencida),
           temVencendo: periodosFunc.some(p => p.vencendo)

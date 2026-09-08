@@ -20,6 +20,8 @@ import { useToast, useConfirm, usePrompt } from '../../../components/ui/Notifica
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { indexarFeriados, ehFeriado, type IndiceFeriados } from '../../../lib/feriados';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 
 interface RegistroDiario {
   id?: string;
@@ -48,7 +50,39 @@ export default function GestaoDePonto() {
   const toast = useToast();
   const confirm = useConfirm();
   const prompt = usePrompt();
-  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
+
+  // Restrição por empresa: só quem é literalmente "Administrador" vê todas
+  // (ehAdministradorGlobal). Os demais ficam nas empresas às quais estão
+  // vinculados em perfis_usuarios_empresas — mesmo critério do resto do RH.
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null | undefined>(undefined);
+  const [filtroEmpresa, setFiltroEmpresa] = useState<string>('TODAS');
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(data || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) { setEmpresasPermitidas(null); return; }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = useMemo(() =>
+    empresasPermitidas === null
+      ? empresasCatalogo
+      : empresasCatalogo.filter(e => (empresasPermitidas || []).includes(e.id)),
+    [empresasCatalogo, empresasPermitidas]);
+
+  const nomeEmpresa = (id: number | null | undefined) =>
+    id == null ? '—' : (empresasCatalogo.find(e => e.id === id)?.nome || 'Empresa removida');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abonoFileInputRef = useRef<HTMLInputElement>(null);
@@ -96,6 +130,20 @@ export default function GestaoDePonto() {
   // Mesmos funcionários, com admissão/desligamento — usado só para calcular
   // faltas do mês (mesma regra de apurarPonto() em /admin/rh/holerite).
   const [funcionariosAtivosDetalhe, setFuncionariosAtivosDetalhe] = useState<{ nome_completo: string; data_admissao: string | null; data_desligamento: string | null; empresa_id?: number | null }[]>([]);
+
+  // Escopo escolhido no seletor de empresa da tela (por cima do que o
+  // usuário já pode ver, resolvido no servidor). Único ponto de controle:
+  // registros/abonos e as listas de funcionário passam por aqui antes de
+  // qualquer view agregada (resumo, faltas, inconsistências, dropdowns).
+  const funcionariosAtivosDetalheEscopo = useMemo(() =>
+    filtroEmpresa === 'TODAS' ? funcionariosAtivosDetalhe : funcionariosAtivosDetalhe.filter(f => String(f.empresa_id) === filtroEmpresa),
+    [funcionariosAtivosDetalhe, filtroEmpresa]);
+  const listaFuncionariosAtivosEscopo = useMemo(() =>
+    funcionariosAtivosDetalheEscopo.map(f => f.nome_completo),
+    [funcionariosAtivosDetalheEscopo]);
+  const nomesEscopo = useMemo(() => new Set(listaFuncionariosAtivosEscopo), [listaFuncionariosAtivosEscopo]);
+  const registrosEscopo = useMemo(() => registros.filter(r => nomesEscopo.has(r.funcionario_nome)), [registros, nomesEscopo]);
+  const abonosEscopo = useMemo(() => abonos.filter(a => nomesEscopo.has(a.funcionario_nome)), [abonos, nomesEscopo]);
   const [manualFuncionario, setManualFuncionario] = useState('');
   const [manualData, setManualData] = useState('');
   const [manualE1, setManualE1] = useState('');
@@ -127,24 +175,31 @@ export default function GestaoDePonto() {
   });
 
   useEffect(() => {
-    if (!authLoading && !acessoNegado) carregarAcessoEDados();
-  }, [mesAnoSelecionado, authLoading, acessoNegado]);
+    // empresasPermitidas === undefined: ainda resolvendo. Sem esta guarda os
+    // registros/abonos do mês seriam carregados sem restrição e mostrariam
+    // ponto de outra empresa até o próximo render.
+    if (!authLoading && !acessoNegado && empresasPermitidas !== undefined) carregarAcessoEDados();
+  }, [mesAnoSelecionado, authLoading, acessoNegado, empresasPermitidas]);
 
   // O resultado da verificação de inconsistência é para o mês em que foi
   // gerado — muda o mês, o resultado anterior fica obsoleto.
   useEffect(() => { setInconsistencias(null); setFaltasEncontradas(null); setFiltroFuncionarioPendencia(''); }, [mesAnoSelecionado]);
 
   useEffect(() => {
-    if (authLoading || acessoNegado) return;
+    // empresasPermitidas === undefined: ainda resolvendo. Sem esta guarda os
+    // seletores de funcionário mostrariam gente de outra empresa até o
+    // próximo render.
+    if (authLoading || acessoNegado || empresasPermitidas === undefined) return;
     // Só entra nos controles de ponto quem bate ponto pelo WhatsApp — quem
     // tem essa opção desligada na ficha não gera batida nenhuma por aqui,
     // então não faz sentido aparecer nos seletores nem na apuração de faltas.
-    supabase.from('folha_funcionarios').select('nome_completo, data_admissao, data_desligamento, empresa_id').eq('ativo', true).eq('ponto_whatsapp_ativo', true).order('nome_completo')
-      .then(({ data }) => {
+    let q = supabase.from('folha_funcionarios').select('nome_completo, data_admissao, data_desligamento, empresa_id').eq('ativo', true).eq('ponto_whatsapp_ativo', true).order('nome_completo');
+    if (empresasPermitidas) q = q.in('empresa_id', empresasPermitidas);
+    q.then(({ data }) => {
         setListaFuncionariosAtivos((data || []).map(f => f.nome_completo));
         setFuncionariosAtivosDetalhe(data || []);
       });
-  }, [authLoading, acessoNegado]);
+  }, [authLoading, acessoNegado, empresasPermitidas]);
 
   const verificarRegistroExistente = async (funcionario: string, data: string) => {
     setVerificandoExistente(true);
@@ -209,8 +264,12 @@ export default function GestaoDePonto() {
 
     // Quem tem "Bate ponto pelo WhatsApp" desligado na ficha não entra nos
     // controles desta tela — nem em registros/abonos históricos que tenham
-    // sobrado de antes da opção ser desativada.
-    const { data: funcData } = await supabase.from('folha_funcionarios').select('nome_completo').eq('ponto_whatsapp_ativo', true);
+    // sobrado de antes da opção ser desativada. Isolamento por empresa direto
+    // na origem: registros e abonos ficam corretos por consequência, já que
+    // os dois só entram no state se o nome estiver neste conjunto.
+    let qHabilitados = supabase.from('folha_funcionarios').select('nome_completo').eq('ponto_whatsapp_ativo', true);
+    if (empresasPermitidas) qHabilitados = qHabilitados.in('empresa_id', empresasPermitidas);
+    const { data: funcData } = await qHabilitados;
     const nomesHabilitados = new Set((funcData || []).map(f => f.nome_completo));
 
     // Busca Abonos do Mês
@@ -675,7 +734,7 @@ export default function GestaoDePonto() {
   const resumoGeral = useMemo(() => {
     const mapa: Record<string, { nome: string; totalMins: number; extraSemMins: number; extraSabMins: number; extraDomMins: number }> = {};
     
-    const todosOsNomes = [...new Set([...registros.map(r => r.funcionario_nome), ...abonos.map(a => a.funcionario_nome)])];
+    const todosOsNomes = [...new Set([...registrosEscopo.map(r => r.funcionario_nome), ...abonosEscopo.map(a => a.funcionario_nome)])];
 
     todosOsNomes.forEach(nome => {
         mapa[nome] = { nome, totalMins: 0, extraSemMins: 0, extraSabMins: 0, extraDomMins: 0 };
@@ -683,13 +742,13 @@ export default function GestaoDePonto() {
 
     const dadosCombinados: Record<string, { trabalhados: number, abonados: number, data: string }> = {};
 
-    registros.forEach(r => {
+    registrosEscopo.forEach(r => {
         const key = `${r.funcionario_nome}|${r.data_registro}`;
         if (!dadosCombinados[key]) dadosCombinados[key] = { trabalhados: 0, abonados: 0, data: r.data_registro };
         dadosCombinados[key].trabalhados = r.minutos_trabalhados;
     });
 
-    abonos.forEach(a => {
+    abonosEscopo.forEach(a => {
         const key = `${a.funcionario_nome}|${a.data_abono}`;
         if (!dadosCombinados[key]) dadosCombinados[key] = { trabalhados: 0, abonados: 0, data: a.data_abono };
         dadosCombinados[key].abonados = a.minutos_abonados;
@@ -724,21 +783,21 @@ export default function GestaoDePonto() {
     });
 
     return Object.values(mapa).sort((a, b) => a.nome.localeCompare(b.nome));
-  }, [registros, abonos, indiceFeriados, funcionariosAtivosDetalhe]);
+  }, [registrosEscopo, abonosEscopo, indiceFeriados, funcionariosAtivosDetalheEscopo]);
 
-  const funcionariosUnicos = useMemo(() => [...new Set([...registros.map(r => r.funcionario_nome), ...abonos.map(a => a.funcionario_nome)])].sort(), [registros, abonos]);
+  const funcionariosUnicos = useMemo(() => [...new Set([...registrosEscopo.map(r => r.funcionario_nome), ...abonosEscopo.map(a => a.funcionario_nome)])].sort(), [registrosEscopo, abonosEscopo]);
 
   // Abonos do mês ordenados por nome e depois por data
   const abonosOrdenados = useMemo(() => {
-    return [...abonos].sort((a, b) =>
+    return [...abonosEscopo].sort((a, b) =>
       a.funcionario_nome.localeCompare(b.funcionario_nome) || a.data_abono.localeCompare(b.data_abono)
     );
-  }, [abonos]);
+  }, [abonosEscopo]);
 
   // Consolidado de abonos por funcionário: nº de dias, minutos totais e parciais
   const abonosPorFuncionario = useMemo(() => {
     const mapa: Record<string, { nome: string; qtd: number; totalMins: number; qtdDiaTodo: number; qtdParcial: number }> = {};
-    abonos.forEach(a => {
+    abonosEscopo.forEach(a => {
       if (!mapa[a.funcionario_nome]) mapa[a.funcionario_nome] = { nome: a.funcionario_nome, qtd: 0, totalMins: 0, qtdDiaTodo: 0, qtdParcial: 0 };
       mapa[a.funcionario_nome].qtd += 1;
       mapa[a.funcionario_nome].totalMins += a.minutos_abonados;
@@ -746,9 +805,9 @@ export default function GestaoDePonto() {
       else mapa[a.funcionario_nome].qtdParcial += 1;
     });
     return Object.values(mapa).sort((a, b) => a.nome.localeCompare(b.nome));
-  }, [abonos]);
+  }, [abonosEscopo]);
 
-  const totalAbonosMin = useMemo(() => abonos.reduce((acc, a) => acc + a.minutos_abonados, 0), [abonos]);
+  const totalAbonosMin = useMemo(() => abonosEscopo.reduce((acc, a) => acc + a.minutos_abonados, 0), [abonosEscopo]);
 
   // Um dia só é considerado OK se tiver uma quantidade par de batidas: nenhuma,
   // duas (quaisquer duas — viram entrada+saída automaticamente, independente
@@ -769,18 +828,18 @@ export default function GestaoDePonto() {
   // ainda nem foi importado).
   const calcularFaltasDoMes = (): { funcionario_nome: string; data: string }[] => {
     const mapaDias: Record<string, { trabalhados: number; abonados: number }> = {};
-    registros.forEach(r => {
+    registrosEscopo.forEach(r => {
       const key = `${r.funcionario_nome}|${r.data_registro}`;
       mapaDias[key] = { trabalhados: r.minutos_trabalhados, abonados: mapaDias[key]?.abonados || 0 };
     });
-    abonos.forEach(a => {
+    abonosEscopo.forEach(a => {
       const key = `${a.funcionario_nome}|${a.data_abono}`;
       mapaDias[key] = { trabalhados: mapaDias[key]?.trabalhados || 0, abonados: a.minutos_abonados };
     });
 
     const nomesComRegistroNoMes = new Set([
-      ...registros.map(r => r.funcionario_nome),
-      ...abonos.map(a => a.funcionario_nome)
+      ...registrosEscopo.map(r => r.funcionario_nome),
+      ...abonosEscopo.map(a => a.funcionario_nome)
     ]);
 
     const [ano, mes] = mesAnoSelecionado.split('-').map(Number);
@@ -789,7 +848,7 @@ export default function GestaoDePonto() {
 
     const faltas: { funcionario_nome: string; data: string }[] = [];
 
-    funcionariosAtivosDetalhe.forEach(f => {
+    funcionariosAtivosDetalheEscopo.forEach(f => {
       if (!nomesComRegistroNoMes.has(f.nome_completo)) return;
 
       for (let d = 1; d <= diasNoMes; d++) {
@@ -813,7 +872,7 @@ export default function GestaoDePonto() {
   };
 
   const verificarInconsistenciasPonto = () => {
-    const problemas = registros
+    const problemas = registrosEscopo
       .filter(r => !diaComBatidasOk(r))
       .sort((a, b) => a.funcionario_nome.localeCompare(b.funcionario_nome) || a.data_registro.localeCompare(b.data_registro));
     setInconsistencias(problemas);
@@ -1192,7 +1251,7 @@ export default function GestaoDePonto() {
         </button>
       </div>
 
-      <div className="px-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full print:hidden">
+      <div className="px-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full print:hidden flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex bg-[#F1F5F9] p-1 rounded-lg border border-[#E2E8F0]">
           <button onClick={() => setAbaPrincipal('gestao')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-md transition-all ${abaPrincipal === 'gestao' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>
             📊 Gestão de Ponto
@@ -1207,11 +1266,19 @@ export default function GestaoDePonto() {
             ⚠️ Inconsistência no Ponto
           </button>
         </div>
+        {empresasCatalogoVisivel.length > 1 && (
+          <select
+            value={filtroEmpresa} onChange={e => setFiltroEmpresa(e.target.value)}
+            className="p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-white cursor-pointer"
+          >
+            <option value="TODAS">🏭 Todas as empresas</option>
+            {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+          </select>
+        )}
       </div>
-
       <div className="p-4 md:px-8 pt-6 flex-grow flex flex-col max-w-[1400px] mx-auto w-full">
 
-        {abaPrincipal === 'registro_diario' && <RegistroPontoConsulta />}
+        {abaPrincipal === 'registro_diario' && <RegistroPontoConsulta filtroEmpresaId={filtroEmpresa === 'TODAS' ? null : Number(filtroEmpresa)} />}
 
         {abaPrincipal === 'gestao' && (
         <>
@@ -1553,7 +1620,7 @@ export default function GestaoDePonto() {
                   <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">
                     {abonosConsolidado ? 'Abonos — Consolidado por Equipe' : 'Abonos — Lançamentos do Mês'}
                   </h2>
-                  <p className="text-sm text-[#64748B]">Competência: {mesAnoSelecionado.split('-').reverse().join('/')} • {abonos.length} lançamento(s) • Total abonado: {minutesToTimeStr(totalAbonosMin)}</p>
+                  <p className="text-sm text-[#64748B]">Competência: {mesAnoSelecionado.split('-').reverse().join('/')} • {abonosEscopo.length} lançamento(s) • Total abonado: {minutesToTimeStr(totalAbonosMin)}</p>
                 </div>
                 <div className="flex items-center gap-3">
                   <input type="month" value={mesAnoSelecionado} onChange={(e) => setMesAnoSelecionado(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
@@ -1566,7 +1633,7 @@ export default function GestaoDePonto() {
 
               {loading ? (
                 <div className="p-12 text-center text-[#94A3B8] font-bold">Carregando abonos...</div>
-              ) : abonos.length === 0 ? (
+              ) : abonosEscopo.length === 0 ? (
                 <div className="p-12 text-center text-[#94A3B8] font-bold">
                   Nenhum abono lançado para este mês. Importe o CSV de abonos na aba Gestão de Ponto.
                 </div>
@@ -1637,7 +1704,7 @@ export default function GestaoDePonto() {
                     <tfoot>
                       <tr className="border-t-2 border-[#0C1D4D] bg-[#F8FAFC] font-black text-[#0C1D4D]">
                         <td className="p-4 uppercase text-xs tracking-wider">Total da Equipe</td>
-                        <td className="p-4 text-center">{abonos.length}</td>
+                        <td className="p-4 text-center">{abonosEscopo.length}</td>
                         <td className="p-4 text-center text-green-700">{abonosPorFuncionario.reduce((s, i) => s + i.qtdDiaTodo, 0)}</td>
                         <td className="p-4 text-center text-blue-700">{abonosPorFuncionario.reduce((s, i) => s + i.qtdParcial, 0)}</td>
                         <td className="p-4 text-center">{minutesToTimeStr(totalAbonosMin)}</td>
@@ -1659,7 +1726,7 @@ export default function GestaoDePonto() {
                 <div className="flex flex-col gap-2">
                   <select value={manualFuncionario} onChange={e => setManualFuncionario(e.target.value)} className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]">
                     <option value="">Selecione o funcionário...</option>
-                    {listaFuncionariosAtivos.map(n => <option key={n} value={n}>{n}</option>)}
+                    {listaFuncionariosAtivosEscopo.map(n => <option key={n} value={n}>{n}</option>)}
                   </select>
                   <input type="date" value={manualData} onChange={e => setManualData(e.target.value)} className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]" />
 
@@ -1720,7 +1787,7 @@ export default function GestaoDePonto() {
                 <div className="flex flex-col gap-2">
                   <select value={abonoFuncionario} onChange={e => setAbonoFuncionario(e.target.value)} className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]">
                     <option value="">Selecione o funcionário...</option>
-                    {listaFuncionariosAtivos.map(n => <option key={n} value={n}>{n}</option>)}
+                    {listaFuncionariosAtivosEscopo.map(n => <option key={n} value={n}>{n}</option>)}
                   </select>
                   <input type="date" value={abonoData} onChange={e => setAbonoData(e.target.value)} className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]" />
 

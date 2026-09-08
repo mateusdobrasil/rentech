@@ -14,6 +14,9 @@ import logoColorido from '../../../../app/imgs/logo.png';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
+import { supabase } from '../../../lib/supabase';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 
 interface Assinatura {
   id: number;
@@ -30,6 +33,9 @@ interface Assinatura {
   visualizado_em: string | null;
   assinado_em: string | null;
   titulo_avulso?: string | null;
+  // Vem do select(*) da action; as actions já restringem por empresa no servidor,
+  // este campo é para o filtro visual e o selo na lista.
+  empresa_id?: number | null;
 }
 
 const formatarMesAnoBR = (iso: string) => { if (!iso) return ''; const [a, m] = iso.split('-'); return `${m}/${a}`; };
@@ -46,7 +52,7 @@ const STATUS_INFO: Record<string, { label: string; cor: string; bg: string; icon
 export default function AssinaturasPage() {
   const router = useRouter();
   const toast = useToast();
-  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
   const [aba, setAba] = useState<'HOLERITES' | 'RESCISAO'>('HOLERITES');
 
   const [loading, setLoading] = useState(true);
@@ -55,6 +61,40 @@ export default function AssinaturasPage() {
   const [baixandoAssinado, setBaixandoAssinado] = useState<string | null>(null);
   const [atualizandoTodas, setAtualizandoTodas] = useState(false);
   const [filtro, setFiltro] = useState<'TODOS' | 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO'>('TODOS');
+  // Empresa: as actions já cortam o que o usuário não pode ver (servidor). Aqui é
+  // só a escolha dele dentro do que sobrou — mesmo padrão de /admin/rh/holerite.
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [filtroEmpresa, setFiltroEmpresa] = useState<string>('TODAS');
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(data || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) { setEmpresasPermitidas(null); return; }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = useMemo(() =>
+    empresasPermitidas === null
+      ? empresasCatalogo
+      : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id)),
+    [empresasCatalogo, empresasPermitidas]);
+
+  const nomeEmpresa = (id: number | null | undefined) =>
+    id == null ? 'Sem empresa' : (empresasCatalogo.find(e => e.id === id)?.nome || 'Empresa removida');
+
+  const daEmpresaEscolhida = (a: Assinatura) =>
+    filtroEmpresa === 'TODAS' || String(a.empresa_id) === filtroEmpresa;
+
 
   // ==========================================================================
   // ABA RESCISÃO — mesmo mecanismo de assinatura (folha_holerite_assinaturas),
@@ -110,14 +150,15 @@ export default function AssinaturasPage() {
   };
 
   const filtradasRescisao = useMemo(() =>
-    filtroRescisao === 'TODOS' ? assinaturasRescisao : assinaturasRescisao.filter(a => a.status === filtroRescisao),
-    [assinaturasRescisao, filtroRescisao]);
+    assinaturasRescisao.filter(daEmpresaEscolhida).filter(a => filtroRescisao === 'TODOS' || a.status === filtroRescisao),
+    [assinaturasRescisao, filtroRescisao, filtroEmpresa]);
 
   const contagemRescisao = useMemo(() => {
-    const c = { total: assinaturasRescisao.length, ENVIADO: 0, VISUALIZADO: 0, ASSINADO: 0, REJEITADO: 0 };
-    assinaturasRescisao.forEach(a => { if (a.status in c) (c as any)[a.status]++; });
+    const daEmpresa = assinaturasRescisao.filter(daEmpresaEscolhida);
+    const c = { total: daEmpresa.length, ENVIADO: 0, VISUALIZADO: 0, ASSINADO: 0, REJEITADO: 0 };
+    daEmpresa.forEach(a => { if (a.status in c) (c as any)[a.status]++; });
     return c;
-  }, [assinaturasRescisao]);
+  }, [assinaturasRescisao, filtroEmpresa]);
 
   // Upload avulso
   const [mostrarUpload, setMostrarUpload] = useState(false);
@@ -245,14 +286,15 @@ export default function AssinaturasPage() {
   };
 
   const filtradas = useMemo(() =>
-    filtro === 'TODOS' ? assinaturas : assinaturas.filter(a => a.status === filtro),
-    [assinaturas, filtro]);
+    assinaturas.filter(daEmpresaEscolhida).filter(a => filtro === 'TODOS' || a.status === filtro),
+    [assinaturas, filtro, filtroEmpresa]);
 
   const contagem = useMemo(() => {
-    const c = { total: assinaturas.length, ENVIADO: 0, VISUALIZADO: 0, ASSINADO: 0, REJEITADO: 0 };
-    assinaturas.forEach(a => { if (a.status in c) (c as any)[a.status]++; });
+    const daEmpresa = assinaturas.filter(daEmpresaEscolhida);
+    const c = { total: daEmpresa.length, ENVIADO: 0, VISUALIZADO: 0, ASSINADO: 0, REJEITADO: 0 };
+    daEmpresa.forEach(a => { if (a.status in c) (c as any)[a.status]++; });
     return c;
-  }, [assinaturas]);
+  }, [assinaturas, filtroEmpresa]);
 
   const pctAssinado = contagem.total > 0 ? Math.round((contagem.ASSINADO / contagem.total) * 100) : 0;
 
@@ -397,12 +439,23 @@ export default function AssinaturasPage() {
         )}
 
         {/* Barra de Seleção de Filtros */}
-        <div className="flex bg-white p-1 rounded-xl border border-[#E2E8F0] w-fit shadow-sm gap-1 flex-wrap">
-          {(['TODOS', 'ENVIADO', 'VISUALIZADO', 'ASSINADO', 'REJEITADO'] as const).map(f => (
-            <button key={f} onClick={() => setFiltro(f)} className={`px-4 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${filtro === f ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D] hover:bg-gray-50'}`}>
-              {f === 'TODOS' ? 'Todos' : STATUS_INFO[f].label}
-            </button>
-          ))}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex bg-white p-1 rounded-xl border border-[#E2E8F0] w-fit shadow-sm gap-1 flex-wrap">
+            {(['TODOS', 'ENVIADO', 'VISUALIZADO', 'ASSINADO', 'REJEITADO'] as const).map(f => (
+              <button key={f} onClick={() => setFiltro(f)} className={`px-4 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${filtro === f ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D] hover:bg-gray-50'}`}>
+                {f === 'TODOS' ? 'Todos' : STATUS_INFO[f].label}
+              </button>
+            ))}
+          </div>
+          {empresasCatalogoVisivel.length > 1 && (
+            <select
+              value={filtroEmpresa} onChange={e => setFiltroEmpresa(e.target.value)}
+              className="p-2.5 border border-[#E2E8F0] rounded-xl text-xs font-black uppercase tracking-wider bg-white text-[#0C1D4D] shadow-sm cursor-pointer"
+            >
+              <option value="TODAS">🏭 Todas as empresas</option>
+              {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+            </select>
+          )}
         </div>
 
         {/* Tabela de Dados Concretos */}
@@ -444,6 +497,11 @@ export default function AssinaturasPage() {
                           <span className="text-[10px] text-gray-500 font-medium block mt-0.5">
                             CPF {a.cpf || '—'}{a.sandbox && <span className="ml-1.5 text-amber-600 font-black bg-amber-50 px-1.5 py-0.5 rounded text-[8px]">AMB. TESTE</span>}
                           </span>
+                          {empresasCatalogoVisivel.length > 1 && (
+                            <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase inline-block mt-1 ${corSeloEmpresa(a.empresa_id)}`}>
+                              🏭 {nomeEmpresa(a.empresa_id)}
+                            </span>
+                          )}
                         </td>
                         <td className="p-4 text-center">
                           <span className="text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-wider inline-flex items-center gap-1" style={{ color: info.cor, background: info.bg }}>
@@ -515,12 +573,23 @@ export default function AssinaturasPage() {
             ))}
           </div>
 
-          <div className="flex bg-white p-1 rounded-xl border border-[#E2E8F0] w-fit shadow-sm gap-1 flex-wrap">
-            {(['TODOS', 'ENVIADO', 'VISUALIZADO', 'ASSINADO', 'REJEITADO'] as const).map(f => (
-              <button key={f} onClick={() => setFiltroRescisao(f)} className={`px-4 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${filtroRescisao === f ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D] hover:bg-gray-50'}`}>
-                {f === 'TODOS' ? 'Todos' : STATUS_INFO[f].label}
-              </button>
-            ))}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex bg-white p-1 rounded-xl border border-[#E2E8F0] w-fit shadow-sm gap-1 flex-wrap">
+              {(['TODOS', 'ENVIADO', 'VISUALIZADO', 'ASSINADO', 'REJEITADO'] as const).map(f => (
+                <button key={f} onClick={() => setFiltroRescisao(f)} className={`px-4 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${filtroRescisao === f ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D] hover:bg-gray-50'}`}>
+                  {f === 'TODOS' ? 'Todos' : STATUS_INFO[f].label}
+                </button>
+              ))}
+            </div>
+            {empresasCatalogoVisivel.length > 1 && (
+              <select
+                value={filtroEmpresa} onChange={e => setFiltroEmpresa(e.target.value)}
+                className="p-2.5 border border-[#E2E8F0] rounded-xl text-xs font-black uppercase tracking-wider bg-white text-[#0C1D4D] shadow-sm cursor-pointer"
+              >
+                <option value="TODAS">🏭 Todas as empresas</option>
+                {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+              </select>
+            )}
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden">
@@ -559,6 +628,11 @@ export default function AssinaturasPage() {
                             <span className="text-[10px] text-gray-500 font-medium block mt-0.5">
                               CPF {a.cpf || '—'}{a.sandbox && <span className="ml-1.5 text-amber-600 font-black bg-amber-50 px-1.5 py-0.5 rounded text-[8px]">AMB. TESTE</span>}
                             </span>
+                            {empresasCatalogoVisivel.length > 1 && (
+                              <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase inline-block mt-1 ${corSeloEmpresa(a.empresa_id)}`}>
+                                🏭 {nomeEmpresa(a.empresa_id)}
+                              </span>
+                            )}
                           </td>
                           <td className="p-4 text-center">
                             <span className="text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-wider inline-flex items-center gap-1" style={{ color: info.cor, background: info.bg }}>

@@ -11,11 +11,14 @@ import {
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
+import { supabase } from '../../../lib/supabase';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 
 const BRL = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
 interface LinhaFunc {
-  nome: string; cargo: string; contrato: string;
+  nome: string; cargo: string; contrato: string; empresaId?: number | null;
   beneficiosFixos: { id: number; tipoId: number; meioId: number; tipo: string; meio: string; valor: number; modalidade: string; qtdDias: number | null; observacao: string | null }[];
   totalFixos: number;
   temVariavel: boolean;
@@ -44,7 +47,39 @@ export default function BeneficiosPage() {
   const [formObs, setFormObs] = useState('');
   const [salvando, setSalvando] = useState(false);
 
-  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
+
+  // O painel já vem restrito à(s) empresa(s) do usuário (query filtrada no
+  // servidor); este seletor é só a escolha ADICIONAL de qual empresa ver,
+  // útil pro Administrador global, que enxerga as duas.
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [filtroEmpresa, setFiltroEmpresa] = useState<string>('TODAS');
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(data || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) { setEmpresasPermitidas(null); return; }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = useMemo(() =>
+    empresasPermitidas === null
+      ? empresasCatalogo
+      : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id)),
+    [empresasCatalogo, empresasPermitidas]);
+
+  const nomeEmpresa = (id: number | null | undefined) =>
+    id == null ? '—' : (empresasCatalogo.find(e => e.id === id)?.nome || 'Empresa removida');
   const toast = useToast();
 
   // Grid consolidado (mês)
@@ -117,7 +152,13 @@ export default function BeneficiosPage() {
     }
   };
 
-  const filtradas = useMemo(() => linhas
+  // linhas já vem restrita à(s) empresa(s) do usuário (query filtrada no
+  // servidor); linhasEscopo aplica por cima a empresa ESCOLHIDA no filtro.
+  const linhasEscopo = useMemo(() =>
+    filtroEmpresa === 'TODAS' ? linhas : linhas.filter(l => String(l.empresaId) === filtroEmpresa),
+    [linhas, filtroEmpresa]);
+
+  const filtradas = useMemo(() => linhasEscopo
     .map(l => {
       // Quando um meio é selecionado, mostra só os benefícios daquele meio
       if (filtroMeio === 'TODOS') return l;
@@ -130,14 +171,14 @@ export default function BeneficiosPage() {
       if (filtroMeio !== 'TODOS') return l.beneficiosFixos.length > 0;
       return filtro === 'TODOS' || (filtro === 'SEM' ? l.semNenhum : !l.semNenhum);
     }),
-    [linhas, busca, filtro, filtroMeio]);
+    [linhasEscopo, busca, filtro, filtroMeio]);
 
   const totais = useMemo(() => ({
-    total: linhas.length,
-    sem: linhas.filter(l => l.semNenhum).length,
-    com: linhas.length - linhas.filter(l => l.semNenhum).length,
-    somaFixos: linhas.reduce((s, l) => s + l.totalFixos, 0)
-  }), [linhas]);
+    total: linhasEscopo.length,
+    sem: linhasEscopo.filter(l => l.semNenhum).length,
+    com: linhasEscopo.length - linhasEscopo.filter(l => l.semNenhum).length,
+    somaFixos: linhasEscopo.reduce((s, l) => s + l.totalFixos, 0)
+  }), [linhasEscopo]);
 
   const abrirNovo = (nome: string) => {
     setModalFunc(nome); setEditId(null);
@@ -322,6 +363,12 @@ export default function BeneficiosPage() {
               <option value="TODOS">Todos os meios</option>
               {meios.map(m => <option key={m.id} value={m.id}>{m.nome}</option>)}
             </select>
+            {empresasCatalogoVisivel.length > 1 && (
+              <select value={filtroEmpresa} onChange={e => setFiltroEmpresa(e.target.value)} className="p-2.5 border border-gray-300 rounded-lg text-[11px] font-black uppercase text-gray-600 bg-[#F8FAFC]">
+                <option value="TODAS">🏭 Todas as empresas</option>
+                {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+              </select>
+            )}
           </div>
           <button onClick={() => setMostrarCatalogos(!mostrarCatalogos)} className="text-[10px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-4 py-2.5 rounded-lg uppercase tracking-wider">
             ⚙ Tipos e Meios
@@ -388,6 +435,11 @@ export default function BeneficiosPage() {
                         <td className="p-3">
                           <span className="font-black text-[#0C1D4D] block">{l.nome}</span>
                           <span className="text-[10px] text-gray-400 font-bold uppercase">{l.cargo || '—'}</span>
+                          {empresasCatalogoVisivel.length > 1 && (
+                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase inline-block mt-0.5 ${corSeloEmpresa(l.empresaId)}`}>
+                              🏭 {nomeEmpresa(l.empresaId)}
+                            </span>
+                          )}
                         </td>
                         <td className="p-3 text-[11px] font-black text-amber-500 uppercase" colSpan={3}>⚠ Sem benefícios</td>
                         <td className="p-3 text-center">
@@ -401,6 +453,11 @@ export default function BeneficiosPage() {
                             <td className="p-3 align-top" rowSpan={linhas}>
                               <span className="font-black text-[#0C1D4D] block">{l.nome}</span>
                               <span className="text-[10px] text-gray-400 font-bold uppercase">{l.cargo || '—'}</span>
+                          {empresasCatalogoVisivel.length > 1 && (
+                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase inline-block mt-0.5 ${corSeloEmpresa(l.empresaId)}`}>
+                              🏭 {nomeEmpresa(l.empresaId)}
+                            </span>
+                          )}
                             </td>
                           )}
                           <td className="p-3 text-[11px] font-black text-indigo-700 uppercase whitespace-nowrap">{b.tipo}</td>

@@ -11,6 +11,8 @@ import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
 import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 
 // ============================================================================
 // UTILITÁRIOS (mesmas fórmulas do holerite, para os números baterem)
@@ -74,9 +76,10 @@ interface LinhaRelatorio {
   minsTrabalhados: number; minsExtras60: number; minsExtras100: number;
   faltas: number; totalCreditos: number; totalDebitos: number; liquido: number;
   fechado: boolean;
+  empresaId: number | null;
 }
 
-interface FuncionarioResumo { nome_completo: string; cargo: string; ativo: boolean; data_admissao: string | null; data_desligamento: string | null; }
+interface FuncionarioResumo { nome_completo: string; cargo: string; ativo: boolean; data_admissao: string | null; data_desligamento: string | null; empresa_id?: number | null; }
 interface Movimentacao { funcionario_nome: string; motivo: 'ADMISSAO' | 'DEMISSAO' | 'ALTERACAO_CARGO'; cargo: string | null; data_movimentacao: string; }
 interface LinhaDocumentos { nome: string; cargo: string; totalDocs: number; vencidos: number; vencendo: number; semDocumentos: boolean; }
 interface PainelDocumentos { linhas: LinhaDocumentos[]; totais: { funcionarios: number; semDocumentos: number; totalDocs: number; vencidos: number; vencendo: number } }
@@ -292,7 +295,42 @@ const BarrasDuplas = ({ dados, corA, corB, formato }: {
 
 export default function RelatoriosRH() {
   const router = useRouter();
-  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
+
+  // Restrição por empresa: só quem é literalmente "Administrador" vê todas
+  // (ehAdministradorGlobal). Os demais ficam nas empresas às quais estão
+  // vinculados em perfis_usuarios_empresas — mesmo critério do resto do RH.
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null | undefined>(undefined);
+  const [filtroEmpresa, setFiltroEmpresa] = useState<string>('TODAS');
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(data || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) { setEmpresasPermitidas(null); return; }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = useMemo(() =>
+    empresasPermitidas === null
+      ? empresasCatalogo
+      : empresasCatalogo.filter(e => (empresasPermitidas || []).includes(e.id)),
+    [empresasCatalogo, empresasPermitidas]);
+
+  const nomeEmpresa = (id: number | null | undefined) =>
+    id == null ? '—' : (empresasCatalogo.find(e => e.id === id)?.nome || 'Empresa removida');
+
+  const daEmpresaEscolhida = (empresaId: number | null | undefined) =>
+    filtroEmpresa === 'TODAS' || String(empresaId) === filtroEmpresa;
   const toast = useToast();
 
   const [loading, setLoading] = useState(true);
@@ -317,8 +355,11 @@ export default function RelatoriosRH() {
   });
 
   useEffect(() => {
-    if (!authLoading && !acessoNegado) carregarRelatorio(mesReferencia);
-  }, [mesReferencia, authLoading, acessoNegado]);
+    // empresasPermitidas === undefined: ainda resolvendo. Sem esta guarda o
+    // relatório financeiro (salário, extras, descontos) seria montado sem
+    // restrição e mostraria gente de outra empresa até o próximo render.
+    if (!authLoading && !acessoNegado && empresasPermitidas !== undefined) carregarRelatorio(mesReferencia);
+  }, [mesReferencia, authLoading, acessoNegado, empresasPermitidas]);
 
   // Carrega os benefícios calculados para o mês (para o grid de benefícios)
   useEffect(() => {
@@ -333,19 +374,25 @@ export default function RelatoriosRH() {
   // Carrega o Quadro de Pessoal (movimentações + funcionários) e o Painel de Documentos.
   // Não depende do mês de competência — é uma fotografia viva do quadro atual.
   useEffect(() => {
-    if (authLoading || acessoNegado) return;
+    // empresasPermitidas === undefined: ainda resolvendo. Sem esta guarda o
+    // quadro seria montado sem restrição e mostraria gente de outra empresa
+    // até o próximo render.
+    if (authLoading || acessoNegado || empresasPermitidas === undefined) return;
     let vivo = true;
 
     const carregarQuadro = async () => {
       setLoadingQuadro(true);
+      let qFuncsQuadro = supabase.from('folha_funcionarios').select('nome_completo, cargo, ativo, data_admissao, data_desligamento, empresa_id');
+      if (empresasPermitidas) qFuncsQuadro = qFuncsQuadro.in('empresa_id', empresasPermitidas);
       const [{ data: funcsData }, { data: movsData }, docsRes] = await Promise.all([
-        supabase.from('folha_funcionarios').select('nome_completo, cargo, ativo, data_admissao, data_desligamento'),
+        qFuncsQuadro,
         supabase.from('folha_movimentacoes').select('funcionario_nome, motivo, cargo, data_movimentacao').order('data_movimentacao', { ascending: false }),
         painelDocumentosAction(accessToken),
       ]);
       if (!vivo) return;
+      const nomesPermitidos = new Set((funcsData || []).map(f => f.nome_completo));
       setTodosFuncionarios(funcsData || []);
-      setMovimentacoes(movsData || []);
+      setMovimentacoes((movsData || []).filter(m => nomesPermitidos.has(m.funcionario_nome)));
       if (docsRes.ok) setDocumentosPanel(docsRes.info);
       setLoadingQuadro(false);
     };
@@ -371,11 +418,17 @@ export default function RelatoriosRH() {
       const dataInicio = `${ano}-${mes}-01`;
       const dataFim = `${ano}-${mes}-${new Date(Number(ano), Number(mes), 0).getDate()}`;
 
+      let qFuncsRel = supabase.from('folha_funcionarios').select('*').eq('ativo', true).order('nome_completo');
+      // Isolamento por empresa direto na origem: o relatório financeiro
+      // (salário, extras, descontos) fica correto por consequência, já que
+      // é montado a partir só destes funcionários.
+      if (empresasPermitidas) qFuncsRel = qFuncsRel.in('empresa_id', empresasPermitidas);
+
       const [
         { data: funcs }, { data: regrasData }, { data: descs }, { data: bons },
         { data: fechs }, { data: pontoData }, { data: abonoData }, { data: fData }, { data: benData }
       ] = await Promise.all([
-        supabase.from('folha_funcionarios').select('*').eq('ativo', true).order('nome_completo'),
+        qFuncsRel,
         supabase.from('folha_parametros').select('*'),
         supabase.from('folha_descontos').select('*'),
         supabase.from('folha_bonus').select('*'),
@@ -456,7 +509,8 @@ export default function RelatoriosRH() {
         return {
           nome: f.nome_completo, cargo: f.cargo || '—', tipoContrato: f.tipo_contrato || '—',
           minsTrabalhados: ap.minsTrabalhadosTotal, minsExtras60: ap.mins60, minsExtras100: ap.mins100,
-          faltas: ap.faltas, totalCreditos, totalDebitos, liquido, fechado
+          faltas: ap.faltas, totalCreditos, totalDebitos, liquido, fechado,
+          empresaId: f.empresa_id ?? null
         };
       });
 
@@ -471,7 +525,12 @@ export default function RelatoriosRH() {
   // ============================================================================
   // TOTAIS E ORDENAÇÃO
   // ============================================================================
-  const totais = useMemo(() => linhas.reduce((acc, l) => ({
+  // Todas as fontes já vêm restritas à(s) empresa(s) do usuário (query filtrada
+  // na origem). linhasEscopo aplica por cima a empresa ESCOLHIDA no filtro —
+  // útil pro Administrador global, que enxerga as duas, restringir a visão.
+  const linhasEscopo = useMemo(() => linhas.filter(l => daEmpresaEscolhida(l.empresaId)), [linhas, filtroEmpresa]);
+
+  const totais = useMemo(() => linhasEscopo.reduce((acc, l) => ({
     creditos: acc.creditos + l.totalCreditos,
     debitos: acc.debitos + l.totalDebitos,
     liquido: acc.liquido + l.liquido,
@@ -479,30 +538,39 @@ export default function RelatoriosRH() {
     minsExtra: acc.minsExtra + l.minsExtras60 + l.minsExtras100,
     faltas: acc.faltas + l.faltas,
     fechados: acc.fechados + (l.fechado ? 1 : 0)
-  }), { creditos: 0, debitos: 0, liquido: 0, minsTrab: 0, minsExtra: 0, faltas: 0, fechados: 0 }), [linhas]);
+  }), { creditos: 0, debitos: 0, liquido: 0, minsTrab: 0, minsExtra: 0, faltas: 0, fechados: 0 }), [linhasEscopo]);
 
   const linhasOrdenadas = useMemo(() => {
-    const arr = [...linhas];
+    const arr = [...linhasEscopo];
     switch (ordenacao) {
       case 'liquido': return arr.sort((a, b) => b.liquido - a.liquido);
       case 'extras': return arr.sort((a, b) => (b.minsExtras60 + b.minsExtras100) - (a.minsExtras60 + a.minsExtras100));
       case 'faltas': return arr.sort((a, b) => b.faltas - a.faltas);
       default: return arr.sort((a, b) => a.nome.localeCompare(b.nome));
     }
-  }, [linhas, ordenacao]);
+  }, [linhasEscopo, ordenacao]);
 
   // Top 8 para os gráficos (senão fica ilegível com equipe grande)
-  const topExtras = useMemo(() => [...linhas]
+  const topExtras = useMemo(() => [...linhasEscopo]
     .map(l => ({ label: l.nome, valor: l.minsExtras60 + l.minsExtras100 }))
-    .filter(d => d.valor > 0).sort((a, b) => b.valor - a.valor).slice(0, 8), [linhas]);
-  const topLiquido = useMemo(() => [...linhas]
-    .sort((a, b) => b.liquido - a.liquido).slice(0, 8), [linhas]);
-  const comFaltas = useMemo(() => linhas.filter(l => l.faltas > 0).length, [linhas]);
+    .filter(d => d.valor > 0).sort((a, b) => b.valor - a.valor).slice(0, 8), [linhasEscopo]);
+  const topLiquido = useMemo(() => [...linhasEscopo]
+    .sort((a, b) => b.liquido - a.liquido).slice(0, 8), [linhasEscopo]);
+  const comFaltas = useMemo(() => linhasEscopo.filter(l => l.faltas > 0).length, [linhasEscopo]);
 
   // ============================================================================
   // AGREGAÇÕES — QUADRO DE PESSOAL & TURNOVER (janela móvel de 12 meses)
   // ============================================================================
-  const ativos = useMemo(() => todosFuncionarios.filter(f => f.ativo), [todosFuncionarios]);
+  // Mesmo raciocínio do relatório financeiro: fonte já restrita ao usuário,
+  // aqui só aplica a empresa ESCOLHIDA no filtro por cima.
+  const todosFuncionariosEscopo = useMemo(() =>
+    todosFuncionarios.filter(f => daEmpresaEscolhida(f.empresa_id)),
+    [todosFuncionarios, filtroEmpresa]);
+  const ativos = useMemo(() => todosFuncionariosEscopo.filter(f => f.ativo), [todosFuncionariosEscopo]);
+  const movimentacoesEscopo = useMemo(() => {
+    const nomesEscopo = new Set(todosFuncionariosEscopo.map(f => f.nome_completo));
+    return movimentacoes.filter(m => nomesEscopo.has(m.funcionario_nome));
+  }, [movimentacoes, todosFuncionariosEscopo]);
 
   const cargosOrdenados = useMemo(() => Array.from(new Set(ativos.map(f => f.cargo || 'SEM CARGO'))).sort(), [ativos]);
   const quadroPorCargo = useMemo(() => {
@@ -525,18 +593,18 @@ export default function RelatoriosRH() {
     }
     const admissoesPorMes: Record<string, number> = {};
     const desligamentosPorMes: Record<string, number> = {};
-    movimentacoes.forEach(m => {
+    movimentacoesEscopo.forEach(m => {
       const chave = (m.data_movimentacao || '').slice(0, 7);
       if (m.motivo === 'ADMISSAO') admissoesPorMes[chave] = (admissoesPorMes[chave] || 0) + 1;
       if (m.motivo === 'DEMISSAO') desligamentosPorMes[chave] = (desligamentosPorMes[chave] || 0) + 1;
     });
     return meses.map(m => ({ label: m.label, a: admissoesPorMes[m.chave] || 0, b: desligamentosPorMes[m.chave] || 0 }));
-  }, [movimentacoes]);
+  }, [movimentacoesEscopo]);
 
   const kpisQuadro = useMemo(() => {
     const hoje = new Date();
     const ha12Meses = new Date(hoje.getFullYear(), hoje.getMonth() - 12, hoje.getDate());
-    const mov12 = movimentacoes.filter(m => new Date(`${m.data_movimentacao}T00:00:00`) >= ha12Meses);
+    const mov12 = movimentacoesEscopo.filter(m => new Date(`${m.data_movimentacao}T00:00:00`) >= ha12Meses);
     const admissoes12 = mov12.filter(m => m.motivo === 'ADMISSAO').length;
     const desligamentos12 = mov12.filter(m => m.motivo === 'DEMISSAO').length;
     const quadroAtual = ativos.length;
@@ -550,9 +618,9 @@ export default function RelatoriosRH() {
     const tempoMedioMeses = tenures.length > 0 ? tenures.reduce((s, t) => s + t, 0) / tenures.length : 0;
 
     return { quadroAtual, admissoes12, desligamentos12, turnoverPct, tempoMedioMeses };
-  }, [movimentacoes, ativos]);
+  }, [movimentacoesEscopo, ativos]);
 
-  const movimentacoesRecentes = useMemo(() => movimentacoes.slice(0, 30), [movimentacoes]);
+  const movimentacoesRecentes = useMemo(() => movimentacoesEscopo.slice(0, 30), [movimentacoesEscopo]);
 
   // ============================================================================
   // AGREGAÇÕES — COMPLIANCE (Documentos & Assinaturas)
@@ -631,9 +699,18 @@ export default function RelatoriosRH() {
         <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-4 mb-6 no-print">
           <div>
             <h1 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Relatório da Folha — {formatarMesAnoBR(mesReferencia)}</h1>
-            <p className="text-sm text-[#64748B]">{linhas.length} funcionário(s) ativo(s) • {totais.fechados} folha(s) fechada(s)</p>
+            <p className="text-sm text-[#64748B]">{linhasEscopo.length} funcionário(s) ativo(s) • {totais.fechados} folha(s) fechada(s)</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            {empresasCatalogoVisivel.length > 1 && (
+              <select
+                value={filtroEmpresa} onChange={e => setFiltroEmpresa(e.target.value)}
+                className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC] cursor-pointer"
+              >
+                <option value="TODAS">🏭 Todas as empresas</option>
+                {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+              </select>
+            )}
             <input type="month" value={mesReferencia} onChange={(e) => setMesReferencia(e.target.value)} className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold bg-[#F8FAFC]" />
             <button onClick={() => setModoRelatorio('financeiro')} disabled={linhas.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#15803D] transition-all disabled:opacity-50">
               💵 Relatório Financeiro
@@ -1099,6 +1176,11 @@ export default function RelatoriosRH() {
                         <td className="p-3">
                           <span className="font-black text-[#0C1D4D] block">{l.nome}</span>
                           <span className="text-[10px] text-gray-500 font-medium">{l.cargo} • {l.tipoContrato}</span>
+                          {empresasCatalogoVisivel.length > 1 && (
+                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase inline-block mt-0.5 ${corSeloEmpresa(l.empresaId)}`}>
+                              🏭 {nomeEmpresa(l.empresaId)}
+                            </span>
+                          )}
                         </td>
                         <td className="p-3 text-center font-bold">{formatTimeStr(l.minsTrabalhados)}</td>
                         <td className="p-3 text-center font-bold text-[#336699]">{l.minsExtras60 > 0 ? formatTimeStr(l.minsExtras60) : '—'}</td>

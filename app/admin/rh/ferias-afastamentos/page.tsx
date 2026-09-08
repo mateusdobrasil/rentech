@@ -14,6 +14,8 @@ import {
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 
 const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 
@@ -27,12 +29,12 @@ interface PeriodoFerias {
   statusExibicao: 'DISPONIVEL' | 'AGENDADA' | 'EM_GOZO' | 'CONCLUIDA' | 'CANCELADA';
   vencida: boolean; vencendo: boolean; observacao: string | null;
 }
-interface LinhaFerias { nome: string; cargo: string | null; departamento: string | null; ativo: boolean; periodos: PeriodoFerias[]; temVencida: boolean; temVencendo: boolean; }
+interface LinhaFerias { nome: string; cargo: string | null; departamento: string | null; ativo: boolean; periodos: PeriodoFerias[]; temVencida: boolean; temVencendo: boolean; empresaId?: number | null; }
 
 interface Afastamento {
   id: number; funcionario_nome: string; tipo_id: number; tipo: string; cargo: string | null;
   data_inicio: string; data_fim: string | null; cid: string | null; observacao: string | null;
-  status: 'ATIVO' | 'ENCERRADO'; temAnexo: boolean; dias: number;
+  status: 'ATIVO' | 'ENCERRADO'; temAnexo: boolean; dias: number; empresa_id?: number | null;
 }
 
 export default function FeriasAfastamentosPage() {
@@ -40,7 +42,39 @@ export default function FeriasAfastamentosPage() {
   const toast = useToast();
   const [aba, setAba] = useState<'ferias' | 'afastamentos'>('ferias');
 
-  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
+
+  // As listagens (painelFeriasAction/painelAfastamentosAction) já vêm
+  // filtradas do servidor; empresasPermitidas aqui é só pra fonte do dropdown
+  // de nomes em "Novo Afastamento" e pro seletor visual (filtroEmpresa).
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null | undefined>(undefined);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+  const [filtroEmpresa, setFiltroEmpresa] = useState('TODAS');
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarPermissoes() {
+      const { data } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(data || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) { setEmpresasPermitidas(null); return; }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarPermissoes();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = useMemo(() =>
+    empresasPermitidas === null
+      ? empresasCatalogo
+      : empresasCatalogo.filter(e => (empresasPermitidas || []).includes(e.id)),
+    [empresasCatalogo, empresasPermitidas]);
+
+  const nomeEmpresa = (id: number | null | undefined) =>
+    id == null ? '—' : (empresasCatalogo.find(e => e.id === id)?.nome || 'Empresa removida');
 
   // ==========================================================================
   // ABA FÉRIAS
@@ -116,9 +150,10 @@ export default function FeriasAfastamentosPage() {
   };
 
   const linhasFeriasFiltradas = useMemo(() => linhasFerias
+    .filter(l => filtroEmpresa === 'TODAS' || String(l.empresaId) === filtroEmpresa)
     .filter(l => l.nome.toLowerCase().includes(buscaFerias.toLowerCase()))
     .filter(l => l.periodos.some(p => periodoCombinaFiltro(p, filtroFerias))),
-    [linhasFerias, buscaFerias, filtroFerias]);
+    [linhasFerias, buscaFerias, filtroFerias, filtroEmpresa]);
 
   const badgeFerias = (p: PeriodoFerias) => {
     if (p.statusExibicao === 'CANCELADA') return null;
@@ -166,12 +201,19 @@ export default function FeriasAfastamentosPage() {
     finally { setLoadingAfast(false); }
   };
 
-  const carregarFuncionarios = async () => {
-    const { data } = await supabase.from('folha_funcionarios').select('nome_completo, cargo').eq('ativo', true).order('nome_completo');
+  const carregarFuncionarios = async (permitidas: number[] | null) => {
+    let q = supabase.from('folha_funcionarios').select('nome_completo, cargo').eq('ativo', true).order('nome_completo');
+    if (permitidas) q = q.in('empresa_id', permitidas);
+    const { data } = await q;
     setFuncionariosAtivos(data || []);
   };
 
-  useEffect(() => { if (accessToken) { carregarAfastamentos(); carregarFuncionarios(); } }, [accessToken]);
+  useEffect(() => {
+    // empresasPermitidas === undefined: ainda resolvendo. Sem esta guarda o
+    // dropdown de "Novo Afastamento" listaria gente de outra empresa até o
+    // próximo render.
+    if (accessToken && empresasPermitidas !== undefined) { carregarAfastamentos(); carregarFuncionarios(empresasPermitidas); }
+  }, [accessToken, empresasPermitidas]);
 
   const abrirNovoAfastamento = () => {
     setModalAfast(true); setEditAfastId(null);
@@ -249,9 +291,10 @@ export default function FeriasAfastamentosPage() {
   };
 
   const afastamentosFiltrados = useMemo(() => afastamentos
+    .filter(a => filtroEmpresa === 'TODAS' || String(a.empresa_id) === filtroEmpresa)
     .filter(a => `${a.funcionario_nome} ${a.tipo}`.toLowerCase().includes(buscaAfast.toLowerCase()))
     .filter(a => filtroAfast === 'TODOS' || a.status === filtroAfast),
-    [afastamentos, buscaAfast, filtroAfast]);
+    [afastamentos, buscaAfast, filtroAfast, filtroEmpresa]);
 
   if (authLoading) {
     return (
@@ -295,7 +338,8 @@ export default function FeriasAfastamentosPage() {
       </div>
 
       {/* ABAS */}
-      <div className="px-4 md:px-8 pt-4 flex-shrink-0 flex gap-2 border-b border-[#E2E8F0] bg-white">
+      <div className="px-4 md:px-8 pt-4 flex-shrink-0 flex flex-wrap items-center justify-between gap-3 border-b border-[#E2E8F0] bg-white">
+        <div className="flex gap-2">
         <button
           onClick={() => setAba('ferias')}
           className={`px-5 py-3 text-xs font-black uppercase tracking-wider rounded-t-lg transition-colors ${aba === 'ferias' ? 'bg-[#336699] text-white' : 'text-[#64748B] hover:bg-[#F0F4F8]'}`}
@@ -308,6 +352,16 @@ export default function FeriasAfastamentosPage() {
         >
           🩺 Afastamentos {totaisAfast.ativos > 0 && <span className="ml-1 bg-amber-500 text-white rounded-full px-1.5 py-0.5 text-[9px]">{totaisAfast.ativos}</span>}
         </button>
+        </div>
+        {empresasCatalogoVisivel.length > 1 && (
+          <select
+            value={filtroEmpresa} onChange={e => setFiltroEmpresa(e.target.value)}
+            className="mb-2 p-2 border border-[#E2E8F0] rounded-lg text-xs font-black uppercase tracking-wider bg-[#F8FAFC] text-[#0C1D4D] cursor-pointer"
+          >
+            <option value="TODAS">🏭 Todas as empresas</option>
+            {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+          </select>
+        )}
       </div>
 
       {/* ============================================================================ */}
@@ -370,7 +424,12 @@ export default function FeriasAfastamentosPage() {
                       const zebra = idx % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white';
                       return periodos.length === 0 ? (
                         <tr key={l.nome} className={`${zebra} border-b border-[#E2E8F0]`}>
-                          <td className="p-3"><span className="font-black text-[#0C1D4D] block">{l.nome}</span><span className="text-[10px] text-gray-400 font-bold uppercase">{l.cargo || '—'}</span></td>
+                          <td className="p-3"><span className="font-black text-[#0C1D4D] block">{l.nome}</span><span className="text-[10px] text-gray-400 font-bold uppercase">{l.cargo || '—'}</span>
+                          {empresasCatalogoVisivel.length > 1 && (
+                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase inline-block ml-1 ${corSeloEmpresa(l.empresaId)}`}>
+                              🏭 {nomeEmpresa(l.empresaId)}
+                            </span>
+                          )}</td>
                           <td className="p-3 text-[11px] font-black text-gray-400 uppercase" colSpan={5}>Sem período aquisitivo completo ainda</td>
                         </tr>
                       ) : (
@@ -380,6 +439,11 @@ export default function FeriasAfastamentosPage() {
                               <td className="p-3 align-top" rowSpan={linhas}>
                                 <span className="font-black text-[#0C1D4D] block">{l.nome}</span>
                                 <span className="text-[10px] text-gray-400 font-bold uppercase">{l.cargo || '—'}</span>
+                          {empresasCatalogoVisivel.length > 1 && (
+                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase inline-block ml-1 ${corSeloEmpresa(l.empresaId)}`}>
+                              🏭 {nomeEmpresa(l.empresaId)}
+                            </span>
+                          )}
                               </td>
                             )}
                             <td className="p-3 text-[11px] font-bold text-gray-600 whitespace-nowrap">{fmtData(p.periodo_aquisitivo_inicio)} — {fmtData(p.periodo_aquisitivo_fim)}</td>
@@ -478,7 +542,15 @@ export default function FeriasAfastamentosPage() {
                   <tbody>
                     {afastamentosFiltrados.map((a, idx) => (
                       <tr key={a.id} className={`${idx % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white'} border-b border-[#E2E8F0]`}>
-                        <td className="p-3"><span className="font-black text-[#0C1D4D] block">{a.funcionario_nome}</span><span className="text-[10px] text-gray-400 font-bold uppercase">{a.cargo || '—'}</span></td>
+                        <td className="p-3">
+                          <span className="font-black text-[#0C1D4D] block">{a.funcionario_nome}</span>
+                          <span className="text-[10px] text-gray-400 font-bold uppercase">{a.cargo || '—'}</span>
+                          {empresasCatalogoVisivel.length > 1 && (
+                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase inline-block mt-0.5 ${corSeloEmpresa(a.empresa_id)}`}>
+                              🏭 {nomeEmpresa(a.empresa_id)}
+                            </span>
+                          )}
+                        </td>
                         <td className="p-3 text-[11px] font-black text-indigo-700 uppercase whitespace-nowrap">{a.tipo}</td>
                         <td className="p-3 text-[11px] font-bold text-gray-600 whitespace-nowrap">{fmtData(a.data_inicio)}</td>
                         <td className="p-3 text-[11px] font-bold text-gray-600 whitespace-nowrap">{a.data_fim ? fmtData(a.data_fim) : <span className="text-amber-600">em aberto</span>}</td>

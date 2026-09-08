@@ -10,6 +10,9 @@ import type { MotivoRescisao, TipoAvisoPrevio } from '../../../lib/calculoRescis
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
+import { supabase } from '../../../lib/supabase';
+import { corSeloEmpresa } from '../../../lib/coresEmpresa';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 const fmtMoeda = (v: number | null) => (v == null ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
@@ -46,13 +49,48 @@ interface Rescisao {
   id: number; funcionario_nome: string; motivo: string; data_desligamento: string;
   tipo_folha: 'PROPRIO' | 'CONTABILIDADE'; status: string; valor_total_liquido: number | null;
   pago_em: string | null;
+  // A action já restringe as linhas por empresa no servidor; este campo é
+  // só para o selo visual.
+  empresa_id?: number | null;
 }
 interface FuncionarioElegivel { nome: string; cargo: string | null; dataDesligamento: string | null; tipoFolha: 'PROPRIO' | 'CONTABILIDADE'; }
 
 export default function RescisaoPage() {
   const router = useRouter();
   const toast = useToast();
-  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
+
+  // A listagem (painelRescisoesAction) já vem restrita do servidor;
+  // empresasPermitidas aqui é só pra restringir o CATÁLOGO do seletor visual
+  // (não oferecer no dropdown uma empresa que o usuário não enxerga) e pro
+  // selo nas linhas — nome de empresa não é dado sensível.
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [filtroEmpresa, setFiltroEmpresa] = useState('TODAS');
+
+  useEffect(() => {
+    async function carregarEmpresas() {
+      const { data } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(data || []);
+
+      if (ehAdministradorGlobal(permissaoBruta)) { setEmpresasPermitidas(null); return; }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase
+        .from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [permissaoBruta]);
+
+  const empresasCatalogoVisivel = useMemo(() =>
+    empresasPermitidas === null
+      ? empresasCatalogo
+      : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id)),
+    [empresasCatalogo, empresasPermitidas]);
+
+  const nomeEmpresa = (id: number | null | undefined) =>
+    id == null ? '—' : (empresasCatalogo.find(e => e.id === id)?.nome || 'Empresa removida');
 
   const [loading, setLoading] = useState(true);
   const [linhas, setLinhas] = useState<Rescisao[]>([]);
@@ -80,9 +118,10 @@ export default function RescisaoPage() {
   };
 
   const linhasFiltradas = useMemo(() => linhas
+    .filter(r => filtroEmpresa === 'TODAS' || String(r.empresa_id) === filtroEmpresa)
     .filter(r => r.funcionario_nome.toLowerCase().includes(busca.toLowerCase()))
     .filter(statusCombina),
-    [linhas, busca, filtro]);
+    [linhas, busca, filtro, filtroEmpresa]);
 
   // ==========================================================================
   // MODAL: NOVA RESCISÃO
@@ -208,6 +247,15 @@ export default function RescisaoPage() {
                 </button>
               ))}
             </div>
+            {empresasCatalogoVisivel.length > 1 && (
+              <select
+                value={filtroEmpresa} onChange={e => setFiltroEmpresa(e.target.value)}
+                className="p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC] cursor-pointer"
+              >
+                <option value="TODAS">🏭 Todas as empresas</option>
+                {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+              </select>
+            )}
           </div>
           <button onClick={abrirModal} className="text-[10px] font-black bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-4 py-2.5 rounded-lg uppercase tracking-wider">
             + Nova Rescisão
@@ -236,7 +284,14 @@ export default function RescisaoPage() {
                 <tbody>
                   {linhasFiltradas.map((r, idx) => (
                     <tr key={r.id} className={`${idx % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white'} border-b border-[#E2E8F0]`}>
-                      <td className="p-3 font-black text-[#0C1D4D]">{r.funcionario_nome}</td>
+                      <td className="p-3">
+                        <span className="font-black text-[#0C1D4D] block">{r.funcionario_nome}</span>
+                        {empresasCatalogoVisivel.length > 1 && (
+                          <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase inline-block mt-0.5 ${corSeloEmpresa(r.empresa_id)}`}>
+                            🏭 {nomeEmpresa(r.empresa_id)}
+                          </span>
+                        )}
+                      </td>
                       <td className="p-3 text-[11px] font-bold text-gray-600">{motivoLabel(r.motivo)}</td>
                       <td className="p-3 text-[11px] font-bold text-gray-600 whitespace-nowrap">{fmtData(r.data_desligamento)}</td>
                       <td className="p-3 text-center whitespace-nowrap">

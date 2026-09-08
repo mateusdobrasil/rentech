@@ -345,7 +345,7 @@ export async function painelDocumentosAction(accessToken: string): Promise<Resul
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
 
     let qFuncs = db.from('folha_funcionarios')
-      .select('nome_completo, cargo').eq('ativo', true).order('nome_completo');
+      .select('nome_completo, cargo, empresa_id').eq('ativo', true).order('nome_completo');
     if (empresasPermitidas) qFuncs = qFuncs.in('empresa_id', empresasPermitidas);
     const { data: funcs } = await qFuncs;
     const { data: docs } = await db.from('folha_documentos')
@@ -371,7 +371,7 @@ export async function painelDocumentosAction(accessToken: string): Promise<Resul
     const linhas = (funcs || []).map(f => {
       const p = porFunc[f.nome_completo] || { total: 0, vencidos: 0, vencendo: 0, categorias: new Set() };
       return {
-        nome: f.nome_completo, cargo: f.cargo,
+        nome: f.nome_completo, cargo: f.cargo, empresaId: f.empresa_id ?? null,
         totalDocs: p.total, vencidos: p.vencidos, vencendo: p.vencendo,
         semDocumentos: p.total === 0
       };

@@ -68,13 +68,42 @@ export async function criarCategoriaDocAction(payload: { nome: string; exigeVali
 // ============================================================================
 // UPLOAD de documento
 // ============================================================================
+// Calcula o caminho de storage que o CLIENTE deve usar pra subir o arquivo
+// direto no bucket (ver uploadDocumentoAction abaixo pro porquê) — mantém a
+// mesma convenção de sempre (funcionario/categoria/timestamp-nome.ext).
+export async function storagePathDocumentoAction(payload: {
+  funcionarioNome: string; categoriaId: number; nomeArquivo: string;
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const { data: cat } = await db.from('folha_documento_categorias').select('nome').eq('id', payload.categoriaId).maybeSingle();
+    const catSlug = slug(cat?.nome || 'outros');
+    const path = `${slug(payload.funcionarioNome)}/${catSlug}/${Date.now()}-${slug(payload.nomeArquivo.replace(/\.[^.]+$/, ''))}.${(payload.nomeArquivo.split('.').pop() || 'bin').toLowerCase()}`;
+    return { ok: true, info: { path, bucket: BUCKET } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// O arquivo em si já foi enviado pelo CLIENTE direto pro Storage (bucket
+// privado, política de INSERT liberada só pra authenticated — ver
+// .sql/documentos_storage_upload_autenticado.sql) antes de chamar esta
+// action: mandar o arquivo inteiro (mesmo em base64) dentro de uma Server
+// Action estourava o limite de corpo de requisição da Vercel (~4,5MB,
+// independente do bodySizeLimit do next.config.ts — mesmo problema já visto
+// no anexo de OPs), e um documento digitalizado um pouco maior já bastava
+// pra disparar "An unexpected response was received from the server".
 export async function uploadDocumentoAction(payload: {
   funcionarioNome: string;
   categoriaId: number;
   titulo?: string | null;
-  arquivoBase64: string;
+  storagePath: string;
   nomeArquivo: string;
   tipoMime: string;
+  tamanhoBytes: number;
   dataValidade?: string | null;
   observacao?: string | null;
   enviadoPor: string;
@@ -84,9 +113,9 @@ export async function uploadDocumentoAction(payload: {
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
-  const { funcionarioNome, categoriaId, titulo, arquivoBase64, nomeArquivo, tipoMime, dataValidade, observacao, enviadoPor, visivelPortal } = payload;
+  const { funcionarioNome, categoriaId, titulo, storagePath, nomeArquivo, tipoMime, tamanhoBytes, dataValidade, observacao, enviadoPor, visivelPortal } = payload;
 
-  if (!funcionarioNome || !categoriaId || !arquivoBase64) {
+  if (!funcionarioNome || !categoriaId || !storagePath) {
     return { ok: false, erro: 'Funcionário, categoria e arquivo são obrigatórios.' };
   }
 
@@ -94,30 +123,21 @@ export async function uploadDocumentoAction(payload: {
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     const empresaIdFunc = await empresaIdDoFuncionario(db, funcionarioNome);
     if (!empresaPermitida(empresasPermitidas, empresaIdFunc)) {
+      // O arquivo já foi parar no bucket a esta altura (upload direto do
+      // cliente, antes desta checagem) — remove pra não deixar órfão.
+      await db.storage.from(BUCKET).remove([storagePath]);
       return { ok: false, erro: 'Você não tem permissão para enviar documentos para este funcionário.' };
     }
-
-    // Nome da categoria para compor o caminho
-    const { data: cat } = await db.from('folha_documento_categorias').select('nome').eq('id', categoriaId).maybeSingle();
-    const catSlug = slug(cat?.nome || 'outros');
-
-    const bytes = Buffer.from(arquivoBase64, 'base64');
-    const path = `${slug(funcionarioNome)}/${catSlug}/${Date.now()}-${slug(nomeArquivo.replace(/\.[^.]+$/, ''))}.${(nomeArquivo.split('.').pop() || 'bin').toLowerCase()}`;
-
-    const { error: upErr } = await db.storage.from(BUCKET).upload(path, bytes, {
-      contentType: tipoMime || 'application/octet-stream', upsert: false
-    });
-    if (upErr) throw new Error(`Falha no upload: ${upErr.message}`);
 
     const { error: dbErr } = await db.from('folha_documentos').insert({
       funcionario_nome: funcionarioNome,
       empresa_id: empresaIdFunc,
       categoria_id: categoriaId,
       titulo: titulo || null,
-      storage_path: path,
+      storage_path: storagePath,
       nome_arquivo: nomeArquivo,
       tipo_mime: tipoMime || null,
-      tamanho_bytes: bytes.length,
+      tamanho_bytes: tamanhoBytes,
       data_validade: dataValidade || null,
       observacao: observacao || null,
       enviado_por: enviadoPor || null,
@@ -125,7 +145,7 @@ export async function uploadDocumentoAction(payload: {
     });
     if (dbErr) {
       // rollback do arquivo se o registro falhar
-      await db.storage.from(BUCKET).remove([path]);
+      await db.storage.from(BUCKET).remove([storagePath]);
       throw new Error(dbErr.message);
     }
 

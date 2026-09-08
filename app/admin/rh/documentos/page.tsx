@@ -5,12 +5,12 @@ import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../../lib/supabase';
 import {
-  listarCategoriasDocAction, criarCategoriaDocAction, uploadDocumentoAction,
+  listarCategoriasDocAction, criarCategoriaDocAction, uploadDocumentoAction, storagePathDocumentoAction,
   listarDocumentosAction, urlDocumentoAction, excluirDocumentoAction, painelDocumentosAction,
   alternarVisivelPortalAction
 } from '../actions/actions-documentos-func';
 import {
-  listarCategoriasDocEmpresaAction, criarCategoriaDocEmpresaAction, uploadDocumentoEmpresaAction,
+  listarCategoriasDocEmpresaAction, criarCategoriaDocEmpresaAction, uploadDocumentoEmpresaAction, storagePathDocumentoEmpresaAction,
   listarDocumentosEmpresaAction, urlDocumentoEmpresaAction, excluirDocumentoEmpresaAction
 } from '../actions/actions-documentos-empresa';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
@@ -180,10 +180,22 @@ export default function DocumentosPage() {
     }
     setEnviandoEmpresa(true);
     try {
-      const base64 = await fileParaBase64(upArquivoEmpresa);
+      // Upload direto do navegador pro Storage — mandar o arquivo (mesmo em
+      // base64) dentro da Server Action estourava o limite de corpo de
+      // requisição da Vercel (~4,5MB) pra documentos um pouco maiores,
+      // travando com "An unexpected response was received from the server".
+      const caminho = await storagePathDocumentoEmpresaAction({
+        categoriaId: Number(upCategoriaEmpresa), nomeArquivo: upArquivoEmpresa.name
+      }, accessToken);
+      if (!caminho.ok) throw new Error(caminho.erro);
+      const { error: upErr } = await supabase.storage.from(caminho.info.bucket)
+        .upload(caminho.info.path, upArquivoEmpresa, { contentType: upArquivoEmpresa.type || 'application/octet-stream', upsert: false });
+      if (upErr) throw new Error(`Falha no upload: ${upErr.message}`);
+
       const res = await uploadDocumentoEmpresaAction({
         categoriaId: Number(upCategoriaEmpresa), empresaId: Number(upEmpresaEmpresa), titulo: upTituloEmpresa || null,
-        arquivoBase64: base64, nomeArquivo: upArquivoEmpresa.name, tipoMime: upArquivoEmpresa.type,
+        storagePath: caminho.info.path, nomeArquivo: upArquivoEmpresa.name, tipoMime: upArquivoEmpresa.type,
+        tamanhoBytes: upArquivoEmpresa.size,
         dataValidade: upValidadeEmpresa || null, observacao: upObsEmpresa || null, enviadoPor: usuarioAtual
       }, accessToken);
       if (!res.ok) throw new Error(res.erro);
@@ -267,12 +279,6 @@ export default function DocumentosPage() {
 
   const catSelecionada = categorias.find(c => String(c.id) === upCategoria);
 
-  const fileParaBase64 = (file: File): Promise<string> => new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload = () => res((r.result as string).split(',')[1]);
-    r.onerror = rej; r.readAsDataURL(file);
-  });
-
   const enviarUpload = async () => {
     if (!upCategoria) { toast('Escolha a categoria.', 'error'); return; }
     if (!upArquivo) { toast('Selecione o arquivo.', 'error'); return; }
@@ -281,10 +287,21 @@ export default function DocumentosPage() {
     }
     setEnviando(true);
     try {
-      const base64 = await fileParaBase64(upArquivo);
+      // Upload direto do navegador pro Storage — mesmo motivo do tab Empresas
+      // (ver enviarUploadEmpresa): evita estourar o limite de corpo de
+      // requisição da Vercel numa Server Action com o arquivo inteiro.
+      const caminho = await storagePathDocumentoAction({
+        funcionarioNome: funcSel!, categoriaId: Number(upCategoria), nomeArquivo: upArquivo.name
+      }, accessToken);
+      if (!caminho.ok) throw new Error(caminho.erro);
+      const { error: upErr } = await supabase.storage.from(caminho.info.bucket)
+        .upload(caminho.info.path, upArquivo, { contentType: upArquivo.type || 'application/octet-stream', upsert: false });
+      if (upErr) throw new Error(`Falha no upload: ${upErr.message}`);
+
       const res = await uploadDocumentoAction({
         funcionarioNome: funcSel!, categoriaId: Number(upCategoria), titulo: upTitulo || null,
-        arquivoBase64: base64, nomeArquivo: upArquivo.name, tipoMime: upArquivo.type,
+        storagePath: caminho.info.path, nomeArquivo: upArquivo.name, tipoMime: upArquivo.type,
+        tamanhoBytes: upArquivo.size,
         dataValidade: upValidade || null, observacao: upObs || null, enviadoPor: usuarioAtual,
         visivelPortal: upVisivelPortal
       }, accessToken);

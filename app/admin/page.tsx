@@ -5,6 +5,7 @@ import { Analytics } from "@vercel/analytics/next";
 import { useModuleAccess } from '../components/hooks/useModuleAccess';
 import ModuleGrid from '../components/ui/ModuleGrid';
 import { HubLoading, HubPerfilNaoLocalizado, HubErro } from '../components/ui/HubStates';
+import { VERSAO_APP } from '../lib/versaoApp';
 
 // Estrutura dos módulos do sistema. As permissões de cada um NÃO ficam mais
 // aqui — vêm da tabela parametros_paginas_permissoes (gerida em /admin/parametros/permissoes),
@@ -123,6 +124,9 @@ export default function HubAdministrativo() {
             <Link href="/admin/conta" className="inline-block mt-2 text-[10px] font-black text-[#64748B] hover:text-[#336699] uppercase tracking-widest transition-colors">
               ⚙️ Minha Conta
             </Link>
+            <span title="Versão do sistema" className="block mt-1 text-[9px] text-[#CBD5E1] font-bold tracking-widest">
+              v{VERSAO_APP}
+            </span>
           </div>
         </div>
       </div>

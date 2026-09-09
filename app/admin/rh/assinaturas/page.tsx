@@ -159,6 +159,11 @@ export default function AssinaturasPage() {
     daEmpresa.forEach(a => { if (a.status in c) (c as any)[a.status]++; });
     return c;
   }, [assinaturasRescisao, filtroEmpresa]);
+  // Selo vermelho da aba: só o que ainda precisa de atenção (aguardando ou
+  // visualizado, mas não assinado ainda) — contagemRescisao.total conta TUDO
+  // que já foi enviado, inclusive o que já foi assinado, então usava o
+  // selo pra mostrar rescisão pendente mesmo com tudo já assinado.
+  const contagemRescisaoPendentes = contagemRescisao.ENVIADO + contagemRescisao.VISUALIZADO;
 
   // Upload avulso
   const [mostrarUpload, setMostrarUpload] = useState(false);
@@ -344,7 +349,7 @@ export default function AssinaturasPage() {
             💰 Holerites
           </button>
           <button onClick={() => setAba('RESCISAO')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${aba === 'RESCISAO' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:bg-gray-50'}`}>
-            📤 Rescisão {contagemRescisao.total > 0 && <span className="ml-1 bg-red-500 text-white rounded-full px-1.5 py-0.5 text-[9px]">{contagemRescisao.total}</span>}
+            📤 Rescisão {contagemRescisaoPendentes > 0 && <span className="ml-1 bg-red-500 text-white rounded-full px-1.5 py-0.5 text-[9px]">{contagemRescisaoPendentes}</span>}
           </button>
         </div>
 

@@ -176,7 +176,10 @@ export async function salvarBonusDescontosAction(payload: {
         descricao: d.descricao || 'DESCONTO', tipo: d.tipo,
         parcelas: d.tipo === 'FIXO' ? 1 : (Number(d.parcelas) || 1),
         mes_inicio: d.mes_inicio,
-        mes_fim: d.tipo === 'FIXO' ? '2099-12' : d.mes_fim,
+        // Um desconto FIXO só ganha mes_fim quando é "encerrado" pela tela de
+        // Holerite (fica com uma data real em vez de '2099-12', o padrão de
+        // "sem fim definido") — sem isso, o mês encerrado se perde ao salvar.
+        mes_fim: d.tipo === 'FIXO' ? (d.mes_fim || '2099-12') : d.mes_fim,
         valor_parcela: Number(d.valor_parcela) || 0
       }));
       const { error: insDesc } = await db.from('folha_descontos').insert(limpaDescontos);
@@ -190,7 +193,8 @@ export async function salvarBonusDescontosAction(payload: {
       const limpaBonus = bonus.map((b: any) => ({
         funcionario_nome: funcionarioNome,
         descricao: b.descricao || 'PRÊMIO', recorrencia: b.recorrencia,
-        mes_referencia: b.mes_referencia, valor: Number(b.valor) || 0
+        mes_referencia: b.mes_referencia, valor: Number(b.valor) || 0,
+        mes_fim: b.recorrencia === 'MENSAL' ? (b.mes_fim || null) : null
       }));
       const { error: insBonus } = await db.from('folha_bonus').insert(limpaBonus);
       if (insBonus) throw new Error(`Falha ao gravar bônus: ${insBonus.message}`);

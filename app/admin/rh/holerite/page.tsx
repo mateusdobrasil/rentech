@@ -182,7 +182,7 @@ interface FuncionarioFin {
 }
 
 interface Desconto { id?: string; funcionario_nome?: string; descricao: string; tipo: 'FIXO' | 'PARCELADO'; parcelas: number; mes_inicio: string; mes_fim: string; valor_parcela: number; }
-interface Bonus { id?: string; funcionario_nome?: string; descricao: string; recorrencia: 'MENSAL' | 'UNICO'; mes_referencia: string; valor: number; }
+interface Bonus { id?: string; funcionario_nome?: string; descricao: string; recorrencia: 'MENSAL' | 'UNICO'; mes_referencia: string; valor: number; mes_fim?: string | null; }
 
 interface DadosHolerite {
   minutosExtras60: number; minutosExtras100: number; diasTrabalhadosFds: number;
@@ -393,11 +393,11 @@ const montarDadosHolerite = (
 
   const descontosAtivos = descontosFunc.filter(d => {
     if (mesRef < d.mes_inicio) return false;
-    if (d.tipo === 'FIXO') return true;
+    if (d.tipo === 'FIXO') return !d.mes_fim || d.mes_fim === '2099-12' || mesRef <= d.mes_fim;
     const fimReal = (d.mes_inicio && d.parcelas > 0) ? calcularMesFim(d.mes_inicio, d.parcelas) : d.mes_fim;
     return mesRef <= fimReal;
   });
-  const bonusAtivos = bonusFunc.filter(b => b.recorrencia === 'MENSAL' || b.mes_referencia === mesRef);
+  const bonusAtivos = bonusFunc.filter(b => b.recorrencia === 'MENSAL' ? (!b.mes_fim || mesRef <= b.mes_fim) : b.mes_referencia === mesRef);
 
   const totalBonusGrid = bonusAtivos.reduce((acc, curr) => acc + curr.valor, 0);
   const totalDescontosGrid = descontosAtivos.reduce((acc, curr) => acc + curr.valor_parcela, 0);
@@ -722,6 +722,8 @@ export default function HoleritePage() {
   const [snapshotBonusDesc, setSnapshotBonusDesc] = useState('');
   const [mostrarQuitados, setMostrarQuitados] = useState(false);
   const [mostrarBonusEncerrados, setMostrarBonusEncerrados] = useState(false);
+  const [alvoEncerramento, setAlvoEncerramento] = useState<{ tipo: 'desconto' | 'bonus'; idx: number } | null>(null);
+  const [mesEncerramento, setMesEncerramento] = useState('');
 
   const fichaAtualSerializada = useMemo(
     () => JSON.stringify({ descontosSelecionado, bonusSelecionado, dadosSalariais: extrairDadosSalariais(formSelecionado) }),
@@ -954,6 +956,33 @@ export default function HoleritePage() {
   const removeDesconto = (idx: number) => setDescontosSelecionado(descontosSelecionado.filter((_, i) => i !== idx));
   const removeBonus = (idx: number) => setBonusSelecionado(bonusSelecionado.filter((_, i) => i !== idx));
 
+  const abrirEncerramento = (tipo: 'desconto' | 'bonus', idx: number) => {
+    setAlvoEncerramento({ tipo, idx });
+    setMesEncerramento(mesReferencia);
+  };
+  const cancelarEncerramento = () => { setAlvoEncerramento(null); setMesEncerramento(''); };
+  const confirmarEncerramento = () => {
+    if (!alvoEncerramento || !mesEncerramento) return;
+    if (alvoEncerramento.tipo === 'desconto') {
+      const d = descontosSelecionado[alvoEncerramento.idx];
+      if (d && mesEncerramento < d.mes_inicio) { toast('O mês de encerramento não pode ser antes da competência inicial.', 'error'); return; }
+      handleDescontoChange(alvoEncerramento.idx, 'mes_fim', mesEncerramento);
+    } else {
+      const novosBonus = [...bonusSelecionado];
+      novosBonus[alvoEncerramento.idx] = { ...novosBonus[alvoEncerramento.idx], mes_fim: mesEncerramento };
+      setBonusSelecionado(novosBonus);
+    }
+    cancelarEncerramento();
+  };
+  const reabrirEncerramento = (tipo: 'desconto' | 'bonus', idx: number) => {
+    if (tipo === 'desconto') handleDescontoChange(idx, 'mes_fim', '2099-12');
+    else {
+      const novosBonus = [...bonusSelecionado];
+      novosBonus[idx] = { ...novosBonus[idx], mes_fim: null };
+      setBonusSelecionado(novosBonus);
+    }
+  };
+
   const handleDescontoChange = <K extends keyof Desconto>(idx: number, campo: K, valor: Desconto[K]) => {
     const novosDescontos = [...descontosSelecionado];
     novosDescontos[idx] = { ...novosDescontos[idx], [campo]: valor };
@@ -1005,6 +1034,8 @@ export default function HoleritePage() {
     if (d.tipo === 'PARCELADO' && d.mes_inicio && d.parcelas > 0) {
       const fimReal = calcularMesFim(d.mes_inicio, d.parcelas);
       quitado = mesReferencia > fimReal;
+    } else if (d.tipo === 'FIXO' && d.mes_fim && d.mes_fim !== '2099-12') {
+      quitado = mesReferencia > d.mes_fim;
     }
     return { d, idx, quitado };
   }), [descontosSelecionado, mesReferencia]);
@@ -1012,7 +1043,8 @@ export default function HoleritePage() {
 
   const bonusComIndice = useMemo(() => bonusSelecionado.map((b, idx) => ({
     b, idx,
-    encerrado: b.recorrencia === 'UNICO' && !!b.mes_referencia && mesReferencia > b.mes_referencia
+    encerrado: (b.recorrencia === 'UNICO' && !!b.mes_referencia && mesReferencia > b.mes_referencia)
+      || (b.recorrencia === 'MENSAL' && !!b.mes_fim && mesReferencia > b.mes_fim)
   })), [bonusSelecionado, mesReferencia]);
   const qtdBonusEncerrados = useMemo(() => bonusComIndice.filter(x => x.encerrado).length, [bonusComIndice]);
 
@@ -1566,6 +1598,33 @@ export default function HoleritePage() {
                           <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Valor R$</label><InputMoeda value={b.valor} disabled={encerrado} onChange={v => { const n = [...bonusSelecionado]; n[idx].valor = v; setBonusSelecionado(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs text-[#16A34A] font-bold disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" /></div>
                           <div><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Recorrência</label><select value={b.recorrencia} disabled={encerrado} onChange={e => { const n = [...bonusSelecionado]; n[idx].recorrencia = e.target.value as 'MENSAL'|'UNICO'; setBonusSelecionado(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed"><option value="UNICO">Única Vez</option><option value="MENSAL">Fixo (Mensal)</option></select></div>
                           {b.recorrencia === 'UNICO' && <div className="col-span-2"><label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Competência do Bônus</label><input type="month" value={b.mes_referencia} disabled={encerrado} onChange={e => { const n = [...bonusSelecionado]; n[idx].mes_referencia = e.target.value; setBonusSelecionado(n); }} className="w-full p-1.5 border border-gray-200 rounded text-xs disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed" />{b.mes_referencia && <p className="text-[9px] font-bold text-emerald-600 mt-0.5 uppercase">💵 Sai no pagamento de {competenciaParaPagamento(b.mes_referencia)}</p>}</div>}
+                          {b.recorrencia === 'MENSAL' && (
+                            encerrado ? (
+                              <div className="col-span-2 bg-gray-200 border border-gray-300 rounded-lg px-2 py-1.5">
+                                <span className="text-[9px] font-black text-gray-600 uppercase">🔒 Pago até {formatarMesAnoBR(b.mes_fim || '')} — última vez em {competenciaParaPagamento(b.mes_fim || '')}</span>
+                              </div>
+                            ) : (
+                              <div className="col-span-2">
+                                {alvoEncerramento?.tipo === 'bonus' && alvoEncerramento.idx === idx ? (
+                                  <div className="flex items-end gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                                    <div className="flex-grow">
+                                      <label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Encerrar após a competência</label>
+                                      <input type="month" value={mesEncerramento} min={b.mes_referencia || undefined} onChange={e => setMesEncerramento(e.target.value)} className="w-full p-1.5 border border-gray-200 rounded text-xs" />
+                                    </div>
+                                    <button onClick={confirmarEncerramento} className="text-[10px] bg-amber-600 hover:bg-amber-700 text-white font-black px-2.5 py-1.5 rounded uppercase">Confirmar</button>
+                                    <button onClick={cancelarEncerramento} className="text-[10px] bg-gray-200 hover:bg-gray-300 text-gray-700 font-black px-2.5 py-1.5 rounded uppercase">Cancelar</button>
+                                  </div>
+                                ) : b.mes_fim ? (
+                                  <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+                                    <span className="text-[9px] font-black text-amber-700 uppercase">⏳ Encerra após {formatarMesAnoBR(b.mes_fim)}</span>
+                                    <button onClick={() => reabrirEncerramento('bonus', idx)} className="text-[9px] font-black text-amber-700 underline uppercase">↺ Reabrir</button>
+                                  </div>
+                                ) : (
+                                  <button onClick={() => abrirEncerramento('bonus', idx)} className="text-[10px] bg-amber-100 hover:bg-amber-200 text-amber-700 font-black px-3 py-1.5 rounded uppercase tracking-wider w-full">⏹ Encerrar</button>
+                                )}
+                              </div>
+                            )
+                          )}
                         </div>
                       ))}
 
@@ -1632,6 +1691,34 @@ export default function HoleritePage() {
                               </p>
                               {quitado && <p className="text-[9px] font-bold text-gray-500 uppercase mt-0.5">Encerrada, bloqueada para edição</p>}
                             </div>
+                          )}
+
+                          {d.tipo === 'FIXO' && (
+                            quitado ? (
+                              <div className="col-span-2 bg-gray-200 border border-gray-300 rounded-lg px-2 py-1.5">
+                                <span className="text-[9px] font-black text-gray-600 uppercase">🔒 Descontado até {formatarMesAnoBR(d.mes_fim)} — última parcela paga em {competenciaParaPagamento(d.mes_fim)}</span>
+                              </div>
+                            ) : (
+                              <div className="col-span-2">
+                                {alvoEncerramento?.tipo === 'desconto' && alvoEncerramento.idx === idx ? (
+                                  <div className="flex items-end gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                                    <div className="flex-grow">
+                                      <label className="text-[9px] font-bold uppercase text-gray-500 block mb-0.5">Encerrar após a competência</label>
+                                      <input type="month" value={mesEncerramento} min={d.mes_inicio || undefined} onChange={e => setMesEncerramento(e.target.value)} className="w-full p-1.5 border border-gray-200 rounded text-xs" />
+                                    </div>
+                                    <button onClick={confirmarEncerramento} className="text-[10px] bg-amber-600 hover:bg-amber-700 text-white font-black px-2.5 py-1.5 rounded uppercase">Confirmar</button>
+                                    <button onClick={cancelarEncerramento} className="text-[10px] bg-gray-200 hover:bg-gray-300 text-gray-700 font-black px-2.5 py-1.5 rounded uppercase">Cancelar</button>
+                                  </div>
+                                ) : d.mes_fim && d.mes_fim !== '2099-12' ? (
+                                  <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+                                    <span className="text-[9px] font-black text-amber-700 uppercase">⏳ Encerra após {formatarMesAnoBR(d.mes_fim)}</span>
+                                    <button onClick={() => reabrirEncerramento('desconto', idx)} className="text-[9px] font-black text-amber-700 underline uppercase">↺ Reabrir</button>
+                                  </div>
+                                ) : (
+                                  <button onClick={() => abrirEncerramento('desconto', idx)} className="text-[10px] bg-amber-100 hover:bg-amber-200 text-amber-700 font-black px-3 py-1.5 rounded uppercase tracking-wider w-full">⏹ Encerrar</button>
+                                )}
+                              </div>
+                            )
                           )}
                         </div>
                         );

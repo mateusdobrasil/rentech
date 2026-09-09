@@ -69,7 +69,7 @@ interface FuncionarioFin {
   empresa_id?: number | null;
 }
 interface Desconto { funcionario_nome?: string; descricao: string; tipo: 'FIXO' | 'PARCELADO'; parcelas: number; mes_inicio: string; mes_fim: string; valor_parcela: number; }
-interface Bonus { funcionario_nome?: string; descricao: string; recorrencia: 'MENSAL' | 'UNICO'; mes_referencia: string; valor: number; }
+interface Bonus { funcionario_nome?: string; descricao: string; recorrencia: 'MENSAL' | 'UNICO'; mes_referencia: string; valor: number; mes_fim?: string | null; }
 
 interface LinhaRelatorio {
   nome: string; cargo: string; tipoContrato: string;
@@ -172,8 +172,10 @@ const calcularFinanceiro = (
   const salarioBaseExibido = regra.paga_salario_base ? func.salario_folha : 0;
   const complemento = regra.paga_salario_base ? Math.max(0, func.salario_contrato - func.salario_folha) : 0;
 
-  const descAtivos = descontosFunc.filter(d => d.tipo === 'FIXO' ? mesRef >= d.mes_inicio : (mesRef >= d.mes_inicio && mesRef <= d.mes_fim));
-  const bonusAtivos = bonusFunc.filter(b => b.recorrencia === 'MENSAL' || b.mes_referencia === mesRef);
+  const descAtivos = descontosFunc.filter(d => d.tipo === 'FIXO'
+    ? (mesRef >= d.mes_inicio && (!d.mes_fim || d.mes_fim === '2099-12' || mesRef <= d.mes_fim))
+    : (mesRef >= d.mes_inicio && mesRef <= d.mes_fim));
+  const bonusAtivos = bonusFunc.filter(b => b.recorrencia === 'MENSAL' ? (!b.mes_fim || mesRef <= b.mes_fim) : b.mes_referencia === mesRef);
   const totalBonus = bonusAtivos.reduce((s, b) => s + b.valor, 0);
   const totalDesc = descAtivos.reduce((s, d) => s + d.valor_parcela, 0);
 

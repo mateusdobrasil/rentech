@@ -37,6 +37,10 @@ interface FuncionarioBusca {
   pix_chave: string | null;
   pix_tipo: string | null;
   endereco: string | null;
+  banco_codigo: string | null;
+  banco_agencia: string | null;
+  banco_conta: string | null;
+  banco_tipo: string | null;
 }
 
 export default function NovaOrdemPagamento() {
@@ -85,6 +89,13 @@ export default function NovaOrdemPagamento() {
   const [tipoPagamento, setTipoPagamento] = useState('PIX');
   const [chavePix, setChavePix] = useState('CELULAR');
   const [dadosPagamento, setDadosPagamento] = useState('');
+  // Só usados quando tipoPagamento === 'TRANSFERÊNCIA' — dados estruturados
+  // (mesmo formato de folha_funcionarios) pra a OP entrar no lote automático
+  // do Financeiro RH junto com PIX, em vez de cair só como texto livre.
+  const [bancoTipo, setBancoTipo] = useState('CORRENTE');
+  const [bancoCodigo, setBancoCodigo] = useState('');
+  const [bancoAgencia, setBancoAgencia] = useState('');
+  const [bancoConta, setBancoConta] = useState('');
   const [dataVencimento, setDataVencimento] = useState('');
   const [obs, setObs] = useState('');
   
@@ -330,7 +341,7 @@ export default function NovaOrdemPagamento() {
     // Rentech numa OP marcada como AlfaLight (ou vice-versa).
     const { data, error } = await supabase
       .from('folha_funcionarios')
-      .select('id, nome_completo, cpf, celular, pix_chave, pix_tipo, endereco')
+      .select('id, nome_completo, cpf, celular, pix_chave, pix_tipo, endereco, banco_codigo, banco_agencia, banco_conta, banco_tipo')
       .eq('ativo', true)
       .eq('empresa_id', empresaId)
       .order('nome_completo', { ascending: true });
@@ -348,16 +359,33 @@ export default function NovaOrdemPagamento() {
     // Funcionário é sempre pessoa física — o CPF acima já serve como
     // signatário; não precisa preencher o campo separado.
     aplicarMascaraCelularSignatario(func.celular || '');
-    setTipoPagamento('PIX');
 
-    let tipoMapeado = 'CELULAR';
-    const tipoFunc = (func.pix_tipo || '').toUpperCase();
-    if (tipoFunc.includes('CPF') || tipoFunc.includes('CNPJ')) tipoMapeado = 'CPF/CNPJ';
-    if (tipoFunc.includes('EMAIL') || tipoFunc.includes('E-MAIL')) tipoMapeado = 'EMAIL';
-    if (tipoFunc.includes('ALEAT')) tipoMapeado = 'ALEATÓRIO';
+    const temContaBancaria = !!(func.banco_codigo && func.banco_agencia && func.banco_conta);
 
-    setChavePix(tipoMapeado);
-    setDadosPagamento(func.pix_chave || '');
+    if (func.pix_chave) {
+      setTipoPagamento('PIX');
+      let tipoMapeado = 'CELULAR';
+      const tipoFunc = (func.pix_tipo || '').toUpperCase();
+      if (tipoFunc.includes('CPF') || tipoFunc.includes('CNPJ')) tipoMapeado = 'CPF/CNPJ';
+      if (tipoFunc.includes('EMAIL') || tipoFunc.includes('E-MAIL')) tipoMapeado = 'EMAIL';
+      if (tipoFunc.includes('ALEAT')) tipoMapeado = 'ALEATÓRIO';
+      setChavePix(tipoMapeado);
+      setDadosPagamento(func.pix_chave);
+    } else if (temContaBancaria) {
+      // Sem Pix cadastrado na ficha, mas com agência/conta — puxa direto pra
+      // TRANSFERÊNCIA, já nos campos estruturados (em vez de deixar em branco
+      // pro usuário redigitar à mão).
+      setTipoPagamento('TRANSFERÊNCIA');
+      setBancoTipo(func.banco_tipo || 'CORRENTE');
+      setBancoCodigo(func.banco_codigo || '');
+      setBancoAgencia(func.banco_agencia || '');
+      setBancoConta(func.banco_conta || '');
+      setDadosPagamento('');
+    } else {
+      setTipoPagamento('PIX');
+      setChavePix('CELULAR');
+      setDadosPagamento('');
+    }
     setModalFuncionarioAberto(false);
   };
 
@@ -407,6 +435,11 @@ export default function NovaOrdemPagamento() {
       setLoading(false);
       return;
     }
+    if (tipoPagamento === 'TRANSFERÊNCIA' && !(bancoCodigo.trim() && bancoAgencia.trim() && bancoConta.trim())) {
+      setModal({ open: true, success: false, title: 'Atenção', msg: 'Informe banco, agência e conta do favorecido — obrigatório para o Financeiro conseguir incluir esta OP no lote de pagamento.' });
+      setLoading(false);
+      return;
+    }
 
     const urlsAnexos: string[] = [];
 
@@ -446,7 +479,17 @@ export default function NovaOrdemPagamento() {
       telefone_recebedora: celularSignatario,
       tipo_pagamento: tipoPagamento,
       chave_pix: tipoPagamento === 'PIX' ? chavePix : '',
-      dados_pagamento: dadosPagamento, 
+      // Pra TRANSFERÊNCIA, dados_pagamento vira só um resumo legível (usado
+      // nas telas que ainda exibem texto livre — e-mail, detalhe da OP); o
+      // que o Financeiro RH de fato lê pra montar o lote são os 4 campos
+      // estruturados abaixo (banco_codigo/agencia/conta/tipo).
+      dados_pagamento: tipoPagamento === 'TRANSFERÊNCIA'
+        ? `AG ${bancoAgencia} / CC ${bancoConta} / BANCO ${bancoCodigo}`
+        : dadosPagamento,
+      banco_codigo: tipoPagamento === 'TRANSFERÊNCIA' ? bancoCodigo : null,
+      banco_agencia: tipoPagamento === 'TRANSFERÊNCIA' ? bancoAgencia : null,
+      banco_conta: tipoPagamento === 'TRANSFERÊNCIA' ? bancoConta : null,
+      banco_tipo: tipoPagamento === 'TRANSFERÊNCIA' ? bancoTipo : null,
       data_vencimento: dataVencimento,
       observacao: obs.toUpperCase(),
       itens: itensValidos,
@@ -784,7 +827,31 @@ export default function NovaOrdemPagamento() {
               </div>
             </div>
 
-            <input type="text" placeholder="DIGITE A CHAVE PIX, CÓDIGO DE BARRAS OU AGÊNCIA/CONTA" className="w-full p-3 bg-white border border-[#BAE6FD] rounded-lg text-sm text-[#0A2A4A] font-bold outline-none focus:ring-2 focus:ring-[#00A8E8]" value={dadosPagamento} onChange={(e) => setDadosPagamento(e.target.value)} />
+            {tipoPagamento === 'TRANSFERÊNCIA' ? (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-[#0369A1] uppercase tracking-wider mb-1">Tipo de Conta</label>
+                  <select className="w-full p-2.5 bg-white border border-[#BAE6FD] rounded-lg text-sm text-[#0A2A4A] font-bold outline-none focus:ring-2 focus:ring-[#00A8E8]" value={bancoTipo} onChange={(e) => setBancoTipo(e.target.value)}>
+                    <option value="CORRENTE">Corrente</option>
+                    <option value="POUPANCA">Poupança</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-[#0369A1] uppercase tracking-wider mb-1">Banco (código)</label>
+                  <input type="text" placeholder="341" className="w-full p-2.5 bg-white border border-[#BAE6FD] rounded-lg text-sm text-[#0A2A4A] font-bold outline-none focus:ring-2 focus:ring-[#00A8E8]" value={bancoCodigo} onChange={(e) => setBancoCodigo(e.target.value)} />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-[#0369A1] uppercase tracking-wider mb-1">Agência</label>
+                  <input type="text" placeholder="0000" className="w-full p-2.5 bg-white border border-[#BAE6FD] rounded-lg text-sm text-[#0A2A4A] font-bold outline-none focus:ring-2 focus:ring-[#00A8E8]" value={bancoAgencia} onChange={(e) => setBancoAgencia(e.target.value)} />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-[#0369A1] uppercase tracking-wider mb-1">Conta</label>
+                  <input type="text" placeholder="00000-0" className="w-full p-2.5 bg-white border border-[#BAE6FD] rounded-lg text-sm text-[#0A2A4A] font-bold outline-none focus:ring-2 focus:ring-[#00A8E8]" value={bancoConta} onChange={(e) => setBancoConta(e.target.value)} />
+                </div>
+              </div>
+            ) : (
+              <input type="text" placeholder="DIGITE A CHAVE PIX, CÓDIGO DE BARRAS OU AGÊNCIA/CONTA" className="w-full p-3 bg-white border border-[#BAE6FD] rounded-lg text-sm text-[#0A2A4A] font-bold outline-none focus:ring-2 focus:ring-[#00A8E8]" value={dadosPagamento} onChange={(e) => setDadosPagamento(e.target.value)} />
+            )}
           </section>
 
           {/* Sessão 5: Itens da OP */}

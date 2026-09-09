@@ -143,10 +143,10 @@ export async function montarLoteSalariosAction(payload: {
     // sucesso pela API num lote anterior (ver enviarLoteAoBancoAction) —
     // mesmo sem status='PAGO' ainda (isso exige confirmação humana), não
     // pode reaparecer aqui e ser enviado de novo, senão paga em dobro.
-    let opsPendentes: { id: string; numero_op: number; empresa_id: number | null; empresa_recebedora: string; cnpj_cpf_recebedora: string; tipo_pagamento: string; chave_pix: string; dados_pagamento: string; total_geral: number; data_vencimento: string | null }[] = [];
+    let opsPendentes: { id: string; numero_op: number; empresa_id: number | null; empresa_recebedora: string; cnpj_cpf_recebedora: string; tipo_pagamento: string; chave_pix: string; dados_pagamento: string; total_geral: number; data_vencimento: string | null; banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null }[] = [];
     if (fontes.includes('OP')) {
       const { data: ops } = await db.from('op_ordens_pagamento')
-        .select('id, numero_op, empresa_id, empresa_recebedora, cnpj_cpf_recebedora, tipo_pagamento, chave_pix, dados_pagamento, total_geral, data_vencimento')
+        .select('id, numero_op, empresa_id, empresa_recebedora, cnpj_cpf_recebedora, tipo_pagamento, chave_pix, dados_pagamento, total_geral, data_vencimento, banco_codigo, banco_agencia, banco_conta, banco_tipo')
         .eq('status', 'PENDENTE').is('pago_em', null);
       opsPendentes = ops || [];
     }
@@ -296,7 +296,12 @@ export async function montarLoteSalariosAction(payload: {
     // ItemLote de funcionário, onde pix_chave é o valor.
     opsPendentes.forEach(op => {
       const ehPix = String(op.tipo_pagamento || '').toUpperCase() === 'PIX' && !!String(op.dados_pagamento || '').trim();
-      const metodo = ehPix ? 'PIX' : 'SEM_DADOS';
+      // TRANSFERÊNCIA com banco/agência/conta preenchidos (ver /admin/op/nova)
+      // entra no lote pela mesma via de funcionário com TED (banco_codigo +
+      // banco_agencia + banco_conta) — enviarLoteAoBancoAction e a exportação
+      // CNAB já sabem lidar com isso, sem precisar saber que veio de uma OP.
+      const ehTed = !ehPix && !!(op.banco_codigo && op.banco_agencia && op.banco_conta);
+      const metodo = ehPix ? 'PIX' : ehTed ? 'TED' : 'SEM_DADOS';
       const valor = Number(op.total_geral || 0);
       itens.push({
         funcionario_nome: op.empresa_recebedora ? `${op.empresa_recebedora} — OP #${op.numero_op}` : `OP #${op.numero_op}`,
@@ -316,12 +321,16 @@ export async function montarLoteSalariosAction(payload: {
         // a digitada na tela de montagem do lote — ver enviarLoteAoBancoAction
         // e a exportação CNAB no front, que preferem este campo quando presente.
         dataPagamento: op.data_vencimento || null,
-        banco_codigo: null, banco_agencia: null, banco_conta: null, banco_tipo: null,
-        // Só usado pra exibição quando não dá pra pagar via Pix (BOLETO,
-        // TRANSFERÊNCIA ou DINHEIRO) — mostra ao usuário o que foi digitado
-        // na OP em vez do aviso genérico de "sem dados bancários".
-        nota: !ehPix ? [op.tipo_pagamento, op.dados_pagamento].filter(Boolean).join(': ') : null,
-        pronto: ehPix && valor > 0
+        banco_codigo: ehTed ? op.banco_codigo : null,
+        banco_agencia: ehTed ? op.banco_agencia : null,
+        banco_conta: ehTed ? op.banco_conta : null,
+        banco_tipo: ehTed ? op.banco_tipo : null,
+        // Só usado pra exibição quando não dá pra pagar automaticamente
+        // (BOLETO, DINHEIRO, ou TRANSFERÊNCIA sem conta cadastrada) — mostra
+        // ao usuário o que foi digitado na OP em vez do aviso genérico de
+        // "sem dados bancários".
+        nota: (!ehPix && !ehTed) ? [op.tipo_pagamento, op.dados_pagamento].filter(Boolean).join(': ') : null,
+        pronto: (ehPix || ehTed) && valor > 0
       });
     });
 

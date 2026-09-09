@@ -47,6 +47,14 @@ export interface NovaOPData {
   tipo_pagamento: string;
   chave_pix: string;
   dados_pagamento: string;
+  // Só preenchidos quando tipo_pagamento = TRANSFERÊNCIA — mesmas 4 colunas
+  // de folha_funcionarios, pra a OP entrar no lote automático do Financeiro
+  // RH pela mesma lógica que já existe pra funcionário (ver
+  // montarLoteSalariosAction em app/admin/rh/actions/actions-financeiro.ts).
+  banco_codigo?: string | null;
+  banco_agencia?: string | null;
+  banco_conta?: string | null;
+  banco_tipo?: string | null;
   itens: ItemOPNormalizado[];
   total_geral: number;
   data_vencimento: string; // YYYY-MM-DD

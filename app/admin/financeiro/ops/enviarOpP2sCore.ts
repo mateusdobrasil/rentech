@@ -23,6 +23,7 @@ export interface OPParaEnvioP2s {
   cnpj_cpf_recebedora: string | null;
   total_geral: number;
   data_vencimento: string;
+  observacao: string | null;
 }
 
 export interface ResultadoEnvioP2s {
@@ -150,7 +151,7 @@ export async function criarContaPagarParaOP(op: OPParaEnvioP2s, nomeResponsavel:
     Descricao: `OP: ${op.numero_op} - ${op.empresa_recebedora}`,
     Valor: Number(op.total_geral) || 0,
     DataVencimentoNominal: dataParaP2s(new Date(`${op.data_vencimento}T00:00:00Z`)),
-    Observacoes: `Lançada via sistema Rentech por ${nomeResponsavel} | Natureza: ${op.natureza_pagamento || '—'} | OS: ${op.os_numero || 'S/N'} | Cliente: ${op.os_cliente || '—'} | Evento: ${op.os_evento || '—'}`,
+    Observacoes: `Lançada via sistema Rentech por ${nomeResponsavel} | Natureza: ${op.natureza_pagamento || '—'} | OS: ${op.os_numero || 'S/N'} | Cliente: ${op.os_cliente || '—'} | Evento: ${op.os_evento || '—'}${op.observacao ? ` | Obs: ${op.observacao}` : ''}`,
     Centro: CENTRO_RENTECH_OID,
   };
   if (entidade) campos.Entidade = entidade.oid;

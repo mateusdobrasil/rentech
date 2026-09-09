@@ -159,7 +159,7 @@ export async function enviarOpParaPrimeStartAction(opId: string, accessToken: st
     const db = supabaseAdmin();
     const { data: op, error: erroOp } = await db
       .from('op_ordens_pagamento')
-      .select('id, numero_op, os_numero, os_cliente, os_evento, natureza_pagamento, empresa_recebedora, cnpj_cpf_recebedora, total_geral, data_vencimento, p2s_conta_pagar_oid')
+      .select('id, numero_op, os_numero, os_cliente, os_evento, natureza_pagamento, empresa_recebedora, cnpj_cpf_recebedora, total_geral, data_vencimento, observacao, p2s_conta_pagar_oid')
       .eq('id', opId)
       .single();
     if (erroOp) throw new Error(erroOp.message);

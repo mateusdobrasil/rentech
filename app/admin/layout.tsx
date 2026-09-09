@@ -5,6 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import { supabase } from '../lib/supabase';
 import ExigirMFA from './ExigirMFA';
 import { NotificationProvider } from '../components/ui/NotificationProvider';
+import VersaoSistema from '../components/ui/VersaoSistema';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -116,6 +117,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   return (
     <NotificationProvider>
       <ExigirMFA ativo={requerMfa}>{children}</ExigirMFA>
+      <VersaoSistema />
     </NotificationProvider>
   );
 }

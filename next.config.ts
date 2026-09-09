@@ -1,6 +1,24 @@
 import type { NextConfig } from "next";
+import { execSync } from "node:child_process";
+
+// Versão do build, pra suporte conseguir saber se o navegador do usuário está
+// com a última versão do sistema aberta (ver VersaoSistema.tsx) — usa o SHA
+// curto do commit. Na Vercel, VERCEL_GIT_COMMIT_SHA já vem pronto; local
+// (build ou dev) cai pro git direto.
+function resolverVersaoBuild(): string {
+  if (process.env.VERCEL_GIT_COMMIT_SHA) return process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 7);
+  try {
+    return execSync('git rev-parse --short HEAD').toString().trim();
+  } catch {
+    return 'dev';
+  }
+}
 
 const nextConfig: NextConfig = {
+  env: {
+    NEXT_PUBLIC_APP_VERSION: resolverVersaoBuild(),
+    NEXT_PUBLIC_APP_BUILT_AT: new Date().toISOString(),
+  },
   experimental: {
     serverActions: {
       bodySizeLimit: '100mb'

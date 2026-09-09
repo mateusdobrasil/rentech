@@ -9,24 +9,29 @@ export const metadata = {
 // Esconde a Navbar da Rentech antes da primeira pintura, sem servidor
 // precisar saber o host/origem (isso manteria o site inteiro em SSR
 // dinâmico). Script roda antes da hidratação, então não há flash da Navbar
-// aparecendo e sumindo. Três casos, mesma classe:
-// 1. Acesso white-label pelo subdomínio da AlfaLight (portal.alfalight.com.br) —
-//    hoje cobre /login e /freelance, as páginas públicas que a AlfaLight usa
-//    com o próprio domínio; qualquer outra rota pública que ganhe o mesmo
-//    tratamento branco entra nessa mesma lista.
-// 2. Home (/) no domínio da AlfaLight — troca a Navbar da Rentech pelo
-//    Header_alfalight (ver app/page.tsx e a classe white-label-alfalight-home
-//    logo abaixo, mesmo mecanismo de classe pré-pintura).
+// aparecendo e sumindo. Dois casos, mesma classe:
+// 1. Qualquer acesso pelo subdomínio da AlfaLight (portal.alfalight.com.br) —
+//    a Navbar da Rentech nunca aparece nesse domínio, em NENHUMA rota (login,
+//    freelance, portal do funcionário, admin etc.) — decisão do usuário
+//    2026-09-09: era só a home antes, mas o vazamento em /portal/login (uma
+//    rota fora da lista antiga) mostrou que o certo é banir por domínio
+//    inteiro, não rota por rota. Cada página cuida da própria marca sozinha
+//    (ex.: /login já troca o logo via isAlfaLight); só a home (/) ganha um
+//    header de verdade no lugar (Header_alfalight — ver item 2).
+// 2. Home (/) no domínio da AlfaLight — além de esconder a Navbar (item 1),
+//    também MOSTRA o Header_alfalight no lugar dela (ver app/page.tsx e a
+//    classe white-label-alfalight-home logo abaixo, mesmo mecanismo de
+//    classe pré-pintura). Só faz sentido na home porque os links do header
+//    (#equipamentos, #simulador etc.) são âncoras que só existem nela.
 // 3. WebView do app mobile (mobile/components/WebViewScreen.tsx) — a navegação
 //    já é toda controlada pelo app nativo, então a Navbar do site (que levaria
 //    pra outras páginas fora do que o app abriu de propósito) fica escondida.
 //    A flag é marcada em localStorage por app/mobile-bridge/page.tsx, no
 //    mesmo navegador/origem da WebView, antes de qualquer página do site
 //    carregar.
-const ROTAS_WHITE_LABEL_ALFALIGHT = ['/login', '/freelance', '/'];
 const HIDE_NAVBAR_SCRIPT = `
   try {
-    if (location.hostname === 'portal.alfalight.com.br' && ${JSON.stringify(ROTAS_WHITE_LABEL_ALFALIGHT)}.includes(location.pathname)) {
+    if (location.hostname === 'portal.alfalight.com.br') {
       document.documentElement.classList.add('white-label-hide-navbar');
     }
     if (location.hostname === 'portal.alfalight.com.br' && location.pathname === '/') {

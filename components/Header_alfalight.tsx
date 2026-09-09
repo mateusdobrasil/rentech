@@ -5,15 +5,6 @@ import Image from "next/image";
 import Link from "next/link";
 import { company } from "@/lib/content";
 
-const navLinks = [
-  { href: "#equipamentos", label: "Equipamentos" },
-  { href: "#simulador", label: "Simulador" },
-  { href: "#como-funciona", label: "Como funciona" },
-  { href: "#orcamento", label: "Orçamento" },
-  { href: "#faq", label: "FAQ" },
-  { href: "#contato", label: "Contato" },
-];
-
 const accessLinks = [
   { href: "https://portal.alfalight.com.br/freelance", label: "Freelance" },
   { href: "https://portal.alfalight.com.br/login", label: "Sistema WEB" },
@@ -59,19 +50,7 @@ export default function Header() {
           />
         </Link>
 
-        <nav className="hidden items-center gap-5 text-sm font-medium text-neutral-700 lg:flex xl:gap-7">
-          {navLinks.map((link) => (
-            <a
-              key={link.href}
-              href={link.href}
-              className="transition-colors hover:text-brand-crimson"
-            >
-              {link.label}
-            </a>
-          ))}
-        </nav>
-
-        <div className="flex shrink-0 items-center gap-2">
+         <div className="flex shrink-0 items-center gap-2">
           <div className="relative hidden sm:block" ref={accessMenuRef}>
             <button
               type="button"
@@ -155,16 +134,6 @@ export default function Header() {
           id="mobile-nav"
           className="flex flex-col gap-1 border-t border-black/5 bg-white px-5 py-3 lg:hidden"
         >
-          {navLinks.map((link) => (
-            <a
-              key={link.href}
-              href={link.href}
-              onClick={() => setIsMenuOpen(false)}
-              className="rounded-lg px-3 py-2.5 text-sm font-medium text-neutral-700 transition-colors hover:bg-brand-pink-light hover:text-brand-crimson"
-            >
-              {link.label}
-            </a>
-          ))}
           <a
             href={company.whatsappHref}
             target="_blank"

@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
-import Link from "next/link";
 import { company } from "@/lib/content";
 
 const accessLinks = [
@@ -35,8 +34,8 @@ export default function Header() {
   return (
     <header className="sticky top-0 z-50 border-b border-black/5 bg-white/90 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3">
-        <Link
-          href="#"
+        <a
+          href="https://www.alfalight.com.br/"
           className="flex items-center gap-2"
           onClick={() => setIsMenuOpen(false)}
         >
@@ -48,7 +47,7 @@ export default function Header() {
             priority
             className="h-10 w-auto sm:h-12"
           />
-        </Link>
+        </a>
 
          <div className="flex shrink-0 items-center gap-2">
           <div className="relative hidden sm:block" ref={accessMenuRef}>

@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Analytics } from "@vercel/analytics/next";
 import VideoCarousel from '@/components/VideoCarousel';
-import HeaderAlfalight from '@/components/Header_alfalight';
 import { enviarOrcamento } from './actions';
 
 // Importação do Supabase
@@ -107,13 +106,6 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-[#000000] text-slate-50 font-sans scroll-smooth">
-      {/* Sempre no DOM (evita mismatch de hidratação) — visibilidade decidida
-          por CSS via a classe white-label-alfalight-home, marcada no <html>
-          antes da pintura pelo script em app/layout.tsx quando o host é
-          portal.alfalight.com.br e a rota é "/". Ver app/globals.css. */}
-      <div data-alfalight-header>
-        <HeaderAlfalight />
-      </div>
       <Analytics/>
 
       {/* Hero Section */}

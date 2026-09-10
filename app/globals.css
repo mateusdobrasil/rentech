@@ -46,14 +46,15 @@ html.white-label-hide-navbar [data-site-content] {
   padding-top: 0;
 }
 
-/* Home (/) no domínio da AlfaLight: troca a Navbar da Rentech (já escondida
-   acima, via white-label-hide-navbar) pelo Header_alfalight — ver app/page.tsx
-   e app/layout.tsx. Fica sempre no DOM (evita mismatch de hidratação) e só a
-   visibilidade muda, decidida antes da pintura pelo mesmo script. */
+/* Nas rotas de acesso do domínio da AlfaLight (ROTAS_COM_HEADER_ALFALIGHT em
+   app/layout.tsx): troca a Navbar da Rentech (já escondida acima, via
+   white-label-hide-navbar) pelo Header_alfalight. Fica sempre no DOM (evita
+   mismatch de hidratação) e só a visibilidade muda, decidida antes da
+   pintura pelo mesmo script. */
 [data-alfalight-header] {
   display: none;
 }
 
-html.white-label-alfalight-home [data-alfalight-header] {
+html.white-label-alfalight-header [data-alfalight-header] {
   display: block;
 }

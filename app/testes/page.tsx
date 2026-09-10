@@ -18,6 +18,20 @@ export default function Testes() {
         {/* Grid de Testes */}
         <main className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full flex-grow">
 
+          {/* Card 0 — Call Time */}
+          <Link href="/testes/montagem" className="group flex flex-col bg-[#0C1D4D]/20 border border-[#284B8C]/30 rounded-2xl p-8 backdrop-blur-md hover:-translate-y-2 hover:border-[#336699] hover:shadow-[0_15px_35px_rgba(0,0,0,0.5),_0_0_15px_rgba(51,102,153,0.2)] transition-all duration-300 relative overflow-hidden md:col-span-2">
+            <div className="text-[10px] md:text-xs font-black uppercase text-[#336699] mb-3 tracking-widest">
+              Touchscreen • Jogo • Montagem
+            </div>
+            <h2 className="text-xl md:text-2xl font-black text-white mb-3 tracking-tight">
+              Call Time
+            </h2>
+            <p className="text-sm text-[#999999] mb-6 leading-relaxed flex-grow font-medium">
+              Monte um painel de LED de 6 x 3 m respeitando a ordem da montagem, antes da porta abrir às 19h. Distribua os gabinetes nos circuitos e nas portas do processador sem estourar o limite — errar a ordem não dá erro, dá retrabalho, e retrabalho custa relógio.
+            </p>
+            <div className="h-1 w-10 bg-[#336699] rounded-sm group-hover:w-full transition-all duration-500"></div>
+          </Link>
+
           {/* Card 1 */}
           <Link href="/testes/reflexo" className="group flex flex-col bg-[#0C1D4D]/20 border border-[#284B8C]/30 rounded-2xl p-8 backdrop-blur-md hover:-translate-y-2 hover:border-[#336699] hover:shadow-[0_15px_35px_rgba(0,0,0,0.5),_0_0_15px_rgba(51,102,153,0.2)] transition-all duration-300 relative overflow-hidden">
             <div className="text-[10px] md:text-xs font-black uppercase text-[#336699] mb-3 tracking-widest">

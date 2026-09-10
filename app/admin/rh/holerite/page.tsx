@@ -1445,7 +1445,7 @@ export default function HoleritePage() {
           {/* LISTAGEM LATERAL */}
           <aside className="w-full lg:w-80 flex-shrink-0 space-y-4">
             <div className="bg-[#0C1D4D] p-5 rounded-2xl shadow-md text-white">
-              <h2 className="font-black uppercase tracking-wider mb-4">Equipe</h2>
+              <h2 className="font-black uppercase tracking-wider mb-4">Colaboradores</h2>
               <input
                 type="text" placeholder="Buscar nome..." value={buscaGrid} onChange={e => setBuscaGrid(e.target.value)}
                 className="w-full p-2.5 rounded-lg text-sm text-white bg-[#1E3A6E] outline-none font-bold placeholder:text-blue-200"

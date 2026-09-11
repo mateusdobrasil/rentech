@@ -21,8 +21,8 @@ import {
   COLUNAS_MAX,
   LINHAS_MAX,
   MODULO_M,
-  celulaAtiva,
   colunaDe,
+  extensaoMontada,
   linhaDe,
   gabinetesPedidos,
   medidasM,
@@ -113,8 +113,8 @@ function Barras({ segs, espessura, cor }: { segs: Seg3D[]; espessura: number; co
 
 // ---------------------------------------------------------------------------
 // A tela viva: um único plano com shader, que só acende nos gabinetes que
-// têm energia E sinal. A máscara é uma textura de 12 x 7 texels, um por
-// gabinete — assim o painel inteiro custa uma chamada de desenho, e ligar ou
+// têm energia E sinal. A máscara é uma textura de 18 x 8 texels, um por
+// encaixe da grade — assim o painel inteiro custa uma chamada de desenho, e ligar ou
 // apagar um gabinete é trocar um byte.
 // ---------------------------------------------------------------------------
 
@@ -136,12 +136,14 @@ const TELA_FRAG = /* glsl */ `
   uniform float uRows;
   uniform float uColsMax;
   uniform float uRowsMax;
+  uniform float uC0;
+  uniform float uL0;
   uniform float uTime;
   uniform float uModo;
 
   void main() {
-    float col = floor(vUv.x * uCols);
-    float linha = floor((1.0 - vUv.y) * uRows);
+    float col = uC0 + floor(vUv.x * uCols);
+    float linha = uL0 + floor((1.0 - vUv.y) * uRows);
     float ligado = texture2D(uMask, vec2((col + 0.5) / uColsMax, (linha + 0.5) / uRowsMax)).r;
     if (ligado < 0.5) discard;
 
@@ -188,9 +190,26 @@ function criarUniformsTela() {
     uRows: { value: LINHAS_MAX },
     uColsMax: { value: COLUNAS_MAX },
     uRowsMax: { value: LINHAS_MAX },
+    uC0: { value: 0 },
+    uL0: { value: 0 },
     uTime: { value: 0 },
     uModo: { value: 0 },
   };
+}
+
+// Geometria da grade: 18 x 8 encaixes, maior que qualquer obra. Deitada no
+// chão ela é o "tapete" onde o técnico habilita os gabinetes; na hora de içar,
+// só os habilitados sobem, e sobem centralizados no portal.
+const LARGURA_GRADE = COLUNAS_MAX * MODULO_M;
+const gradeX = (coluna: number) => -LARGURA_GRADE / 2 + MODULO_M / 2 + coluna * MODULO_M;
+const gradeY = (linha: number) => -(linha + 0.5) * MODULO_M;
+
+/** Deslocamento que leva o que foi montado da posição na grade para o centro do portal. */
+function deslocamentoParaPendurar(estado: Estado): { dx: number; dy: number } {
+  const ext = extensaoMontada(estado);
+  if (!ext) return { dx: 0, dy: 0 };
+  const cx = (gradeX(ext.coluna0) + gradeX(ext.coluna0 + ext.colunas - 1)) / 2;
+  return { dx: -cx, dy: ext.linha0 * MODULO_M };
 }
 
 function TelaViva({ estado, modo, visivel }: { estado: Estado; modo: TelaModo; visivel: boolean }) {
@@ -200,6 +219,7 @@ function TelaViva({ estado, modo, visivel }: { estado: Estado; modo: TelaModo; v
   const [uniformsIniciais] = useState(criarUniformsTela);
   const material = useRef<THREE.ShaderMaterial>(null);
   const texturaParaDescartar = useRef<THREE.DataTexture | null>(null);
+  const ext = extensaoMontada(estado);
 
   useEffect(() => {
     texturaParaDescartar.current = uniformsIniciais.uMask.value;
@@ -209,34 +229,38 @@ function TelaViva({ estado, modo, visivel }: { estado: Estado; modo: TelaModo; v
     };
   }, [uniformsIniciais]);
 
-  // Um byte por gabinete: 255 se está instalado, energizado e com sinal.
-  // Depende de `visivel` porque, escondida, a tela não tem material para
-  // atualizar — e ao voltar precisa refletir o estado atual, não o de antes.
+  // Um byte por encaixe da grade: 255 se está instalado, energizado e com
+  // sinal. Depende de `visivel` porque, escondida, a tela não tem material
+  // para atualizar — e ao voltar precisa refletir o estado atual.
   useEffect(() => {
     const m = material.current;
     if (!m) return;
     const mascara = m.uniforms.uMask.value as THREE.DataTexture;
     const dados = mascara.image.data as Uint8Array;
     estado.celulas.forEach((c, i) => {
-      dados[i] = celulaAtiva(estado, i) && c.instalado && c.circuito !== null && c.porta !== null ? 255 : 0;
+      dados[i] = c.instalado && c.circuito !== null && c.porta !== null ? 255 : 0;
     });
     mascara.needsUpdate = true;
   }, [estado, visivel]);
 
   useFrame((_, dt) => {
     const m = material.current;
-    if (!m) return;
+    if (!m || !ext) return;
     m.uniforms.uTime.value += dt;
-    m.uniforms.uRows.value = estado.linhas;
-    m.uniforms.uCols.value = estado.colunas;
+    m.uniforms.uCols.value = ext.colunas;
+    m.uniforms.uRows.value = ext.linhas;
+    m.uniforms.uC0.value = ext.coluna0;
+    m.uniforms.uL0.value = ext.linha0;
     m.uniforms.uModo.value = modo === 'show' ? 1 : 0;
   });
 
-  if (!visivel) return null;
-  const { largura, altura } = medidasM(estado);
+  if (!visivel || !ext) return null;
+  const largura = ext.colunas * MODULO_M;
+  const altura = ext.linhas * MODULO_M;
+  const cx = (gradeX(ext.coluna0) + gradeX(ext.coluna0 + ext.colunas - 1)) / 2;
 
   return (
-    <mesh position={[0, -altura / 2, 0.052]} raycast={() => null}>
+    <mesh position={[cx, -(ext.linha0 * MODULO_M) - altura / 2, 0.052]} raycast={() => null}>
       <planeGeometry args={[largura, altura]} />
       <shaderMaterial
         ref={material}
@@ -313,7 +337,7 @@ const Gabinete = memo(function Gabinete({
 // ---------------------------------------------------------------------------
 
 function Painel({
-  estado, camada, onPintar, aoIniciarPintura, reduzirMovimento, alertas, telaModo,
+  estado, camada, onPintar, aoIniciarPintura, reduzirMovimento, alertas, selecionadas, telaModo,
 }: {
   estado: Estado;
   camada: Camada;
@@ -321,9 +345,11 @@ function Painel({
   aoIniciarPintura: () => void;
   reduzirMovimento: boolean;
   alertas: Set<number>;
+  selecionadas: Set<number>;
   telaModo: TelaModo;
 }) {
   const grupo = useRef<THREE.Group>(null);
+  const interno = useRef<THREE.Group>(null);
   const t = useRef(estado.icado ? 1 : 0);
   /** Instante em que o painel terminou de subir — a partir daí ele balança. */
   const chegadaEm = useRef<number | null>(estado.icado ? 0 : null);
@@ -340,7 +366,10 @@ function Painel({
     };
   }, []);
 
-  const { largura, altura } = medidasM(estado);
+  const { altura } = medidasM(estado);
+  const ext = extensaoMontada(estado);
+  const larguraMontada = (ext?.colunas ?? 0) * MODULO_M;
+  const { dx, dy } = deslocamentoParaPendurar(estado);
 
   useFrame((estadoR3F, dt) => {
     const g = grupo.current;
@@ -380,19 +409,26 @@ function Painel({
       THREE.MathUtils.lerp(Z_DEITADO, 0, subida),
     );
     g.rotation.x = THREE.MathUtils.lerp(-Math.PI / 2, 0, giro);
+
+    // Enquanto sobe, o que foi montado desliza do lugar onde estava no tapete
+    // para o centro do portal, com a borda de cima encostada na talha.
+    const i = interno.current;
+    if (i) i.position.set(dx * subida, dy * subida, 0);
   });
 
-  const gabinetes = useMemo(() => {
+  const montados = useMemo(() => {
     const lista: { i: number; x: number; y: number }[] = [];
-    const meiaLargura = (estado.colunas * MODULO_M) / 2;
-    for (let i = 0; i < estado.celulas.length; i++) {
-      if (!celulaAtiva(estado, i)) continue;
-      lista.push({
-        i,
-        x: -meiaLargura + MODULO_M / 2 + colunaDe(i) * MODULO_M,
-        y: -(linhaDe(i) + 0.5) * MODULO_M, // cresce para baixo a partir da talha
-      });
-    }
+    estado.celulas.forEach((c, i) => {
+      if (c.instalado) lista.push({ i, x: gradeX(colunaDe(i)), y: gradeY(linhaDe(i)) });
+    });
+    return lista;
+  }, [estado]);
+
+  const encaixesVazios = useMemo(() => {
+    const lista: { i: number; x: number; y: number }[] = [];
+    estado.celulas.forEach((c, i) => {
+      if (!c.instalado) lista.push({ i, x: gradeX(colunaDe(i)), y: gradeY(linhaDe(i)) });
+    });
     return lista;
   }, [estado]);
 
@@ -413,21 +449,24 @@ function Painel({
 
   // Quanto do painel já está aceso — manda na luz que ele joga no chão.
   const fracaoAcesa = useMemo(() => {
-    const pedidos = gabinetesPedidos(estado);
-    if (pedidos === 0) return 0;
-    let acesos = 0;
-    estado.celulas.forEach((c, i) => {
-      if (celulaAtiva(estado, i) && c.instalado && c.circuito !== null && c.porta !== null) acesos++;
+    let montado = 0, acesos = 0;
+    estado.celulas.forEach((c) => {
+      if (!c.instalado) return;
+      montado++;
+      if (c.circuito !== null && c.porta !== null) acesos++;
     });
-    return acesos / pedidos;
+    return montado === 0 ? 0 : acesos / Math.max(montado, gabinetesPedidos(estado));
   }, [estado]);
 
   // Estável entre renders: sem isso o useLayoutEffect das barras recalcularia
   // as matrizes dos cabos a cada gabinete pintado.
-  const cabos = useMemo<Seg3D[]>(() => [
-    { a: [-largura / 2 + 0.4, 0.02, 0], b: [-0.05, 0.6, 0] },
-    { a: [largura / 2 - 0.4, 0.02, 0], b: [0.05, 0.6, 0] },
-  ], [largura]);
+  const cabos = useMemo<Seg3D[]>(() => {
+    const meia = Math.max(larguraMontada, 1) / 2;
+    return [
+      { a: [-meia + 0.4, 0.02, 0], b: [-0.05, 0.6, 0] },
+      { a: [meia - 0.4, 0.02, 0], b: [0.05, 0.6, 0] },
+    ];
+  }, [larguraMontada]);
 
   const corDe = (i: number): { cor: string; vazio: boolean; aceso: boolean } => {
     const c = estado.celulas[i];
@@ -456,45 +495,56 @@ function Painel({
     };
   };
 
+  const desenhar = ({ i, x, y }: { i: number; x: number; y: number }) => {
+    const { cor, vazio, aceso } = corDe(i);
+    return (
+      <Gabinete
+        key={i}
+        indice={i}
+        x={x}
+        y={y}
+        cor={cor}
+        vazio={vazio}
+        aceso={aceso}
+        destacado={hover === i || selecionadas.has(i)}
+        alerta={alertas.has(i)}
+        onApontar={apontar}
+        onArrastar={arrastar}
+        onSair={sair}
+      />
+    );
+  };
+
   return (
-    <group ref={grupo}>
-      {gabinetes.map(({ i, x, y }) => {
-        const { cor, vazio, aceso } = corDe(i);
-        return (
-          <Gabinete
-            key={i}
-            indice={i}
-            x={x}
-            y={y}
-            cor={cor}
-            vazio={vazio}
-            aceso={aceso}
-            destacado={hover === i}
-            alerta={alertas.has(i)}
-            onApontar={apontar}
-            onArrastar={arrastar}
-            onSair={sair}
+    <>
+      {/* o tapete de encaixes fica no chão o tempo todo: é a planta da obra */}
+      <group position={[0, Y_DEITADO - 0.01, Z_DEITADO]} rotation={[-Math.PI / 2, 0, 0]}>
+        {encaixesVazios.map(desenhar)}
+      </group>
+
+      <group ref={grupo}>
+        <group ref={interno}>
+          {montados.map(desenhar)}
+
+          {/* a tela só aparece na camada de estrutura: nas outras, a cor é a informação */}
+          <TelaViva estado={estado} modo={telaModo} visivel={camada === 'estrutura'} />
+        </group>
+
+        {/* o painel aceso ilumina o chão e o truss à volta */}
+        {fracaoAcesa > 0 && camada === 'estrutura' && (
+          <pointLight
+            position={[0, -((ext?.linhas ?? 0) * MODULO_M) / 2, 1.1]}
+            intensity={fracaoAcesa * (telaModo === 'show' ? 26 : 18)}
+            color={telaModo === 'show' ? '#6FA8FF' : '#D9E6FF'}
+            distance={11}
+            decay={2}
           />
-        );
-      })}
+        )}
 
-      {/* a tela só aparece na camada de estrutura: nas outras, a cor é a informação */}
-      <TelaViva estado={estado} modo={telaModo} visivel={camada === 'estrutura'} />
-
-      {/* o painel aceso ilumina o chão e o truss à volta */}
-      {fracaoAcesa > 0 && camada === 'estrutura' && (
-        <pointLight
-          position={[0, -altura / 2, 1.1]}
-          intensity={fracaoAcesa * (telaModo === 'show' ? 26 : 18)}
-          color={telaModo === 'show' ? '#6FA8FF' : '#D9E6FF'}
-          distance={11}
-          decay={2}
-        />
-      )}
-
-      {/* cabos de aço da talha até os cantos de cima do painel */}
-      <Barras segs={cabos} espessura={0.035} cor={COR_CABO} />
-    </group>
+        {/* cabos de aço da talha até os cantos de cima do que foi montado */}
+        {ext && <Barras segs={cabos} espessura={0.035} cor={COR_CABO} />}
+      </group>
+    </>
   );
 }
 
@@ -509,15 +559,14 @@ export type Foco = {
   tipo: 'reprovacao' | 'tempo' | 'qualidade';
 };
 
-/** Onde uma célula está no mundo, com o painel já pendurado. */
+/**
+ * Onde uma célula está no mundo com o painel pendurado. Vale até para encaixe
+ * vazio: um buraco, ou a fiada que faltou, aparece onde deveria estar.
+ */
 export function posicaoMundo(e: Estado, i: number): [number, number, number] {
-  const { largura } = medidasM(e);
+  const { dx, dy } = deslocamentoParaPendurar(e);
   const yTopo = yPendurado(alturaDoPortal(medidasM(e).altura));
-  return [
-    -largura / 2 + MODULO_M / 2 + colunaDe(i) * MODULO_M,
-    yTopo - (linhaDe(i) + 0.5) * MODULO_M,
-    0,
-  ];
+  return [gradeX(colunaDe(i)) + dx, yTopo + gradeY(linhaDe(i)) + dy, 0];
 }
 
 function centroide(e: Estado, celulas: number[]): [number, number, number] {
@@ -615,6 +664,9 @@ function EtiquetaProblema({ estado, foco }: { estado: Estado; foco: Foco }) {
 // Cena
 // ---------------------------------------------------------------------------
 
+/** Conjunto vazio estável, para não quebrar o memo dos gabinetes. */
+const VAZIO: Set<number> = new Set();
+
 // Fora do componente para a assinatura ficar estável entre renders.
 const CONSULTA_MOVIMENTO = '(prefers-reduced-motion: reduce)';
 const assinarMovimento = (avisar: () => void) => {
@@ -625,11 +677,13 @@ const assinarMovimento = (avisar: () => void) => {
 const lerMovimento = () => window.matchMedia(CONSULTA_MOVIMENTO).matches;
 
 export default function Palco3D({
-  estado, camada, onPintar, vistoriando = false, foco = null, orbitar = false, telaModo = 'teste',
+  estado, camada, onPintar, vistoriando = false, foco = null, orbitar = false, telaModo = 'teste', selecionadas,
 }: {
   estado: Estado;
   camada: Camada;
   onPintar: (i: number) => void;
+  /** Prévia do retângulo que o técnico está arrastando. */
+  selecionadas?: Set<number>;
   /** Na vistoria a câmera é dirigida e o jogador não mexe em nada. */
   vistoriando?: boolean;
   foco?: Foco | null;
@@ -746,6 +800,7 @@ export default function Palco3D({
         aoIniciarPintura={vistoriando ? naoFazNada : iniciarPintura}
         reduzirMovimento={reduzirMovimento}
         alertas={alertas}
+        selecionadas={selecionadas ?? VAZIO}
         telaModo={telaModo}
       />
 

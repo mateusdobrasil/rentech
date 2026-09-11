@@ -24,12 +24,12 @@ import {
   LINHAS_MAX,
   janelaDe,
   deveDispararImprevisto,
-  GABINETES_POR_CIRCUITO,
   CONSUMO_W_M2,
   TENSAO_V,
-  DISJUNTOR_A,
-  W_UTIL_CIRCUITO,
   fmtKw,
+  puxarCircuito,
+  recolherCircuito,
+  podeRecolherCircuito,
   PX_POR_PORTA,
   APLICACOES,
   PROCESSADORAS,
@@ -176,8 +176,14 @@ export default function CallTimeMontagem() {
 
   // --- pintura na grade -----------------------------------------------------
 
+  const circuitosPuxados = estado.circuitosPuxados;
+
   /** Aplica a ferramenta atual num conjunto de encaixes. */
   const aplicarEm = useCallback((alvosBrutos: number[]) => {
+    if (camada === 'energia' && ferramenta !== 'limpar' && Number(ferramenta) > circuitosPuxados) {
+      toast('Nenhum circuito puxado ainda — use "+ Circuito"');
+      return;
+    }
     aplicar((e) => {
       if (e.finalizado) return e;
       const alvos = alvosBrutos.filter((k) => celulaAtiva(e, k));
@@ -234,7 +240,7 @@ export default function CallTimeMontagem() {
 
       return mudou ? { ...e, celulas, gastos, retrabalho } : e;
     });
-  }, [aplicar, camada, ferramenta]);
+  }, [aplicar, camada, ferramenta, circuitosPuxados, toast]);
 
   /**
    * Um toque na grade. Com o pincel de uma peça, aplica na hora. Com o de
@@ -318,14 +324,20 @@ export default function CallTimeMontagem() {
     }));
   };
 
-  const hubExtra = () => {
+  // Quantos circuitos puxar é a conta do técnico: nada aqui diz se bastam.
+  const puxar = () => {
     iniciar(); tocar('clique', 450);
-    toast(`Segundo hub buscado, +5 circuitos · −${CUSTO.hubExtra} min`);
-    aplicar((e) => ({
-      ...e,
-      circuitosDisponiveis: e.circuitosDisponiveis + 5,
-      gastos: e.gastos + CUSTO.hubExtra,
-    }));
+    const n = estado.circuitosPuxados + 1;
+    setFerramenta(String(n));
+    aplicar(puxarCircuito);
+  };
+
+  const recolher = () => {
+    if (!podeRecolherCircuito(estado)) return;
+    iniciar(); tocar('clique', 300);
+    const n = estado.circuitosPuxados;
+    if (ferramenta === String(n)) setFerramenta(n > 1 ? String(n - 1) : 'limpar');
+    aplicar(recolherCircuito);
   };
 
   /**
@@ -784,7 +796,7 @@ export default function CallTimeMontagem() {
 
               {camada === 'energia' && (
                 <>
-                  {Array.from({ length: estado.circuitosDisponiveis }, (_, k) => {
+                  {Array.from({ length: estado.circuitosPuxados }, (_, k) => {
                     const n = k + 1;
                     return (
                       <BotaoFerramenta
@@ -797,6 +809,22 @@ export default function CallTimeMontagem() {
                       </BotaoFerramenta>
                     );
                   })}
+                  <button
+                    onClick={puxar}
+                    className="px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-wider border border-dashed border-[#336699]/70 text-[#4E93D8] hover:bg-[#0C1D4D]/60 hover:text-white transition-all"
+                  >
+                    + Circuito · {ENERGIA.porCircuito} min
+                  </button>
+                  {estado.circuitosPuxados > 0 && (
+                    <button
+                      onClick={recolher}
+                      disabled={!podeRecolherCircuito(estado)}
+                      title={podeRecolherCircuito(estado) ? undefined : `C${estado.circuitosPuxados} tem gabinetes ligados`}
+                      className="px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-wider border border-dashed border-white/20 text-white/50 hover:text-white hover:border-white/40 transition-all disabled:opacity-30 disabled:hover:text-white/50 disabled:hover:border-white/20"
+                    >
+                      − Recolher C{estado.circuitosPuxados}
+                    </button>
+                  )}
                   <BotaoFerramenta ativo={ferramenta === 'limpar'} onClick={() => setFerramenta('limpar')} cor="#64748B">
                     Limpar
                   </BotaoFerramenta>
@@ -834,7 +862,7 @@ export default function CallTimeMontagem() {
                   ? `O painel já subiu. Gabinete instalado agora custa ${CUSTO.instalarAr} min em vez de ${CUSTO.instalarChao} — é o preço de montar no ar.`
                   : 'Arraste sobre a grade para instalar os gabinetes com a estrutura ainda deitada no chão. É assim que se monta de verdade: o painel sobe pronto.'
               )}
-              {camada === 'energia' && `Tomadas de ${TENSAO_V} V com disjuntor de ${DISJUNTOR_A} A, e o painel consome ${CONSUMO_W_M2} W por m². Quantos gabinetes cabem num circuito é conta sua — e disjuntor não trabalha no limite. Cada circuito é um lance de cabo: circuito a mais gasta tempo, carga demais derruba o disjuntor no meio do evento.`}
+              {camada === 'energia' && `A tomada do local é de ${TENSAO_V} V com disjuntor de ${estado.briefing.tomadaA} A, e o painel consome ${CONSUMO_W_M2} W por m². Quantos circuitos puxar é conta sua — e disjuntor não trabalha no limite. Cada circuito é um lance de cabo de ${ENERGIA.porCircuito} min, usado ou não; carga demais derruba o disjuntor no meio do evento.`}
               {camada === 'sinal' && `Cada porta do processador aguenta ${PX_POR_PORTA.toLocaleString('pt-BR')} px. Quantos gabinetes cabem nela depende do pitch — a conta é sua. Passar do limite apaga uma faixa do painel.`}
             </p>
             )}
@@ -905,16 +933,14 @@ export default function CallTimeMontagem() {
               <h2 className="text-[10px] font-black uppercase tracking-widest text-[#336699]">Suprimento</h2>
 
               {/* a conta do painel contratado, feita para o jogador */}
-              <div className="grid grid-cols-2 gap-2 mb-1">
-                <div className={`rounded-lg border p-2.5 flex flex-col gap-0.5 ${
-                  'border-[#284B8C]/30 bg-black/30'
-                }`}>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-lg border p-2.5 flex flex-col gap-0.5 border-[#284B8C]/30 bg-black/30">
                   <span className="text-[9px] font-black uppercase tracking-wider text-white/40">Circuitos</span>
                   <span className="text-lg font-black tabular-nums leading-none text-white">
-                    {estado.circuitosDisponiveis}
+                    {estado.circuitosPuxados}
                   </span>
                   <span className="text-[9px] font-bold text-white/35 leading-tight">
-                    {TENSAO_V} V · {DISJUNTOR_A} A no hub
+                    puxados · tomada {estado.briefing.tomadaA} A
                   </span>
                 </div>
                 <div className="rounded-lg border p-2.5 flex flex-col gap-0.5 border-[#284B8C]/30 bg-black/30">
@@ -927,16 +953,9 @@ export default function CallTimeMontagem() {
                   </span>
                 </div>
               </div>
-
-              <button
-                onClick={hubExtra}
-                className="py-2.5 rounded-lg text-[11px] font-black uppercase tracking-widest bg-black/40 border border-[#284B8C]/40 text-white/80 hover:border-[#336699] hover:text-white transition-all text-left px-3"
-              >
-                + Hub de energia
-                <span className="block text-[9px] font-bold text-white/40 tracking-normal normal-case mt-0.5">
-                  +5 circuitos · −{CUSTO.hubExtra} min · tem {estado.circuitosDisponiveis}
-                </span>
-              </button>
+              {estado.circuitosPuxados === 0 && (
+                <p className="text-[10px] text-white/40 leading-snug">Os circuitos se puxam na aba Energia.</p>
+              )}
             </div>
 
             {/* processadora: a escolha técnica da obra */}
@@ -1011,7 +1030,7 @@ export default function CallTimeMontagem() {
             >
               Fechar montagem e testar
               <span className="block text-[9px] font-bold text-black/50 tracking-normal normal-case mt-0.5">
-                energia pelos circuitos usados · sinal, teste e acabamento −{CUSTO.fecharSinal + CUSTO.testar + CUSTO.acabamento} min
+                energia pelos circuitos puxados · sinal, teste e acabamento −{CUSTO.fecharSinal + CUSTO.testar + CUSTO.acabamento} min
               </span>
             </button>
           </aside>
@@ -1553,7 +1572,7 @@ function CartaoOS({ estado, portaAbre, mostrarMetros }: { estado: Estado; portaA
           <span className="text-[10px] font-bold text-white/35">aparece na energia</span>
         )}
       </CampoOS>
-      <CampoOS rotulo="Circuitos do local">{b.circuitos} × {DISJUNTOR_A} A · {TENSAO_V} V</CampoOS>
+      <CampoOS rotulo="Tomada do local">{b.tomadaA} A · {TENSAO_V} V</CampoOS>
       <CampoOS rotulo="Porta abre">{portaAbre}</CampoOS>
     </div>
   );
@@ -1607,7 +1626,7 @@ function LicaoProcessadora({ estado }: { estado: Estado }) {
  */
 function LicaoEnergia({ estado }: { estado: Estado }) {
   const l = licaoEnergia(estado);
-  if (l.usados === 0) return null;
+  if (l.puxados === 0) return null;
   const perfeito = l.sobrecarregados === 0 && l.minutos === l.minutosIdeal;
 
   return (
@@ -1619,8 +1638,8 @@ function LicaoEnergia({ estado }: { estado: Estado }) {
       </span>
       <p className="text-xs text-white/75 leading-relaxed tabular-nums">{l.conta}.</p>
       <p className="text-xs text-white/75 leading-relaxed tabular-nums">
-        O painel puxa <strong className="text-white">{fmtKw(l.wattsTotal)}</strong>: {l.minimo} {l.minimo === 1 ? 'circuito bastava' : 'circuitos bastavam'}, e você usou {l.usados}.
-        Cada circuito é um lance de cabo de {ENERGIA.porCircuito} min.
+        O painel puxa <strong className="text-white">{fmtKw(l.wattsTotal)}</strong>: {l.minimo} {l.minimo === 1 ? 'circuito bastava' : 'circuitos bastavam'}, e você puxou {l.puxados}.
+        Cada circuito é um lance de cabo de {ENERGIA.porCircuito} min, usado ou não.
       </p>
       <div className="flex flex-wrap gap-1">
         {l.circuitos.map((c) => (
@@ -1639,7 +1658,7 @@ function LicaoEnergia({ estado }: { estado: Estado }) {
         ))}
       </div>
       <p className="text-[10px] text-white/40 leading-snug">
-        Azul: circuito necessário, dentro de {fmtKw(W_UTIL_CIRCUITO)}. Âmbar: circuito a mais, dava para ter juntado. Vermelho: passou de {GABINETES_POR_CIRCUITO} gabinetes e derrubou o disjuntor.
+        Azul: circuito necessário, dentro de {fmtKw(l.wattsUtil)}. Âmbar: circuito a mais, dava para ter juntado ou nem puxado. Vermelho: passou de {l.teto} gabinetes e derrubou o disjuntor.
       </p>
     </div>
   );

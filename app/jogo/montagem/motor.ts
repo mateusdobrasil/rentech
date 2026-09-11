@@ -145,9 +145,10 @@ export const APLICACOES: Record<Aplicacao, {
 /** Consumo do painel por metro quadrado. */
 export const CONSUMO_W_M2 = 400;
 
-/** Tomadas do local: 220 V, disjuntor de 20 A. */
+/** Tomadas do local: sempre 220 V; o disjuntor muda de obra para obra. */
 export const TENSAO_V = 220;
-export const DISJUNTOR_A = 20;
+export type Tomada = 10 | 20;
+export const TOMADAS_A: readonly Tomada[] = [10, 20];
 
 /**
  * Disjuntor não trabalha no limite: carga contínua fica em 80% do nominal.
@@ -157,19 +158,23 @@ export const DISJUNTOR_A = 20;
 export const MARGEM_DISJUNTOR = 0.8;
 
 export const W_POR_GABINETE = CONSUMO_W_M2 * MODULO_M * MODULO_M; // 100 W
-export const W_NOMINAL_CIRCUITO = TENSAO_V * DISJUNTOR_A; // 4.400 W
-export const W_UTIL_CIRCUITO = W_NOMINAL_CIRCUITO * MARGEM_DISJUNTOR; // 3.520 W
+/** 20 A: 4.400 W · 10 A: 2.200 W */
+export const wNominal = (a: Tomada) => TENSAO_V * a;
+/** 20 A: 3.520 W · 10 A: 1.760 W */
+export const wUtil = (a: Tomada) => wNominal(a) * MARGEM_DISJUNTOR;
 
-/** Quantos gabinetes um circuito aguenta dentro da margem: 35. */
-export const GABINETES_POR_CIRCUITO = Math.floor(W_UTIL_CIRCUITO / W_POR_GABINETE);
+/** Quantos gabinetes um circuito aguenta dentro da margem: 35 em 20 A, 17 em 10 A. */
+export const gabinetesPorCircuitoDe = (a: Tomada) => Math.floor(wUtil(a) / W_POR_GABINETE);
 
 /**
- * Energia se paga por circuito: cada um é um lance de cabo do quadro até o
- * painel, um disjuntor e um teste de tensão. O ideal é o menor número de
- * circuitos que carrega o painel sem passar da margem — dividindo a carga por
- * igual entre eles, como se faz na obra. Cada circuito além do necessário é
- * cabo puxado à toa. Sobrecarregado derruba o disjuntor no meio do evento
- * (isso é cobrado na vistoria, não aqui).
+ * Energia se paga por circuito puxado: cada um é um lance de cabo do quadro
+ * até o painel, um disjuntor e um teste de tensão — use-se ou não. A obra
+ * começa sem nenhum; o técnico faz a conta pela tomada que o local informa e
+ * puxa quantos achar que precisa. O ideal é o menor número que carrega o
+ * painel sem passar da margem, dividindo a carga por igual entre eles, como
+ * se faz na obra. Cada circuito além do necessário é cabo puxado à toa.
+ * Sobrecarregado derruba o disjuntor no meio do evento (isso é cobrado na
+ * vistoria, não aqui).
  */
 export const ENERGIA = {
   /** Montar o hub, aterramento e conferência de fase e neutro. */
@@ -177,11 +182,12 @@ export const ENERGIA = {
   porCircuito: 5,
 } as const;
 
-export const circuitosPara = (gabinetes: number) => Math.ceil(gabinetes / GABINETES_POR_CIRCUITO);
+export const circuitosPara = (gabinetes: number, a: Tomada) =>
+  Math.ceil(gabinetes / gabinetesPorCircuitoDe(a));
 
 /** O melhor que dá para fazer com N gabinetes: só os circuitos necessários. */
-export function custoEnergiaIdeal(gabinetes: number): number {
-  return ENERGIA.base + circuitosPara(gabinetes) * ENERGIA.porCircuito;
+export function custoEnergiaIdeal(gabinetes: number, a: Tomada): number {
+  return ENERGIA.base + circuitosPara(gabinetes, a) * ENERGIA.porCircuito;
 }
 
 /** "3,5 kW" */
@@ -215,8 +221,8 @@ export type Briefing = {
   colunas: number;
   linhas: number;
   evento: string;
-  /** Circuitos de 220 V / 20 A que o local disponibiliza. */
-  circuitos: number;
+  /** Disjuntor das tomadas do local. Quantos circuitos puxar é conta do técnico. */
+  tomadaA: Tomada;
   /** Minutos de carga até a porta abrir. Acompanha o tamanho da obra. */
   janelaMin: number;
   /** Número da ordem de serviço, só para a OS parecer uma OS. */
@@ -262,15 +268,14 @@ export function sortearBriefing(): Briefing {
   const colunas = entre(meta.colunas[0], meta.colunas[1]);
   const linhas = entre(meta.linhas[0], meta.linhas[1]);
 
-  // O local entrega um circuito de folga sobre o necessário. Depois do
-  // imprevisto costuma faltar — que é exatamente a decisão do hub extra.
-  const circuitos = circuitosPara(colunas * linhas) + 1;
+  // O local só diz a tomada. A mesma obra pede o dobro de circuitos em 10 A.
+  const tomadaA = sortear(TOMADAS_A);
 
   return {
     aplicacao, pitch, colunas, linhas,
     evento: sortear(EVENTOS[aplicacao]),
-    circuitos,
-    janelaMin: janelaPara(colunas, linhas),
+    tomadaA,
+    janelaMin: janelaPara(colunas, linhas, tomadaA),
     os: entre(4100, 9899),
     pergunta: sortear(['resolucao', 'tamanho'] as const),
     // Plenária sempre tem régie. Estande e testeira de feira costumam passar o
@@ -291,11 +296,11 @@ export const HORA_INICIAL = 14 * 60;
  * para tudo tornava as obras grandes invencíveis mesmo jogadas na perfeição.
  * A margem de 30% sobre o trabalho mínimo é o que o imprevisto vai comer.
  */
-export function janelaPara(colunas: number, linhas: number): number {
+export function janelaPara(colunas: number, linhas: number, tomadaA: Tomada): number {
   const trabalho =
     colunas * linhas * CUSTO.instalarChao
     + CUSTO.conferirPrumo + CUSTO.icar
-    + custoEnergiaIdeal(colunas * linhas) + CUSTO.fecharSinal + CUSTO.testar + CUSTO.acabamento
+    + custoEnergiaIdeal(colunas * linhas, tomadaA) + CUSTO.fecharSinal + CUSTO.testar + CUSTO.acabamento
     + 12; // setup típico de processadora
   return Math.round((trabalho * 1.3) / 5) * 5;
 }
@@ -315,7 +320,6 @@ export const CUSTO = {
   remover: 1,
   conferirPrumo: 5,
   icar: 15,
-  hubExtra: 10,
   placaExtra: 8,
   fecharSinal: 15,
   testar: 10,
@@ -370,7 +374,8 @@ export type Estado = {
   icado: boolean;
   prumoConferido: boolean;
   talhaKg: number | null;
-  circuitosDisponiveis: number;
+  /** Começa em zero: quantos circuitos puxar é decisão do técnico. */
+  circuitosPuxados: number;
   /** null = ainda não escolheu. Sem processadora não há sinal nenhum. */
   processadoraId: string | null;
   /** A primeira escolha é de graça; trocar depois custa re-rack e remapeamento. */
@@ -404,7 +409,7 @@ export function criarPartida(briefing: Briefing = sortearBriefing()): Estado {
     icado: false,
     prumoConferido: false,
     talhaKg: null,
-    circuitosDisponiveis: briefing.circuitos,
+    circuitosPuxados: 0,
     processadoraId: null,
     trocasProcessadora: 0,
     retrabalho: 0,
@@ -425,7 +430,6 @@ export function aplicarImprevisto(e: Estado): Estado {
     : { ...e, linhas: Math.min(LINHAS_MAX, e.linhas + 1), imprevistoDisparado: true };
 }
 
-/** Quantos gabinetes o imprevisto acrescenta, para o aviso na tela. */
 /** Fração do painel montada a partir da qual o cliente liga pedindo mais. */
 export const FRACAO_IMPREVISTO = 0.6;
 
@@ -443,6 +447,7 @@ export function deveDispararImprevisto(e: Estado): boolean {
     || gabinetesInstalados(e) >= Math.ceil(gabinetesPedidos(e) * FRACAO_IMPREVISTO);
 }
 
+/** Quantos gabinetes o imprevisto acrescenta, para o aviso na tela. */
 export function gabinetesDoImprevisto(e: Estado): number {
   // O aviso aparece com o painel já crescido. Aplicar de novo em cima dele
   // dava zero (ou crescia duas vezes na conta): a comparação certa é com a
@@ -534,7 +539,10 @@ export const tetoPorPorta = (e: Estado) => gabinetesPorPorta(e.briefing.pitch);
 export const portasNecessarias = (e: Estado) =>
   Math.ceil(gabinetesPedidos(e) / tetoPorPorta(e));
 
-export const circuitosNecessarios = (e: Estado) => circuitosPara(gabinetesPedidos(e));
+/** Teto de gabinetes por circuito, que depende da tomada da obra. */
+export const gabinetesPorCircuito = (e: Estado) => gabinetesPorCircuitoDe(e.briefing.tomadaA);
+
+export const circuitosNecessarios = (e: Estado) => circuitosPara(gabinetesPedidos(e), e.briefing.tomadaA);
 
 export function relogio(gastos: number, janelaMin: number): string {
   const t = HORA_INICIAL + Math.min(gastos, janelaMin);
@@ -578,39 +586,53 @@ export function contarPorPorta(e: Estado): Map<number, number> {
 export type SituacaoCircuito = 'ideal' | 'sobra' | 'sobrecarregado';
 
 /**
- * Como ficou cada circuito que o técnico usou. Acima da margem, sobrecarregado.
- * Se usou mais circuitos que o painel pedia, os mais leves são os de sobra —
- * eram eles que dava para ter juntado nos outros.
+ * Como ficou cada circuito que o técnico puxou — inclusive os que ficaram sem
+ * nada. Acima da margem, sobrecarregado. Se puxou mais circuitos que o painel
+ * pedia, os mais leves são os de sobra: eram eles que dava para ter juntado
+ * nos outros (ou nem ter puxado).
  */
 export function situacaoCircuitos(e: Estado): { circuito: number; gabinetes: number; watts: number; situacao: SituacaoCircuito }[] {
-  const usados = [...contarPorCircuito(e).entries()];
-  const aMais = Math.max(0, usados.length - circuitosPara(gabinetesInstalados(e)));
+  const contagem = contarPorCircuito(e);
+  const teto = gabinetesPorCircuito(e);
+  const total = Math.max(e.circuitosPuxados, ...contagem.keys());
+  const puxados = Array.from({ length: total }, (_, k) => [k + 1, contagem.get(k + 1) ?? 0] as const);
+  const aMais = Math.max(0, puxados.length - circuitosPara(gabinetesInstalados(e), e.briefing.tomadaA));
   const deSobra = new Set(
-    usados
-      .filter(([, g]) => g <= GABINETES_POR_CIRCUITO)
+    puxados
+      .filter(([, g]) => g <= teto)
       .sort((a, b) => a[1] - b[1] || b[0] - a[0])
       .slice(0, aMais)
       .map(([c]) => c),
   );
-  return usados
-    .sort((a, b) => a[0] - b[0])
-    .map(([circuito, gabinetes]) => ({
-      circuito,
-      gabinetes,
-      watts: gabinetes * W_POR_GABINETE,
-      situacao: gabinetes > GABINETES_POR_CIRCUITO ? 'sobrecarregado'
-        : deSobra.has(circuito) ? 'sobra'
-        : 'ideal',
-    }));
+  return puxados.map(([circuito, gabinetes]) => ({
+    circuito,
+    gabinetes,
+    watts: gabinetes * W_POR_GABINETE,
+    situacao: gabinetes > teto ? 'sobrecarregado'
+      : deSobra.has(circuito) ? 'sobra'
+      : 'ideal',
+  }));
 }
 
-/** Minutos de energia: um lance de cabo por circuito usado. */
+/** Puxar um circuito: o cabo é cobrado no fechamento, junto com o resto da energia. */
+export const puxarCircuito = (e: Estado): Estado => ({ ...e, circuitosPuxados: e.circuitosPuxados + 1 });
+
+/** Só o último, e só se estiver vazio — circuito com gabinete não se recolhe. */
+export function podeRecolherCircuito(e: Estado): boolean {
+  const n = e.circuitosPuxados;
+  return n > 0 && !e.celulas.some((c) => c.instalado && c.circuito === n);
+}
+
+export const recolherCircuito = (e: Estado): Estado =>
+  podeRecolherCircuito(e) ? { ...e, circuitosPuxados: e.circuitosPuxados - 1 } : e;
+
+/** Minutos de energia: um lance de cabo por circuito puxado, usado ou não. */
 export function custoEnergia(e: Estado): number {
-  return ENERGIA.base + contarPorCircuito(e).size * ENERGIA.porCircuito;
+  return ENERGIA.base + e.circuitosPuxados * ENERGIA.porCircuito;
 }
 
 /**
- * Tudo que o botão "Fechar montagem" cobra: energia pelos circuitos usados,
+ * Tudo que o botão "Fechar montagem" cobra: energia pelos circuitos puxados,
  * sinal, teste, acabamento e o setup da processadora escolhida.
  */
 export function custoFechamento(e: Estado): number {
@@ -622,20 +644,23 @@ export function custoFechamento(e: Estado): number {
 export function licaoEnergia(e: Estado) {
   const circuitos = situacaoCircuitos(e);
   const montados = gabinetesInstalados(e);
+  const a = e.briefing.tomadaA;
   return {
     circuitos,
-    usados: circuitos.length,
-    minimo: circuitosPara(montados),
+    puxados: circuitos.length,
+    minimo: circuitosPara(montados, a),
     wattsTotal: montados * W_POR_GABINETE,
+    wattsUtil: wUtil(a),
+    teto: gabinetesPorCircuitoDe(a),
     conta: `Gabinete de 0,5 × 0,5 m = 0,25 m² × ${CONSUMO_W_M2} W = ${W_POR_GABINETE} W. `
-      + `Circuito ${TENSAO_V} V × ${DISJUNTOR_A} A = ${W_NOMINAL_CIRCUITO.toLocaleString('pt-BR')} W; `
-      + `a ${Math.round(MARGEM_DISJUNTOR * 100)}%, ${W_UTIL_CIRCUITO.toLocaleString('pt-BR')} W `
-      + `→ ${GABINETES_POR_CIRCUITO} gabinetes por circuito`,
+      + `Tomada ${TENSAO_V} V × ${a} A = ${wNominal(a).toLocaleString('pt-BR')} W; `
+      + `a ${Math.round(MARGEM_DISJUNTOR * 100)}%, ${wUtil(a).toLocaleString('pt-BR')} W `
+      + `→ ${gabinetesPorCircuitoDe(a)} gabinetes por circuito`,
     ideais: circuitos.filter((c) => c.situacao === 'ideal').length,
     comSobra: circuitos.filter((c) => c.situacao === 'sobra').length,
     sobrecarregados: circuitos.filter((c) => c.situacao === 'sobrecarregado').length,
     minutos: custoEnergia(e),
-    minutosIdeal: custoEnergiaIdeal(montados),
+    minutosIdeal: custoEnergiaIdeal(montados, a),
   };
 }
 
@@ -675,8 +700,8 @@ export function distribuirAtribuicao(
   campo: Atribuicao,
   inicial: number,
 ): { celulas: Celula[]; ultimo: number; mudou: boolean } {
-  const teto = campo === 'circuito' ? GABINETES_POR_CIRCUITO : tetoPorPorta(e);
-  const disponiveis = campo === 'circuito' ? e.circuitosDisponiveis : portasDisponiveis(e);
+  const teto = campo === 'circuito' ? gabinetesPorCircuito(e) : tetoPorPorta(e);
+  const disponiveis = campo === 'circuito' ? e.circuitosPuxados : portasDisponiveis(e);
   const contagem = new Map(campo === 'circuito' ? contarPorCircuito(e) : contarPorPorta(e));
 
   let celulas = e.celulas;
@@ -788,6 +813,15 @@ export function vistoriar(e: Estado): Vistoria {
     });
   }
 
+  if (gabinetesInstalados(e) > 0 && !e.celulas.some((c) => c.instalado && c.circuito !== null)) {
+    problemas.push({
+      tipo: 'reprovacao',
+      texto: 'Nenhum circuito foi ligado ao painel. Ele subiu e ficou apagado.',
+      curto: 'Sem energia',
+      celulas: [],
+    });
+  }
+
   const proc = acharProcessadora(e.processadoraId);
   if (proc) {
     const pxMontado = gabinetesInstalados(e) * pxPorGabinete(e.briefing.pitch);
@@ -833,10 +867,10 @@ export function vistoriar(e: Estado): Vistoria {
 
   // --- problemas que custam minutos ---
   for (const [circuito, qtd] of contarPorCircuito(e)) {
-    if (qtd > GABINETES_POR_CIRCUITO) {
+    if (qtd > gabinetesPorCircuito(e)) {
       problemas.push({
         tipo: 'tempo',
-        texto: `Circuito ${circuito} com ${qtd} gabinetes: ${fmtKw(qtd * W_POR_GABINETE)} num disjuntor de ${DISJUNTOR_A} A, que trabalha até ${fmtKw(W_UTIL_CIRCUITO)}. No pico do conteúdo ele desarmou durante o evento.`,
+        texto: `Circuito ${circuito} com ${qtd} gabinetes: ${fmtKw(qtd * W_POR_GABINETE)} num disjuntor de ${e.briefing.tomadaA} A, que trabalha até ${fmtKw(wUtil(e.briefing.tomadaA))}. No pico do conteúdo ele desarmou durante o evento.`,
         curto: `Circuito ${circuito} sobrecarregado`,
         celulas: celulasOnde(e, (c) => c.instalado && c.circuito === circuito),
         minutos: PENALIDADE.circuitoSobrecarregado,

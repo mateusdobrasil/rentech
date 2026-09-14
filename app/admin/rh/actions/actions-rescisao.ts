@@ -363,6 +363,50 @@ export async function obterRescisaoAction(payload: { id: number }, accessToken: 
 }
 
 // ============================================================================
+// DADOS PARA PRÉ-PREENCHER A NOVA OP DE PAGAMENTO (botão "💳 Criar OP de
+// Pagamento" na tela de detalhe) — a criação em si acontece em /admin/op/nova
+// (criarOP, actions.ts do módulo OP), igual a qualquer outra OP: o RH revisa
+// e confirma antes de disparar e-mail/WhatsApp/PrimeStart. Aqui só devolve o
+// necessário pra tela chegar pré-preenchida.
+// ============================================================================
+export async function obterDadosPagamentoRescisaoAction(payload: { id: number }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const { data: r, error } = await db.from('folha_rescisoes')
+      .select('funcionario_nome, empresa_id, tipo_folha, status, valor_total_liquido').eq('id', payload.id).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
+    if (r.tipo_folha !== 'PROPRIO') return { ok: false, erro: 'Este caso não tem valor calculado pelo sistema — a folha é administrada pela contabilidade.' };
+    if (r.status !== 'HOMOLOGADA') return { ok: false, erro: 'Só é possível gerar a OP de pagamento depois da rescisão homologada.' };
+    if (!(Number(r.valor_total_liquido) > 0)) return { ok: false, erro: 'O valor líquido desta rescisão está zerado.' };
+
+    const { data: func } = await db.from('folha_funcionarios')
+      .select('cpf, celular, endereco, pix_chave, pix_tipo, banco_codigo, banco_agencia, banco_conta, banco_tipo')
+      .eq('nome_completo', r.funcionario_nome).maybeSingle();
+
+    return {
+      ok: true,
+      info: {
+        empresaId: r.empresa_id,
+        funcionarioNome: r.funcionario_nome,
+        valorLiquido: Number(r.valor_total_liquido) || 0,
+        cpf: func?.cpf || '', celular: func?.celular || '', endereco: func?.endereco || '',
+        pixChave: func?.pix_chave || '', pixTipo: func?.pix_tipo || '',
+        bancoCodigo: func?.banco_codigo || '', bancoAgencia: func?.banco_agencia || '',
+        bancoConta: func?.banco_conta || '', bancoTipo: func?.banco_tipo || ''
+      }
+    };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
 // RECALCULAR — reroda o motor com os dados atuais do funcionário, sobrescrevendo
 // dados_calculo (a UI deve avisar que isso descarta edições manuais).
 // ============================================================================

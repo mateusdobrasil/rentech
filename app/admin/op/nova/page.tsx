@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useMemo, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { criarOP, NovaOPData } from '../actions';
 import { supabase } from '../../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next";
 import { useAcessoRota } from '../useAcessoRota';
 import { useToast } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import { obterDadosPagamentoRescisaoAction } from '../../rh/actions/actions-rescisao';
 
 interface ItemOP {
   id: number;
@@ -44,7 +45,20 @@ interface FuncionarioBusca {
 }
 
 export default function NovaOrdemPagamento() {
+  return (
+    <Suspense fallback={null}>
+      <NovaOrdemPagamentoForm />
+    </Suspense>
+  );
+}
+
+function NovaOrdemPagamentoForm() {
   const router = useRouter();
+  // Pré-preenchimento vindo do botão "💳 Criar OP de Pagamento" na tela de
+  // detalhe da rescisão (/admin/rh/rescisao/[id]) — ver o useEffect mais
+  // abaixo. O RH ainda revisa e confirma aqui antes do envio de verdade
+  // (e-mail/WhatsApp/PrimeStart só disparam ao clicar em "Enviar OP").
+  const rescisaoId = useSearchParams().get('rescisaoId');
 
   // Sessão + permissão da rota, resolvidas pelo hook compartilhado do módulo.
   const { authLoading, acessoNegado, perfil } = useAcessoRota('/admin/op/nova');
@@ -389,6 +403,56 @@ export default function NovaOrdemPagamento() {
     setModalFuncionarioAberto(false);
   };
 
+  // Veio do botão "💳 Criar OP de Pagamento" em /admin/rh/rescisao/[id]
+  // (?rescisaoId=...) — pré-preenche natureza, favorecido, dados
+  // bancários/Pix e o valor líquido já calculado, igual ao Autocompletar do
+  // Banco de Funcionários acima, só que disparado automaticamente ao abrir
+  // a tela em vez de por um clique manual.
+  useEffect(() => {
+    if (!rescisaoId || !perfil?.accessToken) return;
+    (async () => {
+      const res = await obterDadosPagamentoRescisaoAction({ id: Number(rescisaoId) }, perfil.accessToken);
+      if (!res.ok) { toast('Não foi possível carregar os dados da rescisão: ' + res.erro, 'error'); return; }
+      const d = res.info;
+
+      setNatureza('RESCISÃO');
+      if (d.empresaId) setEmpresaId(d.empresaId);
+      setEmpresaRecebedora(d.funcionarioNome);
+      setCnpjCpf(d.cpf || '');
+      aplicarMascaraCpfCnpj(d.cpf || '');
+      setEndereco(d.endereco || '');
+      aplicarMascaraCelularSignatario(d.celular || '');
+      setObs(`REFERENTE À RESCISÃO DE CONTRATO — PROCESSO #${rescisaoId}`);
+      setItens(prev => {
+        const arr = [...prev];
+        arr[0] = { ...arr[0], descricao: 'PAGAMENTO DE RESCISÃO CONTRATUAL', qtd: 1, valorUnitario: d.valorLiquido };
+        return arr;
+      });
+      setDataVencimento(prev => prev || new Date().toISOString().slice(0, 10));
+
+      const temContaBancaria = !!(d.bancoCodigo && d.bancoAgencia && d.bancoConta);
+      if (d.pixChave) {
+        setTipoPagamento('PIX');
+        let tipoMapeado = 'CELULAR';
+        const tipoPix = (d.pixTipo || '').toUpperCase();
+        if (tipoPix.includes('CPF') || tipoPix.includes('CNPJ')) tipoMapeado = 'CPF/CNPJ';
+        if (tipoPix.includes('EMAIL') || tipoPix.includes('E-MAIL')) tipoMapeado = 'EMAIL';
+        if (tipoPix.includes('ALEAT')) tipoMapeado = 'ALEATÓRIO';
+        setChavePix(tipoMapeado);
+        setDadosPagamento(d.pixChave);
+      } else if (temContaBancaria) {
+        setTipoPagamento('TRANSFERÊNCIA');
+        setBancoTipo(d.bancoTipo || 'CORRENTE');
+        setBancoCodigo(d.bancoCodigo);
+        setBancoAgencia(d.bancoAgencia);
+        setBancoConta(d.bancoConta);
+      } else {
+        toast('Rescisão carregada, mas o funcionário não tem Pix nem conta bancária cadastrados — preencha manualmente.', 'info');
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rescisaoId, perfil?.accessToken]);
+
   const funcionariosFiltrados = useMemo(() => {
     if (!termoBuscaFunc) return listaFuncionarios;
     const termo = termoBuscaFunc.toLowerCase();
@@ -712,6 +776,7 @@ export default function NovaOrdemPagamento() {
                 <option value="REEMBOLSO">REEMBOLSO</option>
                 <option value="HOSPEDAGEM">HOSPEDAGEM</option>
                 <option value="BV">BV (BONIFICAÇÃO/COMISSÃO)</option>
+                <option value="RESCISÃO">RESCISÃO</option>
               </select>
             </div>
           </section>

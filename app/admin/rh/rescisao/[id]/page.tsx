@@ -478,6 +478,15 @@ export default function DetalheRescisaoPage() {
             </div>
 
             <div className="flex items-center gap-3 mt-3 pt-3 border-t border-[#E2E8F0]">
+              {rescisao.tipo_folha === 'PROPRIO' && !rescisao.pago_em && (rescisao.valor_total_liquido || 0) > 0 && (
+                <button
+                  onClick={() => router.push(`/admin/op/nova?rescisaoId=${id}`)}
+                  className="text-[10px] font-black text-white bg-[#0C1D4D] hover:bg-[#284B8C] px-4 py-2.5 rounded-lg uppercase"
+                  title="Abre a Nova OP já preenchida com os dados desta rescisão — confira e envie por lá."
+                >
+                  💳 Criar OP de Pagamento
+                </button>
+              )}
               {!rescisao.pago_em ? (
                 <button onClick={() => marcarPago(true)} disabled={marcandoPago} className="text-[10px] font-black text-white bg-emerald-600 hover:bg-emerald-700 px-4 py-2.5 rounded-lg uppercase disabled:opacity-50">
                   {marcandoPago ? 'Salvando...' : '💰 Marcar como paga'}

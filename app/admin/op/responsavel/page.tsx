@@ -54,7 +54,7 @@ export default function PainelResponsavel() {
   // Estados de Filtro
   const [busca, setBusca] = useState('');
   const [filtroResponsavel, setFiltroResponsavel] = useState('');
-  const [filtroCliente, setFiltroCliente] = useState('');
+  const [filtroFavorecido, setFiltroFavorecido] = useState('');
   const [filtroEmpresa, setFiltroEmpresa] = useState<number | null>(null);
 
   // Empresa(s) que o usuário pode enxergar (Rentech × AlfaLight): só quem é
@@ -127,9 +127,9 @@ export default function PainelResponsavel() {
     return [...new Set(nomes)].sort();
   }, [ops]);
 
-  const clientesUnicos = useMemo(() => {
-    const clientes = ops.map(op => (op.os_cliente || '').toUpperCase().trim()).filter(Boolean);
-    return [...new Set(clientes)].sort();
+  const favorecidosUnicos = useMemo(() => {
+    const favorecidos = ops.map(op => (op.empresa_recebedora || '').toUpperCase().trim()).filter(Boolean);
+    return [...new Set(favorecidos)].sort();
   }, [ops]);
 
   // OPs filtradas
@@ -146,28 +146,28 @@ export default function PainelResponsavel() {
       const nomeResponsavelLimpo = (op.responsavel_nome || '').toUpperCase().trim();
       const matchResponsavel = !filtroResponsavel || nomeResponsavelLimpo === filtroResponsavel;
 
-      const nomeClienteLimpo = (op.os_cliente || '').toUpperCase().trim();
-      const matchCliente = !filtroCliente || nomeClienteLimpo === filtroCliente;
+      const nomeFavorecidoLimpo = (op.empresa_recebedora || '').toUpperCase().trim();
+      const matchFavorecido = !filtroFavorecido || nomeFavorecidoLimpo === filtroFavorecido;
 
       // OPs antigas (anteriores à coluna empresa_id) ficam com empresa_id
       // nulo — tratadas como visíveis independente do filtro, mesmo critério
       // já usado no resto do sistema (empresaPermitida em app/lib/serverAuth.ts).
       const matchEmpresa = !filtroEmpresa || op.empresa_id == null || op.empresa_id === filtroEmpresa;
 
-      return matchBusca && matchResponsavel && matchCliente && matchEmpresa;
+      return matchBusca && matchResponsavel && matchFavorecido && matchEmpresa;
     });
-  }, [ops, busca, filtroResponsavel, filtroCliente, filtroEmpresa]);
+  }, [ops, busca, filtroResponsavel, filtroFavorecido, filtroEmpresa]);
 
   const limparFiltros = () => {
     setBusca('');
     setFiltroResponsavel('');
-    setFiltroCliente('');
+    setFiltroFavorecido('');
     // Só libera "Todas" se o usuário de fato tem mais de uma empresa — senão
     // o filtro fica travado e não é uma opção pra limpar.
     if (empresasCatalogoVisivel.length > 1) setFiltroEmpresa(null);
   };
 
-  const filtrosAtivos = busca || filtroResponsavel || filtroCliente || (empresasCatalogoVisivel.length > 1 && filtroEmpresa);
+  const filtrosAtivos = busca || filtroResponsavel || filtroFavorecido || (empresasCatalogoVisivel.length > 1 && filtroEmpresa);
 
   // Utilitários
   const formatarMoeda = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
@@ -351,13 +351,13 @@ export default function PainelResponsavel() {
           </select>
 
           <select
-            value={filtroCliente}
-            onChange={(e) => setFiltroCliente(e.target.value)}
+            value={filtroFavorecido}
+            onChange={(e) => setFiltroFavorecido(e.target.value)}
             className="py-2.5 px-3 border border-[#CBD5E1] rounded-lg text-sm outline-none focus:border-[#336699] focus:ring-1 focus:ring-[#336699]/30 transition-all text-[#0A2A4A] bg-white md:w-52 shrink-0"
           >
-            <option value="">🏢 Todos os clientes</option>
-            {clientesUnicos.map((c) => (
-              <option key={c} value={c}>{c}</option>
+            <option value="">🏢 Todos os favorecidos</option>
+            {favorecidosUnicos.map((f) => (
+              <option key={f} value={f}>{f}</option>
             ))}
           </select>
 

@@ -9,6 +9,22 @@
 // existem no sistema, e as origens estão anotadas em cada uma.
 // ============================================================================
 
+import {
+  TENSAO_V, MARGEM_DISJUNTOR, ENERGIA, TOMADAS_A, wNominal, wUtil, fmtKw,
+  type Tomada,
+} from '../eletrica';
+
+export {
+  TENSAO_V, MARGEM_DISJUNTOR, ENERGIA, TOMADAS_A, wNominal, wUtil, fmtKw,
+} from '../eletrica';
+export type { Tomada } from '../eletrica';
+
+import { PONTOS_ICAMENTO, talhaRecomendada } from '../rigging';
+
+export {
+  TALHAS_KG, PONTOS_ICAMENTO, talhaRecomendada, CUSTO_TALHA_FOLGADA,
+} from '../rigging';
+
 // ---------------------------------------------------------------------------
 // Constantes de engenharia
 // ---------------------------------------------------------------------------
@@ -145,42 +161,19 @@ export const APLICACOES: Record<Aplicacao, {
 /** Consumo do painel por metro quadrado. */
 export const CONSUMO_W_M2 = 400;
 
-/** Tomadas do local: sempre 220 V; o disjuntor muda de obra para obra. */
-export const TENSAO_V = 220;
-export type Tomada = 10 | 20;
-export const TOMADAS_A: readonly Tomada[] = [10, 20];
-
-/**
- * Disjuntor não trabalha no limite: carga contínua fica em 80% do nominal.
- * Os 20% de folga cobrem o calor no quadro, a queda de tensão no fim do cabo
- * e o pico das fontes quando o painel liga ou o conteúdo vai para o branco.
- */
-export const MARGEM_DISJUNTOR = 0.8;
-
 export const W_POR_GABINETE = CONSUMO_W_M2 * MODULO_M * MODULO_M; // 100 W
-/** 20 A: 4.400 W · 10 A: 2.200 W */
-export const wNominal = (a: Tomada) => TENSAO_V * a;
-/** 20 A: 3.520 W · 10 A: 1.760 W */
-export const wUtil = (a: Tomada) => wNominal(a) * MARGEM_DISJUNTOR;
 
 /** Quantos gabinetes um circuito aguenta dentro da margem: 35 em 20 A, 17 em 10 A. */
 export const gabinetesPorCircuitoDe = (a: Tomada) => Math.floor(wUtil(a) / W_POR_GABINETE);
 
 /**
- * Energia se paga por circuito puxado: cada um é um lance de cabo do quadro
- * até o painel, um disjuntor e um teste de tensão — use-se ou não. A obra
- * começa sem nenhum; o técnico faz a conta pela tomada que o local informa e
- * puxa quantos achar que precisa. O ideal é o menor número que carrega o
- * painel sem passar da margem, dividindo a carga por igual entre eles, como
- * se faz na obra. Cada circuito além do necessário é cabo puxado à toa.
- * Sobrecarregado derruba o disjuntor no meio do evento (isso é cobrado na
- * vistoria, não aqui).
+ * A obra começa sem nenhum circuito: o técnico faz a conta pela tomada que o
+ * local informa e puxa quantos achar que precisa. O ideal é o menor número
+ * que carrega o painel sem passar da margem, dividindo a carga por igual
+ * entre eles, como se faz na obra. Cada circuito além do necessário é cabo
+ * puxado à toa, e sobrecarregado derruba o disjuntor no meio do evento (isso
+ * é cobrado na vistoria, não aqui).
  */
-export const ENERGIA = {
-  /** Montar o hub, aterramento e conferência de fase e neutro. */
-  base: 6,
-  porCircuito: 5,
-} as const;
 
 export const circuitosPara = (gabinetes: number, a: Tomada) =>
   Math.ceil(gabinetes / gabinetesPorCircuitoDe(a));
@@ -190,17 +183,10 @@ export function custoEnergiaIdeal(gabinetes: number, a: Tomada): number {
   return ENERGIA.base + circuitosPara(gabinetes, a) * ENERGIA.porCircuito;
 }
 
-/** "3,5 kW" */
-export const fmtKw = (w: number) => `${(w / 1000).toFixed(1).replace('.', ',')} kW`;
-
 export const PESO_GABINETE_KG = 11;
-export const PONTOS_ICAMENTO = 2;
 
 /** Peso do portal Q30 por metro de vão, com as duas torres rateadas. */
 export const PESO_PORTAL_KG_POR_M = 68;
-
-/** Catálogo de talhas — app/simulador/boxtruss/page.tsx (TALHA_OPTIONS) */
-export const TALHAS_KG = [500, 1000, 2000, 3000] as const;
 
 // ---------------------------------------------------------------------------
 // Geometria: a grade tem um teto fixo, e cada obra ocupa um pedaço dela.
@@ -345,13 +331,6 @@ export const CUSTO_TROCA_PROCESSADORA = 8;
  */
 export const ATRASO_TOLERADO = 30;
 
-/** Talha maior que o necessário: peso e gente a mais pra subir. */
-export const CUSTO_TALHA_FOLGADA: Record<number, number> = {
-  500: 0,
-  1000: 0,
-  2000: 5,
-  3000: 10,
-};
 
 // ---------------------------------------------------------------------------
 // Estado
@@ -560,10 +539,6 @@ export function cargaPorPonto(e: Estado): number {
   return Math.round(peso / PONTOS_ICAMENTO);
 }
 
-/** Mesma lógica do recomendarTalha() do simulador de boxtruss. */
-export function talhaRecomendada(cargaKg: number): number {
-  return TALHAS_KG.find((t) => t >= cargaKg) ?? TALHAS_KG[TALHAS_KG.length - 1];
-}
 
 export function contarPorCircuito(e: Estado): Map<number, number> {
   const m = new Map<number, number>();

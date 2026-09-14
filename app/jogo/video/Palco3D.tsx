@@ -38,7 +38,7 @@ import {
   COR_CABO,
   corCircuito,
   corPorta,
-} from './cores';
+} from '../cores';
 
 export type Camada = 'estrutura' | 'energia' | 'sinal';
 

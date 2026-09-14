@@ -18,7 +18,9 @@ export type Marca = {
   quando: number;
 };
 
-const CHAVE = 'calltime.ranking.v1';
+/** Cada posto tem o seu quadro: pontos de LED e de luz não se comparam. */
+export type Jogo = 'montagem' | 'luz' | 'som';
+const chaveDe = (jogo: Jogo) => `calltime.ranking.${jogo}.v1`;
 const LIMITE = 8;
 
 export const APELIDO_MAX = 12;
@@ -39,10 +41,10 @@ export function limparApelido(bruto: string): string {
     .slice(0, APELIDO_MAX);
 }
 
-export function lerRanking(): Marca[] {
+export function lerRanking(jogo: Jogo = 'montagem'): Marca[] {
   if (typeof window === 'undefined') return [];
   try {
-    const cru = window.localStorage.getItem(CHAVE);
+    const cru = window.localStorage.getItem(chaveDe(jogo));
     if (!cru) return [];
     const lista: unknown = JSON.parse(cru);
     if (!Array.isArray(lista)) return [];
@@ -62,16 +64,16 @@ export function lerRanking(): Marca[] {
   }
 }
 
-export function gravarMarca(apelido: string, pontos: number): Marca[] {
+export function gravarMarca(apelido: string, pontos: number, jogo: Jogo = 'montagem'): Marca[] {
   const limpo = limparApelido(apelido);
-  if (!limpo) return lerRanking();
+  if (!limpo) return lerRanking(jogo);
 
-  const atualizada = [...lerRanking(), { apelido: limpo, pontos, dia: diaDeHoje(), quando: Date.now() }]
+  const atualizada = [...lerRanking(jogo), { apelido: limpo, pontos, dia: diaDeHoje(), quando: Date.now() }]
     .sort((a, b) => b.pontos - a.pontos)
     .slice(0, LIMITE);
 
   try {
-    window.localStorage.setItem(CHAVE, JSON.stringify(atualizada));
+    window.localStorage.setItem(chaveDe(jogo), JSON.stringify(atualizada));
   } catch {
     // sem persistência, mas a lista da sessão ainda aparece na tela
   }
@@ -79,13 +81,13 @@ export function gravarMarca(apelido: string, pontos: number): Marca[] {
 }
 
 /** Posição (1-based) que essa pontuação ocuparia hoje. */
-export function posicaoDe(pontos: number): number {
-  return lerRanking().filter((m) => m.pontos > pontos).length + 1;
+export function posicaoDe(pontos: number, jogo: Jogo = 'montagem'): number {
+  return lerRanking(jogo).filter((m) => m.pontos > pontos).length + 1;
 }
 
 /** Entra no quadro se bate alguém ou se ainda sobra vaga. */
-export function entraNoRanking(pontos: number): boolean {
+export function entraNoRanking(pontos: number, jogo: Jogo = 'montagem'): boolean {
   if (pontos <= 0) return false;
-  const atual = lerRanking();
+  const atual = lerRanking(jogo);
   return atual.length < LIMITE || pontos > atual[atual.length - 1].pontos;
 }

@@ -7,18 +7,19 @@
 // minutos do relógio) é mais divertido e ensina melhor que penalizar com
 // "errado". O 3D só entra na Fase 2, depois que a mecânica se provar.
 //
-// Toda a regra vive em app/jogo/montagem/motor.ts — aqui é só interação.
+// Toda a regra vive em app/jogo/video/motor.ts — aqui é só interação.
 // ============================================================================
 
 import { useState, useRef, useCallback, useEffect, useSyncExternalStore } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import QRCode from 'qrcode';
 import BackButton from '../BackButton';
 import { useSom } from '../useSom';
-import { CORES_CIRCUITO, CORES_PORTA } from '../../jogo/montagem/cores';
+import { CORES_CIRCUITO, CORES_PORTA } from '../../jogo/cores';
 import {
   lerRanking, gravarMarca, entraNoRanking, posicaoDe, limparApelido, APELIDO_MAX,
-} from '../../jogo/montagem/ranking';
+} from '../../jogo/ranking';
 import {
   COLUNAS_MAX,
   LINHAS_MAX,
@@ -72,7 +73,7 @@ import {
   vistoriar,
   pontuar,
   type Estado,
-} from '../../jogo/montagem/motor';
+} from '../../jogo/video/motor';
 
 type Camada = 'estrutura' | 'energia' | 'sinal';
 type Vista = 'palco' | 'planta';
@@ -93,7 +94,7 @@ function celulasDoRetangulo(a: number, b: number): number[] {
 
 // O 3D só existe no navegador (usa WebGL), então entra por dynamic sem SSR —
 // mesmo padrão do Truss3D em /simulador/boxtruss.
-const Palco3D = dynamic(() => import('../../jogo/montagem/Palco3D'), {
+const Palco3D = dynamic(() => import('../../jogo/video/Palco3D'), {
   ssr: false,
   loading: () => (
     <div className="h-[52vh] min-h-[22rem] rounded-xl border border-[#284B8C]/30 bg-[#0C1D4D]/15 flex items-center justify-center">
@@ -557,7 +558,7 @@ export default function CallTimeMontagem() {
 
   return (
     <>
-      <BackButton />
+      <BackButton href="/testes/calltime" />
 
       <div className="min-h-[calc(100vh-5rem)] bg-black bg-[radial-gradient(circle_at_20%_20%,_rgba(12,29,77,0.45)_0%,_transparent_50%),radial-gradient(circle_at_85%_75%,_rgba(51,102,153,0.18)_0%,_transparent_50%)] text-white select-none">
 
@@ -1314,6 +1315,12 @@ export default function CallTimeMontagem() {
               >
                 Montar de novo
               </button>
+              <Link
+                href="/testes/calltime"
+                className="py-3 rounded-xl border border-[#284B8C]/40 text-white/60 text-[11px] font-black uppercase tracking-widest text-center hover:text-white hover:border-[#336699] transition-colors"
+              >
+                Voltar aos postos
+              </Link>
             </div>
           </div>
         </div>

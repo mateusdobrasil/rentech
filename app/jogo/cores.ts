@@ -26,3 +26,18 @@ export const COR_CABO = '#2A3550';
 
 export const corCircuito = (n: number) => CORES_CIRCUITO[(n - 1) % CORES_CIRCUITO.length];
 export const corPorta = (n: number) => CORES_PORTA[(n - 1) % CORES_PORTA.length];
+
+// --- grid de luz -----------------------------------------------------------
+
+/** Linhas DMX: uma cor por universo, distinta das cores de circuito. */
+export const CORES_UNIVERSO = ['#8B72D0', '#3E9E8F', '#D45D79', '#B8A03E', '#4FA3B8', '#C0704F'];
+
+export const corUniverso = (n: number) => CORES_UNIVERSO[(n - 1) % CORES_UNIVERSO.length];
+
+export const COR_MOVING = '#4E93D8';
+export const COR_PAR = '#E0912F';
+/** Peça pendurada depois do içamento: o âmbar escuro marca o retrabalho. */
+export const COR_PECA_AR = '#8A5A22';
+/** Peça sem cabo de aço: é o que reprova a partida. */
+export const COR_SEM_CABO = '#E0574F';
+export const COR_POSICAO_VAZIA = '#16203A';

@@ -39,18 +39,26 @@ export interface ResultadoEnvioP2s {
 // nosso, ex: freelancer, que não é Parceiro). Colaborador só tem CPF (é
 // sempre pessoa física), por isso só entra na busca quando o documento tem
 // 11 dígitos.
+//
+// Compara por DÍGITOS (cpf_digitos/cnpj_digitos, colunas geradas — ver
+// .sql/parceiros_documento_digitos.sql), não pela string mascarada crua:
+// nem todo cadastro sincronizado do PrimeStart usa a mesma pontuação (às
+// vezes vem sem máscara, com espaço a mais etc.), então comparar a string
+// inteira ("123.456.789-00") batia igualdade EXATA e falhava mesmo com o
+// parceiro certo já cadastrado — causava duplicação (bug reportado
+// 2026-09-14: parceiro já existia e o sistema criava outro).
 async function buscarEntidadeLocal(documentoFormatado: string): Promise<{ oid: string; origem: 'parceiro' | 'colaborador' } | null> {
   const digitos = documentoFormatado.replace(/\D/g, '');
   if (!digitos) return null;
-  const campo = digitos.length > 11 ? 'cnpj' : 'cpf';
+  const campo = digitos.length > 11 ? 'cnpj_digitos' : 'cpf_digitos';
 
   const db = supabaseAdmin();
 
-  const { data: parceiro } = await db.from('parceiros').select('p2s_oid').eq(campo, documentoFormatado).limit(1).maybeSingle();
+  const { data: parceiro } = await db.from('parceiros').select('p2s_oid').eq(campo, digitos).limit(1).maybeSingle();
   if (parceiro?.p2s_oid) return { oid: parceiro.p2s_oid as string, origem: 'parceiro' };
 
-  if (campo === 'cpf') {
-    const { data: colaborador } = await db.from('colaboradores').select('p2s_oid').eq('cpf', documentoFormatado).limit(1).maybeSingle();
+  if (campo === 'cpf_digitos') {
+    const { data: colaborador } = await db.from('colaboradores').select('p2s_oid').eq('cpf_digitos', digitos).limit(1).maybeSingle();
     if (colaborador?.p2s_oid) return { oid: colaborador.p2s_oid as string, origem: 'colaborador' };
   }
 
@@ -60,10 +68,19 @@ async function buscarEntidadeLocal(documentoFormatado: string): Promise<{ oid: s
 // Segunda tentativa, ao vivo na API, antes de decidir cadastrar um parceiro
 // novo — reduz o risco de duplicar um cadastro que já existe no PrimeStart
 // mas ainda não chegou na sincronização local (ex: cadastrado há poucos
-// minutos por outra pessoa).
+// minutos por outra pessoa). Tenta o documento mascarado (formato mais comum
+// no PrimeStart) e, se não achar, também só os dígitos — mesmo motivo do
+// buscarEntidadeLocal: não dá pra confiar que todo cadastro usa a mesma
+// pontuação, e a API só faz igualdade exata (sem normalizar).
 async function buscarParceiroAoVivo(ambiente: AmbienteP2s, documentoFormatado: string, campo: 'CNPJ' | 'CPF'): Promise<string | null> {
   const resultado = await consultarObjetos(ambiente, 'TCustomParceiro', [criterio(campo, 'eq', 'str', documentoFormatado)], { proxy: true });
-  return resultado.objectlist[0]?.oid ?? null;
+  const oidMascarado = resultado.objectlist[0]?.oid ?? null;
+  if (oidMascarado) return oidMascarado;
+
+  const digitos = documentoFormatado.replace(/\D/g, '');
+  if (digitos === documentoFormatado) return null;
+  const resultadoDigitos = await consultarObjetos(ambiente, 'TCustomParceiro', [criterio(campo, 'eq', 'str', digitos)], { proxy: true });
+  return resultadoDigitos.objectlist[0]?.oid ?? null;
 }
 
 // Cadastra um Parceiro/Fornecedor novo no PrimeStart quando nenhum cadastro

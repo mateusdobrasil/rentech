@@ -14,15 +14,22 @@ export type Tomada = 10 | 20;
 export const TOMADAS_A: readonly Tomada[] = [10, 20];
 
 /**
- * Disjuntor não trabalha no limite: carga contínua fica em 80% do nominal.
- * Os 20% de folga cobrem o calor no quadro, a queda de tensão no fim do cabo
- * e o pico das fontes quando o equipamento liga.
+ * Régua de carga por circuito, sobre o nominal do disjuntor.
+ *
+ * O disjuntor conduz a corrente nominal continuamente — a NBR 5410 não manda
+ * derrubar isso para 80% como o NEC americano. A folga aqui é de operação, e
+ * tem três motivos concretos: disjuntor é calibrado a 30 °C e dentro de quadro
+ * fechado ou rack os fabricantes publicam fator de 0,90 a 40 °C; o cabo de um
+ * lance longo, ainda por cima enrolado no carretel, esquenta antes do
+ * disjuntor desarmar; e a fonte chaveada dá pico ao ligar.
+ *
+ * 0,9 é a régua da operação da Rentech: 3.960 W num circuito de 20 A.
  */
-export const MARGEM_DISJUNTOR = 0.8;
+export const MARGEM_DISJUNTOR = 0.9;
 
-/** 20 A: 4.400 W · 10 A: 2.200 W */
+/** O que o disjuntor aguenta no limite — 20 A: 4.400 VA · 10 A: 2.200 VA */
 export const wNominal = (a: Tomada) => TENSAO_V * a;
-/** 20 A: 3.520 W · 10 A: 1.760 W */
+/** A régua de trabalho — 20 A: 3.960 W · 10 A: 1.980 W */
 export const wUtil = (a: Tomada) => wNominal(a) * MARGEM_DISJUNTOR;
 
 /**

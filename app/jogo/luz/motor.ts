@@ -11,7 +11,7 @@
 // ============================================================================
 
 import {
-  ENERGIA, TOMADAS_A, wUtil, fmtKw, type Tomada,
+  ENERGIA, TOMADAS_A, wUtil, wNominal, fmtKw, type Tomada,
 } from '../eletrica';
 import {
   PONTOS_ICAMENTO, TRUSS_Q30_KG_POR_M, CUSTO_TALHA_FOLGADA,
@@ -715,7 +715,7 @@ export function vistoriar(e: EstadoLuz): Vistoria {
     if (linha.situacao !== 'estourada') continue;
     problemas.push({
       tipo: 'tempo',
-      texto: `Circuito ${linha.circuito} com ${linha.pecas} peças: ${fmtKw(linha.watts)} num disjuntor de ${e.briefing.tomadaA} A, que trabalha até ${fmtKw(teto)}. Caiu no primeiro blackout da cena.`,
+      texto: `Circuito ${linha.circuito} com ${linha.pecas} peças: ${fmtKw(linha.watts)}. O disjuntor de ${e.briefing.tomadaA} A aguenta ${fmtKw(wNominal(e.briefing.tomadaA))} no limite, e a régua de trabalho é ${fmtKw(teto)} — caiu no primeiro blackout da cena.`,
       curto: `Circuito ${linha.circuito} sobrecarregado`,
       celulas: contarPorCircuito(e).get(linha.circuito) ?? [],
       minutos: PENALIDADE.circuitoSobrecarregado,
@@ -883,7 +883,7 @@ export function licaoEnergia(e: EstadoLuz) {
     minutos: custoEnergia(e),
     minutosIdeal: custoEnergiaIdeal(e),
     conta: `${contarPeca(e, 'moving')} movings × ${PECAS.moving.watts} W + ${contarPeca(e, 'par')} pars × ${PECAS.par.watts} W = ${fmtKw(wattsMontados(e))}. `
-      + `Tomada de ${a} A trabalha até ${fmtKw(wUtil(a))} por circuito`,
+      + `Tomada de ${a} A: ${fmtKw(wNominal(a))} no limite do disjuntor, ${fmtKw(wUtil(a))} de régua de trabalho por circuito`,
   };
 }
 

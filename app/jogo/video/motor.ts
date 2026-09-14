@@ -628,8 +628,8 @@ export function licaoEnergia(e: Estado) {
     wattsUtil: wUtil(a),
     teto: gabinetesPorCircuitoDe(a),
     conta: `Gabinete de 0,5 × 0,5 m = 0,25 m² × ${CONSUMO_W_M2} W = ${W_POR_GABINETE} W. `
-      + `Tomada ${TENSAO_V} V × ${a} A = ${wNominal(a).toLocaleString('pt-BR')} W; `
-      + `a ${Math.round(MARGEM_DISJUNTOR * 100)}%, ${wUtil(a).toLocaleString('pt-BR')} W `
+      + `Tomada ${TENSAO_V} V × ${a} A = ${wNominal(a).toLocaleString('pt-BR')} VA no limite do disjuntor; `
+      + `trabalhando a ${Math.round(MARGEM_DISJUNTOR * 100)}%, ${wUtil(a).toLocaleString('pt-BR')} W `
       + `→ ${gabinetesPorCircuitoDe(a)} gabinetes por circuito`,
     ideais: circuitos.filter((c) => c.situacao === 'ideal').length,
     comSobra: circuitos.filter((c) => c.situacao === 'sobra').length,
@@ -845,7 +845,7 @@ export function vistoriar(e: Estado): Vistoria {
     if (qtd > gabinetesPorCircuito(e)) {
       problemas.push({
         tipo: 'tempo',
-        texto: `Circuito ${circuito} com ${qtd} gabinetes: ${fmtKw(qtd * W_POR_GABINETE)} num disjuntor de ${e.briefing.tomadaA} A, que trabalha até ${fmtKw(wUtil(e.briefing.tomadaA))}. No pico do conteúdo ele desarmou durante o evento.`,
+        texto: `Circuito ${circuito} com ${qtd} gabinetes: ${fmtKw(qtd * W_POR_GABINETE)}. O disjuntor de ${e.briefing.tomadaA} A aguenta ${fmtKw(wNominal(e.briefing.tomadaA))} no limite, e a régua de trabalho é ${fmtKw(wUtil(e.briefing.tomadaA))} — com o quadro quente e o cabo no carretel, ele desarmou no pico do conteúdo.`,
         curto: `Circuito ${circuito} sobrecarregado`,
         celulas: celulasOnde(e, (c) => c.instalado && c.circuito === circuito),
         minutos: PENALIDADE.circuitoSobrecarregado,

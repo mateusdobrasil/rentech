@@ -1,94 +1,88 @@
 "use client";
 
 // ============================================================================
-// CALL TIME — Fase 4: o PA
+// CALL TIME — Fase 4: o grid de luz
 //
-// Terceira irmã de /testes/montagem e /testes/luz: mesmo relógio, mesma
-// vistoria, mesmo placar. O ofício aqui é impedância, cobertura e delay — e a
-// regra de ouro da energização, que é o jeito mais rápido de estragar uma
-// montagem boa nos últimos trinta segundos.
+// Irmã da tela do LED em /testes/calltime/video: mesmo relógio, mesma vistoria,
+// mesmo placar. O que muda é o ofício — aqui o inimigo é o endereço DMX, e a
+// régua de segurança é o cabo de aço, que reprova a partida quando falta.
 //
-// Toda a regra vive em app/jogo/som/motor.ts.
+// Toda a regra vive em app/jogo/luz/motor.ts — esta tela é só interação.
 // ============================================================================
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import BackButton from '../BackButton';
-import { useSom as useSomDaTela } from '../useSom';
-import { CORES_CIRCUITO } from '../../jogo/cores';
+import BackButton from '../../BackButton';
+import { useSom } from '../../useSom';
+import { CORES_CIRCUITO, CORES_UNIVERSO } from '../../../jogo/cores';
 import {
   lerRanking, gravarMarca, entraNoRanking, posicaoDe as posicaoNoRanking,
   limparApelido, APELIDO_MAX,
-} from '../../jogo/ranking';
+} from '../../../jogo/ranking';
 import {
-  AMPLIFICADOR,
-  ANGULOS,
   APLICACOES,
-  ARRANJOS,
-  CAIXAS,
+  ATRASO_TOLERADO,
+  CANAIS_POR_UNIVERSO,
   CUSTO,
-  CUSTO_ANGULO_NO_AR,
   CUSTO_CONSULTA_OS,
-  EQUIPAMENTOS,
-  FILAS,
+  ENERGIA,
   MULT_NO_AR,
-  ORDEM_LIGA,
+  PECAS,
+  PECAS_POR_LINHA,
   POSICOES_MAX,
   TALHAS_KG,
-  TOLERANCIA_GRAUS,
-  VELOCIDADE_SOM,
-  angularEm,
-  atribuirEm,
-  caboAcoEm,
+  VARAS,
+  aplicarImprevisto,
   cargaPorPonto,
-  coberturaDoLado,
+  caboAcoEm,
   conferirLeitura,
   contaOS,
-  contarNaFila,
+  contarPeca,
   criarPartida,
   custoFechamento,
   custoPendurar,
-  escolherArranjo,
-  filaDe,
+  deveDispararImprevisto,
   finalizar,
+  fmtKw,
   folga,
-  icar as icarPA,
+  icar as icarGrid,
   indice,
   janelaDe,
-  lerNumero,
-  licaoAmplificacao,
-  licaoCobertura,
-  ligar as ligarEquipamento,
-  limparCanalEm,
-  penduradas,
+  licaoDmx,
+  licaoEnergia,
+  limparAtribuicaoEm,
+  atribuirEm,
+  pecasDoImprevisto,
+  pecasPenduradas,
   pendurarEm,
-  podeRecolherCanal,
+  podeRecolherCircuito,
+  podeRecolherUniverso,
   pontuar,
   posicaoDe,
-  programarDelay,
-  puxarCanal,
-  recolherCanal,
+  puxarCircuito,
+  puxarUniverso,
+  recolherCircuito,
+  recolherUniverso,
   relogio,
   removerEm,
   respostaOS,
   talhaRecomendada,
-  tipoDaFila,
+  varaDe,
   vistoriar,
-  type Arranjo,
-  type BriefingSom,
+  type BriefingLuz,
   type ConferenciaOS,
-  type Equipamento,
-  type EstadoSom,
+  type EstadoLuz,
   type Problema,
-} from '../../jogo/som/motor';
+  type TipoPeca,
+} from '../../../jogo/luz/motor';
 
-type Camada = 'pa' | 'cobertura' | 'amplificacao';
+type Camada = 'grid' | 'dmx' | 'energia';
 type Vista = 'palco' | 'planta';
 type Fase = 'os' | 'jogando' | 'vistoria' | 'placar';
 type Toast = { id: number; texto: string; tom: 'custo' | 'penal' | 'ok' };
 
-const Som3D = dynamic(() => import('../../jogo/som/Som3D'), {
+const Grid3D = dynamic(() => import('../../../jogo/luz/Grid3D'), {
   ssr: false,
   loading: () => (
     <div className="h-full flex items-center justify-center">
@@ -100,90 +94,98 @@ const Som3D = dynamic(() => import('../../jogo/som/Som3D'), {
 const OCIO_MS = 120_000;
 const BEAT_ABERTURA_MS = 2_600;
 const BEAT_PROBLEMA_MS = 3_800;
-const BEAT_LIMPO_MS = 5_400;
+/** Passagem limpa na luz: um ciclo inteiro da cena, com o botão de pular à mão. */
+const BEAT_LIMPO_MS = 20_000;
 
-/** Posições entre dois pontos da MESMA fila: o traço não pula de lado. */
+/** Posições entre duas garras da MESMA vara: o traço não pula de vara. */
 function posicoesDoTraco(a: number, b: number): number[] {
-  if (filaDe(a) !== filaDe(b)) return [a];
-  const fila = filaDe(a);
+  if (varaDe(a) !== varaDe(b)) return [a];
+  const vara = varaDe(a);
   const p0 = Math.min(posicaoDe(a), posicaoDe(b));
   const p1 = Math.max(posicaoDe(a), posicaoDe(b));
   const fora: number[] = [];
-  for (let p = p0; p <= p1; p++) fora.push(indice(fila, p));
+  for (let p = p0; p <= p1; p++) fora.push(indice(vara, p));
   return fora;
 }
 
+// O sorteio da obra usa Math.random: renderizar no servidor daria uma obra no
+// servidor e outra no navegador. Então o jogo só aparece depois de montar.
 const assinarNada = () => () => {};
 const noNavegador = () => true;
 const noServidor = () => false;
 
-export default function CallTimeSom() {
+export default function CallTimeLuz() {
   const montadoNoCliente = useSyncExternalStore(assinarNada, noNavegador, noServidor);
-  const [estado, setEstado] = useState<EstadoSom>(criarPartida);
+  const [estado, setEstado] = useState<EstadoLuz>(criarPartida);
   const [fase, setFase] = useState<Fase>('os');
-  const [camada, setCamada] = useState<Camada>('pa');
-  const [vista, setVista] = useState<Vista>('palco');
-  const [ferramenta, setFerramenta] = useState<string>('caixa');
+  const [camada, setCamada] = useState<Camada>('grid');
+  // Começa na planta: é nela que se trabalha. O palco entra no fechamento,
+  // quando a câmera assume e mostra o que a montagem virou.
+  const [vista, setVista] = useState<Vista>('planta');
+  const [ferramenta, setFerramenta] = useState<string>('moving');
   const [selecao, setSelecao] = useState<{ a: number; b: number } | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [imprevisto, setImprevisto] = useState(false);
   const [passo, setPasso] = useState(-1);
   const [apelido, setApelido] = useState('');
   const [gravado, setGravado] = useState(false);
-  const [osDelay, setOsDelay] = useState('');
   const [osCanais, setOsCanais] = useState('');
+  const [osUniversos, setOsUniversos] = useState('');
   const [conferencia, setConferencia] = useState<ConferenciaOS | null>(null);
-  const [delayDigitado, setDelayDigitado] = useState('');
 
   const ancora = useRef<number | null>(null);
   const selecaoRef = useRef<{ a: number; b: number } | null>(null);
   const toastId = useRef(0);
-  const { iniciar, tocar } = useSomDaTela();
+  const { iniciar, tocar } = useSom();
 
   const janela = janelaDe(estado);
   const emJogo = fase === 'jogando' || fase === 'os';
 
+  // --- feedback -------------------------------------------------------------
   const toast = useCallback((texto: string, tom: Toast['tom'] = 'custo') => {
     const id = ++toastId.current;
     setToasts((t) => [...t, { id, texto, tom }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2600);
   }, []);
 
-  const aplicar = useCallback((fn: (e: EstadoSom) => EstadoSom) => {
-    setEstado((anterior) => fn(anterior));
+  /** Toda mudança passa por aqui, e é aqui que o cliente liga pedindo mais. */
+  const aplicar = useCallback((fn: (e: EstadoLuz) => EstadoLuz) => {
+    setEstado((anterior) => {
+      const proximo = fn(anterior);
+      if (deveDispararImprevisto(proximo)) {
+        setImprevisto(true);
+        return aplicarImprevisto(proximo);
+      }
+      return proximo;
+    });
   }, []);
 
-  // --- pintura --------------------------------------------------------------
-  const canaisPuxados = estado.canaisPuxados;
+  // --- pintura na grade -----------------------------------------------------
+  const universosPuxados = estado.universosPuxados;
+  const circuitosPuxados = estado.circuitosPuxados;
 
   const aplicarEm = useCallback((alvos: number[]) => {
-    if (camada === 'amplificacao' && ferramenta !== 'limpar' && Number(ferramenta) > canaisPuxados) {
-      toast('Nenhum canal de amplificador puxado ainda');
-      return;
+    if (camada !== 'grid' && ferramenta !== 'limpar') {
+      const limite = camada === 'dmx' ? universosPuxados : circuitosPuxados;
+      if (Number(ferramenta) > limite) {
+        toast(camada === 'dmx' ? 'Nenhuma linha DMX puxada ainda' : 'Nenhum circuito puxado ainda');
+        return;
+      }
     }
 
     aplicar((e) => {
       if (e.finalizado) return e;
-      if (camada === 'amplificacao') {
+      if (camada === 'dmx' || camada === 'energia') {
+        const campo = camada === 'dmx' ? 'universo' : 'circuito';
         return ferramenta === 'limpar'
-          ? limparCanalEm(e, alvos)
-          : atribuirEm(e, alvos, Number(ferramenta));
+          ? limparAtribuicaoEm(e, alvos, campo)
+          : atribuirEm(e, alvos, campo, Number(ferramenta));
       }
-      if (camada === 'cobertura') return angularEm(e, alvos, Number(ferramenta));
       if (ferramenta === 'cabo') return caboAcoEm(e, alvos);
       if (ferramenta === 'remover') return removerEm(e, alvos);
-      // Na camada do PA, a fila manda: line array nos lados, sub no chão.
-      const porFila = new Map<number, number[]>();
-      for (const i of alvos) {
-        const fila = filaDe(i);
-        porFila.set(fila, [...(porFila.get(fila) ?? []), i]);
-      }
-      let proximo = e;
-      for (const [fila, lista] of porFila) {
-        proximo = pendurarEm(proximo, lista, ferramenta === 'caixa' ? tipoDaFila(fila) : 'sub');
-      }
-      return proximo;
+      return pendurarEm(e, alvos, ferramenta as TipoPeca);
     });
-  }, [aplicar, camada, ferramenta, canaisPuxados, toast]);
+  }, [aplicar, camada, ferramenta, universosPuxados, circuitosPuxados, toast]);
 
   const pintar = useCallback((i: number) => {
     if (ancora.current === null) { aplicarEm([i]); return; }
@@ -194,6 +196,7 @@ export default function CallTimeSom() {
     setSelecao(s);
   }, [aplicarEm]);
 
+  /** Hit-test manual: pointerenter não dispara durante arrasto por toque. */
   const pintarNoPonto = useCallback((x: number, y: number) => {
     const alvo = document.elementFromPoint(x, y) as HTMLElement | null;
     const attr = alvo?.dataset?.idx;
@@ -231,47 +234,31 @@ export default function CallTimeSom() {
   const icar = () => {
     if (estado.icado || estado.talhaKg === null) return;
     iniciar(); tocar('vitoria');
-    toast(`PA içado · −${CUSTO.icar} min`, 'ok');
-    aplicar(icarPA);
+    toast(`Grid içado · −${CUSTO.icar} min`, 'ok');
+    aplicar(icarGrid);
   };
 
-  const puxar = () => {
+  const puxarLinha = (tipo: 'dmx' | 'energia') => {
     iniciar(); tocar('clique', 450);
-    setFerramenta(String(estado.canaisPuxados + 1));
-    aplicar(puxarCanal);
+    const n = (tipo === 'dmx' ? estado.universosPuxados : estado.circuitosPuxados) + 1;
+    setFerramenta(String(n));
+    aplicar(tipo === 'dmx' ? puxarUniverso : puxarCircuito);
   };
 
-  const recolher = () => {
-    if (!podeRecolherCanal(estado)) return;
+  const recolherLinha = (tipo: 'dmx' | 'energia') => {
+    const pode = tipo === 'dmx' ? podeRecolherUniverso(estado) : podeRecolherCircuito(estado);
+    if (!pode) return;
     iniciar(); tocar('clique', 300);
-    const n = estado.canaisPuxados;
+    const n = tipo === 'dmx' ? estado.universosPuxados : estado.circuitosPuxados;
     if (ferramenta === String(n)) setFerramenta(n > 1 ? String(n - 1) : 'limpar');
-    aplicar(recolherCanal);
-  };
-
-  const ligar = (equipamento: Equipamento) => {
-    if (estado.ligacao.includes(equipamento)) return;
-    iniciar();
-    const proximo = ORDEM_LIGA[estado.ligacao.length];
-    if (equipamento !== proximo) { tocar('erro'); toast(`${EQUIPAMENTOS[equipamento].rotulo} fora de ordem`, 'penal'); }
-    else tocar('clique', 600);
-    aplicar((e) => ligarEquipamento(e, equipamento));
-  };
-
-  const definirArranjo = (arranjo: Arranjo) => {
-    iniciar(); tocar('clique', 520);
-    aplicar((e) => escolherArranjo(e, arranjo));
-  };
-
-  const gravarDelay = (bruto: string) => {
-    setDelayDigitado(bruto);
-    const ms = lerNumero(bruto);
-    aplicar((e) => programarDelay(e, ms === null ? null : Math.round(ms)));
+    aplicar(tipo === 'dmx' ? recolherUniverso : recolherCircuito);
   };
 
   const fechar = () => {
     iniciar(); tocar('sucesso', 600);
     setEstado((e) => (e.finalizado ? e : finalizar(e)));
+    setVista('palco');   // a vistoria acontece no 3D, não na planta
+    setCamada('grid');   // e mostra o grid como ele ficou, não o mapa de DMX
     setPasso(-1);
     setFase('vistoria');
   };
@@ -279,25 +266,31 @@ export default function CallTimeSom() {
   const reiniciar = useCallback(() => {
     setEstado(criarPartida());
     setFase('os');
-    setCamada('pa');
-    setVista('palco');
-    setFerramenta('caixa');
+    setCamada('grid');
+    setVista('planta');
+    setFerramenta('moving');
     setToasts([]);
+    setImprevisto(false);
     setPasso(-1);
     setApelido('');
     setGravado(false);
-    setOsDelay('');
     setOsCanais('');
+    setOsUniversos('');
     setConferencia(null);
-    setDelayDigitado('');
   }, []);
 
+  /**
+   * Leitura da OS. Acertar de primeira vale bônus; errar custa uma ligação
+   * para o escritório. Nunca trava a partida: o objetivo é a pessoa sair
+   * sabendo fazer a conta.
+   */
   const confirmarLeitura = () => {
     iniciar();
-    const c = conferirLeitura(estado.briefing, osDelay, osCanais);
+    const c = conferirLeitura(estado.briefing, osCanais, osUniversos);
+    const certo = c.canaisOk && c.universosOk;
     setConferencia(c);
 
-    if (c.delayOk && c.canaisOk) {
+    if (certo) {
       tocar('vitoria');
       setEstado((e) => ({
         ...e,
@@ -318,8 +311,8 @@ export default function CallTimeSom() {
 
   const liberarSemAcertar = () => {
     const certo = respostaOS(estado.briefing);
-    setOsDelay(String(certo.delayMs));
     setOsCanais(String(certo.canais));
+    setOsUniversos(String(certo.universos));
     setEstado((e) => ({ ...e, leitura: { ...e.leitura, resolvida: true } }));
     setFase('jogando');
   };
@@ -328,18 +321,18 @@ export default function CallTimeSom() {
   const vistoria = fase === 'vistoria' || fase === 'placar' ? vistoriar(estado) : null;
   const problemas: Problema[] = vistoria?.problemas ?? [];
   const placar = vistoria ? pontuar(estado, vistoria) : null;
-  const paLimpo = estado.finalizado && problemas.length === 0;
+  const gridLimpo = estado.finalizado && problemas.length === 0;
   const focoAtual = fase === 'vistoria' && passo >= 0 ? problemas[passo] ?? null : null;
 
   useEffect(() => {
     if (fase !== 'vistoria') return;
-    const duracao = paLimpo ? BEAT_LIMPO_MS : passo < 0 ? BEAT_ABERTURA_MS : BEAT_PROBLEMA_MS;
+    const duracao = gridLimpo ? BEAT_LIMPO_MS : passo < 0 ? BEAT_ABERTURA_MS : BEAT_PROBLEMA_MS;
     const id = setTimeout(() => {
       if (passo + 1 >= problemas.length) setFase('placar');
       else setPasso(passo + 1);
     }, duracao);
     return () => clearTimeout(id);
-  }, [fase, passo, problemas.length, paLimpo]);
+  }, [fase, passo, problemas.length, gridLimpo]);
 
   useEffect(() => {
     let id: ReturnType<typeof setTimeout>;
@@ -357,12 +350,12 @@ export default function CallTimeSom() {
     };
   }, [reiniciar]);
 
-  const ranking = fase === 'placar' ? lerRanking('som') : [];
-  const podeGravar = placar !== null && !placar.reprovado && entraNoRanking(placar.total, 'som');
+  const ranking = fase === 'placar' ? lerRanking('luz') : [];
+  const podeGravar = placar !== null && !placar.reprovado && entraNoRanking(placar.total, 'luz');
 
   const registrarMarca = () => {
     if (!placar || !limparApelido(apelido)) return;
-    gravarMarca(apelido, placar.total, 'som');
+    gravarMarca(apelido, placar.total, 'luz');
     setGravado(true);
     tocar('vitoria');
   };
@@ -371,37 +364,34 @@ export default function CallTimeSom() {
   const selecionadas = new Set(selecao ? posicoesDoTraco(selecao.a, selecao.b) : []);
   const carga = cargaPorPonto(estado);
   const talhaMin = talhaRecomendada(carga);
-  const semCabo = estado.celulas.filter((c) => c.caixa === 'caixa' && !c.caboAco).length;
-  const b = estado.briefing;
+  const movings = contarPeca(estado, 'moving');
+  const pars = contarPeca(estado, 'par');
+  const semCabo = estado.celulas.filter((c) => c.peca && !c.caboAco).length;
 
   const etapas = [
-    { nome: 'Caixas', ok: contarNaFila(estado, 0) >= b.caixasPorLado && contarNaFila(estado, 1) >= b.caixasPorLado, ativa: camada === 'pa' },
-    { nome: 'Ângulos', ok: [0, 1].every((f) => coberturaDoLado(estado, f).fecha), ativa: camada === 'cobertura' },
-    { nome: 'Cabo de aço', ok: penduradas(estado) > 0 && semCabo === 0, ativa: ferramenta === 'cabo' },
-    { nome: 'Içar', ok: estado.icado, ativa: !estado.icado && semCabo === 0 && penduradas(estado) > 0 },
-    { nome: 'Amplificação', ok: estado.canaisPuxados > 0 && estado.celulas.every((c) => !c.caixa || c.canal !== null), ativa: camada === 'amplificacao' },
-    { nome: 'Ligar', ok: estado.ligacao.length === ORDEM_LIGA.length, ativa: estado.icado },
+    { nome: 'Peças', ok: pecasPenduradas(estado) >= estado.movings + estado.pars, ativa: camada === 'grid' },
+    { nome: 'Cabo de aço', ok: pecasPenduradas(estado) > 0 && semCabo === 0, ativa: ferramenta === 'cabo' },
+    { nome: 'Içar', ok: estado.icado, ativa: !estado.icado && semCabo === 0 && pecasPenduradas(estado) > 0 },
+    { nome: 'DMX', ok: estado.universosPuxados > 0 && estado.celulas.every((c) => !c.peca || c.universo !== null), ativa: camada === 'dmx' },
+    { nome: 'Energia', ok: estado.circuitosPuxados > 0 && estado.celulas.every((c) => !c.peca || c.circuito !== null), ativa: camada === 'energia' },
   ];
 
   const corCelula = (i: number) => {
     const c = estado.celulas[i];
-    if (!c.caixa) return 'rgba(255,255,255,0.045)';
-    if (camada === 'amplificacao') return c.canal === null ? '#1E2A40' : CORES_CIRCUITO[(c.canal - 1) % CORES_CIRCUITO.length];
-    if (camada === 'cobertura') {
-      if (c.caixa !== 'caixa') return '#1E2A40';
-      return c.angulo === null ? '#1E2A40' : `hsl(${210 - c.angulo * 22}, 60%, ${38 + c.angulo * 4}%)`;
-    }
-    if (c.caixa === 'caixa' && !c.caboAco) return '#7F1D1D';
+    if (!c.peca) return 'rgba(255,255,255,0.045)';
+    if (camada === 'dmx') return c.universo === null ? '#1E2A40' : CORES_UNIVERSO[(c.universo - 1) % CORES_UNIVERSO.length];
+    if (camada === 'energia') return c.circuito === null ? '#1E2A40' : CORES_CIRCUITO[(c.circuito - 1) % CORES_CIRCUITO.length];
+    if (!c.caboAco) return '#7F1D1D';
     if (c.noAr) return '#8A5A22';
-    return c.caixa === 'sub' ? '#3E4E7A' : '#4E93D8';
+    return c.peca === 'moving' ? '#4E93D8' : '#E0912F';
   };
 
   const rotuloCelula = (i: number) => {
     const c = estado.celulas[i];
-    if (!c.caixa) return '';
-    if (camada === 'amplificacao') return c.canal ?? '';
-    if (camada === 'cobertura') return c.caixa === 'caixa' ? (c.angulo === null ? '' : `${c.angulo}`) : '';
-    return c.caixa === 'sub' ? 'S' : 'C';
+    if (!c.peca) return '';
+    if (camada === 'dmx') return c.universo ?? '';
+    if (camada === 'energia') return c.circuito ?? '';
+    return c.peca === 'moving' ? 'M' : 'P';
   };
 
   if (!montadoNoCliente) {
@@ -419,20 +409,22 @@ export default function CallTimeSom() {
       <div className="min-h-[calc(100vh-5rem)] bg-black text-white">
 
         {/* ---------------- cabeçalho ---------------- */}
-        <div className="border-b border-[#284B8C]/25 bg-[#0C1D4D]/20 px-4 py-3 sticky top-0 z-40 backdrop-blur">
+        <div className="border-b border-[#284B8C]/25 bg-[#0C1D4D]/20 px-4 py-3 sticky top-20 z-40 backdrop-blur">
           <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
             <div className="flex items-baseline gap-3">
               <h1 className="text-lg font-black uppercase tracking-wider">
-                Call Time <span className="text-[#336699]">· Som</span>
+                Call Time <span className="text-[#336699]">· Luz</span>
               </h1>
               <span className="hidden sm:inline text-[10px] font-bold uppercase tracking-wider text-white/35">
-                PA e line array
+                Grid de luz cênica
               </span>
             </div>
 
             <div className="flex items-center gap-4">
               <div className="text-right">
-                <div className="text-2xl font-black tabular-nums leading-none">{relogio(estado.gastos, janela)}</div>
+                <div className="text-2xl font-black tabular-nums leading-none">
+                  {relogio(estado.gastos, janela)}
+                </div>
                 <div className="text-[9px] font-bold uppercase tracking-wider text-white/40 tabular-nums">
                   {folga(estado)} min de folga
                 </div>
@@ -447,11 +439,11 @@ export default function CallTimeSom() {
           </div>
 
           <div className="max-w-6xl mx-auto mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-bold uppercase tracking-wider">
-            <span className="text-white/35 tabular-nums">OS {b.os}</span>
+            <span className="text-white/35 tabular-nums">OS {estado.briefing.os}</span>
             <span className="px-2 py-0.5 rounded bg-[#336699]/25 border border-[#336699]/50 text-white font-black">
-              {APLICACOES[b.aplicacao].rotulo}
+              {APLICACOES[estado.briefing.aplicacao].rotulo}
             </span>
-            <span className="text-white/50">{b.evento}</span>
+            <span className="text-white/50">{estado.briefing.evento}</span>
           </div>
 
           {emJogo && (
@@ -476,15 +468,17 @@ export default function CallTimeSom() {
 
         <div className={`max-w-6xl mx-auto px-4 py-6 grid gap-6 items-start ${emJogo ? 'lg:grid-cols-[1fr_20rem]' : 'grid-cols-1'}`}>
 
+          {/* ---------------- o grid ---------------- */}
           <div className="flex flex-col gap-3">
+
             {emJogo && (
               <div className="flex gap-1.5 flex-wrap">
-                {([['pa', 'PA'], ['cobertura', 'Cobertura'], ['amplificacao', 'Amplificação']] as const).map(([id, rotulo]) => (
+                {([['grid', 'Grid'], ['dmx', 'DMX'], ['energia', 'Energia']] as const).map(([id, rotulo]) => (
                   <button
                     key={id}
                     onClick={() => {
                       setCamada(id);
-                      setFerramenta(id === 'pa' ? 'caixa' : id === 'cobertura' ? '2' : '1');
+                      setFerramenta(id === 'grid' ? 'moving' : '1');
                     }}
                     className={`px-4 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${
                       camada === id ? 'bg-[#336699] text-white' : 'bg-[#0C1D4D]/30 text-white/50 border border-[#284B8C]/30 hover:text-white'
@@ -495,7 +489,7 @@ export default function CallTimeSom() {
                 ))}
                 <div className="ml-auto flex items-center gap-3">
                   <span className="hidden sm:flex items-center gap-3 text-[10px] font-bold uppercase tracking-wider text-white/40 tabular-nums">
-                    <span>{contarNaFila(estado, 0)}+{contarNaFila(estado, 1)} caixas · {contarNaFila(estado, 2)} subs</span>
+                    <span>{movings} M · {pars} P</span>
                     <span className="text-white/20">·</span>
                     <span>{carga} kg/ponto</span>
                   </span>
@@ -520,70 +514,65 @@ export default function CallTimeSom() {
               <div className={`rounded-xl border border-[#284B8C]/30 bg-[#0C1D4D]/15 overflow-hidden ${
                 emJogo ? 'h-[52vh] min-h-[22rem]' : 'h-[68vh] min-h-[26rem]'
               }`}>
-                <Som3D
+                <Grid3D
                   estado={estado}
                   camada={camada}
                   onPintar={(i) => { if (emJogo) aplicarEm([i]); }}
                   vistoriando={!emJogo}
                   foco={focoAtual}
-                  orbitar={paLimpo && fase === 'vistoria'}
+                  orbitar={gridLimpo && fase === 'vistoria'}
+                  festa={gridLimpo && !emJogo}
                   selecionadas={selecionadas}
                 />
               </div>
             )}
 
+            {/* planta: as duas varas, garra por garra */}
             {vista === 'planta' && (
               <div className="rounded-xl border border-[#284B8C]/30 bg-[#0C1D4D]/15 p-3 sm:p-4 flex flex-col gap-4 select-none">
-                {FILAS.map((fila, f) => {
-                  const cobertura = f < 2 ? coberturaDoLado(estado, f) : null;
-                  return (
-                    <div key={fila.id} className="flex flex-col gap-1.5">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-[#4E93D8]">{fila.rotulo}</span>
-                        <span className={`text-[9px] font-bold uppercase tracking-wider tabular-nums ${
-                          cobertura && cobertura.caixas > 0 && !cobertura.fecha ? 'text-amber-400' : 'text-white/35'
-                        }`}>
-                          {cobertura
-                            ? `${cobertura.soma}° de ${b.coberturaGraus}° · ${CAIXAS.caixa.ohms} Ω por caixa`
-                            : `${CAIXAS.sub.rotulo} · ${CAIXAS.sub.ohms} Ω · ${CAIXAS.sub.watts} W`}
-                        </span>
-                      </div>
-                      <div
-                        className="grid gap-[3px]"
-                        style={{ gridTemplateColumns: `repeat(${POSICOES_MAX}, minmax(0, 1fr))` }}
-                        onPointerMove={(ev) => { if (ancora.current !== null) pintarNoPonto(ev.clientX, ev.clientY); }}
-                      >
-                        {Array.from({ length: POSICOES_MAX }, (_, p) => {
-                          const i = indice(f, p);
-                          const c = estado.celulas[i];
-                          return (
-                            <button
-                              key={i}
-                              data-idx={i}
-                              disabled={!emJogo}
-                              onPointerDown={(ev) => {
-                                if (!emJogo) return;
-                                ev.preventDefault();
-                                ancora.current = i;
-                                selecaoRef.current = { a: i, b: i };
-                                setSelecao({ a: i, b: i });
-                              }}
-                              className={`aspect-square rounded-[3px] border transition-colors ${
-                                selecionadas.has(i) ? 'border-white' : 'border-black/40'
-                              } ${c.caixa === 'caixa' && !c.caboAco ? 'animate-pulse' : ''}`}
-                              style={{ background: corCelula(i) }}
-                              title={`${fila.rotulo} · posição ${p + 1}`}
-                            >
-                              <span className="text-[8px] font-black text-black/60 tabular-nums">{rotuloCelula(i)}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
+                {VARAS.map((vara, v) => (
+                  <div key={vara.id} className="flex flex-col gap-1.5">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-[#4E93D8]">{vara.rotulo}</span>
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-white/35">
+                        {PECAS[vara.peca].rotulo} · {PECAS[vara.peca].canais} canais · {PECAS[vara.peca].watts} W
+                      </span>
                     </div>
-                  );
-                })}
+                    <div
+                      className="grid gap-[3px]"
+                      style={{ gridTemplateColumns: `repeat(${POSICOES_MAX}, minmax(0, 1fr))` }}
+                      onPointerMove={(ev) => { if (ancora.current !== null) pintarNoPonto(ev.clientX, ev.clientY); }}
+                    >
+                      {Array.from({ length: POSICOES_MAX }, (_, p) => {
+                        const i = indice(v, p);
+                        const c = estado.celulas[i];
+                        return (
+                          <button
+                            key={i}
+                            data-idx={i}
+                            disabled={!emJogo}
+                            onPointerDown={(ev) => {
+                              if (!emJogo) return;
+                              ev.preventDefault();
+                              ancora.current = i;
+                              selecaoRef.current = { a: i, b: i };
+                              setSelecao({ a: i, b: i });
+                            }}
+                            className={`aspect-square rounded-[3px] border transition-colors ${
+                              selecionadas.has(i) ? 'border-white' : 'border-black/40'
+                            } ${c.peca && !c.caboAco ? 'animate-pulse' : ''}`}
+                            style={{ background: corCelula(i) }}
+                            title={`${vara.rotulo} · garra ${p + 1}`}
+                          >
+                            <span className="text-[8px] font-black text-black/60 tabular-nums">{rotuloCelula(i)}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
                 <p className="text-[10px] text-white/35 leading-snug">
-                  Nos lados, a posição 1 é a caixa de cima. Arraste para trabalhar várias de uma vez.
+                  Arraste ao longo da vara para trabalhar várias garras de uma vez. O traço não pula de vara.
                 </p>
               </div>
             )}
@@ -591,10 +580,13 @@ export default function CallTimeSom() {
             {/* ferramentas */}
             {emJogo && (
               <div className="flex flex-wrap gap-1.5">
-                {camada === 'pa' && (
+                {camada === 'grid' && (
                   <>
-                    <BotaoFerramenta ativo={ferramenta === 'caixa'} onClick={() => setFerramenta('caixa')} cor="#4E93D8">
-                      Caixa · −{custoPendurar('caixa', estado.icado)} min
+                    <BotaoFerramenta ativo={ferramenta === 'moving'} onClick={() => setFerramenta('moving')} cor="#4E93D8">
+                      Moving · −{custoPendurar('moving', estado.icado)} min
+                    </BotaoFerramenta>
+                    <BotaoFerramenta ativo={ferramenta === 'par'} onClick={() => setFerramenta('par')} cor="#E0912F">
+                      Par LED · −{custoPendurar('par', estado.icado)} min
                     </BotaoFerramenta>
                     <BotaoFerramenta ativo={ferramenta === 'cabo'} onClick={() => setFerramenta('cabo')} cor="#3E9E8F">
                       Cabo de aço · −{CUSTO.caboAco} min
@@ -605,42 +597,37 @@ export default function CallTimeSom() {
                   </>
                 )}
 
-                {camada === 'cobertura' && ANGULOS.map((g) => (
-                  <BotaoFerramenta
-                    key={g}
-                    ativo={ferramenta === String(g)}
-                    onClick={() => setFerramenta(String(g))}
-                    cor={`hsl(${210 - g * 22}, 60%, ${38 + g * 4}%)`}
-                  >
-                    {g}°
-                  </BotaoFerramenta>
-                ))}
-
-                {camada === 'amplificacao' && (
+                {camada !== 'grid' && (
                   <>
-                    {Array.from({ length: estado.canaisPuxados }, (_, k) => (
-                      <BotaoFerramenta
-                        key={k + 1}
-                        ativo={ferramenta === String(k + 1)}
-                        onClick={() => setFerramenta(String(k + 1))}
-                        cor={CORES_CIRCUITO[k % CORES_CIRCUITO.length]}
-                      >
-                        C{k + 1}
-                      </BotaoFerramenta>
-                    ))}
+                    {Array.from({ length: camada === 'dmx' ? estado.universosPuxados : estado.circuitosPuxados }, (_, k) => {
+                      const n = k + 1;
+                      const cores = camada === 'dmx' ? CORES_UNIVERSO : CORES_CIRCUITO;
+                      return (
+                        <BotaoFerramenta
+                          key={n}
+                          ativo={ferramenta === String(n)}
+                          onClick={() => setFerramenta(String(n))}
+                          cor={cores[k % cores.length]}
+                        >
+                          {camada === 'dmx' ? 'U' : 'C'}{n}
+                        </BotaoFerramenta>
+                      );
+                    })}
                     <button
-                      onClick={puxar}
+                      onClick={() => puxarLinha(camada === 'dmx' ? 'dmx' : 'energia')}
                       className="px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-wider border border-dashed border-[#336699]/70 text-[#4E93D8] hover:bg-[#0C1D4D]/60 hover:text-white transition-all"
                     >
-                      + Canal · {AMPLIFICADOR.minutos} min
+                      {camada === 'dmx'
+                        ? `+ Linha DMX · ${CUSTO.puxarUniverso} min`
+                        : `+ Circuito · ${ENERGIA.porCircuito} min`}
                     </button>
-                    {estado.canaisPuxados > 0 && (
+                    {(camada === 'dmx' ? estado.universosPuxados : estado.circuitosPuxados) > 0 && (
                       <button
-                        onClick={recolher}
-                        disabled={!podeRecolherCanal(estado)}
+                        onClick={() => recolherLinha(camada === 'dmx' ? 'dmx' : 'energia')}
+                        disabled={camada === 'dmx' ? !podeRecolherUniverso(estado) : !podeRecolherCircuito(estado)}
                         className="px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-wider border border-dashed border-white/20 text-white/50 hover:text-white hover:border-white/40 transition-all disabled:opacity-30"
                       >
-                        − Recolher C{estado.canaisPuxados}
+                        − Recolher {camada === 'dmx' ? 'U' : 'C'}{camada === 'dmx' ? estado.universosPuxados : estado.circuitosPuxados}
                       </button>
                     )}
                     <BotaoFerramenta ativo={ferramenta === 'limpar'} onClick={() => setFerramenta('limpar')} cor="#64748B">
@@ -652,14 +639,14 @@ export default function CallTimeSom() {
             )}
 
             {emJogo && (
-              <p className="text-xs text-white/45 leading-relaxed max-w-[62ch]">
-                {camada === 'pa' && (
+              <p className="text-xs text-white/45 leading-relaxed max-w-[60ch]">
+                {camada === 'grid' && (
                   estado.icado
-                    ? `O PA já subiu. Caixa nova agora custa ${MULT_NO_AR}× o tempo, e caixa voada sem cabo de aço reprova a partida.`
-                    : 'Line array se arma no chão e sobe pronto: caixas nos dois lados, subs no piso à frente do palco. Cabo de aço em toda caixa que voa.'
+                    ? `O grid já subiu. Peça pendurada agora custa ${MULT_NO_AR}× o tempo — é escada, plataforma e risco. E peça sem cabo de aço reprova a partida, sem discussão.`
+                    : 'Pendure as peças com o truss ainda no chão: par na frontal, moving no contra. Cabo de aço em toda peça pendurada, sem exceção.'
                 )}
-                {camada === 'cobertura' && `Cada ângulo é a abertura para a caixa seguinte. A soma do lado tem que fechar os ${b.coberturaGraus}° que a plateia pede (tolerância de ${TOLERANCIA_GRAUS}°), e o ângulo abre de cima para baixo: caixa de cima joga longe, caixa de baixo cobre quem está perto. Mexer nisso com o PA no ar custa ${CUSTO_ANGULO_NO_AR} min por caixa.`}
-                {camada === 'amplificacao' && `Canal de amplificador não desce de ${AMPLIFICADOR.ohmsMin} Ω. Caixa é de ${CAIXAS.caixa.ohms} Ω e sub é de ${CAIXAS.sub.ohms} Ω — quantas cabem por canal é conta sua. Quem passa disso põe o amplificador em proteção no meio do show.`}
+                {camada === 'dmx' && `Um universo tem ${CANAIS_POR_UNIVERSO} canais e a linha aguenta ${PECAS_POR_LINHA} aparelhos. Quantas linhas puxar é conta sua: moving come ${PECAS.moving.canais} canais, par LED come ${PECAS.par.canais}. O que não couber fica mudo na passagem.`}
+                {camada === 'energia' && `A tomada do local é de ${estado.briefing.tomadaA} A em 220 V. Moving puxa ${PECAS.moving.watts} W e par LED, ${PECAS.par.watts} W — e disjuntor não trabalha no limite. Cada circuito é um lance de cabo de ${ENERGIA.porCircuito} min, usado ou não.`}
               </p>
             )}
           </div>
@@ -672,112 +659,67 @@ export default function CallTimeSom() {
               {/* içamento */}
               <div className="rounded-xl border border-[#284B8C]/30 bg-[#0C1D4D]/20 p-4 flex flex-col gap-3">
                 <h2 className="text-[10px] font-black uppercase tracking-widest text-[#336699]">Içamento</h2>
+
                 <div className="flex justify-between items-baseline text-xs">
                   <span className="text-white/50 font-bold uppercase tracking-wider">Carga por ponto</span>
                   <span className="font-black tabular-nums">{carga} kg</span>
                 </div>
-                <div className="grid grid-cols-4 gap-1">
-                  {TALHAS_KG.map((kg) => (
-                    <button
-                      key={kg}
-                      disabled={estado.icado}
-                      onClick={() => escolherTalha(kg)}
-                      className={`py-2 rounded text-[10px] font-black tabular-nums transition-all disabled:opacity-40 ${
-                        estado.talhaKg === kg ? 'bg-[#336699] text-white' : 'bg-black/40 text-white/50 border border-[#284B8C]/30 hover:text-white'
-                      }`}
-                    >
-                      {kg}
-                    </button>
-                  ))}
+
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-white/50">Talha</span>
+                  <div className="grid grid-cols-4 gap-1">
+                    {TALHAS_KG.map((kg) => (
+                      <button
+                        key={kg}
+                        disabled={estado.icado}
+                        onClick={() => escolherTalha(kg)}
+                        className={`py-2 rounded text-[10px] font-black tabular-nums transition-all disabled:opacity-40 ${
+                          estado.talhaKg === kg ? 'bg-[#336699] text-white' : 'bg-black/40 text-white/50 border border-[#284B8C]/30 hover:text-white'
+                        }`}
+                      >
+                        {kg}
+                      </button>
+                    ))}
+                  </div>
+                  {estado.talhaKg !== null && estado.talhaKg < talhaMin && (
+                    <p className="text-[10px] font-bold text-red-400 leading-snug">
+                      Abaixo da carga. Içar assim é reprovação direta.
+                    </p>
+                  )}
                 </div>
-                {estado.talhaKg !== null && estado.talhaKg < talhaMin && (
-                  <p className="text-[10px] font-bold text-red-400 leading-snug">Abaixo da carga. Içar assim é reprovação direta.</p>
-                )}
+
                 {semCabo > 0 && (
                   <p className="text-[10px] font-bold text-red-300 leading-snug">
-                    {semCabo} {semCabo === 1 ? 'caixa sem cabo de aço' : 'caixas sem cabo de aço'}.
+                    {semCabo} {semCabo === 1 ? 'peça sem cabo de aço' : 'peças sem cabo de aço'}.
                   </p>
                 )}
+
                 <button
                   onClick={icar}
                   disabled={estado.icado || estado.talhaKg === null}
                   className="py-3 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all disabled:opacity-40 bg-[#336699] text-white hover:bg-[#3d7bb5] active:scale-[0.98]"
                 >
-                  {estado.icado ? '✓ PA içado' : `Içar o PA · −${CUSTO.icar} min`}
+                  {estado.icado ? '✓ Grid içado' : `Içar grid · −${CUSTO.icar} min`}
                 </button>
               </div>
 
-              {/* subs e delay */}
-              <div className="rounded-xl border border-[#284B8C]/30 bg-[#0C1D4D]/20 p-4 flex flex-col gap-3">
-                <h2 className="text-[10px] font-black uppercase tracking-widest text-[#336699]">Ajuste fino</h2>
-
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-white/50">Arranjo dos subs</span>
-                  <div className="grid grid-cols-2 gap-1">
-                    {(Object.keys(ARRANJOS) as Arranjo[]).map((id) => (
-                      <button
-                        key={id}
-                        onClick={() => definirArranjo(id)}
-                        className={`py-2 rounded text-[10px] font-black uppercase tracking-wider transition-all ${
-                          estado.arranjo === id ? 'bg-[#336699] text-white' : 'bg-black/40 text-white/50 border border-[#284B8C]/30 hover:text-white'
-                        }`}
-                      >
-                        {ARRANJOS[id].rotulo}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-[9px] text-white/35 leading-snug">
-                    {estado.arranjo ? ARRANJOS[estado.arranjo].descricao : 'Depende de ter microfone aberto no palco.'}
-                  </p>
-                </div>
-
-                <label className="flex flex-col gap-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-white/50">
-                    Delay da torre · {b.torreM} m
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      value={delayDigitado}
-                      onChange={(ev) => gravarDelay(ev.target.value)}
-                      inputMode="numeric"
-                      placeholder="ms"
-                      className="flex-1 px-3 py-2 rounded-lg bg-black/50 border border-[#284B8C]/40 text-sm font-black tabular-nums text-white placeholder:text-white/25 outline-none focus:border-[#336699]"
-                    />
-                    <span className="text-[10px] font-black uppercase tracking-wider text-white/35">ms</span>
-                  </div>
-                </label>
-              </div>
-
-              {/* energização */}
+              {/* suprimento */}
               <div className="rounded-xl border border-[#284B8C]/30 bg-[#0C1D4D]/20 p-4 flex flex-col gap-2">
-                <div className="flex items-baseline justify-between gap-2">
-                  <h2 className="text-[10px] font-black uppercase tracking-widest text-[#336699]">Energizar</h2>
-                  <span className="text-[9px] font-bold uppercase tracking-wider text-white/35 tabular-nums">
-                    {estado.ligacao.length}/{ORDEM_LIGA.length}
-                  </span>
+                <h2 className="text-[10px] font-black uppercase tracking-widest text-[#336699]">Suprimento</h2>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-lg border p-2.5 flex flex-col gap-0.5 border-[#284B8C]/30 bg-black/30">
+                    <span className="text-[9px] font-black uppercase tracking-wider text-white/40">Linhas DMX</span>
+                    <span className="text-lg font-black tabular-nums leading-none text-white">{estado.universosPuxados}</span>
+                    <span className="text-[9px] font-bold text-white/35 leading-tight">puxadas do rack</span>
+                  </div>
+                  <div className="rounded-lg border p-2.5 flex flex-col gap-0.5 border-[#284B8C]/30 bg-black/30">
+                    <span className="text-[9px] font-black uppercase tracking-wider text-white/40">Circuitos</span>
+                    <span className="text-lg font-black tabular-nums leading-none text-white">{estado.circuitosPuxados}</span>
+                    <span className="text-[9px] font-bold text-white/35 leading-tight">tomada {estado.briefing.tomadaA} A</span>
+                  </div>
                 </div>
-                <div className="grid grid-cols-3 gap-1">
-                  {(Object.keys(EQUIPAMENTOS) as Equipamento[]).map((id) => {
-                    const ordem = estado.ligacao.indexOf(id);
-                    return (
-                      <button
-                        key={id}
-                        onClick={() => ligar(id)}
-                        disabled={ordem >= 0}
-                        className={`py-2.5 rounded text-[10px] font-black uppercase tracking-wider transition-all ${
-                          ordem >= 0
-                            ? 'bg-[#336699] text-white'
-                            : 'bg-black/40 text-white/60 border border-[#284B8C]/30 hover:text-white'
-                        }`}
-                      >
-                        {EQUIPAMENTOS[id].rotulo}
-                        {ordem >= 0 && <span className="block text-[9px] font-bold text-white/60">{ordem + 1}º</span>}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-[9px] text-white/35 leading-snug">
-                  A ordem em que você clica é a ordem em que o sistema liga. Inverter é estouro no PA.
+                <p className="text-[10px] text-white/35 leading-snug">
+                  Linha DMX e circuito se puxam nas abas DMX e Energia.
                 </p>
               </div>
 
@@ -786,9 +728,9 @@ export default function CallTimeSom() {
                 disabled={fase === 'os'}
                 className="py-4 rounded-xl text-xs font-black uppercase tracking-widest transition-all disabled:opacity-40 bg-white text-black hover:bg-white/90 active:scale-[0.98]"
               >
-                Fechar e passar som
+                Fechar o grid e focar
                 <span className="block text-[9px] font-bold text-black/50 tracking-normal normal-case mt-0.5">
-                  canais, multicabo, palco e ring out −{custoFechamento(estado)} min no total
+                  DMX e energia pelas linhas puxadas · foco e cenas −{custoFechamento(estado)} min no total
                 </span>
               </button>
             </aside>
@@ -816,14 +758,38 @@ export default function CallTimeSom() {
       {fase === 'os' && (
         <ModalOS
           estado={estado}
-          delay={osDelay}
           canais={osCanais}
+          universos={osUniversos}
           conferencia={conferencia}
-          onDelay={setOsDelay}
           onCanais={setOsCanais}
+          onUniversos={setOsUniversos}
           onConfirmar={confirmarLeitura}
           onDesistir={liberarSemAcertar}
         />
+      )}
+
+      {/* ---------------- o cliente ligou ---------------- */}
+      {imprevisto && (
+        <div data-abaixo-do-header className="fixed inset-x-0 bottom-0 top-20 z-[92] bg-black/85 backdrop-blur flex items-center justify-center p-6">
+          <div className="max-w-md w-full rounded-2xl border border-amber-500/50 bg-amber-950/20 p-6 flex flex-col gap-3">
+            <span className="text-[10px] font-black uppercase tracking-widest text-amber-400">
+              {relogio(estado.gastos, janela)} · Rádio do produtor
+            </span>
+            <p className="text-xl font-black text-white leading-tight">
+              O cliente pediu mais {pecasDoImprevisto(estado).quantas} {PECAS[pecasDoImprevisto(estado).tipo].curto.toLowerCase()}
+              {pecasDoImprevisto(estado).quantas === 1 ? '' : 's'} no grid.
+            </p>
+            <p className="text-sm text-amber-100/80 leading-relaxed">
+              São {estado.movings} movings e {estado.pars} pars agora. Refaça a conta: mais peça é mais canal, mais aparelho na linha e mais carga no circuito.
+            </p>
+            <button
+              onClick={() => setImprevisto(false)}
+              className="py-3 rounded-lg bg-amber-500 text-black text-[11px] font-black uppercase tracking-widest hover:bg-amber-400 transition-colors"
+            >
+              Entendido
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ---------------- vistoria ---------------- */}
@@ -845,17 +811,17 @@ export default function CallTimeSom() {
 
             <div className="rounded-2xl border border-[#284B8C]/40 bg-black/85 backdrop-blur px-5 py-4 sm:px-7 sm:py-5 flex flex-col gap-2 pointer-events-auto">
               <span className="text-[10px] font-black uppercase tracking-widest text-[#336699]">
-                {relogio(janela, janela)} · Passagem de som
+                {relogio(janela, janela)} · Passagem de luz
               </span>
 
-              {passo < 0 && !paLimpo && (
+              {passo < 0 && !gridLimpo && (
                 <p className="text-lg sm:text-2xl font-black text-white leading-tight">
                   Casa aberta em minutos. Vamos ver o que ficou para trás.
                 </p>
               )}
-              {passo < 0 && paLimpo && (
+              {passo < 0 && gridLimpo && (
                 <p className="text-lg sm:text-2xl font-black text-[#4E93D8] leading-tight">
-                  Cobertura fechada, impedância dentro do limite, sistema ligado na ordem. Passagem limpa.
+                  Grid completo, cabo de aço em tudo, todo mundo respondendo à mesa. Montagem limpa.
                 </p>
               )}
               {passo >= 0 && problemas[passo] && (
@@ -884,7 +850,7 @@ export default function CallTimeSom() {
 
       {/* ---------------- placar ---------------- */}
       {fase === 'placar' && vistoria && placar && (
-        <div className="fixed inset-0 z-[95] bg-black/92 backdrop-blur overflow-y-auto">
+        <div data-abaixo-do-header className="fixed inset-x-0 bottom-0 top-20 z-[95] bg-black/92 backdrop-blur overflow-y-auto">
           <div className="min-h-full flex items-center justify-center p-6">
             <div className="max-w-lg w-full flex flex-col gap-5 py-8">
 
@@ -893,13 +859,13 @@ export default function CallTimeSom() {
                   {relogio(janela, janela)} · Resultado
                 </span>
                 <h2 className={`text-4xl font-black leading-none ${placar.reprovado ? 'text-red-400' : 'text-white'}`}>
-                  {placar.reprovado ? 'Reprovado' : 'Som entregue'}
+                  {placar.reprovado ? 'Reprovado' : 'Grid entregue'}
                 </h2>
               </div>
 
               {placar.reprovado ? (
                 <p className="text-sm text-red-200/80 leading-relaxed">
-                  Falha de segurança ou de entrega zera a partida, independente do tempo. Meia plateia sem som não é apontamento de minutos — é o evento que não aconteceu.
+                  Falha de segurança ou de entrega zera a partida, independente do tempo. Cabo de aço não é apontamento de minutos — é a montagem que não podia ter sido entregue assim.
                 </p>
               ) : (
                 <div className="flex items-baseline gap-3">
@@ -917,8 +883,8 @@ export default function CallTimeSom() {
                 </div>
               )}
 
-              <LicaoAmplificacao estado={estado} />
-              <LicaoCobertura estado={estado} />
+              <LicaoDmx estado={estado} />
+              <LicaoEnergia estado={estado} />
 
               {problemas.length > 0 && (
                 <div className="flex flex-col gap-1.5">
@@ -939,10 +905,11 @@ export default function CallTimeSom() {
                 </div>
               )}
 
+              {/* ranking do dia */}
               {podeGravar && !gravado && (
                 <div className="rounded-xl border border-[#336699]/50 bg-[#0C1D4D]/30 p-4 flex flex-col gap-2">
                   <span className="text-[10px] font-black uppercase tracking-widest text-[#4E93D8]">
-                    {placar.total} pontos · {posicaoNoRanking(placar.total, 'som')}º lugar hoje
+                    {placar.total} pontos · {posicaoNoRanking(placar.total, 'luz')}º lugar hoje
                   </span>
                   <div className="flex gap-2">
                     <input
@@ -964,7 +931,7 @@ export default function CallTimeSom() {
 
               {ranking.length > 0 && (
                 <div className="flex flex-col gap-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-white/40">Melhores de hoje · som</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-white/40">Melhores de hoje · luz</span>
                   {ranking.map((m, k) => (
                     <div key={`${m.apelido}-${m.quando}`} className="flex items-baseline justify-between text-xs font-bold tabular-nums text-white/70">
                       <span>{k + 1}. {m.apelido}</span>
@@ -1035,37 +1002,57 @@ function CampoOS({ rotulo, children }: { rotulo: string; children: React.ReactNo
   );
 }
 
-function CartaoOS({ estado, portaAbre }: { estado: EstadoSom; portaAbre: string }) {
+/** O cartão fixo com a obra, para não precisar decorar o que a OS pediu. */
+function CartaoOS({ estado, portaAbre }: { estado: EstadoLuz; portaAbre: string }) {
   const b = estado.briefing;
+  const cresceu = estado.movings !== b.movings || estado.pars !== b.pars;
+
   return (
     <div className="rounded-xl border border-[#284B8C]/30 bg-black/40 p-4 flex flex-col gap-2">
-      <span className="text-[10px] font-black uppercase tracking-widest text-[#336699]">OS {b.os}</span>
-      <CampoOS rotulo="Caixas por lado">{b.caixasPorLado}</CampoOS>
-      <CampoOS rotulo="Subs">{b.subs}</CampoOS>
-      <CampoOS rotulo="Cobertura da plateia">{b.coberturaGraus}°</CampoOS>
-      <CampoOS rotulo="Torre de delay">{b.torreM} m</CampoOS>
+      <div className="flex items-baseline justify-between">
+        <span className="text-[10px] font-black uppercase tracking-widest text-[#336699]">OS {b.os}</span>
+        {cresceu && <span className="text-[9px] font-black uppercase tracking-wider text-amber-400">alterada</span>}
+      </div>
+      <CampoOS rotulo="Movings (contra)">
+        {estado.movings}
+        {cresceu && estado.movings !== b.movings && (
+          <span className="block text-[10px] font-bold text-amber-400">eram {b.movings}</span>
+        )}
+      </CampoOS>
+      <CampoOS rotulo="Pars (frontal)">
+        {estado.pars}
+        {cresceu && estado.pars !== b.pars && (
+          <span className="block text-[10px] font-bold text-amber-400">eram {b.pars}</span>
+        )}
+      </CampoOS>
+      <CampoOS rotulo="Tomada do local">{b.tomadaA} A · 220 V</CampoOS>
       <CampoOS rotulo="Porta abre">{portaAbre}</CampoOS>
     </div>
   );
 }
 
+/**
+ * A ordem de serviço. O técnico só encosta no truss depois de dizer quantos
+ * canais a obra ocupa e quantas linhas DMX ela pede — que é a conta que
+ * decide a montagem inteira.
+ */
 function ModalOS({
-  estado, delay, canais, conferencia, onDelay, onCanais, onConfirmar, onDesistir,
+  estado, canais, universos, conferencia, onCanais, onUniversos, onConfirmar, onDesistir,
 }: {
-  estado: EstadoSom;
-  delay: string;
+  estado: EstadoLuz;
   canais: string;
+  universos: string;
   conferencia: ConferenciaOS | null;
-  onDelay: (v: string) => void;
   onCanais: (v: string) => void;
+  onUniversos: (v: string) => void;
   onConfirmar: () => void;
   onDesistir: () => void;
 }) {
-  const b: BriefingSom = estado.briefing;
+  const b: BriefingLuz = estado.briefing;
   const tentativas = estado.leitura.tentativas;
 
   return (
-    <div className="fixed inset-0 z-[95] bg-black/92 backdrop-blur overflow-y-auto">
+    <div data-abaixo-do-header className="fixed inset-x-0 bottom-0 top-20 z-[95] bg-black/92 backdrop-blur overflow-y-auto">
       <div className="min-h-full flex items-center justify-center p-6">
         <div className="max-w-md w-full flex flex-col gap-4 py-8">
 
@@ -1074,37 +1061,25 @@ function ModalOS({
               14:00 · Ordem de serviço {b.os}
             </span>
             <h2 className="text-3xl font-black leading-none text-white">{b.evento}</h2>
-            <p className="text-xs text-white/50 leading-relaxed mt-1">{APLICACOES[b.aplicacao].descricao}</p>
+            <p className="text-xs text-white/50 leading-relaxed mt-1">
+              {APLICACOES[b.aplicacao].descricao}
+            </p>
           </div>
 
           <div className="rounded-xl border border-[#284B8C]/30 bg-[#0C1D4D]/20 p-4 flex flex-col gap-2">
-            <CampoOS rotulo="Caixas por lado">{b.caixasPorLado}</CampoOS>
-            <CampoOS rotulo="Subs">{b.subs}</CampoOS>
-            <CampoOS rotulo="Cobertura da plateia">{b.coberturaGraus}°</CampoOS>
-            <CampoOS rotulo="Torre de delay">{b.torreM} m do PA</CampoOS>
+            <CampoOS rotulo="Movings no contra">{b.movings}</CampoOS>
+            <CampoOS rotulo="Pars na frontal">{b.pars}</CampoOS>
+            <CampoOS rotulo="Tomada do local">{b.tomadaA} A · 220 V</CampoOS>
             <CampoOS rotulo="Porta abre">{relogio(b.janelaMin, b.janelaMin)}</CampoOS>
           </div>
 
           <div className="flex flex-col gap-2">
             <span className="text-[10px] font-black uppercase tracking-widest text-white/50">
-              Antes de encostar no PA: as duas contas
+              Antes de subir: a conta do endereçamento
             </span>
 
             <label className="flex flex-col gap-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-white/40">Delay da torre, em ms</span>
-              <input
-                value={delay}
-                onChange={(ev) => onDelay(ev.target.value)}
-                inputMode="numeric"
-                placeholder="0"
-                className={`px-3 py-2.5 rounded-lg bg-black/50 border text-sm font-black tabular-nums text-white outline-none ${
-                  conferencia && !conferencia.delayOk ? 'border-red-500/60' : 'border-[#284B8C]/40 focus:border-[#336699]'
-                }`}
-              />
-            </label>
-
-            <label className="flex flex-col gap-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-white/40">Canais de amplificador</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-white/40">Canais DMX ocupados</span>
               <input
                 value={canais}
                 onChange={(ev) => onCanais(ev.target.value)}
@@ -1115,17 +1090,30 @@ function ModalOS({
                 }`}
               />
             </label>
+
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-white/40">Linhas DMX (universos)</span>
+              <input
+                value={universos}
+                onChange={(ev) => onUniversos(ev.target.value)}
+                inputMode="numeric"
+                placeholder="0"
+                className={`px-3 py-2.5 rounded-lg bg-black/50 border text-sm font-black tabular-nums text-white outline-none ${
+                  conferencia && !conferencia.universosOk ? 'border-red-500/60' : 'border-[#284B8C]/40 focus:border-[#336699]'
+                }`}
+              />
+            </label>
           </div>
 
           {tentativas === 1 && (
             <p className="text-xs text-amber-200/80 leading-relaxed">
-              O escritório respondeu: som anda {VELOCIDADE_SOM} m/s. E o canal do amplificador não desce de {AMPLIFICADOR.ohmsMin} Ω — caixa é de {CAIXAS.caixa.ohms} Ω, sub é de {CAIXAS.sub.ohms} Ω.
+              O escritório respondeu: moving ocupa {PECAS.moving.canais} canais e par LED, {PECAS.par.canais}. Um universo tem {CANAIS_POR_UNIVERSO} canais — e uma linha aguenta {PECAS_POR_LINHA} aparelhos.
             </p>
           )}
 
           {tentativas >= 2 && (
             <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 p-4 flex flex-col gap-1">
-              <span className="text-[10px] font-black uppercase tracking-widest text-amber-400">As contas</span>
+              <span className="text-[10px] font-black uppercase tracking-widest text-amber-400">A conta</span>
               {contaOS(b).map((linha) => (
                 <span key={linha} className="text-xs font-bold tabular-nums text-amber-100/90">{linha}</span>
               ))}
@@ -1144,7 +1132,7 @@ function ModalOS({
               onClick={onDesistir}
               className="text-[10px] font-black uppercase tracking-widest text-white/35 hover:text-white transition-colors"
             >
-              Entrar na obra com as contas prontas
+              Entrar na obra com a conta pronta
             </button>
           )}
 
@@ -1157,74 +1145,78 @@ function ModalOS({
   );
 }
 
-function LicaoAmplificacao({ estado }: { estado: EstadoSom }) {
-  const l = licaoAmplificacao(estado);
+/** Durante o jogo as linhas não mostram lotação; o placar mostra a conta. */
+function LicaoDmx({ estado }: { estado: EstadoLuz }) {
+  const l = licaoDmx(estado);
   if (l.puxados === 0) return null;
-  const limpo = l.emProtecao === 0 && l.minutos === l.minutosIdeal;
+  const limpo = l.mudas === 0 && l.minutos === l.minutosIdeal;
 
   return (
     <div className={`rounded-xl border p-4 flex flex-col gap-2 ${
       limpo ? 'border-[#336699]/50 bg-[#0C1D4D]/30' : 'border-amber-500/40 bg-amber-950/20'
     }`}>
       <span className={`text-[10px] font-black uppercase tracking-widest ${limpo ? 'text-[#4E93D8]' : 'text-amber-400'}`}>
-        Amplificação · {l.minutos} min{limpo ? ', o mínimo possível' : ` — dava para fazer em ${l.minutosIdeal}`}
+        DMX · {l.minutos} min{limpo ? ', o mínimo possível' : ` — dava para fazer em ${l.minutosIdeal}`}
       </span>
       <p className="text-xs text-white/75 leading-relaxed tabular-nums">{l.conta}.</p>
       <p className="text-xs text-white/75 leading-relaxed tabular-nums">
-        {l.minimo} {l.minimo === 1 ? 'canal bastava' : 'canais bastavam'}, e você puxou {l.puxados}.
+        {l.minimo} {l.minimo === 1 ? 'linha bastava' : 'linhas bastavam'}, e você puxou {l.puxados}.
       </p>
       <div className="flex flex-wrap gap-1">
-        {l.linhas.map((c) => (
+        {l.linhas.map((u) => (
           <span
-            key={c.canal}
+            key={u.universo}
             className={`px-2 py-0.5 rounded text-[10px] font-black tabular-nums border ${
-              c.situacao === 'protecao' ? 'border-red-500/60 bg-red-950/40 text-red-200'
-                : c.situacao === 'sobra' ? 'border-amber-500/40 bg-amber-950/30 text-amber-100'
+              u.situacao === 'estourada' ? 'border-red-500/60 bg-red-950/40 text-red-200'
+                : u.situacao === 'sobra' ? 'border-amber-500/40 bg-amber-950/30 text-amber-100'
                 : 'border-[#336699]/60 bg-[#0C1D4D]/50 text-white'
             }`}
           >
-            C{c.canal} · {c.caixas} × {Number.isFinite(c.ohms) ? `${c.ohms.toFixed(1).replace('.', ',')} Ω` : 'vazio'}
+            U{u.universo} · {u.pecas} peças · {u.canais} ch
           </span>
         ))}
       </div>
+      {l.mudas > 0 && (
+        <p className="text-[10px] text-red-200/80 leading-snug">
+          {l.mudas} {l.mudas === 1 ? 'peça ficou' : 'peças ficaram'} sem resposta na mesa.
+        </p>
+      )}
     </div>
   );
 }
 
-function LicaoCobertura({ estado }: { estado: EstadoSom }) {
-  const l = licaoCobertura(estado);
-  const limpo = l.lados.every((lado) => lado.caixas === 0 || (lado.fecha && lado.invertidos.length === 0))
-    && l.arranjo === l.arranjoCerto
-    && l.delayMs !== null && Math.abs(l.delayMs - l.delayCerto) <= 3;
+function LicaoEnergia({ estado }: { estado: EstadoLuz }) {
+  const l = licaoEnergia(estado);
+  if (l.puxados === 0) return null;
+  const limpo = l.linhas.every((c) => c.situacao !== 'estourada') && l.minutos === l.minutosIdeal;
 
   return (
     <div className={`rounded-xl border p-4 flex flex-col gap-2 ${
       limpo ? 'border-[#336699]/50 bg-[#0C1D4D]/30' : 'border-amber-500/40 bg-amber-950/20'
     }`}>
       <span className={`text-[10px] font-black uppercase tracking-widest ${limpo ? 'text-[#4E93D8]' : 'text-amber-400'}`}>
-        Cobertura e tempo
+        Energia · {l.minutos} min{limpo ? ', o mínimo possível' : ` — dava para fazer em ${l.minutosIdeal}`}
       </span>
+      <p className="text-xs text-white/75 leading-relaxed tabular-nums">{l.conta}.</p>
+      <p className="text-xs text-white/75 leading-relaxed tabular-nums">
+        {l.minimo} {l.minimo === 1 ? 'circuito bastava' : 'circuitos bastavam'}, e você puxou {l.puxados}.
+      </p>
       <div className="flex flex-wrap gap-1">
-        {l.lados.map((lado, k) => (
+        {l.linhas.map((c) => (
           <span
-            key={k}
+            key={c.circuito}
             className={`px-2 py-0.5 rounded text-[10px] font-black tabular-nums border ${
-              lado.caixas === 0 ? 'border-white/15 bg-white/[0.03] text-white/40'
-                : lado.fecha ? 'border-[#336699]/60 bg-[#0C1D4D]/50 text-white'
-                : 'border-amber-500/40 bg-amber-950/30 text-amber-100'
+              c.situacao === 'estourada' ? 'border-red-500/60 bg-red-950/40 text-red-200'
+                : c.situacao === 'sobra' ? 'border-amber-500/40 bg-amber-950/30 text-amber-100'
+                : 'border-[#336699]/60 bg-[#0C1D4D]/50 text-white'
             }`}
           >
-            {FILAS[k].rotulo} · {lado.soma}° de {l.pedido}°
+            C{c.circuito} · {c.pecas} peças · {fmtKw(c.watts)}
           </span>
         ))}
       </div>
-      <p className="text-xs text-white/75 leading-relaxed tabular-nums">
-        Delay: {l.torreM} m ÷ {VELOCIDADE_SOM} m/s = <strong className="text-white">{l.delayCerto} ms</strong>
-        {l.delayMs === null ? ' · você deixou a torre sem delay' : ` · você programou ${l.delayMs} ms`}.
-      </p>
-      <p className="text-xs text-white/75 leading-relaxed">
-        Subs: o certo neste evento era <strong className="text-white">{ARRANJOS[l.arranjoCerto].rotulo.toLowerCase()}</strong>
-        {l.arranjo && l.arranjo !== l.arranjoCerto ? `, e você montou em ${ARRANJOS[l.arranjo].rotulo.toLowerCase()}` : ''}. {l.porqueArranjo}
+      <p className="text-[10px] text-white/40 leading-snug">
+        A tomada de {estado.briefing.tomadaA} A trabalha até {fmtKw(l.wattsUtil)} por circuito. Atraso acima de {ATRASO_TOLERADO} min reprova a obra.
       </p>
     </div>
   );

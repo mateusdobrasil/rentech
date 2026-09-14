@@ -14,12 +14,12 @@ import { useState, useRef, useCallback, useEffect, useSyncExternalStore } from '
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import QRCode from 'qrcode';
-import BackButton from '../BackButton';
-import { useSom } from '../useSom';
-import { CORES_CIRCUITO, CORES_PORTA } from '../../jogo/cores';
+import BackButton from '../../BackButton';
+import { useSom } from '../../useSom';
+import { CORES_CIRCUITO, CORES_PORTA } from '../../../jogo/cores';
 import {
   lerRanking, gravarMarca, entraNoRanking, posicaoDe, limparApelido, APELIDO_MAX,
-} from '../../jogo/ranking';
+} from '../../../jogo/ranking';
 import {
   COLUNAS_MAX,
   LINHAS_MAX,
@@ -73,7 +73,7 @@ import {
   vistoriar,
   pontuar,
   type Estado,
-} from '../../jogo/video/motor';
+} from '../../../jogo/video/motor';
 
 type Camada = 'estrutura' | 'energia' | 'sinal';
 type Vista = 'palco' | 'planta';
@@ -94,7 +94,7 @@ function celulasDoRetangulo(a: number, b: number): number[] {
 
 // O 3D só existe no navegador (usa WebGL), então entra por dynamic sem SSR —
 // mesmo padrão do Truss3D em /simulador/boxtruss.
-const Palco3D = dynamic(() => import('../../jogo/video/Palco3D'), {
+const Palco3D = dynamic(() => import('../../../jogo/video/Palco3D'), {
   ssr: false,
   loading: () => (
     <div className="h-[52vh] min-h-[22rem] rounded-xl border border-[#284B8C]/30 bg-[#0C1D4D]/15 flex items-center justify-center">
@@ -116,7 +116,8 @@ const URL_CONTATO = 'https://rentech.tech';
 const OCIO_MS = 120_000;
 const BEAT_ABERTURA_MS = 2_600;
 const BEAT_PROBLEMA_MS = 3_800;
-const BEAT_LIMPO_MS = 5_400;
+/** Montagem limpa no LED: tempo de sobra para a marca aparecer no painel. */
+const BEAT_LIMPO_MS = 15_000;
 
 // A obra é sorteada com Math.random. Se a página renderizasse no servidor, o
 // servidor sortearia uma obra e o navegador outra — erro de hidratação. Então
@@ -129,7 +130,9 @@ export default function CallTimeMontagem() {
   const montadoNoCliente = useSyncExternalStore(assinarNada, noNavegador, noServidor);
   const [estado, setEstado] = useState<Estado>(criarPartida);
   const [camada, setCamada] = useState<Camada>('estrutura');
-  const [vista, setVista] = useState<Vista>('palco');
+  // Começa na planta: é nela que se trabalha. O palco entra no fechamento,
+  // quando a câmera assume e mostra o que a montagem virou.
+  const [vista, setVista] = useState<Vista>('planta');
   const [ferramenta, setFerramenta] = useState<string>('gabinete');
   const [pincel, setPincel] = useState<Pincel>('retangulo');
   const [selecao, setSelecao] = useState<{ a: number; b: number } | null>(null);
@@ -404,7 +407,8 @@ export default function CallTimeMontagem() {
       finalizado: true,
       gastos: e.gastos + custoFechamento(e),
     }));
-    setVista('palco');   // a vistoria acontece no 3D, não na planta
+    setVista('palco');     // a vistoria acontece no 3D, não na planta
+    setCamada('estrutura');// e mostra o painel aceso, não o mapa de circuitos
     setPasso(-1);
     setFase('vistoria');
   };
@@ -412,7 +416,7 @@ export default function CallTimeMontagem() {
   const reiniciar = useCallback(() => {
     setEstado(criarPartida());
     setCamada('estrutura');
-    setVista('palco');
+    setVista('planta');
     setFerramenta('gabinete');
     setToasts([]);
     setImprevisto(false);
@@ -563,7 +567,7 @@ export default function CallTimeMontagem() {
       <div className="min-h-[calc(100vh-5rem)] bg-black bg-[radial-gradient(circle_at_20%_20%,_rgba(12,29,77,0.45)_0%,_transparent_50%),radial-gradient(circle_at_85%_75%,_rgba(51,102,153,0.18)_0%,_transparent_50%)] text-white select-none">
 
         {/* ---------------- barra de call time ---------------- */}
-        <div className="sticky top-0 z-40 bg-black/85 backdrop-blur border-b border-[#284B8C]/30 px-4 py-3">
+        <div className="sticky top-20 z-40 bg-black/85 backdrop-blur border-b border-[#284B8C]/30 px-4 py-3">
           <div className="max-w-6xl mx-auto flex flex-wrap items-center gap-x-6 gap-y-2">
             <div className="flex items-baseline gap-2">
               <span className="text-[10px] font-black uppercase tracking-widest text-[#336699]">Call Time</span>
@@ -696,7 +700,7 @@ export default function CallTimeMontagem() {
                   vistoriando={!emJogo}
                   foco={focoAtual}
                   orbitar={montagemLimpa && fase === 'vistoria'}
-                  telaModo={montagemLimpa ? 'show' : 'teste'}
+                  telaModo={estado.finalizado ? 'show' : 'teste'}
                   selecionadas={selecionadas}
                 />
               </div>
@@ -1082,7 +1086,7 @@ export default function CallTimeMontagem() {
 
       {/* ---------------- imprevisto das 16:00 ---------------- */}
       {imprevisto && (
-        <div className="fixed inset-0 z-[90] bg-black/85 backdrop-blur-sm flex items-center justify-center p-6">
+        <div data-abaixo-do-header className="fixed inset-x-0 bottom-0 top-20 z-[90] bg-black/85 backdrop-blur-sm flex items-center justify-center p-6">
           <div className="max-w-md w-full rounded-2xl border border-amber-500/40 bg-[#0C1D4D]/40 p-7 flex flex-col gap-4">
             <span className="text-[10px] font-black uppercase tracking-widest text-amber-400">
               {relogio(estado.gastos, janela)} · Rádio do produtor
@@ -1174,7 +1178,7 @@ export default function CallTimeMontagem() {
 
       {/* ---------------- placar ---------------- */}
       {fase === 'placar' && vistoria && placar && (
-        <div className="fixed inset-0 z-[95] bg-black/92 backdrop-blur overflow-y-auto">
+        <div data-abaixo-do-header className="fixed inset-x-0 bottom-0 top-20 z-[95] bg-black/92 backdrop-blur overflow-y-auto">
           <div className="min-h-full flex items-center justify-center p-6">
             <div className="max-w-lg w-full flex flex-col gap-5 py-8">
 
@@ -1412,7 +1416,7 @@ function ModalOS({
   const alturaCerta = certo.unidade === 'm' ? `${fmtM(certo.altura)} m` : `${fmtPx(certo.altura)} px`;
 
   return (
-    <div className="fixed inset-0 z-[92] bg-[#05070B] overflow-y-auto">
+    <div data-abaixo-do-header className="fixed inset-x-0 bottom-0 top-20 z-[92] bg-[#05070B] overflow-y-auto">
       <div className="min-h-full flex items-center justify-center p-5">
         <div className="max-w-xl w-full flex flex-col gap-5 py-6">
 

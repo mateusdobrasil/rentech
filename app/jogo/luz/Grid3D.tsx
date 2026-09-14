@@ -21,6 +21,7 @@ import * as THREE from 'three';
 import { buildVaoGeometry3D, type Seg3D } from '../../simulador/boxtruss/geometry3d';
 import {
   ESPACO_GARRA_M,
+  POSICOES_MAX,
   VARAS,
   VARA_M,
   posicaoDe,
@@ -42,6 +43,8 @@ const ALTURA_GRID = 6;                  // altura de trabalho do grid içado
 const Y_DEITADO = 0.35;                 // truss no chão, sobre os cavaletes
 const Z_VARA = [1.6, -1.6];             // frontal à frente do palco, contra atrás
 const DURACAO_ICAMENTO = 2.4;           // segundos
+/** Cada movimento da cena dura isto antes de virar para o próximo. */
+const DURACAO_MOVIMENTO = 5;
 
 const juntas = (comprimentoM: number) => {
   const pecas: number[] = [];
@@ -126,13 +129,88 @@ type PecaProps = {
   destacado: boolean;
   alerta: boolean;
   posicao: [number, number, number];
+  /** Grid aprovado: o moving varre, o par pulsa, e a cena vira show. */
+  festa: boolean;
+  /** Posição da peça na vara e quantas há nela: é o que faz a corrida correr. */
+  ordem: number;
+  total: number;
   onClick: () => void;
   onEnter: () => void;
 };
 
-const Peca = memo(function Peca({ tipo, cor, acesa, destacado, alerta, posicao, onClick, onEnter }: PecaProps) {
+const Peca = memo(function Peca({ tipo, cor, acesa, destacado, alerta, posicao, festa, ordem, total, onClick, onEnter }: PecaProps) {
   const alturaCorpo = tipo === 'moving' ? 0.42 : 0.24;
   const raio = tipo === 'moving' ? 0.12 : 0.14;
+  const cabeca = useRef<THREE.Group>(null);
+  const feixe = useRef<THREE.MeshBasicMaterial>(null);
+  const lente = useRef<THREE.MeshStandardMaterial>(null);
+
+  // A cena é uma sequência, não um balanço só: quatro movimentos de 5 s que
+  // se revezam, do jeito que um operador programa cena de show. O tempo vem
+  // do relógio da cena, então as peças entram juntas sem combinar nada.
+  useFrame(({ clock }) => {
+    const t = clock.elapsedTime;
+    const g = cabeca.current;
+
+    if (!festa) {
+      if (g) { g.rotation.z = 0; g.rotation.x = 0; }
+      if (feixe.current) {
+        feixe.current.opacity = tipo === 'moving' ? 0.14 : 0.09;
+        feixe.current.color.set(tipo === 'moving' ? '#BFD8FF' : '#FFE2A8');
+      }
+      if (lente.current) lente.current.emissiveIntensity = 1.4;
+      return;
+    }
+
+    const movimento = Math.floor(t / DURACAO_MOVIMENTO) % 4;
+    const dentro = (t % DURACAO_MOVIMENTO) / DURACAO_MOVIMENTO;   // 0 a 1
+    const lado = ordem % 2 === 0 ? 1 : -1;
+
+    let pan = 0, tilt = 0, brilho = 0.5, matiz = (t * 0.05) % 1, satura = 0.6;
+
+    if (movimento === 0) {
+      // leque: as peças abrem para fora, uma atrás da outra
+      pan = Math.sin(t * 1.0 + ordem * 0.45) * 0.55;
+      tilt = Math.sin(t * 0.6 + ordem * 0.3) * 0.22 - 0.1;
+      brilho = 0.55 + 0.45 * Math.abs(Math.sin(t * 1.6 + ordem * 0.4));
+      matiz = (0.55 + ordem * 0.015 + t * 0.02) % 1;
+    } else if (movimento === 1) {
+      // corrida: acende uma de cada vez, ida e volta pela vara
+      const cabeçote = (dentro * 2 % 1) * total;
+      const distancia = Math.abs(ordem - (dentro < 0.5 ? cabeçote : total - cabeçote));
+      brilho = Math.max(0.06, 1 - distancia * 0.8);
+      pan = lado * 0.35;
+      tilt = -0.12;
+      matiz = (0.08 + ordem * 0.02) % 1;
+      satura = 0.75;
+    } else if (movimento === 2) {
+      // cruzada: metade das peças vai para um lado, metade para o outro
+      pan = lado * (0.2 + 0.45 * Math.sin(t * 1.4));
+      tilt = Math.sin(t * 1.1) * 0.2 - 0.05;
+      brilho = 0.5 + 0.5 * Math.pow(Math.max(0, Math.sin(t * 3.0)), 2);
+      matiz = (0.75 + Math.sin(t * 0.4) * 0.12) % 1;
+      satura = 0.7;
+    } else {
+      // batida cheia: todo mundo junto, no tempo forte, virando a cor
+      const pulso = Math.pow(Math.max(0, Math.sin(t * 3.2)), 6);
+      pan = Math.sin(t * 0.5 + ordem * 0.2) * 0.18;
+      tilt = -0.16;
+      brilho = 0.25 + 0.95 * pulso;
+      matiz = (Math.floor(t * 1.6) * 0.17) % 1;
+      satura = 0.8;
+    }
+
+    if (g) {
+      // o par não tem cabeça móvel: fica firme e só muda de cor e brilho
+      g.rotation.z = tipo === 'moving' ? pan : 0;
+      g.rotation.x = tipo === 'moving' ? tilt : 0;
+    }
+    if (feixe.current) {
+      feixe.current.opacity = (tipo === 'moving' ? 0.26 : 0.16) * brilho;
+      feixe.current.color.setHSL(matiz, tipo === 'moving' ? satura : satura * 0.55, 0.72);
+    }
+    if (lente.current) lente.current.emissiveIntensity = 0.8 + brilho * 2.2;
+  });
 
   return (
     <group position={posicao}>
@@ -159,29 +237,32 @@ const Peca = memo(function Peca({ tipo, cor, acesa, destacado, alerta, posicao, 
         />
       </mesh>
 
-      {/* lente: só acende com energia e endereço */}
-      <mesh position={[0, -alturaCorpo / 2 - 0.02, 0]}>
-        <cylinderGeometry args={[raio * 0.8, raio * 0.8, 0.05, 12]} />
-        <meshStandardMaterial
-          color={acesa ? '#FFF3D6' : '#0A0F1A'}
-          emissive={acesa ? '#FFE2A8' : '#000000'}
-          emissiveIntensity={acesa ? 1.4 : 0}
-        />
-      </mesh>
-
-      {/* feixe no chão */}
-      {acesa && (
-        <mesh position={[0, -2.6, 0]}>
-          <coneGeometry args={[tipo === 'moving' ? 0.5 : 0.8, 5, 16, 1, true]} />
-          <meshBasicMaterial
-            color={tipo === 'moving' ? '#BFD8FF' : '#FFE2A8'}
-            transparent
-            opacity={tipo === 'moving' ? 0.14 : 0.09}
-            side={THREE.DoubleSide}
-            depthWrite={false}
+      {/* lente e feixe: giram juntos, que é como a cabeça móvel trabalha */}
+      <group ref={cabeca}>
+        <mesh position={[0, -alturaCorpo / 2 - 0.02, 0]}>
+          <cylinderGeometry args={[raio * 0.8, raio * 0.8, 0.05, 12]} />
+          <meshStandardMaterial
+            ref={lente}
+            color={acesa ? '#FFF3D6' : '#0A0F1A'}
+            emissive={acesa ? '#FFE2A8' : '#000000'}
+            emissiveIntensity={acesa ? 1.4 : 0}
           />
         </mesh>
-      )}
+
+        {acesa && (
+          <mesh position={[0, -2.6, 0]}>
+            <coneGeometry args={[tipo === 'moving' ? 0.5 : 0.8, 5, 16, 1, true]} />
+            <meshBasicMaterial
+              ref={feixe}
+              color={tipo === 'moving' ? '#BFD8FF' : '#FFE2A8'}
+              transparent
+              opacity={tipo === 'moving' ? 0.14 : 0.09}
+              side={THREE.DoubleSide}
+              depthWrite={false}
+            />
+          </mesh>
+        )}
+      </group>
     </group>
   );
 });
@@ -215,12 +296,13 @@ const Vaga = memo(function Vaga({ posicao, onClick, onEnter, destacado }: {
 // ---------------------------------------------------------------------------
 
 function GridDeLuz({
-  estado, camada, selecionadas, foco, onPintar, onEntrar,
+  estado, camada, selecionadas, foco, festa, onPintar, onEntrar,
 }: {
   estado: EstadoLuz;
   camada: CamadaLuz;
   selecionadas: Set<number>;
   foco: Foco | null;
+  festa: boolean;
   onPintar: (i: number) => void;
   onEntrar: (i: number) => void;
 }) {
@@ -285,6 +367,9 @@ function GridDeLuz({
             destacado={selecionadas.has(i)}
             alerta={emFoco ? emFoco.has(i) : false}
             posicao={pos}
+            festa={festa}
+            ordem={posicaoDe(i)}
+            total={POSICOES_MAX}
             onClick={() => onPintar(i)}
             onEnter={() => onEntrar(i)}
           />
@@ -380,6 +465,7 @@ export default function Grid3D({
   foco = null,
   orbitar = false,
   vistoriando = false,
+  festa = false,
 }: {
   estado: EstadoLuz;
   camada: CamadaLuz;
@@ -389,6 +475,8 @@ export default function Grid3D({
   foco?: Foco | null;
   orbitar?: boolean;
   vistoriando?: boolean;
+  /** Passagem limpa: o grid roda uma cena em vez de ficar parado. */
+  festa?: boolean;
 }) {
   const semAnimacao = useSyncExternalStore(assinarMovimento, lerMovimento, semMovimento);
   const [pronto, setPronto] = useState(false);
@@ -401,7 +489,7 @@ export default function Grid3D({
         dpr={[1, 1.6]}
         camera={{ position: [2.5, 4, 13], fov: 42 }}
         onCreated={() => setPronto(true)}
-        frameloop={semAnimacao && !vistoriando ? 'demand' : 'always'}
+        frameloop={semAnimacao && !vistoriando && !festa ? 'demand' : 'always'}
       >
         <color attach="background" args={['#06080C']} />
         <fog attach="fog" args={['#06080C', 18, 46]} />
@@ -428,6 +516,7 @@ export default function Grid3D({
           camada={camada}
           selecionadas={selecionadas}
           foco={foco}
+          festa={festa}
           onPintar={onPintar}
           onEntrar={entrar}
         />

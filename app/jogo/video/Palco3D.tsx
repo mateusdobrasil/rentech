@@ -140,6 +140,9 @@ const TELA_FRAG = /* glsl */ `
   uniform float uL0;
   uniform float uTime;
   uniform float uModo;
+  uniform sampler2D uImagem;
+  uniform float uTemImagem;
+  uniform float uImgAspect;
 
   void main() {
     float col = uC0 + floor(vUv.x * uCols);
@@ -161,24 +164,51 @@ const TELA_FRAG = /* glsl */ `
       float varre = 1.0 - smoothstep(0.0, 0.14, abs(vUv.x - x0));
       cor = mix(vec3(0.90, 0.92, 0.96), vec3(0.32, 0.62, 0.98), varre * 0.85);
     } else {
-      // conteúdo: ondas nos azuis da Rentech e um facho de luz atravessando
       float d = vUv.x * 0.9 + (1.0 - vUv.y) * 0.5;
-      float onda = 0.5 + 0.5 * sin(d * 7.0 - uTime * 1.4);
       float brilho = 0.5 + 0.5 * sin(d * 3.0 + uTime * 0.7 + 1.3);
-      vec3 navy = vec3(0.05, 0.11, 0.30);
-      vec3 aco = vec3(0.20, 0.40, 0.60);
-      vec3 claro = vec3(0.58, 0.80, 1.0);
-      cor = mix(navy, aco, onda);
-      cor = mix(cor, claro, pow(brilho, 6.0) * 0.9);
       float f0 = fract(uTime * 0.11) * 2.4 - 0.7;
       float facho = 1.0 - smoothstep(0.0, 0.10, abs((vUv.x - vUv.y * 0.35) - f0));
-      cor += vec3(0.25, 0.45, 0.70) * facho * 0.9;
+
+      if (uTemImagem > 0.5) {
+        // A marca ocupa o painel inteiro, encostando nas bordas do lado que
+        // manda, sem distorcer. O fundo é claro porque o logotipo foi
+        // desenhado para fundo branco: o "ren" é azul-marinho e o "tech" é
+        // branco dentro das placas azuis. Fundo escuro apagava metade dele.
+        vec3 papel = vec3(0.80, 0.86, 0.95);
+        vec3 fundo = papel - vec3(0.10, 0.08, 0.04) * (1.0 - pow(brilho, 2.0));
+        fundo += vec3(0.10, 0.09, 0.05) * facho;
+        cor = clamp(fundo, 0.0, 1.0);
+
+        float painel = uCols / uRows;
+        float w = uImgAspect >= painel ? 1.0 : uImgAspect / painel;
+        float h = uImgAspect >= painel ? painel / uImgAspect : 1.0;
+        vec2 uvImg = (vUv - 0.5) / vec2(w, h) + 0.5;
+        if (uvImg.x > 0.0 && uvImg.x < 1.0 && uvImg.y > 0.0 && uvImg.y < 1.0) {
+          vec4 marca = texture2D(uImagem, uvImg);
+          // as cores da marca entram como são; o painel só respira de brilho
+          float pulso = 0.94 + 0.06 * sin(uTime * 1.1);
+          cor = mix(cor, marca.rgb * pulso, marca.a);
+        }
+      } else {
+        // sem a marca carregada, o painel roda as ondas nos azuis da Rentech
+        float onda = 0.5 + 0.5 * sin(d * 7.0 - uTime * 1.4);
+        vec3 navy = vec3(0.05, 0.11, 0.30);
+        vec3 aco = vec3(0.20, 0.40, 0.60);
+        vec3 claro = vec3(0.58, 0.80, 1.0);
+        cor = mix(navy, aco, onda);
+        cor = mix(cor, claro, pow(brilho, 6.0) * 0.9);
+        cor += vec3(0.25, 0.45, 0.70) * facho * 0.9;
+      }
     }
     gl_FragColor = vec4(cor * led, 1.0);
   }
 `;
 
 function criarUniformsTela() {
+  // Um pixel preto enquanto a marca não chega: sampler sem textura ligada dá
+  // aviso de driver em algumas GPUs.
+  const vazia = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+  vazia.needsUpdate = true;
   const dados = new Uint8Array(COLUNAS_MAX * LINHAS_MAX);
   const mascara = new THREE.DataTexture(dados, COLUNAS_MAX, LINHAS_MAX, THREE.RedFormat, THREE.UnsignedByteType);
   mascara.magFilter = THREE.NearestFilter;
@@ -194,8 +224,14 @@ function criarUniformsTela() {
     uL0: { value: 0 },
     uTime: { value: 0 },
     uModo: { value: 0 },
+    uImagem: { value: vazia },
+    uTemImagem: { value: 0 },
+    uImgAspect: { value: 1 },
   };
 }
+
+/** O conteúdo que roda no painel quando a montagem passa limpa. */
+const IMAGEM_DO_PAINEL = '/logo.png';
 
 // Geometria da grade: 18 x 8 encaixes, maior que qualquer obra. Deitada no
 // chão ela é o "tapete" onde o técnico habilita os gabinetes; na hora de içar,
@@ -219,7 +255,31 @@ function TelaViva({ estado, modo, visivel }: { estado: Estado; modo: TelaModo; v
   const [uniformsIniciais] = useState(criarUniformsTela);
   const material = useRef<THREE.ShaderMaterial>(null);
   const texturaParaDescartar = useRef<THREE.DataTexture | null>(null);
+  const marca = useRef<THREE.Texture | null>(null);
   const ext = extensaoMontada(estado);
+
+  // A marca da Rentech é o conteúdo do painel no fim. Carrega uma vez e fica
+  // guardada na ref: quando a tela está escondida não há material para ligar
+  // nela, então quem faz a ligação é o useFrame, no primeiro quadro visível.
+  useEffect(() => {
+    let vivo = true;
+    const loader = new THREE.TextureLoader();
+    loader.load(
+      IMAGEM_DO_PAINEL,
+      (tex) => {
+        if (!vivo) { tex.dispose(); return; }
+        tex.colorSpace = THREE.SRGBColorSpace;
+        marca.current = tex;
+      },
+      undefined,
+      () => {},   // sem a marca, o painel roda só as ondas
+    );
+    return () => {
+      vivo = false;
+      marca.current?.dispose();
+      marca.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     texturaParaDescartar.current = uniformsIniciais.uMask.value;
@@ -252,6 +312,14 @@ function TelaViva({ estado, modo, visivel }: { estado: Estado; modo: TelaModo; v
     m.uniforms.uC0.value = ext.coluna0;
     m.uniforms.uL0.value = ext.linha0;
     m.uniforms.uModo.value = modo === 'show' ? 1 : 0;
+
+    if (marca.current && m.uniforms.uTemImagem.value < 0.5) {
+      const tex = marca.current;
+      const img = tex.image as { width: number; height: number };
+      m.uniforms.uImagem.value = tex;
+      m.uniforms.uImgAspect.value = img.width / img.height;
+      m.uniforms.uTemImagem.value = 1;
+    }
   });
 
   if (!visivel || !ext) return null;
@@ -535,7 +603,7 @@ function Painel({
           <pointLight
             position={[0, -((ext?.linhas ?? 0) * MODULO_M) / 2, 1.1]}
             intensity={fracaoAcesa * (telaModo === 'show' ? 26 : 18)}
-            color={telaModo === 'show' ? '#6FA8FF' : '#D9E6FF'}
+            color={telaModo === 'show' ? '#CFE0FF' : '#D9E6FF'}
             distance={11}
             decay={2}
           />

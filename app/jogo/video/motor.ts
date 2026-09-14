@@ -3,7 +3,7 @@
 //
 // Regras, custos e avaliação da partida. Sem React de propósito: tudo aqui é
 // função pura sobre um objeto de estado, pra poder ser testado e reaproveitado
-// pelas duas rotas (feira em /testes/montagem, treinamento no portal).
+// pelas duas rotas (feira em /testes/calltime/video, treinamento no portal).
 //
 // As constantes técnicas NÃO foram inventadas — saem dos simuladores que já
 // existem no sistema, e as origens estão anotadas em cada uma.

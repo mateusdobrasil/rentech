@@ -28,8 +28,8 @@ type Posto = {
 
 const POSTOS: Posto[] = [
   {
-    jogo: 'montagem',
-    href: '/testes/montagem',
+    jogo: 'video',
+    href: '/testes/calltime/video',
     numero: '01',
     titulo: 'Painel de LED',
     chamada: 'Monte o painel que a OS pediu e faça ele acender inteiro.',
@@ -44,7 +44,7 @@ const POSTOS: Posto[] = [
   },
   {
     jogo: 'luz',
-    href: '/testes/luz',
+    href: '/testes/calltime/luz',
     numero: '02',
     titulo: 'Grid de luz',
     chamada: 'Pendure o grid, enderece tudo e suba antes da casa abrir.',
@@ -59,7 +59,7 @@ const POSTOS: Posto[] = [
   },
   {
     jogo: 'som',
-    href: '/testes/som',
+    href: '/testes/calltime/som',
     numero: '03',
     titulo: 'PA e line array',
     chamada: 'Voe o PA, feche a cobertura e ligue na ordem certa.',

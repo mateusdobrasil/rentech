@@ -75,15 +75,33 @@ type CaixaProps = {
   alerta: boolean;
   posicao: [number, number, number];
   paraTras: boolean;
+  /** PA aprovado: o cone respira no compasso da passagem. */
+  festa: boolean;
+  fase: number;
   onClick: () => void;
 };
 
 const Caixa = memo(function Caixa({
-  tipo, cor, inclinacao, destacado, alerta, posicao, paraTras, onClick,
+  tipo, cor, inclinacao, destacado, alerta, posicao, paraTras, festa, fase, onClick,
 }: CaixaProps) {
   const largura = tipo === 'caixa' ? 1.05 : 1.2;
   const altura = tipo === 'caixa' ? ALTURA_CAIXA * 0.86 : 0.85;
   const fundo = tipo === 'caixa' ? 0.7 : 1.0;
+  const cone = useRef<THREE.Mesh>(null);
+  const frente = useRef<THREE.MeshStandardMaterial>(null);
+
+  // O sub bate no tempo forte e a caixa acompanha mais miúdo: é só o cone
+  // andando para fora, que é o que se vê de perto num PA tocando.
+  useFrame(({ clock }) => {
+    const c = cone.current;
+    if (!c) return;
+    if (!festa) { c.position.z = fundo / 2 + 0.02; if (frente.current) frente.current.emissiveIntensity = 0; return; }
+    const t = clock.elapsedTime;
+    const compasso = tipo === 'sub' ? 2.2 : 4.4;
+    const batida = Math.pow(Math.max(0, Math.sin(t * compasso + fase)), 4);
+    c.position.z = fundo / 2 + 0.02 + batida * (tipo === 'sub' ? 0.07 : 0.03);
+    if (frente.current) frente.current.emissiveIntensity = batida * (tipo === 'sub' ? 0.5 : 0.3);
+  });
 
   return (
     <group
@@ -104,9 +122,9 @@ const Caixa = memo(function Caixa({
         />
       </mesh>
       {/* frente da caixa: é por onde o som sai, e marca para onde ela aponta */}
-      <mesh position={[0, 0, fundo / 2 + 0.02]}>
+      <mesh ref={cone} position={[0, 0, fundo / 2 + 0.02]}>
         <boxGeometry args={[largura * 0.9, altura * 0.75, 0.04]} />
-        <meshStandardMaterial color="#0A0F1A" roughness={0.95} />
+        <meshStandardMaterial ref={frente} color="#0A0F1A" roughness={0.95} emissive="#4E93D8" emissiveIntensity={0} />
       </mesh>
     </group>
   );
@@ -150,12 +168,13 @@ function Leque({ x, topo, graus, ok }: { x: number; topo: number; graus: number;
 // ---------------------------------------------------------------------------
 
 function Sistema({
-  estado, camada, selecionadas, foco, onPintar,
+  estado, camada, selecionadas, foco, festa, onPintar,
 }: {
   estado: EstadoSom;
   camada: CamadaSom;
   selecionadas: Set<number>;
   foco: Foco | null;
+  festa: boolean;
   onPintar: (i: number) => void;
 }) {
   const lados = useRef<THREE.Group>(null);
@@ -227,6 +246,8 @@ function Sistema({
             destacado={selecionadas.has(i)}
             alerta={emFoco ? emFoco.has(i) : false}
             posicao={pos}
+            festa={festa}
+            fase={posicaoDe(i) * 0.35}
             onClick={() => onPintar(i)}
           />
         );
@@ -258,6 +279,8 @@ function Sistema({
                   destacado={selecionadas.has(i)}
                   alerta={emFoco ? emFoco.has(i) : false}
                   posicao={pos}
+                  festa={festa}
+                  fase={p * 0.5 + fila * 1.3}
                   onClick={() => onPintar(i)}
                 />
               );
@@ -383,6 +406,7 @@ export default function Som3D({
   foco = null,
   orbitar = false,
   vistoriando = false,
+  festa = false,
 }: {
   estado: EstadoSom;
   camada: CamadaSom;
@@ -391,6 +415,8 @@ export default function Som3D({
   foco?: Foco | null;
   orbitar?: boolean;
   vistoriando?: boolean;
+  /** Passagem limpa: o PA toca em vez de ficar parado. */
+  festa?: boolean;
 }) {
   const semAnimacao = useSyncExternalStore(assinarMovimento, lerMovimento, semMovimento);
   const [pronto, setPronto] = useState(false);
@@ -403,7 +429,7 @@ export default function Som3D({
         dpr={[1, 1.6]}
         camera={{ position: [1.5, 6, 22], fov: 42 }}
         onCreated={() => setPronto(true)}
-        frameloop={semAnimacao && !vistoriando ? 'demand' : 'always'}
+        frameloop={semAnimacao && !vistoriando && !festa ? 'demand' : 'always'}
       >
         <color attach="background" args={['#06080C']} />
         <fog attach="fog" args={['#06080C', 24, 70]} />
@@ -430,6 +456,7 @@ export default function Som3D({
           camada={camada}
           selecionadas={selecionadas}
           foco={foco}
+          festa={festa}
           onPintar={pintar}
         />
 

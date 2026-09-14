@@ -46,6 +46,13 @@ html.white-label-hide-navbar [data-site-content] {
   padding-top: 0;
 }
 
+/* As telas cheias do Call Time (ordem de serviço, vistoria, placar) param
+   onde o header do site começa, para quem está jogando nunca ficar sem
+   saída. Sem header, no white-label, elas colam no topo. */
+html.white-label-hide-navbar [data-abaixo-do-header] {
+  top: 0;
+}
+
 /* Nas rotas de acesso do domínio da AlfaLight (ROTAS_COM_HEADER_ALFALIGHT em
    app/layout.tsx): troca a Navbar da Rentech (já escondida acima, via
    white-label-hide-navbar) pelo Header_alfalight. Fica sempre no DOM (evita

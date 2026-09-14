@@ -19,7 +19,7 @@ export type Marca = {
 };
 
 /** Cada posto tem o seu quadro: pontos de LED e de luz não se comparam. */
-export type Jogo = 'montagem' | 'luz' | 'som';
+export type Jogo = 'video' | 'luz' | 'som';
 const chaveDe = (jogo: Jogo) => `calltime.ranking.${jogo}.v1`;
 const LIMITE = 8;
 
@@ -41,7 +41,7 @@ export function limparApelido(bruto: string): string {
     .slice(0, APELIDO_MAX);
 }
 
-export function lerRanking(jogo: Jogo = 'montagem'): Marca[] {
+export function lerRanking(jogo: Jogo = 'video'): Marca[] {
   if (typeof window === 'undefined') return [];
   try {
     const cru = window.localStorage.getItem(chaveDe(jogo));
@@ -64,7 +64,7 @@ export function lerRanking(jogo: Jogo = 'montagem'): Marca[] {
   }
 }
 
-export function gravarMarca(apelido: string, pontos: number, jogo: Jogo = 'montagem'): Marca[] {
+export function gravarMarca(apelido: string, pontos: number, jogo: Jogo = 'video'): Marca[] {
   const limpo = limparApelido(apelido);
   if (!limpo) return lerRanking(jogo);
 
@@ -81,12 +81,12 @@ export function gravarMarca(apelido: string, pontos: number, jogo: Jogo = 'monta
 }
 
 /** Posição (1-based) que essa pontuação ocuparia hoje. */
-export function posicaoDe(pontos: number, jogo: Jogo = 'montagem'): number {
+export function posicaoDe(pontos: number, jogo: Jogo = 'video'): number {
   return lerRanking(jogo).filter((m) => m.pontos > pontos).length + 1;
 }
 
 /** Entra no quadro se bate alguém ou se ainda sobra vaga. */
-export function entraNoRanking(pontos: number, jogo: Jogo = 'montagem'): boolean {
+export function entraNoRanking(pontos: number, jogo: Jogo = 'video'): boolean {
   if (pontos <= 0) return false;
   const atual = lerRanking(jogo);
   return atual.length < LIMITE || pontos > atual[atual.length - 1].pontos;

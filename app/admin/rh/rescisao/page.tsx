@@ -4,7 +4,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import {
-  painelRescisoesAction, listarFuncionariosElegiveisRescisaoAction, criarRescisaoAction
+  painelRescisoesAction, listarFuncionariosElegiveisRescisaoAction, criarRescisaoAction,
+  type BaseSalarialRescisao
 } from '../actions/actions-rescisao';
 import type { MotivoRescisao, TipoAvisoPrevio } from '../../../lib/calculoRescisao';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
@@ -53,7 +54,21 @@ interface Rescisao {
   // só para o selo visual.
   empresa_id?: number | null;
 }
-interface FuncionarioElegivel { nome: string; cargo: string | null; dataDesligamento: string | null; tipoFolha: 'PROPRIO' | 'CONTABILIDADE'; }
+interface FuncionarioElegivel {
+  nome: string; cargo: string | null; dataDesligamento: string | null; tipoFolha: 'PROPRIO' | 'CONTABILIDADE';
+  salarioFolha: number; salarioContrato: number;
+}
+
+const BASES_SALARIAIS: { value: BaseSalarialRescisao; label: string }[] = [
+  { value: 'FOLHA', label: 'Salário Folha' },
+  { value: 'CONTRATO', label: 'Salário Contrato Total' },
+  { value: 'DIFERENCA', label: 'Diferença (Contrato − Folha)' }
+];
+const valorBaseSalarial = (base: BaseSalarialRescisao, folha: number, contrato: number): number => {
+  if (base === 'CONTRATO') return contrato;
+  if (base === 'DIFERENCA') return Math.max(0, contrato - folha);
+  return folha > 0 ? folha : contrato;
+};
 
 export default function RescisaoPage() {
   const router = useRouter();
@@ -133,11 +148,12 @@ export default function RescisaoPage() {
   const [nData, setNData] = useState('');
   const [nMotivo, setNMotivo] = useState<MotivoRescisao>('SEM_JUSTA_CAUSA');
   const [nAviso, setNAviso] = useState<TipoAvisoPrevio>('INDENIZADO');
+  const [nBase, setNBase] = useState<BaseSalarialRescisao>('FOLHA');
   const [salvando, setSalvando] = useState(false);
 
   const abrirModal = async () => {
     setModalAberto(true);
-    setNFunc(''); setNData(''); setNMotivo('SEM_JUSTA_CAUSA'); setNAviso('INDENIZADO');
+    setNFunc(''); setNData(''); setNMotivo('SEM_JUSTA_CAUSA'); setNAviso('INDENIZADO'); setNBase('FOLHA');
     setCarregandoFuncionarios(true);
     try {
       const res = await listarFuncionariosElegiveisRescisaoAction(accessToken);
@@ -168,7 +184,8 @@ export default function RescisaoPage() {
     setSalvando(true);
     try {
       const res = await criarRescisaoAction({
-        funcionarioNome: nFunc, dataDesligamento: nData, motivo: nMotivo, tipoAvisoPrevio: nAviso, usuarioNome: usuarioAtual
+        funcionarioNome: nFunc, dataDesligamento: nData, motivo: nMotivo, tipoAvisoPrevio: nAviso,
+        baseSalarialCalculo: nBase, usuarioNome: usuarioAtual
       }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       router.push(`/admin/rh/rescisao/${res.info.id}`);
@@ -357,6 +374,17 @@ export default function RescisaoPage() {
                   {opcoesAvisoPrevio(nMotivo).map(a => <option key={a} value={a}>{AVISO_LABEL[a]}</option>)}
                 </select>
               </div>
+              {funcionarioSelecionado?.tipoFolha === 'PROPRIO' && (
+                <div>
+                  <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Base salarial do cálculo</label>
+                  <select value={nBase} onChange={e => setNBase(e.target.value as BaseSalarialRescisao)} className="w-full p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-white">
+                    {BASES_SALARIAIS.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
+                  </select>
+                  <p className="text-[10px] font-bold text-gray-500 mt-1">
+                    Folha: {fmtMoeda(funcionarioSelecionado.salarioFolha)} • Contrato: {fmtMoeda(funcionarioSelecionado.salarioContrato)} • Base escolhida: <strong className="text-[#0C1D4D]">{fmtMoeda(valorBaseSalarial(nBase, funcionarioSelecionado.salarioFolha, funcionarioSelecionado.salarioContrato))}</strong>
+                  </p>
+                </div>
+              )}
             </div>
             <div className="flex gap-2 mt-5">
               <button onClick={() => setModalAberto(false)} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 font-black uppercase tracking-wider text-xs py-3 rounded-xl">Cancelar</button>

@@ -7,7 +7,8 @@ import {
   obterRescisaoAction, atualizarItemCalculoAction, recalcularRescisaoAction, atualizarFgtsAction,
   uploadTrctRescisaoAction, urlTrctRescisaoAction, homologarRescisaoAction, cancelarRescisaoAction,
   enviarRescisaoParaAssinaturaAction, obterAssinaturaRescisaoAction, atualizarAssinaturaRescisaoAction,
-  baixarAssinadoRescisaoAction, gerarPdfRescisaoAction, marcarRescisaoPagaAction
+  baixarAssinadoRescisaoAction, gerarPdfRescisaoAction, marcarRescisaoPagaAction,
+  type BaseSalarialRescisao
 } from '../../actions/actions-rescisao';
 import type { ItemRescisao, MotivoRescisao } from '../../../../lib/calculoRescisao';
 import { usePageAccess } from '../../../../components/hooks/usePageAccess';
@@ -73,10 +74,17 @@ interface RescisaoRow {
   dias_aviso_previo: number | null; tipo_folha: 'PROPRIO' | 'CONTABILIDADE'; status: string;
   saldo_fgts_informado: number | null; fgts_percentual_multa: number | null; fgts_valor_multa: number | null;
   dados_calculo: DadosCalculo | null; valor_total_liquido: number | null;
+  base_salarial_calculo: BaseSalarialRescisao; base_salarial_valor: number | null;
   storage_path: string | null; nome_arquivo: string | null;
   homologado_em: string | null; homologado_por: string | null;
   pago_em: string | null; pago_lote_id: number | null;
 }
+
+const BASES_SALARIAIS: { value: BaseSalarialRescisao; label: string }[] = [
+  { value: 'FOLHA', label: 'Salário Folha' },
+  { value: 'CONTRATO', label: 'Salário Contrato Total' },
+  { value: 'DIFERENCA', label: 'Diferença (Contrato − Folha)' }
+];
 
 export default function DetalheRescisaoPage() {
   const router = useRouter();
@@ -97,6 +105,9 @@ export default function DetalheRescisaoPage() {
   const [itens, setItens] = useState<ItemRescisao[]>([]);
   const [saldoFgts, setSaldoFgts] = useState(0);
   const [percentualFgts, setPercentualFgts] = useState('0');
+  const [salarioFolha, setSalarioFolha] = useState(0);
+  const [salarioContrato, setSalarioContrato] = useState(0);
+  const [baseEscolhida, setBaseEscolhida] = useState<BaseSalarialRescisao>('FOLHA');
 
   const carregar = async () => {
     setLoading(true);
@@ -108,6 +119,9 @@ export default function DetalheRescisaoPage() {
       setItens(r.dados_calculo?.itens || []);
       setSaldoFgts(Number(r.saldo_fgts_informado ?? 0));
       setPercentualFgts(String(r.fgts_percentual_multa ?? 0));
+      setSalarioFolha(Number(res.info.salarioFolha) || 0);
+      setSalarioContrato(Number(res.info.salarioContrato) || 0);
+      setBaseEscolhida(r.base_salarial_calculo || 'FOLHA');
     } catch (e: any) { toast('Erro ao carregar rescisão: ' + e.message, 'error'); }
     finally { setLoading(false); }
   };
@@ -151,13 +165,16 @@ export default function DetalheRescisaoPage() {
     if (!confirm('Recalcular vai sobrescrever qualquer edição manual feita nas linhas do cálculo e atualizar a estimativa do saldo do FGTS (mantendo o percentual da multa já salvo). Continuar?')) return;
     setRecalculando(true);
     try {
-      const res = await recalcularRescisaoAction({ id }, accessToken);
+      const res = await recalcularRescisaoAction({ id, baseSalarialCalculo: baseEscolhida }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       // Atualiza os itens/totais do cálculo e o saldo estimado do FGTS — não
       // usa carregar() aqui pra não sobrescrever o percentual da multa caso
       // o usuário tenha uma edição própria ainda não salva nesse campo.
       setItens(res.info.dadosCalculo.itens);
-      setRescisao(prev => prev ? { ...prev, dados_calculo: res.info.dadosCalculo, valor_total_liquido: res.info.dadosCalculo.valorLiquido } : prev);
+      setRescisao(prev => prev ? {
+        ...prev, dados_calculo: res.info.dadosCalculo, valor_total_liquido: res.info.dadosCalculo.valorLiquido,
+        base_salarial_calculo: res.info.baseSalarialCalculo, base_salarial_valor: res.info.baseSalarialValor
+      } : prev);
       setSaldoFgts(res.info.saldoFgtsInformado);
     } catch (e: any) { toast('Erro ao recalcular: ' + e.message, 'error'); }
     finally { setRecalculando(false); }
@@ -521,6 +538,21 @@ export default function DetalheRescisaoPage() {
                     </button>
                   )}
                 </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-4 py-3 border-b border-[#E2E8F0] bg-gray-50">
+                <label className="text-[10px] font-black text-gray-500 uppercase whitespace-nowrap">Base salarial do cálculo</label>
+                {ehFinal ? (
+                  <span className="text-xs font-bold text-[#0C1D4D]">{BASES_SALARIAIS.find(b => b.value === rescisao.base_salarial_calculo)?.label || rescisao.base_salarial_calculo}</span>
+                ) : (
+                  <select value={baseEscolhida} onChange={e => setBaseEscolhida(e.target.value as BaseSalarialRescisao)} className="p-2 border border-gray-300 rounded-lg text-xs font-bold bg-white w-full sm:w-auto">
+                    {BASES_SALARIAIS.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
+                  </select>
+                )}
+                <span className="text-[10px] font-bold text-gray-400">
+                  Folha: {fmtMoeda(salarioFolha)} • Contrato: {fmtMoeda(salarioContrato)} • Usado no último cálculo: <strong className="text-gray-600">{fmtMoeda(rescisao.base_salarial_valor)}</strong>
+                  {!ehFinal && baseEscolhida !== rescisao.base_salarial_calculo && ' — clique em "Recalcular" para aplicar'}
+                </span>
               </div>
 
               {(['PROVENTO', 'DESCONTO', 'INFORMATIVO'] as const).map(tipo => {

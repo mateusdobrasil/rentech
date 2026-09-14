@@ -71,12 +71,25 @@ const STATUS_FINAIS = ['HOMOLOGADA', 'CANCELADA'];
 // um mês real, só uma chave única pra rastrear o envio do TRCT dessa rescisão.
 const marcadorAssinatura = (id: number) => `RESCISAO-${id}`;
 
-// salario_folha é só um valor de referência para cálculo de hora — em vários
-// tipos de contrato ele fica zerado e o salário real está em
-// salario_contrato. Mesma regra usada em holerite/page.tsx (salarioBaseCalculo).
-const resolverSalarioBase = (func: { salario_folha: number | null; salario_contrato: number | null }): number => {
+// Qual valor da ficha usar como base do cálculo da rescisão — escolhido pelo
+// RH na abertura (e reaproveitado no recalcular, a menos que troque de novo):
+// FOLHA (padrão de sempre: salario_folha, caindo pro salario_contrato quando
+// a folha está zerada — em vários tipos de contrato ela é só referência de
+// hora), CONTRATO (remuneração total) ou DIFERENCA (o que o contrato paga
+// além da folha própria). Mesma regra de fallback usada em
+// holerite/page.tsx (salarioBaseCalculo).
+export type BaseSalarialRescisao = 'FOLHA' | 'CONTRATO' | 'DIFERENCA';
+const BASES_SALARIAIS_VALIDAS: BaseSalarialRescisao[] = ['FOLHA', 'CONTRATO', 'DIFERENCA'];
+
+const resolverSalarioBase = (
+  func: { salario_folha: number | null; salario_contrato: number | null },
+  base: BaseSalarialRescisao = 'FOLHA'
+): number => {
   const folha = Number(func.salario_folha) || 0;
-  return folha > 0 ? folha : Number(func.salario_contrato) || 0;
+  const contrato = Number(func.salario_contrato) || 0;
+  if (base === 'CONTRATO') return contrato;
+  if (base === 'DIFERENCA') return Math.max(0, contrato - folha);
+  return folha > 0 ? folha : contrato;
 };
 
 // Mesmas contas de folha_descontos usadas em holerite/page.tsx (calcularMesFim/
@@ -188,7 +201,7 @@ export async function listarFuncionariosElegiveisRescisaoAction(accessToken: str
   try {
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     let qFuncs = db.from('folha_funcionarios')
-      .select('nome_completo, cargo, data_desligamento').eq('ativo', true).order('nome_completo');
+      .select('nome_completo, cargo, data_desligamento, salario_folha, salario_contrato').eq('ativo', true).order('nome_completo');
     if (empresasPermitidas) qFuncs = qFuncs.in('empresa_id', empresasPermitidas);
     const { data: funcs, error } = await qFuncs;
     if (error) throw new Error(error.message);
@@ -207,7 +220,9 @@ export async function listarFuncionariosElegiveisRescisaoAction(accessToken: str
         nome: f.nome_completo,
         cargo: f.cargo,
         dataDesligamento: f.data_desligamento,
-        tipoFolha: resolucao[f.nome_completo]?.recebeFechamento === false ? 'CONTABILIDADE' : 'PROPRIO'
+        tipoFolha: resolucao[f.nome_completo]?.recebeFechamento === false ? 'CONTABILIDADE' : 'PROPRIO',
+        salarioFolha: Number(f.salario_folha) || 0,
+        salarioContrato: Number(f.salario_contrato) || 0
       }));
 
     return { ok: true, info: { linhas } };
@@ -221,13 +236,15 @@ export async function listarFuncionariosElegiveisRescisaoAction(accessToken: str
 // ============================================================================
 export async function criarRescisaoAction(payload: {
   funcionarioNome: string; dataDesligamento: string; motivo: MotivoRescisao;
-  tipoAvisoPrevio: TipoAvisoPrevio; usuarioNome: string;
+  tipoAvisoPrevio: TipoAvisoPrevio; usuarioNome: string; baseSalarialCalculo?: BaseSalarialRescisao;
 }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcessoRescisao(accessToken);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
   const { funcionarioNome, dataDesligamento, motivo, tipoAvisoPrevio, usuarioNome } = payload;
+  const baseSalarialCalculo: BaseSalarialRescisao = BASES_SALARIAIS_VALIDAS.includes(payload.baseSalarialCalculo as BaseSalarialRescisao)
+    ? (payload.baseSalarialCalculo as BaseSalarialRescisao) : 'FOLHA';
 
   if (!funcionarioNome || !dataDesligamento || !motivo) {
     return { ok: false, erro: 'Funcionário, data de desligamento e motivo são obrigatórios.' };
@@ -275,12 +292,14 @@ export async function criarRescisaoAction(payload: {
     };
 
     if (tipoFolha === 'PROPRIO') {
-      const salarioBase = resolverSalarioBase(func);
+      const salarioBase = resolverSalarioBase(func, baseSalarialCalculo);
       const resultado = await montarCalculo(db, {
         funcionarioNome, salarioBase, dataAdmissao: func.data_admissao, dataDesligamento, motivo, tipoAvisoPrevio
       });
       registro.dados_calculo = resultado;
       registro.valor_total_liquido = resultado.valorLiquido;
+      registro.base_salarial_calculo = baseSalarialCalculo;
+      registro.base_salarial_valor = salarioBase;
       registro.status = 'EM_CALCULO';
 
       // Cálculo prévio do saldo do FGTS (8% × salário × meses de casa) — só um
@@ -325,7 +344,18 @@ export async function obterRescisaoAction(payload: { id: number }, accessToken: 
     if (!data) return { ok: false, erro: 'Rescisão não encontrada.' };
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     if (!empresaPermitida(empresasPermitidas, data.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
-    return { ok: true, info: { rescisao: data } };
+
+    // Folha/Contrato ATUAIS da ficha — só pra exibir junto do seletor de base
+    // salarial (o que já foi calculado usa base_salarial_valor, congelado no
+    // momento do cálculo; isso aqui é só pra comparar antes de recalcular).
+    let salarioFolha = 0, salarioContrato = 0;
+    if (data.tipo_folha === 'PROPRIO') {
+      const { data: func } = await db.from('folha_funcionarios').select('salario_folha, salario_contrato').eq('nome_completo', data.funcionario_nome).maybeSingle();
+      salarioFolha = Number(func?.salario_folha) || 0;
+      salarioContrato = Number(func?.salario_contrato) || 0;
+    }
+
+    return { ok: true, info: { rescisao: data, salarioFolha, salarioContrato } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
@@ -335,7 +365,10 @@ export async function obterRescisaoAction(payload: { id: number }, accessToken: 
 // RECALCULAR — reroda o motor com os dados atuais do funcionário, sobrescrevendo
 // dados_calculo (a UI deve avisar que isso descarta edições manuais).
 // ============================================================================
-export async function recalcularRescisaoAction(payload: { id: number }, accessToken: string): Promise<Resultado> {
+export async function recalcularRescisaoAction(
+  payload: { id: number; baseSalarialCalculo?: BaseSalarialRescisao },
+  accessToken: string
+): Promise<Resultado> {
   const acesso = await validarAcessoRescisao(accessToken);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
@@ -350,8 +383,15 @@ export async function recalcularRescisaoAction(payload: { id: number }, accessTo
     if (r.tipo_folha !== 'PROPRIO') return { ok: false, erro: 'Este caso não tem cálculo interno — a folha é administrada pela contabilidade.' };
     if (!r.data_admissao) return { ok: false, erro: 'Esta rescisão não tem data de admissão registrada — não é possível calcular.' };
 
+    // Sem escolha nova explícita, recalcular mantém a mesma base já usada
+    // (não força o usuário a escolher de novo toda vez que os dados da
+    // ficha mudam).
+    const baseSalarialCalculo: BaseSalarialRescisao = BASES_SALARIAIS_VALIDAS.includes(payload.baseSalarialCalculo as BaseSalarialRescisao)
+      ? (payload.baseSalarialCalculo as BaseSalarialRescisao)
+      : (BASES_SALARIAIS_VALIDAS.includes(r.base_salarial_calculo) ? r.base_salarial_calculo : 'FOLHA');
+
     const { data: func } = await db.from('folha_funcionarios').select('salario_folha, salario_contrato').eq('nome_completo', r.funcionario_nome).maybeSingle();
-    const salarioBase = resolverSalarioBase(func || { salario_folha: 0, salario_contrato: 0 });
+    const salarioBase = resolverSalarioBase(func || { salario_folha: 0, salario_contrato: 0 }, baseSalarialCalculo);
 
     const resultado = await montarCalculo(db, {
       funcionarioNome: r.funcionario_nome, salarioBase, dataAdmissao: r.data_admissao, dataDesligamento: r.data_desligamento,
@@ -368,12 +408,19 @@ export async function recalcularRescisaoAction(payload: { id: number }, accessTo
 
     const { error: updErr } = await db.from('folha_rescisoes').update({
       dados_calculo: resultado, valor_total_liquido: resultado.valorLiquido,
+      base_salarial_calculo: baseSalarialCalculo, base_salarial_valor: salarioBase,
       saldo_fgts_informado: estimativaFgts, fgts_valor_multa: multaFgts,
       atualizado_em: new Date().toISOString()
     }).eq('id', payload.id);
     if (updErr) throw new Error(updErr.message);
 
-    return { ok: true, info: { dadosCalculo: resultado, saldoFgtsInformado: estimativaFgts, fgtsValorMulta: multaFgts } };
+    return {
+      ok: true,
+      info: {
+        dadosCalculo: resultado, saldoFgtsInformado: estimativaFgts, fgtsValorMulta: multaFgts,
+        baseSalarialCalculo, baseSalarialValor: salarioBase
+      }
+    };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

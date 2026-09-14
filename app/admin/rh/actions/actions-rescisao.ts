@@ -13,6 +13,7 @@ import { resolverFontesPagamento } from './actions-fontes-pagamento';
 import { consultarAssinaturaAction, baixarAssinadoAction } from './actions-assinatura';
 import { autentiqueCriarDocumento } from '../../../lib/autentique';
 import { gerarRescisaoPdf } from '../../../lib/gerarRescisaoPdf';
+import { mergePdfs } from '../../../lib/mergePdf';
 import {
   calcularRescisao, calcularDiasAvisoPrevio, calcularPercentualMultaFgts, calcularEstimativaFgts,
   type MotivoRescisao, type TipoAvisoPrevio, type ItemRescisao
@@ -776,17 +777,29 @@ export async function enviarRescisaoParaAssinaturaAction(payload: {
     if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
     if (r.status !== 'HOMOLOGADA') return { ok: false, erro: 'Só é possível enviar para assinatura depois da rescisão homologada.' };
 
-    // Sem vínculo com a contabilidade (folha própria): o termo é o que o
-    // próprio sistema calculou, gerado na hora — não depende de anexo.
-    // Com a contabilidade: precisa do TRCT que ela mesma enviou.
+    // Folha própria: o termo é sempre o que o sistema calculou — se também
+    // houver um anexo da contabilidade (mesmo campo storage_path, usado como
+    // extra opcional só neste caso), os dois viram UM documento só, nessa
+    // ordem, pro colaborador assinar tudo de uma vez (ver mergePdfs). Antes
+    // o anexo SUBSTITUÍA o termo calculado em vez de complementar — bug
+    // reportado pelo usuário em 2026-09-14.
+    // Sem folha própria (contabilidade administra): o TRCT que ela mesma
+    // enviou é o único documento, não há termo nosso pra juntar.
     let pdfBase64: string;
-    if (r.storage_path) {
+    if (r.tipo_folha === 'PROPRIO' && r.dados_calculo) {
+      const termoBytes = await montarPdfBytesRescisao(db, r);
+      let pdfBytes: Uint8Array = termoBytes;
+      if (r.storage_path) {
+        const { data: arquivo, error: dlErr } = await db.storage.from(BUCKET).download(r.storage_path);
+        if (dlErr || !arquivo) throw new Error(dlErr?.message || 'Falha ao baixar o anexo da contabilidade.');
+        const anexoBytes = new Uint8Array(await arquivo.arrayBuffer());
+        pdfBytes = await mergePdfs([termoBytes, anexoBytes]);
+      }
+      pdfBase64 = Buffer.from(pdfBytes).toString('base64');
+    } else if (r.storage_path) {
       const { data: arquivo, error: dlErr } = await db.storage.from(BUCKET).download(r.storage_path);
       if (dlErr || !arquivo) throw new Error(dlErr?.message || 'Falha ao baixar o TRCT anexado.');
       pdfBase64 = Buffer.from(await arquivo.arrayBuffer()).toString('base64');
-    } else if (r.tipo_folha === 'PROPRIO' && r.dados_calculo) {
-      const pdfBytes = await montarPdfBytesRescisao(db, r);
-      pdfBase64 = Buffer.from(pdfBytes).toString('base64');
     } else {
       return { ok: false, erro: 'Nenhum TRCT anexado para enviar.' };
     }

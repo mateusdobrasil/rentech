@@ -639,9 +639,11 @@ export default function DetalheRescisaoPage() {
               )}
             </div>
 
-            {/* TRCT opcional */}
+            {/* Anexo opcional da contabilidade — some ao nosso termo calculado
+                (mergePdfs) na hora de enviar pra assinatura, não o substitui. */}
             <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-5">
-              <h3 className="text-sm font-black text-[#0C1D4D] uppercase tracking-wider mb-3">TRCT (opcional)</h3>
+              <h3 className="text-sm font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Anexo da Contabilidade (opcional)</h3>
+              <p className="text-[10px] text-gray-400 font-medium mb-3">Ex.: extrato do FGTS, exame demissional. Se anexado, é enviado JUNTO com o nosso termo de rescisão calculado acima — mesmo documento, mesma assinatura. Não substitui o cálculo.</p>
               {rescisao.storage_path ? (
                 <div className="flex items-center gap-3">
                   <button onClick={abrirAnexo} className="text-[10px] font-black text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg uppercase">📎 Ver anexo</button>
@@ -650,7 +652,12 @@ export default function DetalheRescisaoPage() {
               ) : (
                 <p className="text-xs text-gray-400 font-bold uppercase mb-2">Nenhum anexo enviado ainda.</p>
               )}
-              {!ehFinal && (
+              {/* Diferente do resto do painel (travado em !ehFinal): este
+                  anexo continua editável mesmo já HOMOLOGADA, porque o envio
+                  pra assinatura só é permitido DEPOIS de homologar — o
+                  documento da contabilidade (ex.: extrato do FGTS) muitas
+                  vezes só chega nessa altura. Só CANCELADA trava de vez. */}
+              {rescisao.status !== 'CANCELADA' && (
                 <div className="mt-3">
                   <input ref={arquivoRef} type="file" accept="application/pdf,image/*" disabled={enviandoArquivo}
                     onChange={e => { const f = e.target.files?.[0]; if (f) enviarArquivo(f); }} className="text-xs" />

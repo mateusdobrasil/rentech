@@ -15,6 +15,8 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import BackButton from '../../BackButton';
+import { lerTurno, salvarTurno, noTurno, ROTA_SALAO } from '../../../jogo/turno/armazem';
+import { registrarPosto } from '../../../jogo/turno/motor';
 import { useSom as useSomDaTela } from '../../useSom';
 import { CORES_CIRCUITO } from '../../../jogo/cores';
 import {
@@ -119,7 +121,13 @@ const noServidor = () => false;
 
 export default function CallTimeSom() {
   const montadoNoCliente = useSyncExternalStore(assinarNada, noNavegador, noServidor);
-  const [estado, setEstado] = useState<EstadoSom>(criarPartida);
+  // Dentro de um turno, a obra não é sorteada aqui: ela veio do salão junto
+  // com as outras duas, e é ela que o encarregado viu quando dividiu a equipe.
+  const [emTurno] = useState(noTurno);
+  const [estado, setEstado] = useState<EstadoSom>(() => {
+    const turno = noTurno() ? lerTurno() : null;
+    return turno ? criarPartida(turno.obras.som) : criarPartida();
+  });
   const [fase, setFase] = useState<Fase>('os');
   const [camada, setCamada] = useState<Camada>('pa');
   // Começa na planta: é nela que se trabalha. O palco entra no fechamento,
@@ -366,6 +374,29 @@ export default function CallTimeSom() {
       window.removeEventListener('keydown', rearmar);
     };
   }, [reiniciar]);
+
+  // O salão espera o resultado deste posto: minutos de verdade (com o que a
+  // vistoria cobrou), pontos, carga ligada e se a talha foi usada — a ordem
+  // dos içamentos é o que trava o palco lá fora.
+  const jaRegistrado = useRef(false);
+  useEffect(() => {
+    if (!emTurno || fase !== 'placar' || jaRegistrado.current) return;
+    if (!vistoria || !placar) return;
+    const turno = lerTurno();
+    if (!turno) return;
+    jaRegistrado.current = true;
+    salvarTurno(registrarPosto(turno, {
+      posto: 'som',
+      minutos: estado.gastos + vistoria.minutosExtras,
+      pontos: placar.total,
+      qualidade: vistoria.qualidade,
+      reprovado: placar.reprovado,
+      problemas: vistoria.problemas.map((x) => x.curto),
+      watts: estado.celulas.reduce((n, c) => n + (c.caixa && c.canal !== null ? CAIXAS[c.caixa].watts : 0), 0),
+      icou: estado.icado,
+      montadores: turno.equipe.som,
+    }));
+  }, [emTurno, fase, vistoria, placar, estado]);
 
   const ranking = fase === 'placar' ? lerRanking('som') : [];
   const podeGravar = placar !== null && !placar.reprovado && entraNoRanking(placar.total, 'som');
@@ -950,7 +981,7 @@ export default function CallTimeSom() {
                 </div>
               )}
 
-              {podeGravar && !gravado && (
+              {!emTurno && podeGravar && !gravado && (
                 <div className="rounded-xl border border-[#336699]/50 bg-[#0C1D4D]/30 p-4 flex flex-col gap-2">
                   <span className="text-[10px] font-black uppercase tracking-widest text-[#4E93D8]">
                     {placar.total} pontos · {posicaoNoRanking(placar.total, 'som')}º lugar hoje
@@ -973,7 +1004,7 @@ export default function CallTimeSom() {
                 </div>
               )}
 
-              {ranking.length > 0 && (
+              {!emTurno && ranking.length > 0 && (
                 <div className="flex flex-col gap-1">
                   <span className="text-[10px] font-black uppercase tracking-widest text-white/40">Melhores de hoje · som</span>
                   {ranking.map((m, k) => (
@@ -985,18 +1016,29 @@ export default function CallTimeSom() {
                 </div>
               )}
 
-              <button
-                onClick={reiniciar}
-                className="py-4 rounded-xl bg-white text-black text-xs font-black uppercase tracking-widest hover:bg-white/90 transition-colors"
-              >
-                Jogar de novo
-              </button>
-              <Link
-                href="/testes/calltime"
-                className="py-3 rounded-xl border border-[#284B8C]/40 text-white/60 text-[11px] font-black uppercase tracking-widest text-center hover:text-white hover:border-[#336699] transition-colors"
-              >
-                Voltar aos postos
-              </Link>
+              {emTurno ? (
+                <Link
+                  href={ROTA_SALAO}
+                  className="py-4 rounded-xl bg-white text-black text-xs font-black uppercase tracking-widest text-center hover:bg-white/90 transition-colors"
+                >
+                  Voltar ao salão
+                </Link>
+              ) : (
+                <>
+                <button
+                  onClick={reiniciar}
+                  className="py-4 rounded-xl bg-white text-black text-xs font-black uppercase tracking-widest hover:bg-white/90 transition-colors"
+                >
+                  Jogar de novo
+                </button>
+                <Link
+                  href="/testes/calltime"
+                  className="py-3 rounded-xl border border-[#284B8C]/40 text-white/60 text-[11px] font-black uppercase tracking-widest text-center hover:text-white hover:border-[#336699] transition-colors"
+                >
+                  Voltar aos postos
+                </Link>
+                </>
+              )}
             </div>
           </div>
         </div>

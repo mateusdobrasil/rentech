@@ -175,6 +175,38 @@ export default function CallTimeAbertura() {
             ))}
           </div>
 
+          {/* ---------------- o turno completo ---------------- */}
+          <Link
+            href="/testes/calltime/turno"
+            className="group flex flex-col gap-3 rounded-2xl border border-[#E0912F]/40 bg-[#E0912F]/[0.07] p-6 transition-all duration-300 hover:-translate-y-1.5 hover:border-[#E0912F] hover:bg-[#E0912F]/[0.12]"
+          >
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[10px] font-black uppercase tracking-widest text-[#E0912F]">
+                Turno completo
+              </span>
+              <span className="text-[9px] font-bold uppercase tracking-wider text-white/30">
+                Equipe, gerador e ordem de montagem
+              </span>
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div className="flex flex-col gap-2">
+                <h2 className="text-2xl font-black tracking-tight leading-none">O salão inteiro</h2>
+                <p className="text-sm text-white/60 leading-relaxed max-w-[60ch]">
+                  Os três postos no mesmo relógio, com seis montadores para dividir entre eles e um
+                  gerador de 75 kVA para o salão todo. Quem entrega um posto devolve a equipe ao
+                  pátio — e o grid de luz cruza por cima do palco, então ele sobe antes do LED ou
+                  não sobe mais.
+                </p>
+              </div>
+              <span className="text-[11px] font-black uppercase tracking-widest text-[#E0912F] shrink-0">
+                Assumir o turno →
+              </span>
+            </div>
+
+            <div className="h-1 w-10 rounded-sm bg-[#E0912F] transition-all duration-500 group-hover:w-full" />
+          </Link>
+
           {/* ---------------- quadro do dia ---------------- */}
           <section className="flex flex-col gap-3">
             <div className="flex items-baseline justify-between gap-3 border-b border-[#284B8C]/25 pb-2">

@@ -15,6 +15,8 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import QRCode from 'qrcode';
 import BackButton from '../../BackButton';
+import { lerTurno, salvarTurno, noTurno, ROTA_SALAO } from '../../../jogo/turno/armazem';
+import { registrarPosto } from '../../../jogo/turno/motor';
 import { useSom } from '../../useSom';
 import { CORES_CIRCUITO, CORES_PORTA } from '../../../jogo/cores';
 import {
@@ -41,6 +43,7 @@ import {
   colunaDe,
   CUSTO_TROCA_PROCESSADORA,
   CUSTO_CONSULTA_OS,
+  W_POR_GABINETE,
   PITCHES,
   CONTEUDOS,
   conferirLeitura,
@@ -128,7 +131,13 @@ const noServidor = () => false;
 
 export default function CallTimeMontagem() {
   const montadoNoCliente = useSyncExternalStore(assinarNada, noNavegador, noServidor);
-  const [estado, setEstado] = useState<Estado>(criarPartida);
+  // Dentro de um turno, a obra não é sorteada aqui: ela veio do salão junto
+  // com as outras duas, e é ela que o encarregado viu quando dividiu a equipe.
+  const [emTurno] = useState(noTurno);
+  const [estado, setEstado] = useState<Estado>(() => {
+    const turno = noTurno() ? lerTurno() : null;
+    return turno ? criarPartida(turno.obras.video) : criarPartida();
+  });
   const [camada, setCamada] = useState<Camada>('estrutura');
   // Começa na planta: é nela que se trabalha. O palco entra no fechamento,
   // quando a câmera assume e mostra o que a montagem virou.
@@ -480,6 +489,29 @@ export default function CallTimeMontagem() {
   // 19 reclama, e um memo precisaria de uma dependência inventada só para
   // invalidar. Como gravar uma marca já dispara re-render, ler aqui sempre
   // devolve a lista atual — e é um JSON pequeno, lido só com o placar aberto.
+  // O salão espera o resultado deste posto: minutos de verdade (com o que a
+  // vistoria cobrou), pontos, carga ligada e se a talha foi usada — a ordem
+  // dos içamentos é o que trava o palco lá fora.
+  const jaRegistrado = useRef(false);
+  useEffect(() => {
+    if (!emTurno || fase !== 'placar' || jaRegistrado.current) return;
+    if (!vistoria || !placar) return;
+    const turno = lerTurno();
+    if (!turno) return;
+    jaRegistrado.current = true;
+    salvarTurno(registrarPosto(turno, {
+      posto: 'video',
+      minutos: estado.gastos + vistoria.minutosExtras,
+      pontos: placar.total,
+      qualidade: vistoria.qualidade,
+      reprovado: placar.reprovado,
+      problemas: vistoria.problemas.map((x) => x.curto),
+      watts: estado.celulas.filter((c) => c.instalado && c.circuito !== null).length * W_POR_GABINETE,
+      icou: estado.icado,
+      montadores: turno.equipe.video,
+    }));
+  }, [emTurno, fase, vistoria, placar, estado]);
+
   const ranking = fase === 'placar' ? lerRanking() : [];
 
   const podeGravar = placar !== null && !placar.reprovado && entraNoRanking(placar.total);
@@ -1219,7 +1251,7 @@ export default function CallTimeMontagem() {
               <LicaoProcessadora estado={estado} />
               <LicaoSinal estado={estado} />
 
-              {podeGravar && !gravado && (
+              {!emTurno && podeGravar && !gravado && (
                 <div className="rounded-xl border border-[#336699]/50 bg-[#0C1D4D]/30 p-4 flex flex-col gap-3">
                   <span className="text-[10px] font-black uppercase tracking-widest text-[#336699]">
                     {posicaoDe(placar.total)}º lugar hoje — entra no quadro
@@ -1248,7 +1280,7 @@ export default function CallTimeMontagem() {
                 </div>
               )}
 
-              {ranking.length > 0 && (
+              {!emTurno && ranking.length > 0 && (
                 <div className="rounded-xl border border-[#284B8C]/30 bg-[#0C1D4D]/20 p-4 flex flex-col gap-2">
                   <span className="text-[10px] font-black uppercase tracking-widest text-white/40">
                     Quadro de hoje
@@ -1313,18 +1345,29 @@ export default function CallTimeMontagem() {
                 </div>
               </div>
 
-              <button
-                onClick={reiniciar}
-                className="py-4 rounded-xl bg-white text-black text-xs font-black uppercase tracking-widest hover:bg-white/90 active:scale-[0.98] transition-all"
-              >
-                Montar de novo
-              </button>
-              <Link
-                href="/testes/calltime"
-                className="py-3 rounded-xl border border-[#284B8C]/40 text-white/60 text-[11px] font-black uppercase tracking-widest text-center hover:text-white hover:border-[#336699] transition-colors"
-              >
-                Voltar aos postos
-              </Link>
+              {emTurno ? (
+                <Link
+                  href={ROTA_SALAO}
+                  className="py-4 rounded-xl bg-white text-black text-xs font-black uppercase tracking-widest text-center hover:bg-white/90 transition-colors"
+                >
+                  Voltar ao salão
+                </Link>
+              ) : (
+                <>
+                <button
+                  onClick={reiniciar}
+                  className="py-4 rounded-xl bg-white text-black text-xs font-black uppercase tracking-widest hover:bg-white/90 active:scale-[0.98] transition-all"
+                >
+                  Montar de novo
+                </button>
+                <Link
+                  href="/testes/calltime"
+                  className="py-3 rounded-xl border border-[#284B8C]/40 text-white/60 text-[11px] font-black uppercase tracking-widest text-center hover:text-white hover:border-[#336699] transition-colors"
+                >
+                  Voltar aos postos
+                </Link>
+                </>
+              )}
             </div>
           </div>
         </div>

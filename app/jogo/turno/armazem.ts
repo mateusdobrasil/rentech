@@ -9,7 +9,7 @@
 // sessão. Fechou a aba na feira, o próximo visitante começa do zero.
 // ============================================================================
 
-import type { Turno } from './motor';
+import { postoJogado, postosEntregues, type PostoId, type Turno } from './motor';
 
 const CHAVE = 'calltime.turno.v1';
 
@@ -49,10 +49,31 @@ export function limparTurno(): void {
   }
 }
 
-/** A tela do posto está sendo jogada dentro de um turno? */
+/** O '?turno=1' com que o salão manda a pessoa para o posto. */
 export function noTurno(): boolean {
   if (typeof window === 'undefined') return false;
   return new URLSearchParams(window.location.search).get('turno') === '1';
+}
+
+/**
+ * O turno a que esta partida pertence, ou null se for partida avulsa.
+ *
+ * Não basta olhar o '?turno=1': numa navegação de cliente o endereço pode
+ * chegar depois do primeiro render, e o posto ficaria fora do turno para
+ * sempre. Então vale também o contrário — existe turno aberto e este posto
+ * ainda não foi entregue? Então é dele que esta partida faz parte.
+ */
+export function turnoDoPosto(id: PostoId): Turno | null {
+  const t = lerTurno();
+  if (!t || t.fechado) return null;
+  if (noTurno()) return t;
+  return postoJogado(t, id) ? null : t;
+}
+
+/** "posto 2 de 3", para a pessoa saber onde está dentro do turno. */
+export function posicaoNoTurno(id: PostoId): number | null {
+  const t = turnoDoPosto(id);
+  return t ? postosEntregues(t) + 1 : null;
 }
 
 export const ROTA_SALAO = '/testes/calltime/turno';

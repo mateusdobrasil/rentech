@@ -15,7 +15,7 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import QRCode from 'qrcode';
 import BackButton from '../../BackButton';
-import { lerTurno, salvarTurno, noTurno, ROTA_SALAO } from '../../../jogo/turno/armazem';
+import { lerTurno, salvarTurno, turnoDoPosto, posicaoNoTurno, ROTA_SALAO } from '../../../jogo/turno/armazem';
 import { registrarPosto } from '../../../jogo/turno/motor';
 import { useSom } from '../../useSom';
 import { CORES_CIRCUITO, CORES_PORTA } from '../../../jogo/cores';
@@ -133,9 +133,10 @@ export default function CallTimeMontagem() {
   const montadoNoCliente = useSyncExternalStore(assinarNada, noNavegador, noServidor);
   // Dentro de um turno, a obra não é sorteada aqui: ela veio do salão junto
   // com as outras duas, e é ela que o encarregado viu quando dividiu a equipe.
-  const [emTurno] = useState(noTurno);
+  const [emTurno] = useState(() => turnoDoPosto('video') !== null);
+  const [postoDoTurno] = useState(() => posicaoNoTurno('video'));
   const [estado, setEstado] = useState<Estado>(() => {
-    const turno = noTurno() ? lerTurno() : null;
+    const turno = turnoDoPosto('video');
     return turno ? criarPartida(turno.obras.video) : criarPartida();
   });
   const [camada, setCamada] = useState<Camada>('estrutura');
@@ -423,7 +424,10 @@ export default function CallTimeMontagem() {
   };
 
   const reiniciar = useCallback(() => {
-    setEstado(criarPartida());
+    // Dentro de um turno a obra é a mesma: o salão já mostrou o porte dela ao
+    // encarregado, e o ócio da feira não pode trocar a obra no meio do turno.
+    const turno = turnoDoPosto('video');
+    setEstado(turno ? criarPartida(turno.obras.video) : criarPartida());
     setCamada('estrutura');
     setVista('planta');
     setFerramenta('gabinete');
@@ -642,6 +646,14 @@ export default function CallTimeMontagem() {
             <span className="px-2 py-0.5 rounded bg-[#336699]/25 border border-[#336699]/50 text-white font-black">
               {APLICACOES[estado.briefing.aplicacao].rotulo}
             </span>
+            {emTurno && (
+              <Link
+                href={ROTA_SALAO}
+                className="px-2 py-0.5 rounded bg-[#E0912F]/20 border border-[#E0912F]/50 text-[#E0912F] font-black hover:bg-[#E0912F]/30 transition-colors"
+              >
+                Turno · posto {postoDoTurno} de 3 · voltar ao salão
+              </Link>
+            )}
             <span className="text-white/50">{estado.briefing.evento}</span>
           </div>
 

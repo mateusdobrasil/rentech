@@ -43,6 +43,8 @@ export interface ResultadoEnvioP2s {
 // Observações da Conta a Pagar no PrimeStart — usuário pediu que o detalhe do
 // que está sendo pago (não só o total) apareça lá, já que o ERP não tem os
 // itens da OP como linhas próprias.
+// Uma linha por item (não "; " corrido) — usuário reportou em 2026-09-16 que
+// ficava embolado com vários itens na mesma linha da Conta a Pagar.
 function formatarItensObservacao(itens: OPParaEnvioP2s['itens']): string {
   if (!Array.isArray(itens) || itens.length === 0) return '';
   const fmt = (v: number) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -51,16 +53,19 @@ function formatarItensObservacao(itens: OPParaEnvioP2s['itens']): string {
       const descricao = it?.descricao || it?.description || '';
       const qtd = Number(it?.qtd ?? it?.quantity ?? 0);
       const unitario = Number(it?.valor_unitario ?? 0);
-      return `${descricao} (Qtd ${qtd} x ${fmt(unitario)})`;
+      return `- ${descricao} (Qtd ${qtd} x ${fmt(unitario)})`;
     })
-    .join('; ');
+    .join('\n');
 }
 
 // Observações da Conta a Pagar — mesmo texto usado na criação e na
-// sincronização de edição, pra não duplicar a montagem em dois lugares.
+// sincronização de edição, pra não duplicar a montagem em dois lugares. Os
+// itens (se houver) vão num bloco à parte, com quebra de linha antes da
+// lista e uma linha por item.
 function montarObservacoes(op: OPParaEnvioP2s, nomeResponsavel: string): string {
+  const cabecalho = `Lançada via sistema Rentech por ${nomeResponsavel} | Natureza: ${op.natureza_pagamento || '—'} | OS: ${op.os_numero || 'S/N'} | Cliente: ${op.os_cliente || '—'} | Evento: ${op.os_evento || '—'}${op.observacao ? ` | Obs: ${op.observacao}` : ''}`;
   const itensTexto = formatarItensObservacao(op.itens);
-  return `Lançada via sistema Rentech por ${nomeResponsavel} | Natureza: ${op.natureza_pagamento || '—'} | OS: ${op.os_numero || 'S/N'} | Cliente: ${op.os_cliente || '—'} | Evento: ${op.os_evento || '—'}${op.observacao ? ` | Obs: ${op.observacao}` : ''}${itensTexto ? ` | Itens: ${itensTexto}` : ''}`;
+  return itensTexto ? `${cabecalho}\nItens:\n${itensTexto}` : cabecalho;
 }
 
 // Busca a Entidade pelo CNPJ/CPF já digitado no formulário da OP nas tabelas

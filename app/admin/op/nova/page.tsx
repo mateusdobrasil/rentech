@@ -9,6 +9,7 @@ import { useAcessoRota } from '../useAcessoRota';
 import { useToast } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { obterDadosPagamentoRescisaoAction } from '../../rh/actions/actions-rescisao';
+import { listarNaturezasPagamentoParaSelectAction } from '../actions-naturezas';
 
 interface ItemOP {
   id: number;
@@ -72,6 +73,9 @@ function NovaOrdemPagamentoForm() {
   const [responsavelEmail, setResponsavelEmail] = useState('');
   const [carregandoUsuario, setCarregandoUsuario] = useState(true);
   const [natureza, setNatureza] = useState('SUBLOCAÇÃO');
+  // Catálogo de Natureza do Pagamento (op_naturezas_pagamento — gerido em
+  // /admin/op/naturezas), substitui a lista fixa que existia antes aqui.
+  const [naturezasDisponiveis, setNaturezasDisponiveis] = useState<string[]>([]);
 
   // Empresa (Rentech × AlfaLight) da OP. null = ainda não sabemos o que o
   // usuário pode ver; [] catálogo ainda carregando. Trava sozinho quando o
@@ -167,6 +171,18 @@ function NovaOrdemPagamentoForm() {
       setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
     }
     carregarEmpresas();
+  }, [perfil]);
+
+  // Carrega o catálogo de Natureza do Pagamento — se vier vazio (tabela sem
+  // linhas ainda) ou a chamada falhar, mantém o valor padrão do state
+  // ('SUBLOCAÇÃO') como única opção, pra nunca deixar o select vazio.
+  useEffect(() => {
+    if (!perfil) return;
+    async function carregarNaturezas() {
+      const res = await listarNaturezasPagamentoParaSelectAction(perfil!.accessToken);
+      if (res.ok && res.info.naturezas.length > 0) setNaturezasDisponiveis(res.info.naturezas);
+    }
+    carregarNaturezas();
   }, [perfil]);
 
   const empresasCatalogoVisivel = useMemo(() =>
@@ -771,12 +787,9 @@ function NovaOrdemPagamentoForm() {
               </select>
               <label className="block text-xs font-bold text-[#64748B] uppercase tracking-wider mb-2">Natureza do Pagamento</label>
               <select className="w-full p-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg text-sm text-[#0A2A4A] focus:border-[#00A8E8] outline-none font-semibold cursor-pointer" value={natureza} onChange={(e) => setNatureza(e.target.value)}>
-                <option value="SUBLOCAÇÃO">SUBLOCAÇÃO</option>
-                <option value="FREELANCE">FREELANCE (Diárias)</option>
-                <option value="REEMBOLSO">REEMBOLSO</option>
-                <option value="HOSPEDAGEM">HOSPEDAGEM</option>
-                <option value="BV">BV (BONIFICAÇÃO/COMISSÃO)</option>
-                <option value="RESCISÃO">RESCISÃO</option>
+                {(naturezasDisponiveis.length > 0 ? naturezasDisponiveis : [natureza]).map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
               </select>
             </div>
           </section>

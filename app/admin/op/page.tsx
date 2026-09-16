@@ -28,6 +28,12 @@ const modulosOp = [
     descricao: 'Gestão de Assinaturas de contratos e documentos.',
     icone: '📃', link: '/admin/op/assinaturas',
     cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
+  },
+  {
+    titulo: 'Natureza & Classificação Financeira',
+    descricao: 'Naturezas de pagamento disponíveis na Nova OP e a Classificação Financeira enviada ao PrimeStart.',
+    icone: '🏷️', link: '/admin/op/naturezas',
+    cor: 'bg-amber-50 border-amber-200 text-amber-700', hover: 'hover:border-amber-500'
   }
 ];
 

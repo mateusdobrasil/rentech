@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { listarOPs, atualizarOP, dispararEmailOP } from '../actions';
+import { listarNaturezasPagamentoParaSelectAction } from '../actions-naturezas';
 import { registrarLogAuditoria } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next"
 import { useAcessoRota } from '../useAcessoRota';
@@ -63,6 +64,9 @@ export default function PainelResponsavel() {
   // igual ao resto do sistema.
   const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
   const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+  // Catálogo de Natureza do Pagamento (op_naturezas_pagamento — gerido em
+  // /admin/op/naturezas), usado no select de edição da OP.
+  const [naturezasDisponiveis, setNaturezasDisponiveis] = useState<string[]>([]);
 
   // Estados de Modais
   const [modalDetalhes, setModalDetalhes] = useState<{ open: boolean; op: OP | null }>({ open: false, op: null });
@@ -106,6 +110,15 @@ export default function PainelResponsavel() {
       setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
     }
     carregarEmpresas();
+  }, [perfil]);
+
+  useEffect(() => {
+    if (!perfil) return;
+    async function carregarNaturezas() {
+      const res = await listarNaturezasPagamentoParaSelectAction(perfil!.accessToken);
+      if (res.ok && res.info.naturezas.length > 0) setNaturezasDisponiveis(res.info.naturezas);
+    }
+    carregarNaturezas();
   }, [perfil]);
 
   const empresasCatalogoVisivel = useMemo(() =>
@@ -516,8 +529,12 @@ export default function PainelResponsavel() {
                   <div><label className="block text-[10px] font-bold text-[#64748B] mb-1">PERÍODO</label><input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded uppercase text-sm outline-none focus:border-[#336699]" value={modalEdit.op.os_periodo || ''} onChange={e => updateEditField('os_periodo', e.target.value)} /></div>
                   <div>
                     <label className="block text-[10px] font-bold text-[#64748B] mb-1">NATUREZA</label>
-                    <select className="w-full p-2.5 border border-[#CBD5E1] rounded text-sm outline-none focus:border-[#336699]" value={modalEdit.op.natureza_pagamento || 'SUBLOCAÇÃO'} onChange={e => updateEditField('natureza_pagamento', e.target.value)}>
-                      <option value="SUBLOCAÇÃO">SUBLOCAÇÃO</option><option value="FREELANCE">FREELANCE</option><option value="REEMBOLSO">REEMBOLSO</option><option value="HOSPEDAGEM">HOSPEDAGEM</option><option value="BV">BV</option><option value="OUTROS">OUTROS</option>
+                    <select className="w-full p-2.5 border border-[#CBD5E1] rounded text-sm outline-none focus:border-[#336699] text-[#0A2A4A]" value={modalEdit.op.natureza_pagamento || ''} onChange={e => updateEditField('natureza_pagamento', e.target.value)}>
+                      {/* A natureza atual da OP pode ter sido excluída do catálogo depois de
+                          criada — inclui ela mesma na lista pra não sumir do select nesse caso. */}
+                      {[...new Set([...(modalEdit.op.natureza_pagamento ? [modalEdit.op.natureza_pagamento] : []), ...naturezasDisponiveis])].map(n => (
+                        <option key={n} value={n}>{n}</option>
+                      ))}
                     </select>
                   </div>
                 </div>

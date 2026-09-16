@@ -230,6 +230,40 @@ export async function criarContaPagarParaOP(op: OPParaEnvioP2s, nomeResponsavel:
   await atualizarObjeto(ambiente, 'TCustomContaPagar', criado.oid, campos);
 
   const db = supabaseAdmin();
+
+  // ==========================================================================
+  // CLASSIFICAÇÃO FINANCEIRA (Centro de Custo/Receita + Sub-Centro) — só se a
+  // Natureza do Pagamento desta OP tiver uma classificação configurada em
+  // /admin/op/naturezas (op_naturezas_pagamento). Sem isso, a conta fica sem
+  // Classificacoes, como sempre foi até agora — nunca bloqueia a criação da
+  // Conta a Pagar em si. Escrita como um objeto filho à parte
+  // (TCustomClassificacaoPagtoRec, mesmo padrão create→update de todo
+  // objeto do PrimeStart), ligado de volta pela referência
+  // PagamentoRecebimento — confirmado lendo uma Conta a Pagar real com
+  // Classificacoes preenchido em produção, 2026-09-16.
+  // ==========================================================================
+  try {
+    const { data: naturezaCfg } = await db
+      .from('op_naturezas_pagamento')
+      .select('tipo_classificacao, centro_financeiro_oid, subcentro_financeiro_oid')
+      .eq('natureza', op.natureza_pagamento || '')
+      .maybeSingle();
+
+    if (naturezaCfg?.centro_financeiro_oid) {
+      const classificacao = await criarObjeto(ambiente, 'TCustomClassificacaoPagtoRec');
+      const camposClassificacao: Record<string, unknown> = {
+        Tipo: naturezaCfg.tipo_classificacao === 'RECEITA' ? 'R' : 'P',
+        CentroFinanceiro: naturezaCfg.centro_financeiro_oid,
+        Valor: Number(op.total_geral) || 0,
+        PagamentoRecebimento: criado.oid,
+      };
+      if (naturezaCfg.subcentro_financeiro_oid) camposClassificacao.SubCentroFinanceiro = naturezaCfg.subcentro_financeiro_oid;
+      await atualizarObjeto(ambiente, 'TCustomClassificacaoPagtoRec', classificacao.oid, camposClassificacao);
+    }
+  } catch (classificacaoError) {
+    console.error('Conta a Pagar criada, mas houve um erro ao gravar a Classificação Financeira no PrimeStart:', classificacaoError);
+  }
+
   const agora = new Date().toISOString();
   const { error: erroUpdate } = await db
     .from('op_ordens_pagamento')

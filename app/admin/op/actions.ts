@@ -11,6 +11,7 @@ import { obterEmpresasPermitidas, empresaPermitida } from '../../lib/serverAuth'
 import { gerarHtmlEmailOP } from './emailTemplate';
 import { ItemOPNormalizado, validarNovaOP, validarItensOP } from './utils';
 import { criarContaPagarParaOP, atualizarContaPagarParaOP } from '../financeiro/ops/enviarOpP2sCore';
+import { excluirObjeto } from '../../lib/p2s';
 
 // ============================================================================
 // CLIENTE ADMIN: IGNORA RLS PARA OPERAÇÕES DO SERVIDOR
@@ -341,7 +342,7 @@ export async function reprovarOPAction(opId: string, motivo: string, accessToken
   try {
     const { data: op, error: buscaError } = await supabaseAdmin
       .from('op_ordens_pagamento')
-      .select('status, observacao, os_numero')
+      .select('status, observacao, os_numero, p2s_conta_pagar_oid')
       .eq('id', opId)
       .single();
     if (buscaError) throw buscaError;
@@ -349,17 +350,42 @@ export async function reprovarOPAction(opId: string, motivo: string, accessToken
     if (op.status !== 'PENDENTE') return { success: false, message: `Só é possível reprovar uma OP pendente (status atual: ${op.status}).` };
 
     const notaReprovacao = `[REPROVADA em ${new Date().toLocaleString('pt-BR')} por ${perfil.nome}]${motivo ? `: ${motivo}` : ''}`;
-    const observacaoAtualizada = [op.observacao, notaReprovacao].filter(Boolean).join('\n');
+
+    // ======================================================================
+    // EXCLUI A CONTA A PAGAR NO PRIMESTART, SE JÁ TINHA SIDO ENVIADA
+    // Usuário pediu (2026-09-16) que reprovar a OP também desfaça o
+    // lançamento no ERP — senão a conta ficava esquecida, em aberto, sem
+    // ninguém perceber lá que a OP correspondente foi reprovada. Se o
+    // PrimeStart recusar (ex.: 409, contabilidade já vinculou algo à conta),
+    // NÃO bloqueia a reprovação: só avisa (log + observação da própria OP)
+    // pra alguém tratar manualmente, mantendo o vínculo salvo.
+    // ======================================================================
+    const dadosUpdate: Record<string, unknown> = { status: 'REPROVADA', updated_at: new Date().toISOString() };
+    let notaP2s = '';
+    if (op.p2s_conta_pagar_oid) {
+      try {
+        await excluirObjeto('PRODUCAO', op.p2s_conta_pagar_oid);
+        dadosUpdate.p2s_conta_pagar_oid = null;
+        dadosUpdate.p2s_conta_pagar_enviado_em = null;
+        dadosUpdate.p2s_conta_pagar_enviado_por = null;
+        notaP2s = ` — Conta a Pagar ${op.p2s_conta_pagar_oid} excluída no PrimeStart.`;
+      } catch (p2sError: any) {
+        console.error('OP reprovada, mas falhou ao excluir a Conta a Pagar no PrimeStart:', p2sError);
+        notaP2s = ` — ATENÇÃO: não foi possível excluir a Conta a Pagar ${op.p2s_conta_pagar_oid} no PrimeStart (${p2sError.message || p2sError}); trate manualmente.`;
+      }
+    }
+
+    dadosUpdate.observacao = [op.observacao, notaReprovacao + notaP2s].filter(Boolean).join('\n');
 
     const { error } = await supabaseAdmin
       .from('op_ordens_pagamento')
-      .update({ status: 'REPROVADA', observacao: observacaoAtualizada, updated_at: new Date().toISOString() })
+      .update(dadosUpdate)
       .eq('id', opId);
     if (error) throw error;
 
     registrarLogAuditoria({
       usuario_nome: perfil.nome,
-      acao: `REPROVOU OP${motivo ? ` — MOTIVO: ${motivo}` : ''}`,
+      acao: `REPROVOU OP${motivo ? ` — MOTIVO: ${motivo}` : ''}${notaP2s}`,
       setor: 'OP',
       equipamento_id: opId,
       equipamento_nome: `OS ${op.os_numero || 'S/N'}`,
@@ -383,7 +409,7 @@ export async function reabrirOPAction(opId: string, accessToken: string) {
   try {
     const { data: op, error: buscaError } = await supabaseAdmin
       .from('op_ordens_pagamento')
-      .select('status, os_numero')
+      .select('id, numero_op, os_numero, os_cliente, os_evento, natureza_pagamento, empresa_recebedora, cnpj_cpf_recebedora, total_geral, data_vencimento, observacao, itens, status, p2s_conta_pagar_oid')
       .eq('id', opId)
       .single();
     if (buscaError) throw buscaError;
@@ -396,9 +422,29 @@ export async function reabrirOPAction(opId: string, accessToken: string) {
       .eq('id', opId);
     if (error) throw error;
 
+    // ======================================================================
+    // RECRIA A CONTA A PAGAR NO PRIMESTART, SE ELA TINHA SIDO EXCLUÍDA
+    // Fecha o ciclo do reprovarOPAction (que exclui a conta ao reprovar,
+    // decisão do usuário em 2026-09-16 — ver [[project_op_reprovar_exclui_p2s]]):
+    // reabrir devolve a OP pra PENDENTE, então o lançamento no ERP também
+    // volta a existir. Só cria se p2s_conta_pagar_oid estiver nulo — se a
+    // exclusão na reprovação tinha falhado (409, vínculo no PrimeStart), o
+    // oid antigo continua lá e recriar duplicaria a conta. Mesmo padrão de
+    // criarOP: nunca bloqueia a reabertura se o ERP estiver fora do ar.
+    // ======================================================================
+    let notaP2s = '';
+    if (!op.p2s_conta_pagar_oid) {
+      try {
+        const info = await criarContaPagarParaOP(op, perfil.nome);
+        notaP2s = ` — Conta a Pagar ${info.p2sOid} recriada no PrimeStart.`;
+      } catch (p2sError: any) {
+        console.error('OP reaberta, mas houve um erro ao recriar a Conta a Pagar no PrimeStart:', p2sError);
+      }
+    }
+
     registrarLogAuditoria({
       usuario_nome: perfil.nome,
-      acao: 'REABRIU OP REPROVADA — VOLTOU PARA PENDENTE',
+      acao: `REABRIU OP REPROVADA — VOLTOU PARA PENDENTE${notaP2s}`,
       setor: 'OP',
       equipamento_id: opId,
       equipamento_nome: `OS ${op.os_numero || 'S/N'}`,

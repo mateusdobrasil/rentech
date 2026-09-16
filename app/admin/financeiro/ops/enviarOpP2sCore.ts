@@ -47,7 +47,12 @@ export interface ResultadoEnvioP2s {
 // ficava embolado com vários itens na mesma linha da Conta a Pagar.
 function formatarItensObservacao(itens: OPParaEnvioP2s['itens']): string {
   if (!Array.isArray(itens) || itens.length === 0) return '';
-  const fmt = (v: number) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  // .replace: toLocaleString com style "currency" separa "R$" do valor com
+  // um espaço NÃO separável (U+00A0), que o PrimeStart não exibe direito —
+  // aparecia como "R$?210,00" nas Observações. Usuário reportou em
+  // 2026-09-16; troca pelo espaço comum resolve sem perder o separador de
+  // milhar/decimal do locale pt-BR.
+  const fmt = (v: number) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }).replace(/ /g, ' ');
   return itens
     .map(it => {
       const descricao = it?.descricao || it?.description || '';
@@ -171,6 +176,17 @@ async function criarParceiroFornecedor(ambiente: AmbienteP2s, nome: string, docu
 // por ora toda conta a pagar criada por aqui usa o Centro da Rentech.
 const CENTRO_RENTECH_OID = 'P,275';
 
+// FormaPagamento e ContaFinanceira (referências, não texto livre — mesmo
+// motivo do Centro acima) — usuário pediu que toda Conta a Pagar criada por
+// aqui já saia com Forma de Pagamento "TRANSFERENCIA" e Conta Financeiro
+// (previsão) "Itaú - Rentech". Oids confirmados direto na API em
+// 2026-09-16: TCustomFormaPagamento "TRANSFERENCIA" = P,4803;
+// TCustomContaBancaria "Itaú - Rentech" = P,1146. Assim como o Centro, fixo
+// por ora — o módulo de OP ainda não distingue forma/conta por natureza do
+// pagamento ou por empresa do grupo.
+const FORMA_PAGAMENTO_TRANSFERENCIA_OID = 'P,4803';
+const CONTA_FINANCEIRA_ITAU_RENTECH_OID = 'P,1146';
+
 async function resolverEntidade(op: OPParaEnvioP2s, ambiente: AmbienteP2s): Promise<{ oid: string; origem: 'parceiro' | 'colaborador' | 'parceiro_criado' } | null> {
   const documento = (op.cnpj_cpf_recebedora || '').trim();
   if (!documento) return null;
@@ -206,6 +222,8 @@ export async function criarContaPagarParaOP(op: OPParaEnvioP2s, nomeResponsavel:
     DataVencimentoNominal: dataParaP2s(new Date(`${op.data_vencimento}T00:00:00Z`)),
     Observacoes: montarObservacoes(op, nomeResponsavel),
     Centro: CENTRO_RENTECH_OID,
+    FormaPagamento: FORMA_PAGAMENTO_TRANSFERENCIA_OID,
+    ContaFinanceira: CONTA_FINANCEIRA_ITAU_RENTECH_OID,
   };
   if (entidade) campos.Entidade = entidade.oid;
 

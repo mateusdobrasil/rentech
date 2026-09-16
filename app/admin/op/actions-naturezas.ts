@@ -46,7 +46,7 @@ export async function listarNaturezasPagamentoAction(accessToken: string): Promi
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
-  const { data, error } = await db.from('op_naturezas_pagamento').select('*').order('ordem').order('natureza');
+  const { data, error } = await db.from('op_naturezas_pagamento').select('*').order('natureza');
   if (error) return { ok: false, erro: error.message };
   return { ok: true, info: { naturezas: data || [] } };
 }
@@ -66,7 +66,7 @@ export async function listarNaturezasPagamentoParaSelectAction(accessToken: stri
   if (!temNova && !temResponsavel) return { ok: false, erro: 'Você não tem permissão para executar esta ação.' };
 
   const db = supabaseAdmin();
-  const { data, error } = await db.from('op_naturezas_pagamento').select('natureza').order('ordem').order('natureza');
+  const { data, error } = await db.from('op_naturezas_pagamento').select('natureza').order('natureza');
   if (error) return { ok: false, erro: error.message };
   return { ok: true, info: { naturezas: (data || []).map(n => n.natureza as string) } };
 }
@@ -79,8 +79,7 @@ export async function criarNaturezaPagamentoAction(payload: { natureza: string }
   if (!natureza) return { ok: false, erro: 'Informe o nome da natureza.' };
 
   const db = supabaseAdmin();
-  const { data: maxOrdem } = await db.from('op_naturezas_pagamento').select('ordem').order('ordem', { ascending: false }).limit(1).maybeSingle();
-  const { error } = await db.from('op_naturezas_pagamento').insert({ natureza, ordem: (maxOrdem?.ordem ?? 0) + 1 });
+  const { error } = await db.from('op_naturezas_pagamento').insert({ natureza });
   if (error) return { ok: false, erro: error.code === '23505' ? 'Essa natureza já existe.' : error.message };
 
   registrarLogAuditoria({ usuario_nome: acesso.perfil.nome, acao: `CRIOU NATUREZA DE PAGAMENTO DA OP: ${natureza}`, setor: 'OP' });

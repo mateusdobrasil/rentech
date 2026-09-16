@@ -82,8 +82,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       // /admin/conta é onde o 2FA é ativado/desativado — nunca pode exigir
       // 2FA para entrar, senão quem ainda não cadastrou o fator fica sem
       // como chegar lá (mesmo que alguém marque essa rota por engano na
-      // aba "Permissão 2FA").
-      if (pathname === '/admin/conta') {
+      // aba "Permissão 2FA"). /admin (a home do painel) nunca teve linha
+      // própria em parametros_paginas_permissoes — é o hub raiz, acessível a
+      // qualquer perfil válido, só os módulos dentro dele é que são
+      // filtrados por permissão — então a consulta abaixo sempre dava 406
+      // (nenhuma linha encontrada) à toa; tratado aqui do mesmo jeito.
+      if (pathname === '/admin/conta' || pathname === '/admin') {
         if (ativo) { setRequerMfa(false); setMfaCarregado(true); }
         return;
       }

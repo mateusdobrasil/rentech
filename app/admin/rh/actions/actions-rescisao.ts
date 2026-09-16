@@ -334,6 +334,17 @@ export async function criarRescisaoAction(payload: {
   }
 }
 
+// Anexos (TRCT da contabilidade, extrato do FGTS, exame demissional etc.) —
+// múltiplos por rescisão, ver .sql/rescisao_multiplos_anexos.sql. Helper
+// compartilhado por obterRescisaoAction, listarAnexosRescisaoAction e as
+// checagens de "tem anexo?" (homologar, mudar status).
+async function buscarAnexosRescisao(db: ReturnType<typeof supabaseAdmin>, rescisaoId: number) {
+  const { data } = await db.from('folha_rescisoes_anexos')
+    .select('id, storage_path, nome_arquivo, tipo_mime, enviado_por, criado_em')
+    .eq('rescisao_id', rescisaoId).order('criado_em', { ascending: true });
+  return data || [];
+}
+
 export async function obterRescisaoAction(payload: { id: number }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcessoRescisao(accessToken);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
@@ -356,7 +367,9 @@ export async function obterRescisaoAction(payload: { id: number }, accessToken: 
       salarioContrato = Number(func?.salario_contrato) || 0;
     }
 
-    return { ok: true, info: { rescisao: data, salarioFolha, salarioContrato } };
+    const anexos = await buscarAnexosRescisao(db, payload.id);
+
+    return { ok: true, info: { rescisao: data, salarioFolha, salarioContrato, anexos } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
@@ -539,11 +552,13 @@ export async function atualizarFgtsAction(payload: {
 }
 
 // ============================================================================
-// ANEXO DO TRCT (fornecido pela contabilidade, ou gerado/conferido no caso
-// próprio) — mesmo padrão de upload de actions-afastamentos.ts.
+// ANEXOS (TRCT fornecido pela contabilidade, extrato do FGTS, exame
+// demissional etc.) — múltiplos por rescisão (folha_rescisoes_anexos, ver
+// .sql/rescisao_multiplos_anexos.sql). Mesmo padrão de upload de
+// actions-afastamentos.ts.
 // ============================================================================
-export async function uploadTrctRescisaoAction(payload: {
-  id: number; arquivoBase64: string; nomeArquivo: string; tipoMime?: string | null;
+export async function adicionarAnexoRescisaoAction(payload: {
+  id: number; arquivoBase64: string; nomeArquivo: string; tipoMime?: string | null; usuarioNome?: string;
 }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcessoRescisao(accessToken);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
@@ -565,11 +580,17 @@ export async function uploadTrctRescisaoAction(payload: {
     });
     if (upErr) throw new Error(`Falha no upload: ${upErr.message}`);
 
-    const update: any = { storage_path: path, nome_arquivo: payload.nomeArquivo, atualizado_em: new Date().toISOString() };
-    if (r.tipo_folha === 'CONTABILIDADE' && r.status === 'AGUARDANDO_DOCUMENTO') update.status = 'AGUARDANDO_HOMOLOGACAO';
+    const { error: insertErr } = await db.from('folha_rescisoes_anexos').insert({
+      rescisao_id: payload.id, storage_path: path, nome_arquivo: payload.nomeArquivo,
+      tipo_mime: payload.tipoMime || null, enviado_por: payload.usuarioNome || null
+    });
+    if (insertErr) throw new Error(insertErr.message);
 
-    const { error: updateErr } = await db.from('folha_rescisoes').update(update).eq('id', payload.id);
-    if (updateErr) throw new Error(updateErr.message);
+    if (r.tipo_folha === 'CONTABILIDADE' && r.status === 'AGUARDANDO_DOCUMENTO') {
+      const { error: updateErr } = await db.from('folha_rescisoes')
+        .update({ status: 'AGUARDANDO_HOMOLOGACAO', atualizado_em: new Date().toISOString() }).eq('id', payload.id);
+      if (updateErr) throw new Error(updateErr.message);
+    }
 
     return { ok: true };
   } catch (e: any) {
@@ -577,19 +598,50 @@ export async function uploadTrctRescisaoAction(payload: {
   }
 }
 
-export async function urlTrctRescisaoAction(payload: { id: number; download?: boolean }, accessToken: string): Promise<Resultado> {
+export async function removerAnexoRescisaoAction(payload: { anexoId: number }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcessoRescisao(accessToken);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
   try {
-    const { data: r } = await db.from('folha_rescisoes').select('storage_path, nome_arquivo, empresa_id').eq('id', payload.id).maybeSingle();
-    if (!r?.storage_path) return { ok: false, erro: 'Esta rescisão não tem anexo.' };
+    const { data: anexo, error } = await db.from('folha_rescisoes_anexos')
+      .select('id, rescisao_id, storage_path').eq('id', payload.anexoId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!anexo) return { ok: false, erro: 'Anexo não encontrado.' };
+
+    const { data: r } = await db.from('folha_rescisoes').select('status, empresa_id').eq('id', anexo.rescisao_id).maybeSingle();
+    if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
+    if (r.status === 'CANCELADA') return { ok: false, erro: 'Rescisão cancelada — anexos não podem mais ser alterados.' };
+
+    await db.storage.from(BUCKET).remove([anexo.storage_path]);
+    const { error: delErr } = await db.from('folha_rescisoes_anexos').delete().eq('id', payload.anexoId);
+    if (delErr) throw new Error(delErr.message);
+
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+export async function urlAnexoRescisaoAction(payload: { anexoId: number; download?: boolean }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const { data: anexo } = await db.from('folha_rescisoes_anexos')
+      .select('storage_path, nome_arquivo, rescisao_id').eq('id', payload.anexoId).maybeSingle();
+    if (!anexo) return { ok: false, erro: 'Anexo não encontrado.' };
+
+    const { data: r } = await db.from('folha_rescisoes').select('empresa_id').eq('id', anexo.rescisao_id).maybeSingle();
+    if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
 
-    const opts = payload.download ? { download: r.nome_arquivo || undefined } : undefined;
-    const { data, error } = await db.storage.from(BUCKET).createSignedUrl(r.storage_path, 60 * 10, opts);
+    const opts = payload.download ? { download: anexo.nome_arquivo || undefined } : undefined;
+    const { data, error } = await db.storage.from(BUCKET).createSignedUrl(anexo.storage_path, 60 * 10, opts);
     if (error || !data?.signedUrl) throw new Error(error?.message || 'Falha ao gerar link.');
     return { ok: true, info: { url: data.signedUrl } };
   } catch (e: any) {
@@ -606,7 +658,7 @@ export async function atualizarStatusRescisaoAction(payload: {
 
   const db = supabaseAdmin();
   try {
-    const { data: r, error } = await db.from('folha_rescisoes').select('status, tipo_folha, dados_calculo, storage_path, empresa_id').eq('id', payload.id).maybeSingle();
+    const { data: r, error } = await db.from('folha_rescisoes').select('status, tipo_folha, dados_calculo, empresa_id').eq('id', payload.id).maybeSingle();
     if (error) throw new Error(error.message);
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
@@ -615,7 +667,7 @@ export async function atualizarStatusRescisaoAction(payload: {
 
     if (payload.status === 'AGUARDANDO_HOMOLOGACAO') {
       if (r.tipo_folha === 'PROPRIO' && !r.dados_calculo) return { ok: false, erro: 'É necessário calcular a rescisão antes.' };
-      if (r.tipo_folha === 'CONTABILIDADE' && !r.storage_path) return { ok: false, erro: 'É necessário anexar o TRCT antes.' };
+      if (r.tipo_folha === 'CONTABILIDADE' && (await buscarAnexosRescisao(db, payload.id)).length === 0) return { ok: false, erro: 'É necessário anexar o TRCT antes.' };
     }
 
     const { error: updErr } = await db.from('folha_rescisoes').update({
@@ -646,7 +698,7 @@ export async function homologarRescisaoAction(payload: { id: number; usuarioNome
     if (r.status === 'HOMOLOGADA') return { ok: true }; // já homologada — idempotente
     if (r.status === 'CANCELADA') return { ok: false, erro: 'Rescisão cancelada não pode ser homologada.' };
     if (r.tipo_folha === 'PROPRIO' && !r.dados_calculo) return { ok: false, erro: 'É necessário calcular a rescisão antes de homologar.' };
-    if (r.tipo_folha === 'CONTABILIDADE' && !r.storage_path) return { ok: false, erro: 'É necessário anexar o TRCT antes de homologar.' };
+    if (r.tipo_folha === 'CONTABILIDADE' && (await buscarAnexosRescisao(db, payload.id)).length === 0) return { ok: false, erro: 'É necessário anexar o TRCT antes de homologar.' };
 
     const { error: updErr } = await db.from('folha_rescisoes').update({
       status: 'HOMOLOGADA', homologado_em: new Date().toISOString(), homologado_por: payload.usuarioNome,
@@ -822,28 +874,31 @@ export async function enviarRescisaoParaAssinaturaAction(payload: {
     if (r.status !== 'HOMOLOGADA') return { ok: false, erro: 'Só é possível enviar para assinatura depois da rescisão homologada.' };
 
     // Folha própria: o termo é sempre o que o sistema calculou — se também
-    // houver um anexo da contabilidade (mesmo campo storage_path, usado como
-    // extra opcional só neste caso), os dois viram UM documento só, nessa
-    // ordem, pro colaborador assinar tudo de uma vez (ver mergePdfs). Antes
-    // o anexo SUBSTITUÍA o termo calculado em vez de complementar — bug
-    // reportado pelo usuário em 2026-09-14.
-    // Sem folha própria (contabilidade administra): o TRCT que ela mesma
-    // enviou é o único documento, não há termo nosso pra juntar.
+    // houver anexo(s) da contabilidade (folha_rescisoes_anexos, múltiplos —
+    // ver .sql/rescisao_multiplos_anexos.sql), todos viram UM documento só,
+    // nessa ordem (termo primeiro, depois os anexos na ordem de envio), pro
+    // colaborador assinar tudo de uma vez (ver mergePdfs). Antes o anexo
+    // SUBSTITUÍA o termo calculado em vez de complementar — bug reportado
+    // pelo usuário em 2026-09-14.
+    // Sem folha própria (contabilidade administra): o(s) TRCT que ela mesma
+    // enviou são o único documento, não há termo nosso pra juntar.
+    const anexos = await buscarAnexosRescisao(db, r.id);
+    const baixarAnexos = async () => Promise.all(anexos.map(async a => {
+      const { data: arquivo, error: dlErr } = await db.storage.from(BUCKET).download(a.storage_path);
+      if (dlErr || !arquivo) throw new Error(dlErr?.message || `Falha ao baixar o anexo "${a.nome_arquivo}".`);
+      return new Uint8Array(await arquivo.arrayBuffer());
+    }));
+
     let pdfBase64: string;
     if (r.tipo_folha === 'PROPRIO' && r.dados_calculo) {
       const termoBytes = await montarPdfBytesRescisao(db, r);
-      let pdfBytes: Uint8Array = termoBytes;
-      if (r.storage_path) {
-        const { data: arquivo, error: dlErr } = await db.storage.from(BUCKET).download(r.storage_path);
-        if (dlErr || !arquivo) throw new Error(dlErr?.message || 'Falha ao baixar o anexo da contabilidade.');
-        const anexoBytes = new Uint8Array(await arquivo.arrayBuffer());
-        pdfBytes = await mergePdfs([termoBytes, anexoBytes]);
-      }
+      const anexoBytesList = await baixarAnexos();
+      const pdfBytes = anexoBytesList.length > 0 ? await mergePdfs([termoBytes, ...anexoBytesList]) : termoBytes;
       pdfBase64 = Buffer.from(pdfBytes).toString('base64');
-    } else if (r.storage_path) {
-      const { data: arquivo, error: dlErr } = await db.storage.from(BUCKET).download(r.storage_path);
-      if (dlErr || !arquivo) throw new Error(dlErr?.message || 'Falha ao baixar o TRCT anexado.');
-      pdfBase64 = Buffer.from(await arquivo.arrayBuffer()).toString('base64');
+    } else if (anexos.length > 0) {
+      const anexoBytesList = await baixarAnexos();
+      const pdfBytes = anexoBytesList.length > 1 ? await mergePdfs(anexoBytesList) : anexoBytesList[0];
+      pdfBase64 = Buffer.from(pdfBytes).toString('base64');
     } else {
       return { ok: false, erro: 'Nenhum TRCT anexado para enviar.' };
     }

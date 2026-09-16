@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import {
   obterRescisaoAction, atualizarItemCalculoAction, recalcularRescisaoAction, atualizarFgtsAction,
-  uploadTrctRescisaoAction, urlTrctRescisaoAction, homologarRescisaoAction, cancelarRescisaoAction,
+  adicionarAnexoRescisaoAction, urlAnexoRescisaoAction, removerAnexoRescisaoAction, homologarRescisaoAction, cancelarRescisaoAction,
   enviarRescisaoParaAssinaturaAction, obterAssinaturaRescisaoAction, atualizarAssinaturaRescisaoAction,
   baixarAssinadoRescisaoAction, gerarPdfRescisaoAction, marcarRescisaoPagaAction,
   type BaseSalarialRescisao
@@ -31,6 +31,48 @@ function InputMoeda({ value, onChange, className, disabled }: {
   };
   return (
     <input type="text" inputMode="numeric" value={fmtMoeda(value)} onChange={handleChange} disabled={disabled} className={className} />
+  );
+}
+
+// ============================================================================
+// LISTA DE ANEXOS — usada tanto pro TRCT (caso CONTABILIDADE) quanto pro
+// anexo opcional da contabilidade (caso PRÓPRIO). O "Escolher Arquivo" nativo
+// do <input type="file"> some/fica sem aparência de botão em alguns
+// navegadores — envolvido num <label> estilizado ele sempre parece clicável.
+// ============================================================================
+function ListaAnexos({ anexos, podeEditar, enviando, removendoId, onAdd, onRemove, onView }: {
+  anexos: { id: number; nome_arquivo: string; criado_em: string }[]; podeEditar: boolean; enviando: boolean;
+  removendoId: number | null; onAdd: (file: File) => void; onRemove: (id: number) => void; onView: (id: number) => void;
+}) {
+  return (
+    <div>
+      {anexos.length > 0 ? (
+        <ul className="space-y-2 mb-3">
+          {anexos.map(a => (
+            <li key={a.id} className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+              <span className="text-xs text-gray-600 font-medium flex-1 truncate">{a.nome_arquivo}</span>
+              <button onClick={() => onView(a.id)} className="text-[10px] font-black text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg uppercase shrink-0">📎 Ver</button>
+              {podeEditar && (
+                <button onClick={() => onRemove(a.id)} disabled={removendoId === a.id} className="text-[10px] font-black text-red-600 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg uppercase shrink-0 disabled:opacity-50">
+                  {removendoId === a.id ? '...' : '🗑 Remover'}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs text-gray-400 font-bold uppercase mb-3">Nenhum anexo enviado ainda.</p>
+      )}
+      {podeEditar && (
+        <div>
+          <label className={`inline-flex items-center gap-2 text-[10px] font-black text-white px-4 py-2.5 rounded-lg uppercase cursor-pointer ${enviando ? 'bg-gray-400 pointer-events-none' : 'bg-[#336699] hover:bg-[#284B8C]'}`}>
+            📎 {enviando ? 'Enviando...' : 'Escolher Arquivo'}
+            <input type="file" accept="application/pdf,image/*" disabled={enviando} className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) onAdd(f); e.target.value = ''; }} />
+          </label>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -75,9 +117,12 @@ interface RescisaoRow {
   saldo_fgts_informado: number | null; fgts_percentual_multa: number | null; fgts_valor_multa: number | null;
   dados_calculo: DadosCalculo | null; valor_total_liquido: number | null;
   base_salarial_calculo: BaseSalarialRescisao; base_salarial_valor: number | null;
-  storage_path: string | null; nome_arquivo: string | null;
   homologado_em: string | null; homologado_por: string | null;
   pago_em: string | null; pago_lote_id: number | null;
+}
+
+interface AnexoRescisao {
+  id: number; nome_arquivo: string; tipo_mime: string | null; enviado_por: string | null; criado_em: string;
 }
 
 const BASES_SALARIAIS: { value: BaseSalarialRescisao; label: string }[] = [
@@ -108,6 +153,7 @@ export default function DetalheRescisaoPage() {
   const [salarioFolha, setSalarioFolha] = useState(0);
   const [salarioContrato, setSalarioContrato] = useState(0);
   const [baseEscolhida, setBaseEscolhida] = useState<BaseSalarialRescisao>('FOLHA');
+  const [anexos, setAnexos] = useState<AnexoRescisao[]>([]);
 
   const carregar = async () => {
     setLoading(true);
@@ -122,6 +168,7 @@ export default function DetalheRescisaoPage() {
       setSalarioFolha(Number(res.info.salarioFolha) || 0);
       setSalarioContrato(Number(res.info.salarioContrato) || 0);
       setBaseEscolhida(r.base_salarial_calculo || 'FOLHA');
+      setAnexos(res.info.anexos || []);
     } catch (e: any) { toast('Erro ao carregar rescisão: ' + e.message, 'error'); }
     finally { setLoading(false); }
   };
@@ -191,28 +238,38 @@ export default function DetalheRescisaoPage() {
     finally { setSalvandoFgts(false); }
   };
 
-  const arquivoRef = useRef<HTMLInputElement>(null);
   const [enviandoArquivo, setEnviandoArquivo] = useState(false);
+  const [removendoAnexoId, setRemovendoAnexoId] = useState<number | null>(null);
   const fileParaBase64 = (file: File): Promise<string> => new Promise((res, rej) => {
     const r = new FileReader();
     r.onload = () => res((r.result as string).split(',')[1]);
     r.onerror = rej; r.readAsDataURL(file);
   });
-  const enviarArquivo = async (file: File) => {
+  const adicionarAnexo = async (file: File) => {
     setEnviandoArquivo(true);
     try {
       const arquivoBase64 = await fileParaBase64(file);
-      const res = await uploadTrctRescisaoAction({ id, arquivoBase64, nomeArquivo: file.name, tipoMime: file.type }, accessToken);
+      const res = await adicionarAnexoRescisaoAction({ id, arquivoBase64, nomeArquivo: file.name, tipoMime: file.type, usuarioNome: usuarioAtual }, accessToken);
       if (!res.ok) throw new Error(res.erro);
-      if (arquivoRef.current) arquivoRef.current.value = '';
       await carregar();
     } catch (e: any) { toast('Erro ao enviar arquivo: ' + e.message, 'error'); }
     finally { setEnviandoArquivo(false); }
   };
 
-  const abrirAnexo = async () => {
+  const removerAnexo = async (anexoId: number) => {
+    if (!confirm('Remover este anexo?')) return;
+    setRemovendoAnexoId(anexoId);
     try {
-      const res = await urlTrctRescisaoAction({ id }, accessToken);
+      const res = await removerAnexoRescisaoAction({ anexoId }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      await carregar();
+    } catch (e: any) { toast('Erro ao remover anexo: ' + e.message, 'error'); }
+    finally { setRemovendoAnexoId(null); }
+  };
+
+  const abrirAnexo = async (anexoId: number) => {
+    try {
+      const res = await urlAnexoRescisaoAction({ anexoId }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
     } catch (e: any) { toast('Erro ao abrir anexo: ' + e.message, 'error'); }
@@ -367,10 +424,10 @@ export default function DetalheRescisaoPage() {
   }
 
   const ehFinal = rescisao.status === 'HOMOLOGADA' || rescisao.status === 'CANCELADA';
-  const podeHomologar = !ehFinal && (rescisao.tipo_folha === 'PROPRIO' ? !!rescisao.dados_calculo : !!rescisao.storage_path);
+  const podeHomologar = !ehFinal && (rescisao.tipo_folha === 'PROPRIO' ? !!rescisao.dados_calculo : anexos.length > 0);
   // Sem vínculo com a contabilidade (folha própria) o termo é gerado na hora
   // a partir do cálculo — não depende de anexo pra poder enviar.
-  const podeEnviarAssinatura = !!rescisao.storage_path || (rescisao.tipo_folha === 'PROPRIO' && !!rescisao.dados_calculo);
+  const podeEnviarAssinatura = anexos.length > 0 || (rescisao.tipo_folha === 'PROPRIO' && !!rescisao.dados_calculo);
 
   return (
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-4">
@@ -431,11 +488,11 @@ export default function DetalheRescisaoPage() {
             <h3 className="text-sm font-black text-[#0C1D4D] uppercase tracking-wider mb-3">Ações</h3>
             <div className="flex flex-wrap items-center gap-3">
               <button
-                onClick={rescisao.storage_path ? abrirAnexo : visualizarTermoCalculado}
-                disabled={!rescisao.storage_path && (rescisao.tipo_folha !== 'PROPRIO' || gerandoPdf)}
+                onClick={anexos.length > 0 ? () => abrirAnexo(anexos[0].id) : visualizarTermoCalculado}
+                disabled={anexos.length === 0 && (rescisao.tipo_folha !== 'PROPRIO' || gerandoPdf)}
                 className="text-[10px] font-black text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2.5 rounded-lg uppercase disabled:opacity-50"
               >
-                {rescisao.storage_path ? '👁 Visualizar TRCT anexado' : gerandoPdf ? 'Gerando...' : '👁 Visualizar Termo Calculado'}
+                {anexos.length > 0 ? `👁 Visualizar TRCT anexado${anexos.length > 1 ? ` (1/${anexos.length})` : ''}` : gerandoPdf ? 'Gerando...' : '👁 Visualizar Termo Calculado'}
               </button>
 
               {!assinatura ? (
@@ -510,21 +567,11 @@ export default function DetalheRescisaoPage() {
             </div>
             <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-5">
               <h3 className="text-sm font-black text-[#0C1D4D] uppercase tracking-wider mb-3">TRCT</h3>
-              {rescisao.storage_path ? (
-                <div className="flex items-center gap-3">
-                  <button onClick={abrirAnexo} className="text-[10px] font-black text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg uppercase">📎 Ver anexo</button>
-                  <span className="text-xs text-gray-500">{rescisao.nome_arquivo}</span>
-                </div>
-              ) : (
-                <p className="text-xs text-gray-400 font-bold uppercase mb-2">Nenhum anexo enviado ainda.</p>
-              )}
-              {!ehFinal && (
-                <div className="mt-3">
-                  <input ref={arquivoRef} type="file" accept="application/pdf,image/*" disabled={enviandoArquivo}
-                    onChange={e => { const f = e.target.files?.[0]; if (f) enviarArquivo(f); }} className="text-xs" />
-                  {enviandoArquivo && <p className="text-[10px] text-gray-400 mt-1">Enviando...</p>}
-                </div>
-              )}
+              <p className="text-[10px] text-gray-400 font-medium mb-3">Pode anexar mais de um arquivo (ex.: TRCT + extrato do FGTS + exame demissional) — todos vão juntos, num documento só, pra assinatura.</p>
+              <ListaAnexos
+                anexos={anexos} podeEditar={!ehFinal} enviando={enviandoArquivo} removendoId={removendoAnexoId}
+                onAdd={adicionarAnexo} onRemove={removerAnexo} onView={abrirAnexo}
+              />
             </div>
           </>
         ) : (
@@ -648,31 +695,21 @@ export default function DetalheRescisaoPage() {
               )}
             </div>
 
-            {/* Anexo opcional da contabilidade — some ao nosso termo calculado
-                (mergePdfs) na hora de enviar pra assinatura, não o substitui. */}
+            {/* Anexo(s) opcional(is) da contabilidade — somam ao nosso termo
+                calculado (mergePdfs) na hora de enviar pra assinatura, não o
+                substituem. */}
             <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-5">
-              <h3 className="text-sm font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Anexo da Contabilidade (opcional)</h3>
-              <p className="text-[10px] text-gray-400 font-medium mb-3">Ex.: extrato do FGTS, exame demissional. Se anexado, é enviado JUNTO com o nosso termo de rescisão calculado acima — mesmo documento, mesma assinatura. Não substitui o cálculo.</p>
-              {rescisao.storage_path ? (
-                <div className="flex items-center gap-3">
-                  <button onClick={abrirAnexo} className="text-[10px] font-black text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg uppercase">📎 Ver anexo</button>
-                  <span className="text-xs text-gray-500">{rescisao.nome_arquivo}</span>
-                </div>
-              ) : (
-                <p className="text-xs text-gray-400 font-bold uppercase mb-2">Nenhum anexo enviado ainda.</p>
-              )}
-              {/* Diferente do resto do painel (travado em !ehFinal): este
-                  anexo continua editável mesmo já HOMOLOGADA, porque o envio
-                  pra assinatura só é permitido DEPOIS de homologar — o
+              <h3 className="text-sm font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Anexos da Contabilidade (opcional)</h3>
+              <p className="text-[10px] text-gray-400 font-medium mb-3">Ex.: extrato do FGTS, exame demissional. Pode anexar mais de um — todos são enviados JUNTO com o nosso termo de rescisão calculado acima, num documento só, mesma assinatura. Não substitui o cálculo.</p>
+              {/* Diferente do resto do painel (travado em !ehFinal): estes
+                  anexos continuam editáveis mesmo já HOMOLOGADA, porque o
+                  envio pra assinatura só é permitido DEPOIS de homologar — o
                   documento da contabilidade (ex.: extrato do FGTS) muitas
                   vezes só chega nessa altura. Só CANCELADA trava de vez. */}
-              {rescisao.status !== 'CANCELADA' && (
-                <div className="mt-3">
-                  <input ref={arquivoRef} type="file" accept="application/pdf,image/*" disabled={enviandoArquivo}
-                    onChange={e => { const f = e.target.files?.[0]; if (f) enviarArquivo(f); }} className="text-xs" />
-                  {enviandoArquivo && <p className="text-[10px] text-gray-400 mt-1">Enviando...</p>}
-                </div>
-              )}
+              <ListaAnexos
+                anexos={anexos} podeEditar={rescisao.status !== 'CANCELADA'} enviando={enviandoArquivo} removendoId={removendoAnexoId}
+                onAdd={adicionarAnexo} onRemove={removerAnexo} onView={abrirAnexo}
+              />
             </div>
           </>
         )}

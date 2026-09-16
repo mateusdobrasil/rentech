@@ -10,7 +10,7 @@ import { normalizarPermissao, ehAltaGestaoOP } from '../../lib/permissoes';
 import { obterEmpresasPermitidas, empresaPermitida } from '../../lib/serverAuth';
 import { gerarHtmlEmailOP } from './emailTemplate';
 import { ItemOPNormalizado, validarNovaOP, validarItensOP } from './utils';
-import { criarContaPagarParaOP } from '../financeiro/ops/enviarOpP2sCore';
+import { criarContaPagarParaOP, atualizarContaPagarParaOP } from '../financeiro/ops/enviarOpP2sCore';
 
 // ============================================================================
 // CLIENTE ADMIN: IGNORA RLS PARA OPERAÇÕES DO SERVIDOR
@@ -477,10 +477,12 @@ export async function atualizarOP(opId: string, dadosAtualizados: Partial<NovaOP
       }
     }
 
-    const { error } = await supabaseAdmin
+    const { data: opAtualizada, error } = await supabaseAdmin
       .from('op_ordens_pagamento')
       .update({ ...dadosAtualizados, updated_at: new Date().toISOString() })
-      .eq('id', opId);
+      .eq('id', opId)
+      .select('id, numero_op, os_numero, os_cliente, os_evento, natureza_pagamento, empresa_recebedora, cnpj_cpf_recebedora, total_geral, data_vencimento, observacao, itens, p2s_conta_pagar_oid')
+      .single();
 
     if (error) throw error;
 
@@ -490,6 +492,19 @@ export async function atualizarOP(opId: string, dadosAtualizados: Partial<NovaOP
       setor: 'OP',
       equipamento_id: opId,
     });
+
+    // =========================================================
+    // SINCRONIZA A EDIÇÃO COM O PRIMESTART
+    // Se esta OP já tinha sido enviada pro ERP (p2s_conta_pagar_oid
+    // preenchido), reflete a alteração na mesma Conta a Pagar — usuário
+    // pediu que editar a OP também atualize o PrimeStart, não só a criação.
+    // Nunca bloqueia a edição em si (ERP fora do ar, etc.).
+    // =========================================================
+    try {
+      await atualizarContaPagarParaOP(opAtualizada, perfil.nome);
+    } catch (p2sError) {
+      console.error("A OP foi editada, mas houve um erro ao sincronizar com o PrimeStart:", p2sError);
+    }
 
     revalidatePath('/admin');
     return { success: true };

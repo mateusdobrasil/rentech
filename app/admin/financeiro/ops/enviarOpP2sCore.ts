@@ -12,6 +12,12 @@ import { registrarLogAuditoria } from '../../../actions';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { criarObjeto, atualizarObjeto, consultarObjetos, criterio, dataParaP2s, type AmbienteP2s } from '../../../lib/p2s';
 
+export interface ItemOPParaEnvioP2s {
+  descricao?: string; description?: string;
+  qtd?: number; quantity?: number;
+  valor_unitario?: number;
+}
+
 export interface OPParaEnvioP2s {
   id: string;
   numero_op: number;
@@ -24,12 +30,37 @@ export interface OPParaEnvioP2s {
   total_geral: number;
   data_vencimento: string;
   observacao: string | null;
+  itens?: ItemOPParaEnvioP2s[] | null;
 }
 
 export interface ResultadoEnvioP2s {
   p2sOid: string;
   fornecedorVinculado: boolean;
   origemVinculo: 'parceiro' | 'colaborador' | 'parceiro_criado' | null;
+}
+
+// Formata os itens da OP (descrição, quantidade, valor unitário) pra somar às
+// Observações da Conta a Pagar no PrimeStart — usuário pediu que o detalhe do
+// que está sendo pago (não só o total) apareça lá, já que o ERP não tem os
+// itens da OP como linhas próprias.
+function formatarItensObservacao(itens: OPParaEnvioP2s['itens']): string {
+  if (!Array.isArray(itens) || itens.length === 0) return '';
+  const fmt = (v: number) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  return itens
+    .map(it => {
+      const descricao = it?.descricao || it?.description || '';
+      const qtd = Number(it?.qtd ?? it?.quantity ?? 0);
+      const unitario = Number(it?.valor_unitario ?? 0);
+      return `${descricao} (Qtd ${qtd} x ${fmt(unitario)})`;
+    })
+    .join('; ');
+}
+
+// Observações da Conta a Pagar — mesmo texto usado na criação e na
+// sincronização de edição, pra não duplicar a montagem em dois lugares.
+function montarObservacoes(op: OPParaEnvioP2s, nomeResponsavel: string): string {
+  const itensTexto = formatarItensObservacao(op.itens);
+  return `Lançada via sistema Rentech por ${nomeResponsavel} | Natureza: ${op.natureza_pagamento || '—'} | OS: ${op.os_numero || 'S/N'} | Cliente: ${op.os_cliente || '—'} | Evento: ${op.os_evento || '—'}${op.observacao ? ` | Obs: ${op.observacao}` : ''}${itensTexto ? ` | Itens: ${itensTexto}` : ''}`;
 }
 
 // Busca a Entidade pelo CNPJ/CPF já digitado no formulário da OP nas tabelas
@@ -168,7 +199,7 @@ export async function criarContaPagarParaOP(op: OPParaEnvioP2s, nomeResponsavel:
     Descricao: `OP: ${op.numero_op} - ${op.empresa_recebedora}`,
     Valor: Number(op.total_geral) || 0,
     DataVencimentoNominal: dataParaP2s(new Date(`${op.data_vencimento}T00:00:00Z`)),
-    Observacoes: `Lançada via sistema Rentech por ${nomeResponsavel} | Natureza: ${op.natureza_pagamento || '—'} | OS: ${op.os_numero || 'S/N'} | Cliente: ${op.os_cliente || '—'} | Evento: ${op.os_evento || '—'}${op.observacao ? ` | Obs: ${op.observacao}` : ''}`,
+    Observacoes: montarObservacoes(op, nomeResponsavel),
     Centro: CENTRO_RENTECH_OID,
   };
   if (entidade) campos.Entidade = entidade.oid;
@@ -194,4 +225,39 @@ export async function criarContaPagarParaOP(op: OPParaEnvioP2s, nomeResponsavel:
   revalidatePath('/admin');
 
   return { p2sOid: criado.oid, fornecedorVinculado: !!entidade, origemVinculo: entidade?.origem ?? null };
+}
+
+// Sincroniza uma edição de OP com a Conta a Pagar já criada no PrimeStart
+// (chamada por atualizarOP em app/admin/op/actions.ts, depois de gravar a
+// edição no Supabase) — usuário pediu que editar a OP também reflita no ERP,
+// não só na criação. Não mexe na Entidade/fornecedor (CNPJ/CPF não é
+// editável na tela "Minhas OPs") nem cadastra Parceiro novo — só atualiza os
+// campos que a tela de fato deixa editar: descrição/valor/vencimento/
+// observações (itens inclusos, ver montarObservacoes). Se a OP nunca foi
+// enviada pro PrimeStart (p2s_conta_pagar_oid nulo — ainda não achou
+// fornecedor, ou o envio automático da criação falhou), não há nada a
+// sincronizar aqui; o botão manual em /admin/financeiro/ops continua sendo o
+// caminho pra mandar pela primeira vez.
+export async function atualizarContaPagarParaOP(op: OPParaEnvioP2s & { p2s_conta_pagar_oid: string | null }, nomeResponsavel: string): Promise<void> {
+  if (!op.p2s_conta_pagar_oid) return;
+
+  const ambiente: AmbienteP2s = 'PRODUCAO';
+  const campos: Record<string, unknown> = {
+    Descricao: `OP: ${op.numero_op} - ${op.empresa_recebedora}`,
+    Valor: Number(op.total_geral) || 0,
+    DataVencimentoNominal: dataParaP2s(new Date(`${op.data_vencimento}T00:00:00Z`)),
+    Observacoes: montarObservacoes(op, nomeResponsavel),
+  };
+
+  await atualizarObjeto(ambiente, 'TCustomContaPagar', op.p2s_conta_pagar_oid, campos);
+
+  registrarLogAuditoria({
+    usuario_nome: nomeResponsavel,
+    acao: `EDITOU OP — SINCRONIZOU ALTERAÇÃO COM A CONTA A PAGAR ${op.p2s_conta_pagar_oid} NO PRIMESTART`,
+    setor: 'OP',
+    equipamento_id: op.id,
+    equipamento_nome: `OP #${op.numero_op} — OS ${op.os_numero || 'S/N'}`,
+  });
+
+  revalidatePath('/admin');
 }

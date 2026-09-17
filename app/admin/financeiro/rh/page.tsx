@@ -62,6 +62,47 @@ interface Integracao {
 }
 type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO' | 'OP' | 'CONTAS_PAGAR';
 
+// Nome de exibição + cores por fonte, centralizados aqui pra não duplicar (o
+// nome de cada fonte aparecia hardcoded em uns 3 lugares diferentes antes).
+// `chip` = seletor de fontes (não selecionado), `badge` = selo dentro da
+// linha do grid, `header` = cabeçalho de grupo do grid (ver GRUPOS_FONTE e
+// gruposExibidos, useState mais abaixo).
+const ROTULO_FONTE: Record<FonteLote, string> = {
+  FOLHA: 'Nossa folha', ADIANTAMENTO: 'Adiantamento', PAGAMENTO: 'Pagamento',
+  BENEFICIOS: 'Benefícios', DECIMO_TERCEIRO: '13º Salário', FERIAS: 'Férias',
+  RESCISAO: 'Rescisão', OP: 'Ordem de Pagamento', CONTAS_PAGAR: 'Contas a Pagar (P2S)',
+};
+const COR_FONTE: Record<FonteLote, { chip: string; badge: string; header: string }> = {
+  FOLHA: { chip: 'bg-blue-50 text-blue-700 border-blue-300', badge: 'bg-blue-100 text-blue-700', header: 'bg-blue-50 border-blue-200 text-blue-800' },
+  ADIANTAMENTO: { chip: 'bg-purple-50 text-purple-700 border-purple-300', badge: 'bg-purple-100 text-purple-700', header: 'bg-purple-50 border-purple-200 text-purple-800' },
+  PAGAMENTO: { chip: 'bg-purple-50 text-purple-700 border-purple-300', badge: 'bg-purple-100 text-purple-700', header: 'bg-purple-50 border-purple-200 text-purple-800' },
+  BENEFICIOS: { chip: 'bg-emerald-50 text-emerald-700 border-emerald-300', badge: 'bg-emerald-100 text-emerald-700', header: 'bg-emerald-50 border-emerald-200 text-emerald-800' },
+  DECIMO_TERCEIRO: { chip: 'bg-amber-50 text-amber-700 border-amber-300', badge: 'bg-amber-100 text-amber-700', header: 'bg-amber-50 border-amber-200 text-amber-800' },
+  FERIAS: { chip: 'bg-cyan-50 text-cyan-700 border-cyan-300', badge: 'bg-cyan-100 text-cyan-700', header: 'bg-cyan-50 border-cyan-200 text-cyan-800' },
+  RESCISAO: { chip: 'bg-red-50 text-red-700 border-red-300', badge: 'bg-red-100 text-red-700', header: 'bg-red-50 border-red-200 text-red-800' },
+  OP: { chip: 'bg-indigo-50 text-indigo-700 border-indigo-300', badge: 'bg-indigo-100 text-indigo-700', header: 'bg-indigo-50 border-indigo-200 text-indigo-800' },
+  CONTAS_PAGAR: { chip: 'bg-orange-50 text-orange-700 border-orange-300', badge: 'bg-orange-100 text-orange-700', header: 'bg-orange-50 border-orange-200 text-orange-800' },
+};
+// Fontes de folha (combinam por funcionário) vs avulsos (favorecido isolado,
+// cada um com sua própria elegibilidade/data) — só agrupamento visual do
+// seletor de fontes, sem efeito na lógica de montagem.
+const GRUPOS_FONTE: { titulo: string; itens: [FonteLote, string, string][] }[] = [
+  { titulo: 'Folha', itens: [
+    ['FOLHA', '💼 Nossa folha', COR_FONTE.FOLHA.chip],
+    ['ADIANTAMENTO', '📄 Adiantamento', COR_FONTE.ADIANTAMENTO.chip],
+    ['PAGAMENTO', '📄 Pagamento', COR_FONTE.PAGAMENTO.chip],
+    ['BENEFICIOS', '🎁 Benefícios', COR_FONTE.BENEFICIOS.chip],
+    ['DECIMO_TERCEIRO', '🎄 13º Salário', COR_FONTE.DECIMO_TERCEIRO.chip],
+    ['FERIAS', '🏖️ Férias', COR_FONTE.FERIAS.chip],
+  ] },
+  { titulo: 'Avulsos', itens: [
+    ['RESCISAO', '📤 Rescisão', COR_FONTE.RESCISAO.chip],
+    ['OP', '🧾 Ordem de Pagamento', COR_FONTE.OP.chip],
+    ['CONTAS_PAGAR', '🏢 Contas a Pagar (P2S)', COR_FONTE.CONTAS_PAGAR.chip],
+  ] },
+];
+const ORDEM_FONTES: FonteLote[] = ['FOLHA', 'ADIANTAMENTO', 'PAGAMENTO', 'BENEFICIOS', 'DECIMO_TERCEIRO', 'FERIAS', 'RESCISAO', 'OP', 'CONTAS_PAGAR'];
+
 interface ItemLote {
   funcionario_nome: string; cpf: string; empresa_id: number | null; valor: number; metodo: string;
   fonte: FonteLote; fonte_rotulo: string;
@@ -136,6 +177,9 @@ export default function FinanceiroPage() {
   });
   const [sincronizandoContasPagar, setSincronizandoContasPagar] = useState(false);
   const [filtroTextoContasPagar, setFiltroTextoContasPagar] = useState('');
+  // Grupos do grid recolhidos pelo usuário (ver gruposExibidos) — só
+  // apresentação, não afeta quais itens estão "prontos" pro lote.
+  const [gruposColapsados, setGruposColapsados] = useState<Set<FonteLote>>(new Set());
 
   const [valoresAdiant, setValoresAdiant] = useState<Record<string, number>>({});
   const [valoresPagto, setValoresPagto] = useState<Record<string, number>>({});
@@ -528,9 +572,22 @@ export default function FinanceiroPage() {
   const prontos = itensExibidos.filter(i => i.pronto);
   const totalSelecionado = prontos.reduce((s, i) => s + Number(i.valor || 0), 0);
 
+  // Grid agrupado por fonte (em vez de uma lista só) — com várias fontes
+  // marcadas ao mesmo tempo (ex.: Folha + OP + Contas a Pagar), uma lista
+  // plana vira uma parede de linhas difícil de escanear. Cada grupo tem
+  // cabeçalho colorido com contagem/subtotal e pode ser colapsado.
+  const gruposExibidos = ORDEM_FONTES
+    .map(fonte => ({ fonte, itensGrupo: itensExibidos.filter(i => i.fonte === fonte) }))
+    .filter(g => g.itensGrupo.length > 0);
+  const alternarGrupoColapsado = (fonte: FonteLote) => setGruposColapsados(prev => {
+    const next = new Set(prev);
+    if (next.has(fonte)) next.delete(fonte); else next.add(fonte);
+    return next;
+  });
+
   const gerarLote = async () => {
     if (prontos.length === 0) { toast('Nenhum pagamento pronto para gerar o lote.', 'info'); return; }
-    const sugestao = `${fontesSel.map(f => ({ FOLHA: 'Folha', ADIANTAMENTO: 'Adiantamento', PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios', DECIMO_TERCEIRO: '13º', FERIAS: 'Férias', RESCISAO: 'Rescisão', OP: 'OP', CONTAS_PAGAR: 'Contas a Pagar' }[f])).join(' + ')} ${fmtMesBR(mesReferencia)}`;
+    const sugestao = `${fontesSel.map(f => ROTULO_FONTE[f]).join(' + ')} ${fmtMesBR(mesReferencia)}`;
     const nome = prompt(`Nome do lote (para identificar no histórico):`, sugestao);
     if (nome === null) return;
     setSalvandoLote(true);
@@ -1130,26 +1187,21 @@ export default function FinanceiroPage() {
                   <input type="month" value={mesReferencia} onChange={e => setMesReferencia(e.target.value)} className="p-2 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />
                 </div>
               </div>
-              <div className="flex-1">
+              <div className="flex-1 space-y-2.5">
                 <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Fontes a incluir no lote</label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {([
-                    ['FOLHA', '💼 Nossa folha', 'bg-blue-50 text-blue-700 border-blue-300'],
-                    ['ADIANTAMENTO', '📄 Adiantamento', 'bg-purple-50 text-purple-700 border-purple-300'],
-                    ['PAGAMENTO', '📄 Pagamento', 'bg-purple-50 text-purple-700 border-purple-300'],
-                    ['BENEFICIOS', '🎁 Benefícios', 'bg-emerald-50 text-emerald-700 border-emerald-300'],
-                    ['DECIMO_TERCEIRO', '🎄 13º Salário', 'bg-amber-50 text-amber-700 border-amber-300'],
-                    ['FERIAS', '🏖️ Férias', 'bg-cyan-50 text-cyan-700 border-cyan-300'],
-                    ['RESCISAO', '📤 Rescisão', 'bg-red-50 text-red-700 border-red-300'],
-                    ['OP', '🧾 Ordem de Pagamento', 'bg-indigo-50 text-indigo-700 border-indigo-300'],
-                    ['CONTAS_PAGAR', '🏢 Contas a Pagar (P2S)', 'bg-orange-50 text-orange-700 border-orange-300']
-                  ] as const).map(([f, lbl, cor]) => (
-                    <label key={f} className={`cursor-pointer inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border-2 text-[11px] font-black uppercase tracking-wider transition-all ${fontesSel.includes(f) ? cor : 'bg-gray-50 text-gray-400 border-gray-200'}`}>
-                      <input type="checkbox" checked={fontesSel.includes(f)} onChange={() => alternarFonte(f)} className="w-4 h-4 shrink-0" />
-                      {lbl}
-                    </label>
-                  ))}
-                </div>
+                {GRUPOS_FONTE.map(grupo => (
+                  <div key={grupo.titulo} className="flex items-center gap-2.5 flex-wrap">
+                    <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest w-16 shrink-0">{grupo.titulo}</span>
+                    <div className="flex flex-wrap gap-2">
+                      {grupo.itens.map(([f, lbl, cor]) => (
+                        <label key={f} className={`cursor-pointer inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border-2 text-[11px] font-black uppercase tracking-wider transition-all ${fontesSel.includes(f) ? cor : 'bg-gray-50 text-gray-400 border-gray-200'}`}>
+                          <input type="checkbox" checked={fontesSel.includes(f)} onChange={() => alternarFonte(f)} className="w-4 h-4 shrink-0" />
+                          {lbl}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
               <button onClick={montarLote} disabled={montando || fontesSel.length === 0 || !empresaSelecionada} title={!empresaSelecionada ? 'Selecione a empresa antes de montar o lote' : ''} className="text-xs font-black bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-5 py-2.5 rounded-lg uppercase tracking-wider disabled:opacity-50">
                 {sincronizandoContasPagar ? '🔄 Sincronizando com o PrimeStart...' : montando ? '⏳ Montando...' : '📥 Montar lote'}
@@ -1315,18 +1367,28 @@ export default function FinanceiroPage() {
                       <th className="p-3 text-right font-black text-[#0C1D4D] uppercase text-[10px]">Valor</th>
                     </tr>
                   </thead>
-                  <tbody>
-                    {itensExibidos.map((it, idx) => {
+                  {gruposExibidos.map(({ fonte, itensGrupo }) => {
+                    const colapsado = gruposColapsados.has(fonte);
+                    const subtotalGrupo = itensGrupo.reduce((s, i) => s + Number(i.valor || 0), 0);
+                    const prontosGrupo = itensGrupo.filter(i => i.pronto).length;
+                    return (
+                    <tbody key={fonte} className="border-b-4 border-[#F0F4F8]">
+                      <tr className={`border-b ${COR_FONTE[fonte].header}`}>
+                        <td colSpan={5} className="p-0">
+                          <button type="button" onClick={() => alternarGrupoColapsado(fonte)} className="w-full flex items-center justify-between gap-2 text-left px-3 py-2 hover:brightness-95 transition-all">
+                            <span className="text-[11px] font-black uppercase tracking-wider flex items-center gap-2">
+                              <span className="inline-block w-3">{colapsado ? '▸' : '▾'}</span>
+                              {ROTULO_FONTE[fonte]}
+                              <span className="font-bold normal-case text-[10px] opacity-70">({prontosGrupo}/{itensGrupo.length} prontos)</span>
+                            </span>
+                            <span className="text-[11px] font-black tabular-nums">{BRL(subtotalGrupo)}</span>
+                          </button>
+                        </td>
+                      </tr>
+                      {!colapsado && itensGrupo.map((it, idx) => {
                       const editavel = it.temDoc;
                       const semValor = it.valor <= 0;
-                      const corFonte = it.fonte === 'FOLHA' ? 'bg-blue-100 text-blue-700'
-                        : (it.fonte === 'ADIANTAMENTO' || it.fonte === 'PAGAMENTO') ? 'bg-purple-100 text-purple-700'
-                        : it.fonte === 'DECIMO_TERCEIRO' ? 'bg-amber-100 text-amber-700'
-                        : it.fonte === 'FERIAS' ? 'bg-cyan-100 text-cyan-700'
-                        : it.fonte === 'RESCISAO' ? 'bg-red-100 text-red-700'
-                        : it.fonte === 'OP' ? 'bg-indigo-100 text-indigo-700'
-                        : it.fonte === 'CONTAS_PAGAR' ? 'bg-orange-100 text-orange-700'
-                        : 'bg-emerald-100 text-emerald-700';
+                      const corFonte = COR_FONTE[it.fonte].badge;
                       const chaveEdit = `${it.funcionario_nome}::${it.fonte}`;
                       return (
                         <tr key={chaveEdit} className={`${idx % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white'} border-b border-[#E2E8F0] ${it.metodo === 'SEM_DADOS' && editandoPagamentoCP?.chaveEdit !== chaveEdit ? 'opacity-60' : ''}`}>
@@ -1459,8 +1521,10 @@ export default function FinanceiroPage() {
                           </td>
                         </tr>
                       );
-                    })}
-                  </tbody>
+                      })}
+                    </tbody>
+                    );
+                  })}
                   <tfoot>
                     <tr className="bg-[#F8FAFC] border-t-2 border-[#0C1D4D] font-black">
                       <td colSpan={4} className="p-3 text-[#0C1D4D] uppercase text-[11px]">Total do lote</td>

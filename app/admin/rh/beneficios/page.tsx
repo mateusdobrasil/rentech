@@ -92,38 +92,68 @@ export default function BeneficiosPage() {
   const [carregandoGrid, setCarregandoGrid] = useState(false);
   const [gerandoFlash, setGerandoFlash] = useState(false);
 
-  // Gera o arquivo Flash (CSV) com as colunas exatas da planilha de pedido
+  // Grid de conferência do Flash: "Gerar Flash" busca os elegíveis do mês
+  // (já vem só de quem está ativo — ou desligado dentro do próprio mês —
+  // ver calcularBeneficiosMes em actions-beneficios.ts) e abre este grid
+  // pra dar chance de destravar/tirar alguém manualmente antes de baixar o
+  // CSV de verdade.
+  const [modalFlashAberto, setModalFlashAberto] = useState(false);
+  const [flashLinhas, setFlashLinhas] = useState<any[]>([]);
+  const [flashSelecionados, setFlashSelecionados] = useState<Set<string>>(new Set());
+  const chaveFlash = (l: any) => l.cpf || l.nome;
+
   const gerarFlash = async () => {
     setGerandoFlash(true);
     try {
       const res = await gerarFlashAction({ mesReferencia: gridMes }, accessToken);
       if (!res.ok) throw new Error(res.erro);
-      const linhas = res.info.linhas as any[];
-      if (linhas.length === 0) {
+      const linhasFlash = res.info.linhas as any[];
+      if (linhasFlash.length === 0) {
         toast('Nenhum funcionário com benefício no Cartão Flash neste mês.', 'info');
         return;
       }
-
-      // Cabeçalhos idênticos à planilha modelo
-      const cab = ['CNPJ', 'NOME COMPLETO', 'CPF', 'MOBILIDADE (R$)', 'REFEICAO (R$)', 'ALIMENTACAO (R$)', 'PREMIACAO NO CARTAO (R$)', 'REFEICAO E ALIMENTACAO (R$)', 'PREMIACAO VIRTUAL (R$)'];
-      const num = (v: number) => v.toFixed(2).replace('.', ',');
-      const linhasCsv = linhas.map(l => [
-        l.cnpj, l.nome, l.cpf,
-        num(l.mobilidade), num(l.refeicao), num(l.alimentacao),
-        num(l.premiacaoCartao), num(l.refeicaoEAlimentacao), num(l.premiacaoVirtual)
-      ].join(';'));
-
-      const csv = '\uFEFF' + [cab.join(';'), ...linhasCsv].join('\n');
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `pedido-flash-${gridMes}.csv`; a.click();
-      URL.revokeObjectURL(url);
+      setFlashLinhas(linhasFlash);
+      setFlashSelecionados(new Set(linhasFlash.map(chaveFlash))); // nasce tudo marcado
+      setModalFlashAberto(true);
     } catch (e: any) {
       toast('Erro ao gerar o arquivo Flash: ' + e.message, 'error');
     } finally {
       setGerandoFlash(false);
     }
+  };
+
+  const alternarSelecaoFlash = (chave: string) => {
+    setFlashSelecionados(prev => {
+      const novo = new Set(prev);
+      if (novo.has(chave)) novo.delete(chave); else novo.add(chave);
+      return novo;
+    });
+  };
+
+  const alternarTodosFlash = (marcar: boolean) => {
+    setFlashSelecionados(marcar ? new Set(flashLinhas.map(chaveFlash)) : new Set());
+  };
+
+  // Baixa o CSV (colunas idênticas à planilha modelo) só com quem ficou marcado no grid
+  const baixarFlashCsv = () => {
+    const selecionadas = flashLinhas.filter(l => flashSelecionados.has(chaveFlash(l)));
+    if (selecionadas.length === 0) { toast('Selecione ao menos um funcionário.', 'error'); return; }
+
+    const cab = ['CNPJ', 'NOME COMPLETO', 'CPF', 'MOBILIDADE (R$)', 'REFEICAO (R$)', 'ALIMENTACAO (R$)', 'PREMIACAO NO CARTAO (R$)', 'REFEICAO E ALIMENTACAO (R$)', 'PREMIACAO VIRTUAL (R$)'];
+    const num = (v: number) => v.toFixed(2).replace('.', ',');
+    const linhasCsv = selecionadas.map(l => [
+      l.cnpj, l.nome, l.cpf,
+      num(l.mobilidade), num(l.refeicao), num(l.alimentacao),
+      num(l.premiacaoCartao), num(l.refeicaoEAlimentacao), num(l.premiacaoVirtual)
+    ].join(';'));
+
+    const csv = '﻿' + [cab.join(';'), ...linhasCsv].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `pedido-flash-${gridMes}.csv`; a.click();
+    URL.revokeObjectURL(url);
+    setModalFlashAberto(false);
   };
 
   // Histórico
@@ -249,7 +279,7 @@ export default function BeneficiosPage() {
     rodape.push(grid.totalGeral.toFixed(2).replace('.', ','));
     linhas.push(rodape.join(sep));
 
-    const csv = '\uFEFF' + linhas.join('\n');
+    const csv = '﻿' + linhas.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -555,6 +585,67 @@ export default function BeneficiosPage() {
                   </tfoot>
                 </table>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de conferência do Flash (grid com opção de desmarcar antes do CSV) */}
+      {modalFlashAberto && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setModalFlashAberto(false)}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center p-5 border-b border-gray-200">
+              <div>
+                <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider">⚡ Conferência do Flash — {gridMes}</h2>
+                <p className="text-sm text-gray-500">{flashSelecionados.size} de {flashLinhas.length} selecionado(s). Desmarque quem não deve entrar no arquivo.</p>
+              </div>
+              <button onClick={() => setModalFlashAberto(false)} className="text-[10px] font-black bg-gray-100 px-3 py-2 rounded-lg uppercase">Fechar</button>
+            </div>
+
+            <div className="overflow-auto p-5 flex-1">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-[#0C1D4D] text-white">
+                    <th className="p-2.5 text-center font-black uppercase text-[10px] tracking-wider w-10">
+                      <input type="checkbox" checked={flashSelecionados.size === flashLinhas.length && flashLinhas.length > 0}
+                        onChange={e => alternarTodosFlash(e.target.checked)} className="w-4 h-4" />
+                    </th>
+                    <th className="p-2.5 text-left font-black uppercase text-[10px] tracking-wider">Nome</th>
+                    <th className="p-2.5 text-left font-black uppercase text-[10px] tracking-wider">CPF</th>
+                    <th className="p-2.5 text-right font-black uppercase text-[10px] tracking-wider whitespace-nowrap">Mobilidade</th>
+                    <th className="p-2.5 text-right font-black uppercase text-[10px] tracking-wider whitespace-nowrap">Ref. e Alim.</th>
+                    <th className="p-2.5 text-right font-black uppercase text-[10px] tracking-wider whitespace-nowrap">Premiação</th>
+                    <th className="p-2.5 text-right font-black uppercase text-[10px] tracking-wider bg-indigo-700">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {flashLinhas.map((l, idx) => {
+                    const chave = chaveFlash(l);
+                    const marcado = flashSelecionados.has(chave);
+                    const total = (l.mobilidade || 0) + (l.refeicao || 0) + (l.alimentacao || 0) + (l.premiacaoCartao || 0) + (l.refeicaoEAlimentacao || 0) + (l.premiacaoVirtual || 0);
+                    return (
+                      <tr key={chave} className={`${idx % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]'} ${!marcado ? 'opacity-40' : ''} cursor-pointer`} onClick={() => alternarSelecaoFlash(chave)}>
+                        <td className="p-2.5 text-center" onClick={e => e.stopPropagation()}>
+                          <input type="checkbox" checked={marcado} onChange={() => alternarSelecaoFlash(chave)} className="w-4 h-4" />
+                        </td>
+                        <td className="p-2.5 font-black text-[#0C1D4D] whitespace-nowrap">{l.nome}</td>
+                        <td className="p-2.5 text-gray-500 whitespace-nowrap">{l.cpf}</td>
+                        <td className="p-2.5 text-right tabular-nums text-gray-700 whitespace-nowrap">{l.mobilidade ? BRL(l.mobilidade) : <span className="text-gray-300">—</span>}</td>
+                        <td className="p-2.5 text-right tabular-nums text-gray-700 whitespace-nowrap">{l.refeicaoEAlimentacao ? BRL(l.refeicaoEAlimentacao) : <span className="text-gray-300">—</span>}</td>
+                        <td className="p-2.5 text-right tabular-nums text-gray-700 whitespace-nowrap">{l.premiacaoCartao ? BRL(l.premiacaoCartao) : <span className="text-gray-300">—</span>}</td>
+                        <td className="p-2.5 text-right font-black text-indigo-700 tabular-nums whitespace-nowrap bg-indigo-50/50">{BRL(total)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex justify-end gap-2 p-5 border-t border-gray-200">
+              <button onClick={() => setModalFlashAberto(false)} className="bg-gray-100 hover:bg-gray-200 text-gray-600 font-black uppercase tracking-wider text-xs py-3 px-6 rounded-xl">Cancelar</button>
+              <button onClick={baixarFlashCsv} disabled={flashSelecionados.size === 0} className="bg-[#FF6B35] hover:bg-[#E85A28] text-white font-black uppercase tracking-wider text-xs py-3 px-6 rounded-xl disabled:opacity-50">
+                ⬇ Baixar CSV ({flashSelecionados.size})
+              </button>
             </div>
           </div>
         </div>

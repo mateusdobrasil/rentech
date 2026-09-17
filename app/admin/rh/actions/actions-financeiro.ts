@@ -281,11 +281,30 @@ export async function montarLoteSalariosAction(payload: {
 
     // Dados bancários + valor de adiantamento da ficha
     const { data: funcs } = await db.from('folha_funcionarios')
-      .select('nome_completo, cpf, empresa_id, valor_adiantamento, banco_codigo, banco_agencia, banco_conta, banco_tipo, pix_tipo, pix_chave')
+      .select('nome_completo, cpf, empresa_id, valor_adiantamento, banco_codigo, banco_agencia, banco_conta, banco_tipo, pix_tipo, pix_chave, ativo, data_desligamento')
       .in('nome_completo', Array.from(nomes));
     const bancoPorNome: Record<string, any> = {};
     const empresaPorNomeFunc: Record<string, number | null> = {};
-    (funcs || []).forEach(f => { bancoPorNome[f.nome_completo] = f; empresaPorNomeFunc[f.nome_completo] = f.empresa_id; });
+    const dadosElegibilidadePorNome: Record<string, { ativo: boolean; deslig: string | null }> = {};
+    (funcs || []).forEach(f => {
+      bancoPorNome[f.nome_completo] = f;
+      empresaPorNomeFunc[f.nome_completo] = f.empresa_id;
+      dadosElegibilidadePorNome[f.nome_completo] = { ativo: f.ativo !== false, deslig: f.data_desligamento };
+    });
+    // Elegível pra receber fontes ligadas ao mês corrente (fechamento, 13º,
+    // férias, pagamento, adiantamento por documento): ativo, OU inativo mas
+    // com desligamento dentro/depois do mês de referência (ex.: saiu no meio
+    // do mês em que ainda tem pagamento pendente). Mesma régua já usada em
+    // calcularBeneficiosMes (actions-beneficios.ts), pra não pagar de novo
+    // quem já foi desligado antes do mês do lote. RESCISÃO é o oposto por
+    // natureza (só existe pra quem JÁ foi desligado) e por isso não passa por
+    // este filtro; OP/CONTAS_PAGAR não são funcionários, também não passam.
+    const elegivelNoMes = (nome: string): boolean => {
+      const d = dadosElegibilidadePorNome[nome];
+      if (!d) return true; // sem ficha achada (não deveria ocorrer, já que veio de nomes ligados a funcs) — não bloqueia
+      if (d.ativo) return true;
+      return !!(d.deslig && d.deslig.slice(0, 7) >= mesReferencia);
+    };
 
     // Filtro de empresa: um lote só pode incluir funcionários das empresas
     // que o usuário logado enxerga (senão um usuário só-Rentech poderia
@@ -346,32 +365,34 @@ export async function montarLoteSalariosAction(payload: {
       const resolvido = fontesResolvidas[nome] || { recebeFechamento: true, recebeHolerite: true };
       const entradas: { fonte: FonteLote; valor: number; temDoc?: boolean; origem?: string; rescisaoId?: number }[] = [];
 
-      if (fontes.includes('FOLHA') && resolvido.recebeFechamento && folhaPorNome[nome] !== undefined) {
+      if (fontes.includes('FOLHA') && resolvido.recebeFechamento && folhaPorNome[nome] !== undefined && elegivelNoMes(nome)) {
         entradas.push({ fonte: 'FOLHA', valor: folhaPorNome[nome] });
       }
 
       if (fontes.includes('ADIANTAMENTO')) {
         const daFicha = adiantFichaPorNome[nome];
         if (daFicha !== undefined && daFicha > 0) {
+          // Já vem só de funcionário ativo (query filtra .eq('ativo', true)
+          // na origem, ver acima) — não precisa checar elegivelNoMes de novo.
           entradas.push({ fonte: 'ADIANTAMENTO', valor: daFicha, temDoc: false, origem: 'FICHA' });
-        } else if (temAdiantamento.has(nome)) {
+        } else if (temAdiantamento.has(nome) && elegivelNoMes(nome)) {
           const valor = valoresAdiant[nome] ?? valorOcrAdiantPorNome[nome] ?? 0;
           entradas.push({ fonte: 'ADIANTAMENTO', valor, temDoc: true, origem: 'OCR' });
         }
       }
 
-      if (fontes.includes('PAGAMENTO') && resolvido.recebeHolerite && temPagamento.has(nome)) {
+      if (fontes.includes('PAGAMENTO') && resolvido.recebeHolerite && temPagamento.has(nome) && elegivelNoMes(nome)) {
         const valor = valoresPagto[nome] ?? valorOcrPagtoPorNome[nome] ?? 0;
         entradas.push({ fonte: 'PAGAMENTO', valor, temDoc: true });
       }
       if (fontes.includes('BENEFICIOS') && beneficiosPorNome[nome] !== undefined) {
         entradas.push({ fonte: 'BENEFICIOS', valor: beneficiosPorNome[nome] });
       }
-      if (fontes.includes('DECIMO_TERCEIRO') && resolvido.recebeHolerite && temDecimoTerceiro.has(nome)) {
+      if (fontes.includes('DECIMO_TERCEIRO') && resolvido.recebeHolerite && temDecimoTerceiro.has(nome) && elegivelNoMes(nome)) {
         const valor = valoresDecimoTerceiro[nome] ?? valorOcrDecimoTerceiroPorNome[nome] ?? 0;
         entradas.push({ fonte: 'DECIMO_TERCEIRO', valor, temDoc: true });
       }
-      if (fontes.includes('FERIAS') && resolvido.recebeHolerite && temFerias.has(nome)) {
+      if (fontes.includes('FERIAS') && resolvido.recebeHolerite && temFerias.has(nome) && elegivelNoMes(nome)) {
         const valor = valoresFerias[nome] ?? valorOcrFeriasPorNome[nome] ?? 0;
         entradas.push({ fonte: 'FERIAS', valor, temDoc: true });
       }

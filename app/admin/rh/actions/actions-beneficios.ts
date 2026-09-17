@@ -76,8 +76,6 @@ export async function beneficiosDoMesAction(payload: { mesReferencia: string }, 
 export async function calcularBeneficiosMes(db: ReturnType<typeof supabaseAdmin>, mesAno: string, empresaIds: number[] | null = null) {
   const [ano, mes] = mesAno.split('-').map(Number);
   const primeiroDoMes = `${ano}-${String(mes).padStart(2, '0')}-01`;
-  const ultimoNum = new Date(ano, mes, 0).getDate();
-  const ultimoDoMes = `${ano}-${String(mes).padStart(2, '0')}-${String(ultimoNum).padStart(2, '0')}`;
 
   const { data: fers } = await db.from('folha_feriados').select('*');
   const indiceFeriados = indexarFeriados(fers);
@@ -88,30 +86,30 @@ export async function calcularBeneficiosMes(db: ReturnType<typeof supabaseAdmin>
   // cálculo de cada funcionário, abaixo, usa os feriados da empresa dele.
   const diasUteisMes = diasUteisNoPeriodo(ano, mes, indiceFeriados.gerais);
 
-  // Datas de admissão/desligamento e status de cada funcionário. empresaIds
-  // (null = sem restrição) exclui da fonte quem está fora do escopo do
-  // usuário logado — como diasUteisTrabalhados() só reconhece nomes
-  // presentes aqui, o filtro se propaga naturalmente pros itens calculados.
+  // Data de admissão e status de cada funcionário. empresaIds (null = sem
+  // restrição) exclui da fonte quem está fora do escopo do usuário logado —
+  // como diasUteisTrabalhados() só reconhece nomes presentes aqui, o filtro
+  // se propaga naturalmente pros itens calculados.
   let qFuncs = db.from('folha_funcionarios')
-    .select('nome_completo, data_admissao, data_desligamento, ativo, empresa_id');
+    .select('nome_completo, data_admissao, ativo, empresa_id');
   if (empresaIds) qFuncs = qFuncs.in('empresa_id', empresaIds);
   const { data: funcs } = await qFuncs;
-  const dadosFunc: Record<string, { adm: string | null; deslig: string | null; ativo: boolean; empresaId: number | null }> = {};
-  (funcs || []).forEach(f => { dadosFunc[f.nome_completo] = { adm: f.data_admissao, deslig: f.data_desligamento, ativo: f.ativo !== false, empresaId: f.empresa_id ?? null }; });
+  const dadosFunc: Record<string, { adm: string | null; ativo: boolean; empresaId: number | null }> = {};
+  (funcs || []).forEach(f => { dadosFunc[f.nome_completo] = { adm: f.data_admissao, ativo: f.ativo !== false, empresaId: f.empresa_id ?? null }; });
 
-  // Dias úteis trabalhados no mês por funcionário (respeitando admissão/desligamento)
+  // Dias úteis trabalhados no mês por funcionário (respeitando admissão).
+  // Desligado (ativo=false) NÃO entra aqui — nem proporcional ao próprio mês
+  // do desligamento — por decisão explícita do usuário (2026-09-17): só
+  // ativo recebe pelo Grid/Flash de benefícios. Corrigido nessa data porque
+  // JOSE APARECIDO SILVA DE LIMA (desligado 14/09) ainda aparecia no
+  // Grid/Flash de setembro, proporcional aos dias trabalhados antes de sair.
   const diasUteisTrabalhados = (nome: string): number => {
     const d = dadosFunc[nome];
     if (!d) return 0; // funcionário não encontrado no cadastro atual
-    // Se admitido depois do mês ou desligado antes, não trabalhou no mês
-    if (d.adm && d.adm.slice(0, 7) > mesAno) return 0;
-    if (d.deslig && d.deslig.slice(0, 7) < mesAno) return 0;
-    // Inativo sem desligamento cobrindo este mês (ex.: marcado inativo sem
-    // preencher a data) — não conta como trabalhado, evita aparecer no grid.
-    if (!d.ativo && !(d.deslig && d.deslig.slice(0, 7) >= mesAno)) return 0;
+    if (!d.ativo) return 0; // desligado — fora do Grid/Flash, sem exceção
+    if (d.adm && d.adm.slice(0, 7) > mesAno) return 0; // admitido depois do mês
     const inicio = (d.adm && d.adm > primeiroDoMes) ? d.adm : null;
-    const fim = (d.deslig && d.deslig < ultimoDoMes) ? d.deslig : null;
-    return diasUteisNoPeriodo(ano, mes, feriadosDaEmpresa(indiceFeriados, d.empresaId), inicio, fim);
+    return diasUteisNoPeriodo(ano, mes, feriadosDaEmpresa(indiceFeriados, d.empresaId), inicio, null);
   };
 
   const { data: beneficios } = await db.from('folha_beneficios')

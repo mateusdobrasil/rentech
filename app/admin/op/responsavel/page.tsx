@@ -32,6 +32,13 @@ interface OP {
   cpf_signatario?: string;
   telefone_recebedora?: string;
   tipo_pagamento: string;
+  // Tipo da chave Pix (CELULAR/EMAIL/CPF/CNPJ/ALEATÓRIO) — dados_pagamento
+  // guarda o VALOR da chave, chave_pix guarda o TIPO (nomes invertidos em
+  // relação ao que se esperaria, mesmo padrão de /admin/op/nova). Importa
+  // pro envio via API do Itaú (Financeiro RH): sem o tipo certo, a chave não
+  // é formatada corretamente antes de mandar pro banco (ex.: celular sem o
+  // "+55" na frente é rejeitado pelo DICT).
+  chave_pix: string;
   dados_pagamento: string;
   total_geral: number;
   data_vencimento: string;
@@ -244,6 +251,7 @@ export default function PainelResponsavel() {
       os_cliente: modalEdit.op.os_cliente, os_evento: modalEdit.op.os_evento,
       os_periodo: modalEdit.op.os_periodo, natureza_pagamento: modalEdit.op.natureza_pagamento,
       empresa_recebedora: modalEdit.op.empresa_recebedora, tipo_pagamento: modalEdit.op.tipo_pagamento,
+      chave_pix: modalEdit.op.chave_pix,
       dados_pagamento: modalEdit.op.dados_pagamento, data_vencimento: modalEdit.op.data_vencimento,
       observacao: modalEdit.op.observacao, itens: itensValidos, total_geral: totalEdit,
       cpf_signatario: modalEdit.op.cpf_signatario, telefone_recebedora: modalEdit.op.telefone_recebedora,
@@ -549,7 +557,21 @@ export default function PainelResponsavel() {
                       <option value="PIX">PIX</option><option value="BOLETO">BOLETO</option><option value="TRANSFERÊNCIA">TRANSFERÊNCIA</option><option value="DINHEIRO">DINHEIRO</option>
                     </select>
                   </div>
-                  <div><label className="block text-[10px] font-bold text-[#64748B] mb-1">DADOS BANCÁRIOS / PIX</label><input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded uppercase text-sm outline-none focus:border-[#336699]" value={modalEdit.op.dados_pagamento || ''} onChange={e => updateEditField('dados_pagamento', e.target.value)} /></div>
+                  {modalEdit.op.tipo_pagamento === 'PIX' && (
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#64748B] mb-1">TIPO DE CHAVE</label>
+                      <select className="w-full p-2.5 border border-[#CBD5E1] rounded text-sm outline-none focus:border-[#336699]" value={modalEdit.op.chave_pix || 'CELULAR'} onChange={e => updateEditField('chave_pix', e.target.value)}>
+                        <option value="CELULAR">CELULAR</option>
+                        <option value="EMAIL">E-MAIL</option>
+                        <option value="CPF/CNPJ">CPF / CNPJ</option>
+                        <option value="ALEATÓRIO">CHAVE ALEATÓRIA</option>
+                      </select>
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] mb-1">{modalEdit.op.tipo_pagamento === 'PIX' ? 'CHAVE PIX' : 'DADOS BANCÁRIOS'}</label>
+                    <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded uppercase text-sm outline-none focus:border-[#336699]" value={modalEdit.op.dados_pagamento || ''} onChange={e => updateEditField('dados_pagamento', e.target.value)} />
+                  </div>
                   <div><label className="block text-[10px] font-bold text-red-500 mb-1">VENCIMENTO</label><input type="date" className="w-full p-2.5 border border-red-300 rounded text-sm outline-none focus:border-red-500 font-bold" value={modalEdit.op.data_vencimento || ''} onChange={e => updateEditField('data_vencimento', e.target.value)} /></div>
                   <div><label className="block text-[10px] font-bold text-[#64748B] mb-1">CPF DO SIGNATÁRIO (ASSINATURA DIGITAL)</label><input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded text-sm outline-none focus:border-[#336699] font-bold" value={modalEdit.op.cpf_signatario || ''} onChange={e => updateEditField('cpf_signatario', e.target.value)} /></div>
                   <div><label className="block text-[10px] font-bold text-[#64748B] mb-1">CELULAR DO SIGNATÁRIO (ASSINATURA DIGITAL)</label><input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded text-sm outline-none focus:border-[#336699] font-bold" value={modalEdit.op.telefone_recebedora || ''} onChange={e => updateEditField('telefone_recebedora', e.target.value)} /></div>

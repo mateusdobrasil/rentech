@@ -792,23 +792,23 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
     // esse valor consistente entre pagador e recebedor pra não confundir um
     // teste com o outro.
     const moduloSispag: 'Fornecedores' | 'Diversos' = cfg.modulo_sispag === 'Diversos' ? 'Diversos' : 'Fornecedores';
-    // CONFIRMADO EM PRODUÇÃO (2026-09-17): pagador.conta precisa do prefixo
-    // "00" na frente de conta+dígito (ex.: "00093124"), não só conta+dígito
-    // cru como mandávamos antes ("093124") — chamado de "código de
-    // beneficiário" pelo time técnico do Itaú. Não é documentado em lugar
-    // nenhum do schema oficial (nem em pagador.conta, nem como conceito
-    // separado — só existe nome_beneficiario, um filtro de nome, sem relação
-    // com isso). A agência FICA separada no campo `agencia` normal, não entra
-    // dentro da conta. Esse foi o ajuste que finalmente fez um pagamento
-    // sair de "Inclusão - API Externa" (órfã, cod_operador "0") pra
-    // "Autorização" com operador nomeado e "Efetivação" de verdade — a causa
-    // raiz de toda a investigação "pagamento não aparece pra aprovar" que
-    // vinha desde 2026-08-10.
-    const contaComCodigoBeneficiario = '00' + limpaNum(contaBase) + limpaNum(dacBase || '');
+    // CONFIRMADO EM PRODUÇÃO (2026-09-17): pagador.conta precisava do
+    // prefixo "00" na frente de conta+dígito (ex.: "00093124") pra o
+    // pagamento nascer vinculado a um operador e conseguir ser aprovado —
+    // chamado de "código de beneficiário" pelo time técnico do Itaú, não
+    // documentado em lugar nenhum do schema oficial. A causa raiz de toda a
+    // investigação "pagamento não aparece pra aprovar" (desde 2026-08-10)
+    // era exatamente isso.
+    // POR DECISÃO DO USUÁRIO (2026-09-17): esse prefixo NÃO é mais aplicado
+    // aqui no código — ele mesmo mantém `config.conta_debito` (tela
+    // Integrações → ⚙ Configurar Itaú) já com o "00" incluso quando precisar
+    // (ex.: "0009312-4"), pra ter controle direto sem precisar mexer em
+    // código. Não reintroduzir a concatenação automática aqui, senão o
+    // prefixo duplica.
     const pagador: PagadorSispag = {
       tipo_conta: 'CC',
       agencia: limpaNum(cfg.agencia_debito),
-      conta: contaComCodigoBeneficiario,
+      conta: limpaNum(contaBase) + limpaNum(dacBase || ''),
       tipo_pessoa: 'J',
       documento: limpaNum(cfg.cnpj),
       modulo_sispag: moduloSispag,

@@ -954,18 +954,30 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
     // cadastra "Conta Pagamento", por isso não há opção pra CP aqui.
     const tipoContaSispag = (bancoTipo: string | null): 'CC' | 'PP' => bancoTipo === 'POUPANCA' ? 'PP' : 'CC';
 
-    // Chave PIX tipo TELEFONE precisa estar no formato E.164 (+55DDDNUMERO)
-    // pro DICT/BACEN reconhecer — confirmado 2026-08-27: todo envio de chave
-    // telefone estava voltando "916 Chave não encontrada" porque o cadastro
-    // do funcionário (campo livre, sem máscara) guarda só os dígitos crus
-    // (ex.: "11940654025"), sem o "+55". CPF/e-mail/aleatória não têm esse
-    // problema — o valor cadastrado já é o formato que o DICT espera.
+    // Normaliza a chave Pix pro formato que o DICT/BACEN espera, ANTES de
+    // enviar — três fontes diferentes alimentam item.pix_tipo com
+    // vocabulários próprios pro mesmo conceito (funcionário: TELEFONE/CPF;
+    // OP: CELULAR/"CPF/CNPJ"; Contas a Pagar: TELEFONE/"CPF-CNPJ"), por isso
+    // a checagem é por substring (TEL/CEL, CPF/CNPJ), não igualdade exata.
+    // Dois problemas reais confirmados em produção (lote #41, 2026-09-17):
+    // - Telefone/celular sem "+55" na frente → "916 Chave não encontrada"
+    //   (chave existe no DICT, mas sem o formato E.164 o Itaú não acha).
+    // - CPF/CNPJ com máscara (ex.: "455.769.598-17", digitado à mão numa OP)
+    //   → "Chave PIX inválida" (DICT só aceita dígitos puros).
+    // E-mail/chave aleatória não têm esse problema — vão como cadastrados.
     const chavePixParaEnvio = (item: any): string => {
       const chave = String(item.pix_chave || '').trim();
-      if (item.pix_tipo !== 'TELEFONE' || chave.startsWith('+')) return chave;
-      const digitos = chave.replace(/\D/g, '');
-      // Já vem com código do país (55 + DDD + número = 12/13 dígitos)?
-      return digitos.length >= 12 ? `+${digitos}` : `+55${digitos}`;
+      const tipo = String(item.pix_tipo || '').toUpperCase();
+      if (chave.startsWith('+')) return chave;
+      if (tipo.includes('TEL') || tipo.includes('CEL')) {
+        const digitos = chave.replace(/\D/g, '');
+        // Já vem com código do país (55 + DDD + número = 12/13 dígitos)?
+        return digitos.length >= 12 ? `+${digitos}` : `+55${digitos}`;
+      }
+      if (tipo.includes('CPF') || tipo.includes('CNPJ')) {
+        return chave.replace(/\D/g, '');
+      }
+      return chave;
     };
 
     // Texto livre que vai pro SISPAG (comprovante/mensagem ao recebedor) sem

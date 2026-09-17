@@ -72,6 +72,8 @@ export default function PainelFinanceiro() {
   const [filtroFavorecido, setFiltroFavorecido] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('');
   const [filtroEmpresa, setFiltroEmpresa] = useState<number | null>(null);
+  const [filtroVencimentoDe, setFiltroVencimentoDe] = useState('');
+  const [filtroVencimentoAte, setFiltroVencimentoAte] = useState('');
 
   // Empresa(s) que o usuário pode enxergar (Rentech × AlfaLight): só quem é
   // literalmente "Administrador" (ehAdministradorGlobal) vê todas — Diretoria/
@@ -194,14 +196,25 @@ export default function PainelFinanceiro() {
         matchData = opDate.startsWith(filtroData);
       }
 
+      // Vencimento é um filtro de PERÍODO (de/até), diferente do filtro acima
+      // (que é por Dia/Mês/Ano de CRIAÇÃO da OP) — datas ausentes (data_vencimento
+      // vazia) nunca batem com um filtro de vencimento ativo.
+      let matchVencimento = true;
+      if (filtroVencimentoDe || filtroVencimentoAte) {
+        const opVenc = op.data_vencimento ? op.data_vencimento.split('T')[0] : '';
+        matchVencimento = !!opVenc
+          && (!filtroVencimentoDe || opVenc >= filtroVencimentoDe)
+          && (!filtroVencimentoAte || opVenc <= filtroVencimentoAte);
+      }
+
       // OPs antigas (anteriores à coluna empresa_id) ficam com empresa_id
       // nulo — tratadas como visíveis independente do filtro, mesmo critério
       // já usado no resto do sistema (empresaPermitida em app/lib/serverAuth.ts).
       const matchEmpresa = !filtroEmpresa || op.empresa_id == null || op.empresa_id === filtroEmpresa;
 
-      return matchBusca && matchResponsavel && matchFavorecido && matchStatus && matchData && matchEmpresa;
+      return matchBusca && matchResponsavel && matchFavorecido && matchStatus && matchData && matchVencimento && matchEmpresa;
     });
-  }, [ops, busca, filtroResponsavel, filtroFavorecido, filtroStatus, filtroData, filtroEmpresa]);
+  }, [ops, busca, filtroResponsavel, filtroFavorecido, filtroStatus, filtroData, filtroVencimentoDe, filtroVencimentoAte, filtroEmpresa]);
 
   const limparFiltros = () => {
     setBusca('');
@@ -209,12 +222,14 @@ export default function PainelFinanceiro() {
     setFiltroResponsavel('');
     setFiltroFavorecido('');
     setFiltroStatus('');
+    setFiltroVencimentoDe('');
+    setFiltroVencimentoAte('');
     // Só libera "Todas" se o usuário de fato tem mais de uma empresa — senão
     // o filtro fica travado e não é uma opção pra limpar.
     if (empresasCatalogoVisivel.length > 1) setFiltroEmpresa(null);
   };
 
-  const temFiltroAtivo = busca || filtroData || filtroResponsavel || filtroFavorecido || filtroStatus || (empresasCatalogoVisivel.length > 1 && filtroEmpresa);
+  const temFiltroAtivo = busca || filtroData || filtroResponsavel || filtroFavorecido || filtroStatus || filtroVencimentoDe || filtroVencimentoAte || (empresasCatalogoVisivel.length > 1 && filtroEmpresa);
 
   const metricas = useMemo(() => {
     let tGeral = 0, tPendente = 0, tPago = 0;
@@ -655,6 +670,13 @@ export default function PainelFinanceiro() {
                 <option value="">🏷️ Status</option>
                 {statusUnicos.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
+            </div>
+
+            <div className="w-full lg:w-auto flex items-center gap-1.5 shadow-sm rounded-lg">
+              <label className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider shrink-0">📅 Venc.</label>
+              <input type="date" title="Vencimento de" className="w-full lg:w-36 p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0A2A4A] outline-none focus:border-[#336699]" value={filtroVencimentoDe} onChange={(e) => setFiltroVencimentoDe(e.target.value)} />
+              <span className="text-[#94A3B8] text-xs">até</span>
+              <input type="date" title="Vencimento até" className="w-full lg:w-36 p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0A2A4A] outline-none focus:border-[#336699]" value={filtroVencimentoAte} onChange={(e) => setFiltroVencimentoAte(e.target.value)} />
             </div>
 
             {temFiltroAtivo && (

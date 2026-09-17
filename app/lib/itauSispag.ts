@@ -369,6 +369,17 @@ export interface ResultadoTransferenciaSispag {
   respostaBruta?: any;
 }
 
+// Erros de validação de campo (HTTP 400, e às vezes 422 — ver nota abaixo)
+// vêm com a mensagem específica por campo dentro de `campos`, não só a
+// genérica de `mensagem` (ex.: "Erro na validação dos campos de entrada"
+// não diz qual campo nem por quê — "Chave PIX inválida" diz). Prefere o
+// campo específico quando existir.
+function mensagemErroValidacao(data: any): string | undefined {
+  const campo = Array.isArray(data?.campos) ? data.campos[0] : null;
+  if (campo?.mensagem) return `${campo.mensagem}${campo.campo ? ` (${campo.campo}: ${campo.valor})` : ''}`;
+  return data?.mensagem;
+}
+
 // TESTADO E DESCARTADO (2026-09-04): o exemplo que o suporte do Itaú mandou
 // usava agencia/documento/ispb/agencia_recebedor/identificacao_recebedor
 // como número JSON sem aspas, contrariando o schema oficial (que declara
@@ -388,7 +399,21 @@ export async function enviarPixPorChave(params: EnviarPixPorChaveParams): Promis
     });
 
     if (status === 400) {
-      return { httpStatus: status, erro: data?.mensagem || 'Requisição inválida (dados do pagamento rejeitados pela API antes de tentar o pagamento).', respostaBruta: data };
+      return { httpStatus: status, erro: mensagemErroValidacao(data) || 'Requisição inválida (dados do pagamento rejeitados pela API antes de tentar o pagamento).', respostaBruta: data };
+    }
+    // CONFIRMADO EM PRODUÇÃO (2026-09-17): o Itaú também devolve HTTP 422
+    // pra erro de VALIDAÇÃO DE CAMPO (chave Pix não encontrada no DICT,
+    // formato de chave inválido etc.) — corpo no mesmo formato do 400
+    // (`{codigo, mensagem, campos: [...]}`), SEM `status_pagamento`. Antes
+    // disso, esse formato caía direto no `if (status === 200 || 422)` de
+    // baixo e virava um item com status_pagamento undefined → api_status
+    // ficava `null` (nem "Sucesso" nem "Erro"), a UI mostrava "— Não
+    // enviado" e o motivo real ("Chave não encontrada", "Chave PIX
+    // inválida") sumia — um lote de 11 OPs pareceu ter enviado só 1 e as
+    // outras 10 "não enviadas", quando na verdade 10 chaves foram REJEITADAS
+    // pelo banco e a causa ficou invisível.
+    if (status === 422 && !data?.status_pagamento && data?.mensagem) {
+      return { httpStatus: status, erro: mensagemErroValidacao(data) || data.mensagem, respostaBruta: data };
     }
     if (status === 200 || status === 422) {
       return {
@@ -439,7 +464,12 @@ export async function enviarPixPorDadosBancarios(params: EnviarPixPorDadosBancar
     });
 
     if (status === 400) {
-      return { httpStatus: status, erro: data?.mensagem || 'Requisição inválida (dados do pagamento rejeitados pela API antes de tentar o pagamento).', respostaBruta: data };
+      return { httpStatus: status, erro: mensagemErroValidacao(data) || 'Requisição inválida (dados do pagamento rejeitados pela API antes de tentar o pagamento).', respostaBruta: data };
+    }
+    // Ver nota equivalente em enviarPixPorChave — mesmo formato de erro de
+    // validação de campo pode vir com HTTP 422 aqui também.
+    if (status === 422 && !data?.status_pagamento && data?.mensagem) {
+      return { httpStatus: status, erro: mensagemErroValidacao(data) || data.mensagem, respostaBruta: data };
     }
     if (status === 200 || status === 422) {
       return {

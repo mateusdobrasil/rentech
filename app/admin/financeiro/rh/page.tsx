@@ -11,6 +11,7 @@ import {
   reabrirItemParaReenvioAction
 } from '../../rh/actions/actions-financeiro';
 import { listarIntegracoesAction } from '../../parametros/integracao/actions';
+import { sincronizarContasPagarP2sAction, salvarDadosPagamentoContaPagarAction } from '../contas-pagar/actions';
 import { normalizarItensOP, ItemOPNormalizado } from '../../op/utils';
 import SepararHolerites from '../../rh/holerite/SepararHolerites';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
@@ -59,7 +60,7 @@ interface Integracao {
   id: number; parceiro: string; nome_exibicao: string; tipo: string;
   ativo: boolean; ambiente: string; config: any;
 }
-type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO' | 'OP';
+type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO' | 'OP' | 'CONTAS_PAGAR';
 
 interface ItemLote {
   funcionario_nome: string; cpf: string; empresa_id: number | null; valor: number; metodo: string;
@@ -68,9 +69,15 @@ interface ItemLote {
   origem: string | null;
   rescisaoId: number | null;
   opId: string | null;
-  // Só preenchido pelas OPs sem Pix (BOLETO/TRANSFERÊNCIA/DINHEIRO) — o que
-  // foi digitado na OP, exibido no lugar do aviso genérico de "sem dados
-  // bancários" já que não há como pagar/exportar isso automaticamente.
+  // Só preenchido nos itens de CONTAS_PAGAR (fonte P2S) — id da linha em
+  // financeiro_contas_pagar, usado tanto pra salvar os dados de pagamento
+  // digitados manualmente (salvarDadosPagamentoContaPagarAction) quanto pra
+  // marcar pago_em/pago_lote_id depois do envio (mesmo papel de opId/rescisaoId).
+  contaPagarId: number | null;
+  // OP sem Pix (BOLETO/TRANSFERÊNCIA/DINHEIRO): o que foi digitado na OP,
+  // exibido no lugar do aviso genérico de "sem dados bancários" já que não
+  // há como pagar/exportar isso automaticamente. CONTAS_PAGAR: o centro de
+  // custo da conta (só exibição).
   nota: string | null;
   // Só preenchido nos itens de OP (= data_vencimento da própria OP) — usado
   // no lugar da "Data de pagamento" digitada nesta tela, tanto no envio via
@@ -125,8 +132,10 @@ export default function FinanceiroPage() {
   const [fontesSel, setFontesSel] = useState<FonteLote[]>([]);
   const [resumoLote, setResumoLote] = useState({
     semDados: 0, semOcr: 0, valorTotal: 0, totalItens: 0,
-    totaisPorFonte: { FOLHA: 0, ADIANTAMENTO: 0, PAGAMENTO: 0, BENEFICIOS: 0, DECIMO_TERCEIRO: 0, FERIAS: 0, RESCISAO: 0, OP: 0 }
+    totaisPorFonte: { FOLHA: 0, ADIANTAMENTO: 0, PAGAMENTO: 0, BENEFICIOS: 0, DECIMO_TERCEIRO: 0, FERIAS: 0, RESCISAO: 0, OP: 0, CONTAS_PAGAR: 0 }
   });
+  const [sincronizandoContasPagar, setSincronizandoContasPagar] = useState(false);
+  const [filtroTextoContasPagar, setFiltroTextoContasPagar] = useState('');
 
   const [valoresAdiant, setValoresAdiant] = useState<Record<string, number>>({});
   const [valoresPagto, setValoresPagto] = useState<Record<string, number>>({});
@@ -247,6 +256,20 @@ export default function FinanceiroPage() {
     if (!empresaSelecionada) { toast('Selecione a empresa (Rentech/AlfaLight) antes de montar o lote.', 'error'); return; }
     setMontando(true); setItens([]);
     try {
+      // Contas a Pagar sempre sincroniza com o PrimeStart antes de montar —
+      // pedido explícito do usuário, pra nunca montar o lote com dado
+      // desatualizado (conta já quitada lá, ou nova conta lançada e ainda não
+      // vista aqui). Erro de sync não impede montar com o que já está salvo
+      // localmente (mesmo comportamento tolerante da tela /admin/financeiro/
+      // contas-pagar) — só avisa.
+      if (fontesSel.includes('CONTAS_PAGAR')) {
+        setSincronizandoContasPagar(true);
+        const resSync = await sincronizarContasPagarP2sAction({}, accessToken);
+        setSincronizandoContasPagar(false);
+        if (!resSync.ok) {
+          toast(`Falha ao sincronizar Contas a Pagar com o PrimeStart: ${resSync.erro}. Montando com os dados já salvos.`, 'error');
+        }
+      }
       const res = await montarLoteSalariosAction({
         mesReferencia, fontes: fontesSel, empresaId: empresaSelecionada,
         valoresAdiantamento: valoresAdiant,
@@ -402,7 +425,61 @@ export default function FinanceiroPage() {
   // toggle individual: linhas sem dados bancários ou sem valor nunca ficam
   // "pronto", mesmo em "Marcar Todos".
   const marcarTodos = (marcar: boolean) => {
-    setItens(prev => prev.map(i => ({ ...i, pronto: (i.metodo !== 'SEM_DADOS' && i.valor > 0) ? marcar : false })));
+    setItens(prev => prev.map(i => itemVisivel(i)
+      ? { ...i, pronto: (i.metodo !== 'SEM_DADOS' && i.valor > 0) ? marcar : false }
+      : i));
+  };
+
+  const abrirEdicaoPagamentoCP = (it: ItemLote) => {
+    setEditandoPagamentoCP({
+      chaveEdit: `${it.funcionario_nome}::${it.fonte}`, modo: 'PIX',
+      documento: it.cpf || '', pixTipo: it.pix_tipo || 'CPF-CNPJ', pixChave: it.pix_chave || '',
+      bancoCodigo: it.banco_codigo || '', bancoAgencia: it.banco_agencia || '',
+      bancoConta: it.banco_conta || '', bancoTipo: it.banco_tipo || 'CORRENTE',
+    });
+  };
+
+  const salvarPagamentoCP = async (it: ItemLote) => {
+    const edit = editandoPagamentoCP;
+    if (!edit || !it.contaPagarId) return;
+    const chavePixOk = edit.modo === 'PIX' && edit.pixChave.trim();
+    const contaOk = edit.modo === 'CONTA' && edit.bancoCodigo.trim() && edit.bancoAgencia.trim() && edit.bancoConta.trim();
+    if (!chavePixOk && !contaOk) {
+      toast(edit.modo === 'PIX' ? 'Digite a chave PIX.' : 'Preencha banco, agência e conta.', 'error');
+      return;
+    }
+    setSalvandoPagamentoCP(true);
+    try {
+      const res = await salvarDadosPagamentoContaPagarAction({
+        id: it.contaPagarId,
+        documentoFornecedor: edit.documento || null,
+        pixTipo: edit.modo === 'PIX' ? edit.pixTipo : null,
+        pixChave: edit.modo === 'PIX' ? edit.pixChave.trim() : null,
+        bancoCodigo: edit.modo === 'CONTA' ? edit.bancoCodigo.trim() : null,
+        bancoAgencia: edit.modo === 'CONTA' ? edit.bancoAgencia.trim() : null,
+        bancoConta: edit.modo === 'CONTA' ? edit.bancoConta.trim() : null,
+        bancoTipo: edit.modo === 'CONTA' ? edit.bancoTipo : null,
+      }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      setItens(prev => prev.map(i => (i.funcionario_nome === it.funcionario_nome && i.fonte === it.fonte) ? {
+        ...i,
+        cpf: edit.documento.replace(/\D/g, ''),
+        metodo: edit.modo === 'PIX' ? 'PIX' : 'TED',
+        pix_tipo: edit.modo === 'PIX' ? edit.pixTipo : null,
+        pix_chave: edit.modo === 'PIX' ? edit.pixChave.trim() : null,
+        banco_codigo: edit.modo === 'CONTA' ? edit.bancoCodigo.trim() : null,
+        banco_agencia: edit.modo === 'CONTA' ? edit.bancoAgencia.trim() : null,
+        banco_conta: edit.modo === 'CONTA' ? edit.bancoConta.trim() : null,
+        banco_tipo: edit.modo === 'CONTA' ? edit.bancoTipo : null,
+        pronto: i.valor > 0,
+      } : i));
+      setEditandoPagamentoCP(null);
+      toast('Dados de pagamento salvos — vão ser lembrados da próxima vez que esta conta aparecer num lote.', 'success');
+    } catch (e: any) {
+      toast(e.message, 'error');
+    } finally {
+      setSalvandoPagamentoCP(false);
+    }
   };
 
   const parseBRL = (texto: string): number => {
@@ -413,19 +490,60 @@ export default function FinanceiroPage() {
   const [editandoValor, setEditandoValor] = useState<string | null>(null);
   const [textoEdicao, setTextoEdicao] = useState('');
 
-  const prontos = itens.filter(i => i.pronto);
+  // Edição inline dos dados de pagamento de uma Conta a Pagar (P2S) sem PIX/
+  // conta cadastrados — o PrimeStart não traz esse dado (ver comentário em
+  // .sql/contas_pagar_pagamento_lote.sql), então é digitado aqui uma vez e
+  // fica salvo em financeiro_contas_pagar pra próxima vez que a mesma conta
+  // aparecer num lote. `chaveEdit` identifica a linha (mesma chave usada no
+  // key={} do <tr>, "nome::fonte").
+  const [editandoPagamentoCP, setEditandoPagamentoCP] = useState<{
+    chaveEdit: string; modo: 'PIX' | 'CONTA';
+    documento: string; pixTipo: string; pixChave: string;
+    bancoCodigo: string; bancoAgencia: string; bancoConta: string; bancoTipo: string;
+  } | null>(null);
+  const [salvandoPagamentoCP, setSalvandoPagamentoCP] = useState(false);
+
+  // OP e CONTAS_PAGAR (P2S) têm vencimento próprio (item.dataPagamento =
+  // data_vencimento), diferente das demais fontes (funcionário), que sempre
+  // usam a "Data de pagamento" escolhida no topo. Um item com vencimento
+  // futuro (ex.: vence dia 21, mas o usuário está montando o lote pra pagar
+  // dia 18) fica fora do grid até a data escolhida alcançar o vencimento dele
+  // — mas um item vencido (vencimento no passado) sempre aparece, pra não
+  // passar batido.
+  const FONTES_COM_VENCIMENTO_PROPRIO: FonteLote[] = ['OP', 'CONTAS_PAGAR'];
+  const dentroDoFiltroData = (it: ItemLote) => !FONTES_COM_VENCIMENTO_PROPRIO.includes(it.fonte) || !it.dataPagamento || it.dataPagamento <= dataPagamento;
+  // Busca por texto, só afeta CONTAS_PAGAR (reaproveita o mesmo campo de
+  // busca da tela /admin/financeiro/contas-pagar: descrição/fornecedor/
+  // centro — os dois primeiros já compõem funcionario_nome, o centro vai em
+  // `nota`) — demais fontes não têm essa busca, sempre passam.
+  const semAcentoBusca = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const dentroDaBuscaContasPagar = (it: ItemLote) => {
+    if (it.fonte !== 'CONTAS_PAGAR' || !filtroTextoContasPagar.trim()) return true;
+    return semAcentoBusca(`${it.funcionario_nome} ${it.nota || ''}`).includes(semAcentoBusca(filtroTextoContasPagar.trim()));
+  };
+  const itemVisivel = (it: ItemLote) => dentroDoFiltroData(it) && dentroDaBuscaContasPagar(it);
+  const itensExibidos = itens.filter(itemVisivel);
+  const itensOcultosPorData = itens.filter(i => FONTES_COM_VENCIMENTO_PROPRIO.includes(i.fonte) && !dentroDoFiltroData(i)).length;
+  const contasPagarOcultasPorBusca = itens.filter(i => i.fonte === 'CONTAS_PAGAR' && dentroDoFiltroData(i) && !dentroDaBuscaContasPagar(i)).length;
+  const prontos = itensExibidos.filter(i => i.pronto);
   const totalSelecionado = prontos.reduce((s, i) => s + Number(i.valor || 0), 0);
 
   const gerarLote = async () => {
     if (prontos.length === 0) { toast('Nenhum pagamento pronto para gerar o lote.', 'info'); return; }
-    const sugestao = `${fontesSel.map(f => ({ FOLHA: 'Folha', ADIANTAMENTO: 'Adiantamento', PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios', DECIMO_TERCEIRO: '13º', FERIAS: 'Férias', RESCISAO: 'Rescisão', OP: 'OP' }[f])).join(' + ')} ${fmtMesBR(mesReferencia)}`;
+    const sugestao = `${fontesSel.map(f => ({ FOLHA: 'Folha', ADIANTAMENTO: 'Adiantamento', PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios', DECIMO_TERCEIRO: '13º', FERIAS: 'Férias', RESCISAO: 'Rescisão', OP: 'OP', CONTAS_PAGAR: 'Contas a Pagar' }[f])).join(' + ')} ${fmtMesBR(mesReferencia)}`;
     const nome = prompt(`Nome do lote (para identificar no histórico):`, sugestao);
     if (nome === null) return;
     setSalvandoLote(true);
     try {
+      // Itens ocultos pelo filtro de data ou de busca (CONTAS_PAGAR) nunca
+      // podem ir como "pronto" pro servidor — salvarLoteAction só olha a flag
+      // `pronto`, sem saber de vencimento/busca; sem isso, um item fora do
+      // grid (mas marcado pronto de uma montagem anterior) seria pago em
+      // silêncio, sem o usuário nunca ter visto a linha nesta tela.
+      const itensParaSalvar = itens.map(i => itemVisivel(i) ? i : { ...i, pronto: false });
       const res = await salvarLoteAction({
         parceiro: 'ITAU', mesReferencia, tipoLote: fontesSel.join('+'),
-        nomeLote: nome || sugestao, dataPagamento, itens, criadoPor: usuarioAtual
+        nomeLote: nome || sugestao, dataPagamento, itens: itensParaSalvar, criadoPor: usuarioAtual
       }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       toast(`Lote "${nome || sugestao}" gerado: ${res.info.qtd} pagamentos, ${BRL(res.info.valorTotal)}.`, 'success');
@@ -1023,7 +1141,8 @@ export default function FinanceiroPage() {
                     ['DECIMO_TERCEIRO', '🎄 13º Salário', 'bg-amber-50 text-amber-700 border-amber-300'],
                     ['FERIAS', '🏖️ Férias', 'bg-cyan-50 text-cyan-700 border-cyan-300'],
                     ['RESCISAO', '📤 Rescisão', 'bg-red-50 text-red-700 border-red-300'],
-                    ['OP', '🧾 Ordem de Pagamento', 'bg-indigo-50 text-indigo-700 border-indigo-300']
+                    ['OP', '🧾 Ordem de Pagamento', 'bg-indigo-50 text-indigo-700 border-indigo-300'],
+                    ['CONTAS_PAGAR', '🏢 Contas a Pagar (P2S)', 'bg-orange-50 text-orange-700 border-orange-300']
                   ] as const).map(([f, lbl, cor]) => (
                     <label key={f} className={`cursor-pointer inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border-2 text-[11px] font-black uppercase tracking-wider transition-all ${fontesSel.includes(f) ? cor : 'bg-gray-50 text-gray-400 border-gray-200'}`}>
                       <input type="checkbox" checked={fontesSel.includes(f)} onChange={() => alternarFonte(f)} className="w-4 h-4 shrink-0" />
@@ -1033,7 +1152,7 @@ export default function FinanceiroPage() {
                 </div>
               </div>
               <button onClick={montarLote} disabled={montando || fontesSel.length === 0 || !empresaSelecionada} title={!empresaSelecionada ? 'Selecione a empresa antes de montar o lote' : ''} className="text-xs font-black bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-5 py-2.5 rounded-lg uppercase tracking-wider disabled:opacity-50">
-                {montando ? '⏳ Montando...' : '📥 Montar lote'}
+                {sincronizandoContasPagar ? '🔄 Sincronizando com o PrimeStart...' : montando ? '⏳ Montando...' : '📥 Montar lote'}
               </button>
             </div>
           )}
@@ -1083,6 +1202,21 @@ export default function FinanceiroPage() {
                     </>
                   )}
                   <span className="text-[10px] text-gray-400 font-bold">Comprovantes já lidos usam o valor salvo — só os novos vão para a AWS.</span>
+                </div>
+              )}
+
+              {fontesSel.includes('CONTAS_PAGAR') && (
+                <div>
+                  <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">🔎 Buscar Contas a Pagar (descrição/fornecedor/centro)</label>
+                  <input
+                    type="text" value={filtroTextoContasPagar}
+                    onChange={e => setFiltroTextoContasPagar(e.target.value)}
+                    placeholder="Ex.: SABESP, ART, aluguel galpão..."
+                    className="w-full max-w-md p-2.5 border border-gray-300 rounded-lg text-xs font-bold bg-[#F8FAFC]"
+                  />
+                  {contasPagarOcultasPorBusca > 0 && (
+                    <span className="block mt-1 text-[10px] font-bold text-amber-600">⚠ {contasPagarOcultasPorBusca} conta(s) a pagar oculta(s) por não bater com a busca.</span>
+                  )}
                 </div>
               )}
 
@@ -1141,7 +1275,7 @@ export default function FinanceiroPage() {
             <div className="grid grid-cols-3 gap-3 mb-4">
               <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 text-center">
                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Linhas prontas</p>
-                <p className="text-2xl font-black text-[#0C1D4D]">{prontos.length}<span className="text-sm text-gray-300">/{itens.length}</span></p>
+                <p className="text-2xl font-black text-[#0C1D4D]">{prontos.length}<span className="text-sm text-gray-300">/{itensExibidos.length}</span></p>
               </div>
               <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 text-center">
                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Sem dados / OCR</p>
@@ -1153,13 +1287,20 @@ export default function FinanceiroPage() {
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 mb-3">
-              <button onClick={() => marcarTodos(true)} className="text-[10px] font-black uppercase tracking-wider bg-[#E0F2FE] text-[#0369A1] border border-[#BAE6FD] px-4 py-2 rounded-lg hover:bg-[#BAE6FD] transition-colors">
-                ✓ Marcar Todos
-              </button>
-              <button onClick={() => marcarTodos(false)} className="text-[10px] font-black uppercase tracking-wider bg-gray-100 text-gray-600 border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors">
-                ✕ Desmarcar Todos
-              </button>
+            <div className="flex justify-between items-center gap-2 mb-3">
+              {itensOcultosPorData > 0 ? (
+                <span className="text-[10px] font-bold text-amber-600">
+                  ⚠ {itensOcultosPorData} item(ns) oculto(s) — vencem depois de {fmtData(dataPagamento)}. Avance a "Data de pagamento" pra incluí-los no lote.
+                </span>
+              ) : <span />}
+              <div className="flex gap-2">
+                <button onClick={() => marcarTodos(true)} className="text-[10px] font-black uppercase tracking-wider bg-[#E0F2FE] text-[#0369A1] border border-[#BAE6FD] px-4 py-2 rounded-lg hover:bg-[#BAE6FD] transition-colors">
+                  ✓ Marcar Todos
+                </button>
+                <button onClick={() => marcarTodos(false)} className="text-[10px] font-black uppercase tracking-wider bg-gray-100 text-gray-600 border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors">
+                  ✕ Desmarcar Todos
+                </button>
+              </div>
             </div>
 
             <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden mb-6">
@@ -1175,7 +1316,7 @@ export default function FinanceiroPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {itens.map((it, idx) => {
+                    {itensExibidos.map((it, idx) => {
                       const editavel = it.temDoc;
                       const semValor = it.valor <= 0;
                       const corFonte = it.fonte === 'FOLHA' ? 'bg-blue-100 text-blue-700'
@@ -1184,10 +1325,11 @@ export default function FinanceiroPage() {
                         : it.fonte === 'FERIAS' ? 'bg-cyan-100 text-cyan-700'
                         : it.fonte === 'RESCISAO' ? 'bg-red-100 text-red-700'
                         : it.fonte === 'OP' ? 'bg-indigo-100 text-indigo-700'
+                        : it.fonte === 'CONTAS_PAGAR' ? 'bg-orange-100 text-orange-700'
                         : 'bg-emerald-100 text-emerald-700';
                       const chaveEdit = `${it.funcionario_nome}::${it.fonte}`;
                       return (
-                        <tr key={chaveEdit} className={`${idx % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white'} border-b border-[#E2E8F0] ${it.metodo === 'SEM_DADOS' ? 'opacity-60' : ''}`}>
+                        <tr key={chaveEdit} className={`${idx % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white'} border-b border-[#E2E8F0] ${it.metodo === 'SEM_DADOS' && editandoPagamentoCP?.chaveEdit !== chaveEdit ? 'opacity-60' : ''}`}>
                           <td className="p-3 text-center">
                             <input type="checkbox" checked={it.pronto} disabled={it.metodo === 'SEM_DADOS' || semValor} onChange={() => alternarItemFonte(it.funcionario_nome, it.fonte)} className="w-4 h-4" />
                           </td>
@@ -1195,12 +1337,74 @@ export default function FinanceiroPage() {
                             <span className="font-black text-[#0C1D4D] block">{it.funcionario_nome}</span>
                             <span className="text-[10px] text-gray-400">
                               {it.metodo === 'SEM_DADOS'
-                                ? (it.fonte === 'OP' && it.nota
+                                ? (it.fonte === 'CONTAS_PAGAR'
+                                    ? <button type="button" onClick={() => abrirEdicaoPagamentoCP(it)} className="text-amber-600 font-black underline hover:text-amber-700">✏ Adicionar dados de pagamento</button>
+                                    : it.fonte === 'OP' && it.nota
                                     ? <span className="text-amber-600 font-black">⚠ Pagar manualmente: {it.nota}</span>
                                     : <span className="text-amber-600 font-black">⚠ Sem dados bancários na ficha</span>)
                                 : it.metodo === 'PIX' ? `PIX ${it.pix_tipo}: ${it.pix_chave}`
                                 : `Ag ${it.banco_agencia} · C/C ${it.banco_conta}`}
+                              {it.metodo !== 'SEM_DADOS' && it.fonte === 'CONTAS_PAGAR' && (
+                                <button type="button" onClick={() => abrirEdicaoPagamentoCP(it)} className="ml-1 text-gray-400 hover:text-orange-600 underline">✏ editar</button>
+                              )}
                             </span>
+
+                            {editandoPagamentoCP?.chaveEdit === chaveEdit && (
+                              <div className="mt-2 p-3 bg-orange-50 border border-orange-200 rounded-lg space-y-2 max-w-sm">
+                                <div className="flex gap-3">
+                                  <label className="flex items-center gap-1 text-[10px] font-bold text-gray-600">
+                                    <input type="radio" checked={editandoPagamentoCP.modo === 'PIX'} onChange={() => setEditandoPagamentoCP(v => v && { ...v, modo: 'PIX' })} /> PIX
+                                  </label>
+                                  <label className="flex items-center gap-1 text-[10px] font-bold text-gray-600">
+                                    <input type="radio" checked={editandoPagamentoCP.modo === 'CONTA'} onChange={() => setEditandoPagamentoCP(v => v && { ...v, modo: 'CONTA' })} /> Ag/Conta
+                                  </label>
+                                </div>
+                                <input
+                                  type="text" value={editandoPagamentoCP.documento}
+                                  onChange={e => setEditandoPagamentoCP(v => v && { ...v, documento: e.target.value })}
+                                  placeholder="CPF/CNPJ do favorecido"
+                                  className="w-full p-1.5 border border-gray-300 rounded text-[11px]"
+                                />
+                                {editandoPagamentoCP.modo === 'PIX' ? (
+                                  <div className="flex gap-2">
+                                    <select
+                                      value={editandoPagamentoCP.pixTipo}
+                                      onChange={e => setEditandoPagamentoCP(v => v && { ...v, pixTipo: e.target.value })}
+                                      className="p-1.5 border border-gray-300 rounded text-[11px]"
+                                    >
+                                      <option value="CPF-CNPJ">CPF/CNPJ</option>
+                                      <option value="EMAIL">E-mail</option>
+                                      <option value="TELEFONE">Telefone</option>
+                                      <option value="ALEATORIA">Aleatória</option>
+                                    </select>
+                                    <input
+                                      type="text" value={editandoPagamentoCP.pixChave}
+                                      onChange={e => setEditandoPagamentoCP(v => v && { ...v, pixChave: e.target.value })}
+                                      placeholder="Chave PIX"
+                                      className="flex-1 p-1.5 border border-gray-300 rounded text-[11px]"
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <input type="text" value={editandoPagamentoCP.bancoCodigo} onChange={e => setEditandoPagamentoCP(v => v && { ...v, bancoCodigo: e.target.value })} placeholder="Banco (341)" className="p-1.5 border border-gray-300 rounded text-[11px]" />
+                                    <select value={editandoPagamentoCP.bancoTipo} onChange={e => setEditandoPagamentoCP(v => v && { ...v, bancoTipo: e.target.value })} className="p-1.5 border border-gray-300 rounded text-[11px]">
+                                      <option value="CORRENTE">Corrente</option>
+                                      <option value="POUPANCA">Poupança</option>
+                                    </select>
+                                    <input type="text" value={editandoPagamentoCP.bancoAgencia} onChange={e => setEditandoPagamentoCP(v => v && { ...v, bancoAgencia: e.target.value })} placeholder="Agência" className="p-1.5 border border-gray-300 rounded text-[11px]" />
+                                    <input type="text" value={editandoPagamentoCP.bancoConta} onChange={e => setEditandoPagamentoCP(v => v && { ...v, bancoConta: e.target.value })} placeholder="Conta" className="p-1.5 border border-gray-300 rounded text-[11px]" />
+                                  </div>
+                                )}
+                                <div className="flex gap-2">
+                                  <button type="button" onClick={() => salvarPagamentoCP(it)} disabled={salvandoPagamentoCP} className="text-[10px] font-black bg-orange-600 hover:bg-orange-700 text-white px-3 py-1.5 rounded uppercase disabled:opacity-50">
+                                    {salvandoPagamentoCP ? 'Salvando...' : '✓ Salvar'}
+                                  </button>
+                                  <button type="button" onClick={() => setEditandoPagamentoCP(null)} className="text-[10px] font-black bg-white border border-gray-300 text-gray-600 px-3 py-1.5 rounded uppercase">
+                                    Cancelar
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                           </td>
                           <td className="p-3">
                             <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase ${corFonte}`}>{it.fonte_rotulo}</span>
@@ -1219,6 +1423,11 @@ export default function FinanceiroPage() {
                               <button type="button" onClick={() => abrirDetalhesOP(it.opId!)} className="ml-1 text-[9px] font-black text-gray-400 hover:text-indigo-600 uppercase underline">
                                 ↗ ver
                               </button>
+                            )}
+                            {it.fonte === 'CONTAS_PAGAR' && it.dataPagamento && (
+                              <span className="block text-[9px] font-bold text-gray-400 mt-0.5" title="Vencimento desta conta — usa o vencimento próprio, não a data digitada acima">
+                                📅 Venc.: {fmtData(it.dataPagamento)}{it.nota ? ` · ${it.nota}` : ''}
+                              </span>
                             )}
                           </td>
                           <td className="p-3">

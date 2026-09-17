@@ -47,6 +47,8 @@ export default function ContasPagarPage() {
   const [gridErro, setGridErro] = useState('');
   const [filtroTexto, setFiltroTexto] = useState('');
   const [filtroSituacao, setFiltroSituacao] = useState<'abertas' | 'vencidas' | 'quitadas' | 'todas'>('quitadas');
+  const [filtroDataDe, setFiltroDataDe] = useState('');
+  const [filtroDataAte, setFiltroDataAte] = useState('');
   const [pagina, setPagina] = useState(0);
   const [totalRegistros, setTotalRegistros] = useState(0);
   const [refreshGrid, setRefreshGrid] = useState(0);
@@ -88,6 +90,9 @@ export default function ContasPagarPage() {
         query = query.or(`descricao.ilike.${termo},fornecedor.ilike.${termo},centro.ilike.${termo}`);
       }
 
+      if (filtroDataDe) query = query.gte('data_vencimento', filtroDataDe);
+      if (filtroDataAte) query = query.lte('data_vencimento', filtroDataAte);
+
       const { data, error, count } = await query;
       if (error) {
         setGridErro(error.message);
@@ -100,7 +105,7 @@ export default function ContasPagarPage() {
     }, 300);
 
     return () => clearTimeout(handle);
-  }, [authLoading, acessoNegado, pagina, filtroSituacao, filtroTexto, refreshGrid]);
+  }, [authLoading, acessoNegado, pagina, filtroSituacao, filtroTexto, filtroDataDe, filtroDataAte, refreshGrid]);
 
   const sincronizarViaApi = async () => {
     setSincronizando(true);
@@ -170,7 +175,7 @@ export default function ContasPagarPage() {
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
             <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Sincronizar via API</h2>
             <p className="text-xs text-[#64748B] mb-4">
-              Puxa direto do PrimeStart (produção) as contas a pagar já quitadas dos últimos 3 meses (mais todas as futuras). Sem tela de upload manual — essa integração é só via API.
+              Puxa direto do PrimeStart (produção) as contas a pagar já quitadas dos últimos 3 meses (sem limite pra frente) e as em aberto com vencimento a partir de hoje. Contas em aberto já vencidas (antes de hoje) não são trazidas. Sem tela de upload manual — essa integração é só via API.
             </p>
             <button
               onClick={sincronizarViaApi}
@@ -214,6 +219,35 @@ export default function ContasPagarPage() {
                 <option value="quitadas">Quitadas</option>
                 <option value="todas">Todas</option>
               </select>
+            </div>
+
+            <div className="flex flex-wrap items-end gap-3 mb-4">
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-wider text-[#64748B] mb-1">Vencimento de</label>
+                <input
+                  type="date"
+                  value={filtroDataDe}
+                  onChange={(e) => { setFiltroDataDe(e.target.value); setPagina(0); }}
+                  className="border border-[#E2E8F0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#336699]"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-wider text-[#64748B] mb-1">Vencimento até</label>
+                <input
+                  type="date"
+                  value={filtroDataAte}
+                  onChange={(e) => { setFiltroDataAte(e.target.value); setPagina(0); }}
+                  className="border border-[#E2E8F0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#336699]"
+                />
+              </div>
+              {(filtroDataDe || filtroDataAte) && (
+                <button
+                  onClick={() => { setFiltroDataDe(''); setFiltroDataAte(''); setPagina(0); }}
+                  className="text-xs font-black uppercase tracking-wider bg-red-50 text-red-500 border border-red-200 px-4 py-2 rounded-lg hover:bg-red-100 transition-colors"
+                >
+                  ✕ Limpar datas
+                </button>
+              )}
             </div>
 
             {gridErro && (

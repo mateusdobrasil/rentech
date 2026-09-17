@@ -28,7 +28,7 @@ type Resultado = {
 // ============================================================================
 // MONTAR LOTE DE PAGAMENTO — 4 fontes selecionáveis por funcionário
 // ============================================================================
-export type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO' | 'OP';
+export type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO' | 'OP' | 'CONTAS_PAGAR';
 
 export async function montarLoteSalariosAction(payload: {
   mesReferencia: string;
@@ -46,6 +46,14 @@ export async function montarLoteSalariosAction(payload: {
   const { mesReferencia, fontes } = payload;
   if (!fontes || fontes.length === 0) {
     return { ok: false, erro: 'Selecione ao menos uma fonte de pagamento.' };
+  }
+  // financeiro_contas_pagar não tem coluna de empresa (contas do PrimeStart
+  // não são separadas por Rentech/AlfaLight hoje) — por decisão do usuário
+  // (2026-09-17), toda conta trazida nessa fonte é debitada da empresa
+  // escolhida na tela, então essa fonte não pode ser usada sem empresa
+  // definida (as demais fontes toleram, pra não quebrar fluxo antigo).
+  if (fontes.includes('CONTAS_PAGAR') && !payload.empresaId) {
+    return { ok: false, erro: 'Selecione a empresa antes de montar um lote com Contas a Pagar (P2S) — essas contas não têm empresa própria, então usam a conta de débito da empresa escolhida.' };
   }
 
   try {
@@ -151,6 +159,22 @@ export async function montarLoteSalariosAction(payload: {
       opsPendentes = ops || [];
     }
 
+    // CONTAS A PAGAR (P2S) — mesmo tratamento de item isolado da OP (não
+    // combina por nome, não é escopada pelo mês de competência, pago_em is
+    // null evita reenvio/pagamento em dobro). "Em aberto" aqui é só
+    // quitado=false — o pedido do usuário era literalmente esse (excluir
+    // quitadas), sem outro critério de situação. O corte por vencimento (só
+    // trazer contas até a "Data de pagamento" escolhida) acontece no CLIENTE,
+    // igual já é feito pra OP — ver dentroDoFiltroData em
+    // app/admin/financeiro/rh/page.tsx.
+    let contasPagarPendentes: { id: number; descricao: string | null; fornecedor: string | null; centro: string | null; valor: number | null; valor_pago: number | null; data_vencimento: string | null; documento_fornecedor: string | null; pix_tipo: string | null; pix_chave: string | null; banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null }[] = [];
+    if (fontes.includes('CONTAS_PAGAR')) {
+      const { data: contas } = await db.from('financeiro_contas_pagar')
+        .select('id, descricao, fornecedor, centro, valor, valor_pago, data_vencimento, documento_fornecedor, pix_tipo, pix_chave, banco_codigo, banco_agencia, banco_conta, banco_tipo')
+        .eq('quitado', false).is('pago_em', null);
+      contasPagarPendentes = contas || [];
+    }
+
     const valoresAdiant = payload.valoresAdiantamento || {};
     const valoresPagto = payload.valoresPagamento || {};
     const valoresDecimoTerceiro = payload.valoresDecimoTerceiro || {};
@@ -212,7 +236,7 @@ export async function montarLoteSalariosAction(payload: {
       FOLHA: 'Nossa folha', ADIANTAMENTO: 'Adiantamento',
       PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios',
       DECIMO_TERCEIRO: '13º Salário', FERIAS: 'Férias', RESCISAO: 'Rescisão',
-      OP: 'Ordem de Pagamento'
+      OP: 'Ordem de Pagamento', CONTAS_PAGAR: 'Contas a Pagar (P2S)'
     };
 
     const itens: any[] = [];
@@ -277,6 +301,7 @@ export async function montarLoteSalariosAction(payload: {
           origem: e.origem || null,
           rescisaoId: e.rescisaoId || null,
           opId: null,
+          contaPagarId: null,
           nota: null,
           dataPagamento: null,
           valor: e.valor,
@@ -312,6 +337,7 @@ export async function montarLoteSalariosAction(payload: {
         origem: null,
         rescisaoId: null,
         opId: op.id,
+        contaPagarId: null,
         valor,
         cpf: String(op.cnpj_cpf_recebedora || '').replace(/\D/g, ''),
         metodo,
@@ -331,6 +357,50 @@ export async function montarLoteSalariosAction(payload: {
         // "sem dados bancários".
         nota: (!ehPix && !ehTed) ? [op.tipo_pagamento, op.dados_pagamento].filter(Boolean).join(': ') : null,
         pronto: (ehPix || ehTed) && valor > 0
+      });
+    });
+
+    // CONTAS A PAGAR (P2S) — cada conta também é um item isolado, igual OP.
+    // documento_fornecedor/pix_*/banco_* vêm de financeiro_contas_pagar (só
+    // preenchidos manualmente na própria tela do lote — ver
+    // salvarDadosPagamentoContaPagarAction — porque o PrimeStart não traz
+    // esse dado, ver comentário no .sql da migração). Valor é o SALDO em
+    // aberto (valor - valor_pago), não o valor original, pra contas pagas
+    // parcialmente.
+    contasPagarPendentes.forEach(c => {
+      const temPix = !!c.pix_chave;
+      const temConta = !!(c.banco_codigo && c.banco_agencia && c.banco_conta);
+      const metodo = temPix ? 'PIX' : temConta ? 'TED' : 'SEM_DADOS';
+      const saldo = Number(c.valor || 0) - Number(c.valor_pago || 0);
+      // "(#id)" no fim garante nome único por linha (chaveEdit no front é
+      // funcionario_nome+fonte) — sem isso, duas contas do mesmo fornecedor
+      // com a mesma descrição (ex.: "VALE REFEIÇÃO" de dois meses em aberto
+      // ao mesmo tempo) colidiriam e o toggle/edição de uma mexeria nas duas.
+      itens.push({
+        funcionario_nome: c.fornecedor ? `${c.fornecedor} — ${c.descricao || 'Conta a pagar'} (#${c.id})` : `${c.descricao || 'Conta a pagar'} (#${c.id})`,
+        empresa_id: payload.empresaId ?? null,
+        fonte: 'CONTAS_PAGAR',
+        fonte_rotulo: rotuloFonte.CONTAS_PAGAR,
+        temDoc: false,
+        origem: null,
+        rescisaoId: null,
+        opId: null,
+        contaPagarId: c.id,
+        valor: saldo,
+        cpf: String(c.documento_fornecedor || '').replace(/\D/g, ''),
+        metodo,
+        pix_tipo: temPix ? c.pix_tipo : null,
+        pix_chave: temPix ? c.pix_chave : null,
+        // Vencimento da própria conta — mesmo papel de item.dataPagamento na
+        // OP: usado no lugar da "Data de pagamento" digitada na tela, tanto
+        // no filtro client-side (dentroDoFiltroData) quanto no envio/CNAB.
+        dataPagamento: c.data_vencimento || null,
+        banco_codigo: temConta ? c.banco_codigo : null,
+        banco_agencia: temConta ? c.banco_agencia : null,
+        banco_conta: temConta ? c.banco_conta : null,
+        banco_tipo: temConta ? c.banco_tipo : null,
+        nota: c.centro || null,
+        pronto: (temPix || temConta) && saldo > 0
       });
     });
 
@@ -357,7 +427,8 @@ export async function montarLoteSalariosAction(payload: {
           DECIMO_TERCEIRO: itens.filter(i => i.fonte === 'DECIMO_TERCEIRO').reduce((s, i) => s + i.valor, 0),
           FERIAS: itens.filter(i => i.fonte === 'FERIAS').reduce((s, i) => s + i.valor, 0),
           RESCISAO: itens.filter(i => i.fonte === 'RESCISAO').reduce((s, i) => s + i.valor, 0),
-          OP: itens.filter(i => i.fonte === 'OP').reduce((s, i) => s + i.valor, 0)
+          OP: itens.filter(i => i.fonte === 'OP').reduce((s, i) => s + i.valor, 0),
+          CONTAS_PAGAR: itens.filter(i => i.fonte === 'CONTAS_PAGAR').reduce((s, i) => s + i.valor, 0)
         }
       }
     };
@@ -530,7 +601,7 @@ export async function listarPdfsContabilidadeAction(payload: {
 // mesma busca por nome.
 // ============================================================================
 async function construirResolvedorEmpresa(db: any, itens: any[]): Promise<(item: any) => number | null> {
-  const nomesFunc = Array.from(new Set(itens.filter(i => i.fonte !== 'OP').map(i => i.funcionario_nome)));
+  const nomesFunc = Array.from(new Set(itens.filter(i => i.fonte !== 'OP' && i.fonte !== 'CONTAS_PAGAR').map(i => i.funcionario_nome)));
   const opIds = Array.from(new Set(itens.filter(i => i.fonte === 'OP').map(i => i.opId).filter((v: any): v is string => v != null)));
 
   const [{ data: funcsLote }, { data: opsLote }] = await Promise.all([
@@ -547,10 +618,17 @@ async function construirResolvedorEmpresa(db: any, itens: any[]): Promise<(item:
   const empresaPorOpId: Record<string, number | null> = {};
   (opsLote || []).forEach((o: any) => { empresaPorOpId[o.id] = o.empresa_id; });
 
-  return (item: any): number | null =>
-    item.fonte === 'OP'
-      ? (item.opId != null ? (empresaPorOpId[item.opId] ?? null) : null)
-      : (empresaPorNome[item.funcionario_nome] ?? null);
+  return (item: any): number | null => {
+    if (item.fonte === 'OP') return item.opId != null ? (empresaPorOpId[item.opId] ?? null) : null;
+    // CONTAS_PAGAR não tem coluna de empresa própria pra re-resolver contra o
+    // banco (ver comentário em montarLoteSalariosAction) — diferente das
+    // demais fontes, que sempre re-checam contra uma fonte independente do
+    // payload do cliente, aqui não existe essa fonte independente, então
+    // confiamos no item.empresa_id já validado uma vez na montagem
+    // (payload.empresaId contra empresaPermitida).
+    if (item.fonte === 'CONTAS_PAGAR') return item.empresa_id ?? null;
+    return empresaPorNome[item.funcionario_nome] ?? null;
+  };
 }
 
 // ============================================================================
@@ -911,6 +989,13 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
     // 4 primeiros, que é a agência de fato.
     const agenciaSispag = (v: string) => String(v || '').replace(/\D/g, '').slice(0, 4);
 
+    // SISPAG exige conta com exatamente 8 dígitos (conta+dígito, preenchida
+    // com zero à esquerda quando faltar) — confirmado em produção 2026-09-17
+    // pro pagador (por isso o "00" na frente de "093124") e reconfirmado
+    // 2026-09-17 pelo usuário que a mesma regra vale pro recebedor pago por
+    // agência+conta (dados bancários, não chave Pix).
+    const contaSispag = (v: string) => String(v || '').replace(/\D/g, '').padStart(8, '0');
+
     // TESTADO E DESCARTADO (2026-09-04): mandamos data_pagamento como
     // datetime completo ("yyyy-MM-ddT00:00:00.000Z"), sugestão do time
     // técnico do Itaú — a API devolveu HTTP 500 "Erro de Processamento
@@ -954,8 +1039,18 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
           ispb,
           tipo_identificacao_conta: tipoContaSispag(item.banco_tipo),
           agencia_recebedor: agenciaSispag(item.banco_agencia),
-          conta_recebedor: String(item.banco_conta).replace(/\D/g, ''),
-          tipo_de_identificacao_do_recebedor: 'F',
+          // SISPAG espera conta com exatamente 8 dígitos (mesma regra
+          // confirmada em produção pra pagador.conta — ver comentário acima
+          // sobre o "código de beneficiário"), preenchidos com zero à
+          // esquerda quando a conta do funcionário tiver menos dígitos.
+          conta_recebedor: contaSispag(item.banco_conta),
+          // Era fixo 'F' (pessoa física) — passava despercebido porque só
+          // funcionário e OP usavam este caminho, quase sempre PF. Contas a
+          // Pagar (P2S) muda isso: fornecedor pago por agência/conta é
+          // tipicamente PJ (concessionária, prestador de serviço etc.) — CNPJ
+          // (14 dígitos) com tipo 'F' teria boa chance de ser rejeitado pelo
+          // Itaú. Deriva do tamanho do documento em vez de assumir.
+          tipo_de_identificacao_do_recebedor: String(item.cpf || '').replace(/\D/g, '').length > 11 ? 'J' : 'F',
           identificacao_recebedor: String(item.cpf || '').replace(/\D/g, ''),
           referencia_empresa, identificacao_comprovante, informacoes_entre_usuarios,
           pagador,
@@ -1003,6 +1098,15 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
             await db.from('op_ordens_pagamento')
               .update({ pago_em: new Date().toISOString(), pago_lote_id: payload.loteId })
               .eq('id', item.opId);
+          }
+          // Mesmo raciocínio da OP: FlagQuitado no PrimeStart só muda quando
+          // alguém baixa a conta manualmente lá (ou no próximo sync, se isso
+          // já tiver acontecido) — pago_em aqui é só a nossa própria trava
+          // contra reenvio, independente disso.
+          if (item.fonte === 'CONTAS_PAGAR' && item.contaPagarId) {
+            await db.from('financeiro_contas_pagar')
+              .update({ pago_em: new Date().toISOString(), pago_lote_id: payload.loteId })
+              .eq('id', item.contaPagarId);
           }
         } else {
           rejeitado++;
@@ -1171,13 +1275,16 @@ export async function reabrirItemParaReenvioAction(
     item.api_enviado_em = null;
     item.api_resposta_bruta = null;
 
-    // Devolve OP/rescisão pro estado "a pagar" — sem isso elas continuariam
-    // marcadas como pagas e nunca voltariam a aparecer num lote novo.
+    // Devolve OP/rescisão/conta a pagar pro estado "a pagar" — sem isso elas
+    // continuariam marcadas como pagas e nunca voltariam a aparecer num lote novo.
     if (item.fonte === 'RESCISAO' && item.rescisaoId) {
       await db.from('folha_rescisoes').update({ pago_em: null, pago_lote_id: null }).eq('id', item.rescisaoId);
     }
     if (item.fonte === 'OP' && item.opId) {
       await db.from('op_ordens_pagamento').update({ pago_em: null, pago_lote_id: null }).eq('id', item.opId);
+    }
+    if (item.fonte === 'CONTAS_PAGAR' && item.contaPagarId) {
+      await db.from('financeiro_contas_pagar').update({ pago_em: null, pago_lote_id: null }).eq('id', item.contaPagarId);
     }
 
     const aindaTemSucesso = itens.some(i => STATUS_PIX_SUCESSO.includes(i.api_status));

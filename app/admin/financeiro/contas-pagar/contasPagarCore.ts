@@ -73,13 +73,20 @@ export interface SincronizarContasPagarOpcoes {
   diasRetroativos?: number;
 }
 
-// Puxa só as Contas a Pagar já QUITADAS, com vencimento a partir de N dias
-// atrás (inclui todas as futuras, sem limite superior) — janela que, de
-// quebra, já filtra fora os registros com DataVencimento corrompida (ver
-// nota no topo do arquivo). Uso atual (conciliação de OPs em
-// /admin/financeiro/ops) só precisa de quitadas dos últimos 3 meses —
-// restringir aqui evita sincronizar/upsertar em massa contas antigas que
-// ninguém consulta.
+// Puxa as Contas a Pagar do P2S em DUAS consultas (a API só faz AND entre
+// critérios diferentes — não dá pra pedir "quitadas de qualquer data OU
+// abertas futuras" numa chamada só, ver nota em app/lib/p2s.ts):
+// 1) já QUITADAS, com vencimento a partir de N dias atrás (sem limite
+//    superior) — janela que, de quebra, já filtra fora os registros com
+//    DataVencimento corrompida (ver nota no topo do arquivo).
+// 2) em ABERTO (ainda não quitadas), mas só com vencimento a partir de
+//    HOJE — dá pra usar o filtro de vencimento em /admin/financeiro/contas-pagar
+//    pra pagamentos futuros já lançados no PrimeStart, sem trazer o volume
+//    de contas antigas em aberto que ninguém mais consulta (~4787 num teste
+//    empírico) — só isso já justificava não trazer tudo de uma vez.
+// Consequência: "Vencidas" (em aberto com vencimento no passado) continua
+// sem dado aqui de propósito — se precisar disso no futuro, é só adicionar
+// uma 3ª consulta nos mesmos moldes.
 export async function sincronizarContasPagarCore(opcoes: SincronizarContasPagarOpcoes = {}): Promise<Resultado> {
   const ambiente = opcoes.ambiente || 'PRODUCAO';
   const diasRetroativos = opcoes.diasRetroativos ?? 90; // ~3 meses
@@ -96,14 +103,23 @@ export async function sincronizarContasPagarCore(opcoes: SincronizarContasPagarO
     // busca a janela rolante de N dias por vencimento + quitadas, sem
     // cursor. A execução ainda é registrada no log (ver app/lib/syncLog.ts),
     // só sem o ganho de performance que as outras integrações têm.
-    const criterios = [
+    const criteriosQuitadas = [
       criterio('DataVencimento', 'ge', 'dbl', desde),
       criterio('FlagQuitado', 'eq', 'bool', true),
     ];
+    const criteriosAbertasFuturas = [
+      criterio('DataVencimento', 'ge', 'dbl', hojeSerial),
+      criterio('FlagQuitado', 'eq', 'bool', false),
+    ];
 
-    const resultado = await consultarObjetos(ambiente, 'TCustomContaPagar', criterios, { order: 'DataVencimento', proxy: true });
+    const [resultadoQuitadas, resultadoAbertas] = await Promise.all([
+      consultarObjetos(ambiente, 'TCustomContaPagar', criteriosQuitadas, { order: 'DataVencimento', proxy: true }),
+      consultarObjetos(ambiente, 'TCustomContaPagar', criteriosAbertasFuturas, { order: 'DataVencimento', proxy: true }),
+    ]);
+    const objectlist = [...resultadoQuitadas.objectlist, ...resultadoAbertas.objectlist];
+    const totalEncontradas = resultadoQuitadas.count + resultadoAbertas.count;
 
-    if (resultado.objectlist.length === 0) {
+    if (objectlist.length === 0) {
       await registrarSincronizacao({
         integracao: 'contas_pagar', ambiente, tipo: 'completa',
         cursorDesde: null, cursorAte: null,
@@ -112,11 +128,11 @@ export async function sincronizarContasPagarCore(opcoes: SincronizarContasPagarO
       return { ok: true, info: { processados: 0, totalEncontradas: 0 } };
     }
 
-    const mapaNomes = await resolverNomes(ambiente, resultado.objectlist.flatMap(o => [
+    const mapaNomes = await resolverNomes(ambiente, objectlist.flatMap(o => [
       refOuNull(o.Entidade), refOuNull(o.FormaPagamento), refOuNull(o.ContaFinanceira),
     ]));
 
-    const registros = resultado.objectlist.map(o => {
+    const registros = objectlist.map(o => {
       const entidadeOid = refOuNull(o.Entidade);
       const formaPagamentoOid = refOuNull(o.FormaPagamento);
       const contaFinanceiraOid = refOuNull(o.ContaFinanceira);
@@ -154,9 +170,9 @@ export async function sincronizarContasPagarCore(opcoes: SincronizarContasPagarO
     await registrarSincronizacao({
       integracao: 'contas_pagar', ambiente, tipo: 'completa',
       cursorDesde: null, cursorAte: null,
-      encontrados: resultado.count, processados, status: 'sucesso', iniciadoEm,
+      encontrados: totalEncontradas, processados, status: 'sucesso', iniciadoEm,
     });
-    return { ok: true, info: { processados, totalEncontradas: resultado.count } };
+    return { ok: true, info: { processados, totalEncontradas } };
   } catch (e: any) {
     await registrarSincronizacao({
       integracao: 'contas_pagar', ambiente, tipo: 'completa',

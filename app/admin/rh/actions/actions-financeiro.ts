@@ -792,14 +792,14 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
     // esse valor consistente entre pagador e recebedor pra não confundir um
     // teste com o outro.
     const moduloSispag: 'Fornecedores' | 'Diversos' = cfg.modulo_sispag === 'Diversos' ? 'Diversos' : 'Fornecedores';
-    // TESTE EMPÍRICO (2026-09-17, "código de beneficiário" indicado pelo
-    // time técnico do Itaú): agência + "00" + conta+dígito concatenados —
-    // não documentado em nenhum lugar do schema oficial (só existe
-    // nome_beneficiario, um filtro de nome, nada parecido com isso em
-    // pagador.conta). Testando mesmo assim, no lugar do que mandávamos antes
-    // (só conta+dígito, sem agência/zeros). Reverter: `conta:
+    // TESTE EMPÍRICO (2026-09-17, ajustado após 1ª tentativa falhar):
+    // primeira tentativa foi agência+"00"+conta+dígito ("74800009312-4") —
+    // não deu certo. Ajuste do time técnico do Itaú: agência FICA separada
+    // (campo `agencia` normal), só a `conta` ganha o prefixo "00" — vira
+    // "00" + conta+dígito ("00093124"), sem repetir a agência dentro dela.
+    // Não documentado em lugar nenhum do schema oficial. Reverter: `conta:
     // limpaNum(contaBase) + limpaNum(dacBase || '')` direto, sem o prefixo.
-    const contaComCodigoBeneficiario = limpaNum(cfg.agencia_debito) + '00' + limpaNum(contaBase) + limpaNum(dacBase || '');
+    const contaComCodigoBeneficiario = '00' + limpaNum(contaBase) + limpaNum(dacBase || '');
     const pagador: PagadorSispag = {
       tipo_conta: 'CC',
       agencia: limpaNum(cfg.agencia_debito),

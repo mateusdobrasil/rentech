@@ -792,13 +792,18 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
     // esse valor consistente entre pagador e recebedor pra não confundir um
     // teste com o outro.
     const moduloSispag: 'Fornecedores' | 'Diversos' = cfg.modulo_sispag === 'Diversos' ? 'Diversos' : 'Fornecedores';
-    // TESTE EMPÍRICO (2026-09-17, ajustado após 1ª tentativa falhar):
-    // primeira tentativa foi agência+"00"+conta+dígito ("74800009312-4") —
-    // não deu certo. Ajuste do time técnico do Itaú: agência FICA separada
-    // (campo `agencia` normal), só a `conta` ganha o prefixo "00" — vira
-    // "00" + conta+dígito ("00093124"), sem repetir a agência dentro dela.
-    // Não documentado em lugar nenhum do schema oficial. Reverter: `conta:
-    // limpaNum(contaBase) + limpaNum(dacBase || '')` direto, sem o prefixo.
+    // CONFIRMADO EM PRODUÇÃO (2026-09-17): pagador.conta precisa do prefixo
+    // "00" na frente de conta+dígito (ex.: "00093124"), não só conta+dígito
+    // cru como mandávamos antes ("093124") — chamado de "código de
+    // beneficiário" pelo time técnico do Itaú. Não é documentado em lugar
+    // nenhum do schema oficial (nem em pagador.conta, nem como conceito
+    // separado — só existe nome_beneficiario, um filtro de nome, sem relação
+    // com isso). A agência FICA separada no campo `agencia` normal, não entra
+    // dentro da conta. Esse foi o ajuste que finalmente fez um pagamento
+    // sair de "Inclusão - API Externa" (órfã, cod_operador "0") pra
+    // "Autorização" com operador nomeado e "Efetivação" de verdade — a causa
+    // raiz de toda a investigação "pagamento não aparece pra aprovar" que
+    // vinha desde 2026-08-10.
     const contaComCodigoBeneficiario = '00' + limpaNum(contaBase) + limpaNum(dacBase || '');
     const pagador: PagadorSispag = {
       tipo_conta: 'CC',

@@ -26,6 +26,92 @@ type Resultado = {
 };
 
 // ============================================================================
+// NORMALIZAÇÃO E VALIDAÇÃO DE DADOS DE PAGAMENTO — compartilhadas entre
+// montarLoteSalariosAction (decide se o item nasce "pronto" e mostra o aviso
+// no grid) e enviarLoteAoBancoAction (trava de segurança antes de CADA
+// chamada à API, mesmo que o item já estivesse marcado pronto — cobre o caso
+// de alguém editar manualmente a chave/CPF na grade entre montar e enviar,
+// ex.: a edição inline de Contas a Pagar). Movidas pro escopo do módulo
+// (eram locais a enviarLoteAoBancoAction) justamente pra dar pra reusar nos
+// dois lugares sem duplicar a lógica.
+//
+// Normaliza a chave Pix pro formato que o DICT/BACEN espera, ANTES de
+// enviar — três fontes diferentes alimentam item.pix_tipo com vocabulários
+// próprios pro mesmo conceito (funcionário: TELEFONE/CPF; OP: CELULAR/
+// "CPF/CNPJ"; Contas a Pagar: TELEFONE/"CPF-CNPJ"), por isso a checagem é
+// por substring (TEL/CEL, CPF/CNPJ), não igualdade exata.
+// Dois problemas reais confirmados em produção (lote #41, 2026-09-17):
+// - Telefone/celular sem "+55" na frente → "916 Chave não encontrada"
+//   (chave existe no DICT, mas sem o formato E.164 o Itaú não acha).
+// - CPF/CNPJ com máscara (ex.: "455.769.598-17", digitado à mão numa OP)
+//   → "Chave PIX inválida" (DICT só aceita dígitos puros).
+// E-mail/chave aleatória não têm esse problema — vão como cadastrados.
+function chavePixParaEnvio(item: { pix_chave?: string | null; pix_tipo?: string | null }): string {
+  const chave = String(item.pix_chave || '').trim();
+  const tipo = String(item.pix_tipo || '').toUpperCase();
+  if (chave.startsWith('+')) return chave;
+  if (tipo.includes('TEL') || tipo.includes('CEL')) {
+    const digitos = chave.replace(/\D/g, '');
+    // Já vem com código do país (55 + DDD + número = 12/13 dígitos)?
+    return digitos.length >= 12 ? `+${digitos}` : `+55${digitos}`;
+  }
+  if (tipo.includes('CPF') || tipo.includes('CNPJ')) {
+    return chave.replace(/\D/g, '');
+  }
+  return chave;
+}
+
+// Valida o FORMATO dos dados que vão pro pagamento (não confirma se a chave
+// existe de verdade no DICT — só se o valor tem cara do que o tipo declarado
+// promete), pra pegar erro óbvio ANTES de gastar uma tentativa de API com
+// algo que já dá pra saber que vai falhar (ex.: alguém deixou um texto de
+// anotação — "DADOS JÁ CADASTRADOS" — no campo da chave, em vez do valor de
+// verdade; confirmado em produção no lote #41, 6 OPs assim). Retorna null se
+// parecer válido, ou uma mensagem de erro pronta pra mostrar ao usuário.
+function validarDadosPagamentoItem(item: {
+  funcionario_nome?: string; metodo?: string;
+  pix_tipo?: string | null; pix_chave?: string | null; cpf?: string | null;
+  banco_codigo?: string | null; banco_agencia?: string | null; banco_conta?: string | null;
+}): string | null {
+  if (!item.funcionario_nome || !item.funcionario_nome.trim()) {
+    return 'Nome do favorecido está vazio.';
+  }
+  if (item.metodo === 'PIX') {
+    const chave = chavePixParaEnvio(item);
+    if (!chave) return 'Chave PIX está vazia.';
+    const tipo = String(item.pix_tipo || '').toUpperCase();
+    if (tipo.includes('CPF') || tipo.includes('CNPJ')) {
+      const digitos = chave.replace(/\D/g, '');
+      if (digitos.length !== 11 && digitos.length !== 14) {
+        return `Chave PIX tipo CPF/CNPJ com formato inválido ("${item.pix_chave}") — tem ${digitos.length} dígito(s), esperado 11 (CPF) ou 14 (CNPJ).`;
+      }
+    } else if (tipo.includes('TEL') || tipo.includes('CEL')) {
+      const digitos = chave.replace(/\D/g, '');
+      if (digitos.length < 12 || digitos.length > 13) {
+        return `Chave PIX tipo celular com formato inválido ("${item.pix_chave}") — não parece um telefone com DDI+DDD.`;
+      }
+    } else if (tipo.includes('EMAIL')) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(chave)) {
+        return `Chave PIX tipo e-mail com formato inválido: "${item.pix_chave}".`;
+      }
+    } else if (tipo.includes('ALEAT')) {
+      if (!/^[0-9a-fA-F-]{20,36}$/.test(chave)) {
+        return `Chave PIX tipo aleatória com formato inesperado: "${item.pix_chave}" — confira se não foi digitado outro texto no lugar da chave.`;
+      }
+    }
+  } else if (item.metodo === 'TED') {
+    if (!item.banco_codigo || !item.banco_agencia || !item.banco_conta) {
+      return 'Dados bancários incompletos (banco/agência/conta).';
+    }
+    const cpfDigitos = String(item.cpf || '').replace(/\D/g, '');
+    if (cpfDigitos.length !== 11 && cpfDigitos.length !== 14) {
+      return `Documento do favorecido com formato inválido para pagamento por dados bancários ("${item.cpf}") — tem ${cpfDigitos.length} dígito(s), esperado 11 (CPF) ou 14 (CNPJ).`;
+    }
+  }
+  return null;
+}
+
+// ============================================================================
 // MONTAR LOTE DE PAGAMENTO — 4 fontes selecionáveis por funcionário
 // ============================================================================
 export type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO' | 'OP' | 'CONTAS_PAGAR';
@@ -251,6 +337,11 @@ export async function montarLoteSalariosAction(payload: {
         banco_codigo: b.banco_codigo || null, banco_agencia: b.banco_agencia || null,
         banco_conta: b.banco_conta || null, banco_tipo: b.banco_tipo || null
       };
+      // Formato suspeito na ficha do funcionário (chave PIX mal digitada,
+      // CPF com dígito errado etc.) já nasce sinalizado no grid, sem esperar
+      // o usuário tentar enviar pra só então descobrir — ver
+      // validarDadosPagamentoItem no topo do arquivo.
+      const alertaDados = metodo === 'SEM_DADOS' ? null : validarDadosPagamentoItem({ funcionario_nome: nome, ...bancoInfo });
 
       const resolvido = fontesResolvidas[nome] || { recebeFechamento: true, recebeHolerite: true };
       const entradas: { fonte: FonteLote; valor: number; temDoc?: boolean; origem?: string; rescisaoId?: number }[] = [];
@@ -303,10 +394,11 @@ export async function montarLoteSalariosAction(payload: {
           opId: null,
           contaPagarId: null,
           nota: null,
+          alerta: alertaDados,
           dataPagamento: null,
           valor: e.valor,
           ...bancoInfo,
-          pronto: (temPix || temConta) && e.valor > 0
+          pronto: (temPix || temConta) && e.valor > 0 && !alertaDados
         });
       });
     });
@@ -328,8 +420,15 @@ export async function montarLoteSalariosAction(payload: {
       const ehTed = !ehPix && !!(op.banco_codigo && op.banco_agencia && op.banco_conta);
       const metodo = ehPix ? 'PIX' : ehTed ? 'TED' : 'SEM_DADOS';
       const valor = Number(op.total_geral || 0);
+      const nomeOp = op.empresa_recebedora ? `${op.empresa_recebedora} — OP #${op.numero_op}` : `OP #${op.numero_op}`;
+      const alertaDadosOp = metodo === 'SEM_DADOS' ? null : validarDadosPagamentoItem({
+        funcionario_nome: nomeOp, metodo,
+        pix_tipo: ehPix ? (op.chave_pix || null) : null, pix_chave: ehPix ? (op.dados_pagamento || null) : null,
+        cpf: String(op.cnpj_cpf_recebedora || '').replace(/\D/g, ''),
+        banco_codigo: ehTed ? op.banco_codigo : null, banco_agencia: ehTed ? op.banco_agencia : null, banco_conta: ehTed ? op.banco_conta : null,
+      });
       itens.push({
-        funcionario_nome: op.empresa_recebedora ? `${op.empresa_recebedora} — OP #${op.numero_op}` : `OP #${op.numero_op}`,
+        funcionario_nome: nomeOp,
         empresa_id: op.empresa_id ?? null,
         fonte: 'OP',
         fonte_rotulo: rotuloFonte.OP,
@@ -356,7 +455,8 @@ export async function montarLoteSalariosAction(payload: {
         // ao usuário o que foi digitado na OP em vez do aviso genérico de
         // "sem dados bancários".
         nota: (!ehPix && !ehTed) ? [op.tipo_pagamento, op.dados_pagamento].filter(Boolean).join(': ') : null,
-        pronto: (ehPix || ehTed) && valor > 0
+        alerta: alertaDadosOp,
+        pronto: (ehPix || ehTed) && valor > 0 && !alertaDadosOp
       });
     });
 
@@ -376,8 +476,15 @@ export async function montarLoteSalariosAction(payload: {
       // funcionario_nome+fonte) — sem isso, duas contas do mesmo fornecedor
       // com a mesma descrição (ex.: "VALE REFEIÇÃO" de dois meses em aberto
       // ao mesmo tempo) colidiriam e o toggle/edição de uma mexeria nas duas.
+      const nomeContaPagar = c.fornecedor ? `${c.fornecedor} — ${c.descricao || 'Conta a pagar'} (#${c.id})` : `${c.descricao || 'Conta a pagar'} (#${c.id})`;
+      const alertaDadosCp = metodo === 'SEM_DADOS' ? null : validarDadosPagamentoItem({
+        funcionario_nome: nomeContaPagar, metodo,
+        pix_tipo: temPix ? c.pix_tipo : null, pix_chave: temPix ? c.pix_chave : null,
+        cpf: String(c.documento_fornecedor || '').replace(/\D/g, ''),
+        banco_codigo: temConta ? c.banco_codigo : null, banco_agencia: temConta ? c.banco_agencia : null, banco_conta: temConta ? c.banco_conta : null,
+      });
       itens.push({
-        funcionario_nome: c.fornecedor ? `${c.fornecedor} — ${c.descricao || 'Conta a pagar'} (#${c.id})` : `${c.descricao || 'Conta a pagar'} (#${c.id})`,
+        funcionario_nome: nomeContaPagar,
         empresa_id: payload.empresaId ?? null,
         fonte: 'CONTAS_PAGAR',
         fonte_rotulo: rotuloFonte.CONTAS_PAGAR,
@@ -400,7 +507,8 @@ export async function montarLoteSalariosAction(payload: {
         banco_conta: temConta ? c.banco_conta : null,
         banco_tipo: temConta ? c.banco_tipo : null,
         nota: c.centro || null,
-        pronto: (temPix || temConta) && saldo > 0
+        alerta: alertaDadosCp,
+        pronto: (temPix || temConta) && saldo > 0 && !alertaDadosCp
       });
     });
 
@@ -954,32 +1062,6 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
     // cadastra "Conta Pagamento", por isso não há opção pra CP aqui.
     const tipoContaSispag = (bancoTipo: string | null): 'CC' | 'PP' => bancoTipo === 'POUPANCA' ? 'PP' : 'CC';
 
-    // Normaliza a chave Pix pro formato que o DICT/BACEN espera, ANTES de
-    // enviar — três fontes diferentes alimentam item.pix_tipo com
-    // vocabulários próprios pro mesmo conceito (funcionário: TELEFONE/CPF;
-    // OP: CELULAR/"CPF/CNPJ"; Contas a Pagar: TELEFONE/"CPF-CNPJ"), por isso
-    // a checagem é por substring (TEL/CEL, CPF/CNPJ), não igualdade exata.
-    // Dois problemas reais confirmados em produção (lote #41, 2026-09-17):
-    // - Telefone/celular sem "+55" na frente → "916 Chave não encontrada"
-    //   (chave existe no DICT, mas sem o formato E.164 o Itaú não acha).
-    // - CPF/CNPJ com máscara (ex.: "455.769.598-17", digitado à mão numa OP)
-    //   → "Chave PIX inválida" (DICT só aceita dígitos puros).
-    // E-mail/chave aleatória não têm esse problema — vão como cadastrados.
-    const chavePixParaEnvio = (item: any): string => {
-      const chave = String(item.pix_chave || '').trim();
-      const tipo = String(item.pix_tipo || '').toUpperCase();
-      if (chave.startsWith('+')) return chave;
-      if (tipo.includes('TEL') || tipo.includes('CEL')) {
-        const digitos = chave.replace(/\D/g, '');
-        // Já vem com código do país (55 + DDD + número = 12/13 dígitos)?
-        return digitos.length >= 12 ? `+${digitos}` : `+55${digitos}`;
-      }
-      if (tipo.includes('CPF') || tipo.includes('CNPJ')) {
-        return chave.replace(/\D/g, '');
-      }
-      return chave;
-    };
-
     // Texto livre que vai pro SISPAG (comprovante/mensagem ao recebedor) sem
     // acento nem caractere especial. O backend do SISPAG é mainframe — o
     // próprio Itaú devolve os nomes já sem acento ("RENTECH LOCACAO DE
@@ -1016,6 +1098,18 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
     let sucesso = 0, rejeitado = 0, comErro = 0;
     try {
     for (const item of pendentes) {
+      // Trava de segurança ANTES de gastar uma tentativa de API: revalida o
+      // formato dos dados mesmo que o item já estivesse "pronto" na
+      // montagem — cobre edição manual depois de montar (ex.: chave PIX
+      // digitada errado na edição inline de Contas a Pagar). Ver comentário
+      // de validarDadosPagamentoItem no topo do arquivo.
+      const erroValidacao = validarDadosPagamentoItem(item);
+      if (erroValidacao) {
+        item.api_status = 'Erro'; item.api_erro = erroValidacao; item.api_enviado_em = new Date().toISOString();
+        comErro++;
+        continue;
+      }
+
       // referencia_empresa: maxLength 20 no schema oficial.
       const referencia_empresa = textoSispag(`FOLHA ${lote.mes_referencia}`, 20);
       const identificacao_comprovante = textoSispag(`Pagamento - ${item.funcionario_nome}`, 100);

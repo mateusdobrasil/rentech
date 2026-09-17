@@ -127,6 +127,14 @@ interface ItemLote {
   dataPagamento: string | null;
   pix_tipo: string | null; pix_chave: string | null;
   banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null;
+  // Preenchido por montarLoteSalariosAction (validarDadosPagamentoItem)
+  // quando a chave PIX/CPF/dados bancários têm formato claramente errado
+  // (ex.: CPF com máscara, celular sem "+55", texto de anotação no lugar da
+  // chave) — o item nasce com pronto=false e o checkbox fica travado até o
+  // cadastro de origem (funcionário/OP/conta a pagar) ser corrigido e o
+  // lote remontado. Mesma checagem roda de novo em enviarLoteAoBancoAction
+  // como trava final, mas aqui já avisa sem precisar tentar enviar.
+  alerta: string | null;
   pronto: boolean;
   // Preenchidos por enviarLoteAoBancoAction após a chamada à API do Itaú
   // (app/lib/itauSispag.ts) — ausentes até o item ser realmente enviado.
@@ -446,7 +454,7 @@ export default function FinanceiroPage() {
     else if (fonte === 'DECIMO_TERCEIRO') setValoresDecimoTerceiro(v => ({ ...v, [nome]: valor }));
     else if (fonte === 'FERIAS') setValoresFerias(v => ({ ...v, [nome]: valor }));
     setItens(prev => prev.map(i => (i.funcionario_nome === nome && i.fonte === fonte)
-      ? { ...i, valor, pronto: i.metodo !== 'SEM_DADOS' && valor > 0 } : i));
+      ? { ...i, valor, pronto: i.metodo !== 'SEM_DADOS' && valor > 0 && !i.alerta } : i));
 
     // Grava também em folha_documentos_contabeis.valor_ocr — é de lá que
     // /admin/rh/holerite lê o valor pago pela contabilidade na hora de gerar
@@ -462,15 +470,16 @@ export default function FinanceiroPage() {
 
   const alternarItemFonte = (nome: string, fonte: FonteLote) => {
     setItens(prev => prev.map(i => (i.funcionario_nome === nome && i.fonte === fonte)
-      ? { ...i, pronto: i.metodo !== 'SEM_DADOS' && i.valor > 0 ? !i.pronto : false } : i));
+      ? { ...i, pronto: i.metodo !== 'SEM_DADOS' && i.valor > 0 && !i.alerta ? !i.pronto : false } : i));
   };
 
   // Marca/desmarca todas as linhas de uma vez — respeita a mesma regra do
-  // toggle individual: linhas sem dados bancários ou sem valor nunca ficam
-  // "pronto", mesmo em "Marcar Todos".
+  // toggle individual: linhas sem dados bancários, sem valor ou com dados
+  // suspeitos (ver alerta/validarDadosPagamentoItem) nunca ficam "pronto",
+  // mesmo em "Marcar Todos".
   const marcarTodos = (marcar: boolean) => {
     setItens(prev => prev.map(i => itemVisivel(i)
-      ? { ...i, pronto: (i.metodo !== 'SEM_DADOS' && i.valor > 0) ? marcar : false }
+      ? { ...i, pronto: (i.metodo !== 'SEM_DADOS' && i.valor > 0 && !i.alerta) ? marcar : false }
       : i));
   };
 
@@ -1391,14 +1400,16 @@ export default function FinanceiroPage() {
                       const corFonte = COR_FONTE[it.fonte].badge;
                       const chaveEdit = `${it.funcionario_nome}::${it.fonte}`;
                       return (
-                        <tr key={chaveEdit} className={`${idx % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white'} border-b border-[#E2E8F0] ${it.metodo === 'SEM_DADOS' && editandoPagamentoCP?.chaveEdit !== chaveEdit ? 'opacity-60' : ''}`}>
+                        <tr key={chaveEdit} className={`${idx % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white'} border-b border-[#E2E8F0] ${(it.metodo === 'SEM_DADOS' || it.alerta) && editandoPagamentoCP?.chaveEdit !== chaveEdit ? 'opacity-60' : ''}`}>
                           <td className="p-3 text-center">
-                            <input type="checkbox" checked={it.pronto} disabled={it.metodo === 'SEM_DADOS' || semValor} onChange={() => alternarItemFonte(it.funcionario_nome, it.fonte)} className="w-4 h-4" />
+                            <input type="checkbox" checked={it.pronto} disabled={it.metodo === 'SEM_DADOS' || semValor || !!it.alerta} onChange={() => alternarItemFonte(it.funcionario_nome, it.fonte)} className="w-4 h-4" />
                           </td>
                           <td className="p-3">
                             <span className="font-black text-[#0C1D4D] block">{it.funcionario_nome}</span>
                             <span className="text-[10px] text-gray-400">
-                              {it.metodo === 'SEM_DADOS'
+                              {it.alerta
+                                ? <span className="text-red-600 font-black" title={it.alerta}>⛔ Dados suspeitos: {it.alerta}</span>
+                                : it.metodo === 'SEM_DADOS'
                                 ? (it.fonte === 'CONTAS_PAGAR'
                                     ? <button type="button" onClick={() => abrirEdicaoPagamentoCP(it)} className="text-amber-600 font-black underline hover:text-amber-700">✏ Adicionar dados de pagamento</button>
                                     : it.fonte === 'OP' && it.nota
@@ -1406,7 +1417,7 @@ export default function FinanceiroPage() {
                                     : <span className="text-amber-600 font-black">⚠ Sem dados bancários na ficha</span>)
                                 : it.metodo === 'PIX' ? `PIX ${it.pix_tipo}: ${it.pix_chave}`
                                 : `Ag ${it.banco_agencia} · C/C ${it.banco_conta}`}
-                              {it.metodo !== 'SEM_DADOS' && it.fonte === 'CONTAS_PAGAR' && (
+                              {!it.alerta && it.metodo !== 'SEM_DADOS' && it.fonte === 'CONTAS_PAGAR' && (
                                 <button type="button" onClick={() => abrirEdicaoPagamentoCP(it)} className="ml-1 text-gray-400 hover:text-orange-600 underline">✏ editar</button>
                               )}
                             </span>

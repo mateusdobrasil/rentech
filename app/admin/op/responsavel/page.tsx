@@ -11,11 +11,25 @@ import { normalizarItensOP, ItemOPNormalizado } from '../utils';
 import { DialogOP, DialogOPState, BotaoLinkAssinatura } from '../DialogOP';
 import { supabase } from '../../../lib/supabase';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import { buscarColaboradoresParaOpAction, type ColaboradorParaOp } from '../../comercial/parceiros/actions';
 
 // Os itens em memória já chegam normalizados (ver normalizarItensOP) — não há
 // mais motivo para este tipo carregar os campos legados (description/quantity)
 // de OPs antigas, então reaproveitamos o mesmo tipo canônico de utils.ts.
 type ItemOP = ItemOPNormalizado;
+
+// Mesmas interfaces enxutas de /admin/op/nova, reaproveitadas aqui pro botão
+// "Puxar dados" no modal de EDIÇÃO — pedido do usuário 2026-09-17: poder
+// corrigir uma OP com dados errados (favorecido/CPF/PIX) sem recriar do zero.
+interface FreelancerBusca {
+  id: string;
+  nome: string;
+  cpf: string;
+  telefone: string;
+  pix_chave: string;
+  pix_tipo: string;
+  endereco: string;
+}
 
 interface OP {
   id: string;
@@ -29,6 +43,12 @@ interface OP {
   os_periodo: string;
   empresa_id: number | null;
   empresa_recebedora: string;
+  // CNPJ/CPF e endereço do favorecido — existem em NovaOPData/op_ordens_pagamento
+  // desde sempre, mas esta tela nunca expunha pra edição (só a de criação,
+  // /admin/op/nova). Adicionados junto com chave_pix/banco_* pra permitir
+  // corrigir uma OP com dados errados sem precisar recriar do zero.
+  cnpj_cpf_recebedora?: string;
+  endereco_recebedora?: string;
   cpf_signatario?: string;
   telefone_recebedora?: string;
   tipo_pagamento: string;
@@ -40,6 +60,12 @@ interface OP {
   // "+55" na frente é rejeitado pelo DICT).
   chave_pix: string;
   dados_pagamento: string;
+  // Só usados quando tipo_pagamento = TRANSFERÊNCIA — mesmas 4 colunas de
+  // folha_funcionarios, pra a OP entrar no lote automático do Financeiro RH.
+  banco_codigo?: string | null;
+  banco_agencia?: string | null;
+  banco_conta?: string | null;
+  banco_tipo?: string | null;
   total_geral: number;
   data_vencimento: string;
   observacao: string;
@@ -79,6 +105,18 @@ export default function PainelResponsavel() {
   const [modalDetalhes, setModalDetalhes] = useState<{ open: boolean; op: OP | null }>({ open: false, op: null });
   const [modalEdit, setModalEdit] = useState<{ open: boolean; op: Partial<OP> | null }>({ open: false, op: null });
   const [dialog, setDialog] = useState<DialogOPState>({ open: false, type: 'loading', title: '', msg: '' });
+
+  // Modais e Estados da Busca de Freelancers/Colaboradores — só usados
+  // dentro do modal de EDIÇÃO, pra "puxar dados" e corrigir uma OP errada.
+  const [modalFreelanceAberto, setModalFreelanceAberto] = useState(false);
+  const [listaFreelancers, setListaFreelancers] = useState<FreelancerBusca[]>([]);
+  const [termoBuscaFree, setTermoBuscaFree] = useState('');
+  const [loadingFree, setLoadingFree] = useState(false);
+
+  const [modalColaboradorAberto, setModalColaboradorAberto] = useState(false);
+  const [listaColaboradores, setListaColaboradores] = useState<ColaboradorParaOp[]>([]);
+  const [termoBuscaColaborador, setTermoBuscaColaborador] = useState('');
+  const [loadingColaborador, setLoadingColaborador] = useState(false);
 
   // Busca de dados — só executa depois que o hook resolve sessão + permissão.
   const carregarDados = async (tokenOverride?: string) => {
@@ -230,6 +268,134 @@ export default function PainelResponsavel() {
     modalEdit.op?.itens?.reduce((acc, curr) => acc + (curr.total || 0), 0) || 0
   , [modalEdit.op?.itens]);
 
+  const mascaraCpfCnpj = (valor: string) => {
+    let v = valor.replace(/\D/g, '');
+    if (v.length <= 11) {
+      v = v.replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d{1,2})$/, '$1-$2');
+    } else {
+      v = v.replace(/^(\d{2})(\d)/, '$1.$2').replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d)/, '.$1/$2').replace(/(\d{4})(\d)/, '$1-$2');
+    }
+    return v;
+  };
+  const mascaraCelular = (valor: string) =>
+    valor.replace(/\D/g, '').slice(0, 11).replace(/(\d{2})(\d)/, '($1) $2').replace(/(\d{5})(\d)/, '$1-$2');
+
+  // ============================================================================
+  // "PUXAR DADOS" NO MODAL DE EDIÇÃO — Banco de Talentos (freelancers) e
+  // Banco de Colaboradores (P2S), pra corrigir favorecido/CPF/PIX errados sem
+  // recriar a OP. Mesma lógica de /admin/op/nova, adaptada pra escrever em
+  // modalEdit.op via updateEditField em vez de setters individuais.
+  // ============================================================================
+  const abrirModalFreelance = async () => {
+    setModalFreelanceAberto(true);
+    setLoadingFree(true);
+    const { data, error } = await supabase.from('freelancers')
+      .select('id, nome, cpf, telefone, pix_chave, pix_tipo, endereco')
+      .order('created_at', { ascending: false }).limit(5000);
+    if (!error && data) setListaFreelancers(data);
+    setLoadingFree(false);
+  };
+
+  const selecionarFreelancer = (free: FreelancerBusca) => {
+    if (!modalEdit.op) return;
+    let tipoMapeado = 'CELULAR';
+    const tipoFree = (free.pix_tipo || '').toUpperCase();
+    if (tipoFree.includes('CPF') || tipoFree.includes('CNPJ')) tipoMapeado = 'CPF/CNPJ';
+    if (tipoFree.includes('EMAIL') || tipoFree.includes('E-MAIL')) tipoMapeado = 'EMAIL';
+    if (tipoFree.includes('ALEAT')) tipoMapeado = 'ALEATÓRIO';
+
+    setModalEdit({
+      ...modalEdit,
+      op: {
+        ...modalEdit.op,
+        empresa_recebedora: free.nome,
+        cnpj_cpf_recebedora: mascaraCpfCnpj(free.cpf || ''),
+        endereco_recebedora: free.endereco || '',
+        // Freelancer é sempre pessoa física — o CPF acima já serve como signatário.
+        cpf_signatario: mascaraCpfCnpj(free.cpf || ''),
+        telefone_recebedora: mascaraCelular(free.telefone || ''),
+        tipo_pagamento: 'PIX',
+        chave_pix: tipoMapeado,
+        dados_pagamento: free.pix_chave || '',
+      },
+    });
+    setModalFreelanceAberto(false);
+  };
+
+  const freelancersFiltrados = useMemo(() => {
+    if (!termoBuscaFree) return listaFreelancers;
+    const termo = termoBuscaFree.toLowerCase();
+    const termoDigitos = termo.replace(/\D/g, '');
+    return listaFreelancers.filter(f =>
+      f.nome.toLowerCase().includes(termo) ||
+      (termoDigitos && f.cpf && f.cpf.replace(/\D/g, '').includes(termoDigitos))
+    );
+  }, [listaFreelancers, termoBuscaFree]);
+
+  const abrirModalColaborador = async () => {
+    if (!perfil?.accessToken) return;
+    setModalColaboradorAberto(true);
+    setLoadingColaborador(true);
+    const res = await buscarColaboradoresParaOpAction(perfil.accessToken);
+    if (res.ok) setListaColaboradores(res.info.registros);
+    else setDialog({ open: true, type: 'error', title: 'Erro', msg: 'Não foi possível carregar o Banco de Colaboradores: ' + res.erro });
+    setLoadingColaborador(false);
+  };
+
+  // buscarColaboradoresParaOpAction já une PrimeStart + folha_funcionarios e
+  // resolve PIX/conta no servidor — aqui é só aplicar o registro escolhido.
+  const selecionarColaborador = (col: ColaboradorParaOp) => {
+    if (!modalEdit.op) return;
+    const temPix = !!col.pix_chave;
+    const temContaBancaria = !!(col.banco_codigo && col.banco_agencia && col.banco_conta);
+    let tipoMapeado = 'CELULAR';
+    if (temPix) {
+      const tipoPix = (col.pix_tipo || '').toUpperCase();
+      if (tipoPix.includes('CPF') || tipoPix.includes('CNPJ')) tipoMapeado = 'CPF/CNPJ';
+      if (tipoPix.includes('EMAIL') || tipoPix.includes('E-MAIL')) tipoMapeado = 'EMAIL';
+      if (tipoPix.includes('ALEAT')) tipoMapeado = 'ALEATÓRIO';
+    }
+
+    setModalEdit(atual => atual.op ? {
+      ...atual,
+      op: {
+        ...atual.op,
+        empresa_recebedora: col.nome,
+        cnpj_cpf_recebedora: mascaraCpfCnpj(col.cpf || ''),
+        endereco_recebedora: col.endereco || '',
+        cpf_signatario: mascaraCpfCnpj(col.cpf || ''),
+        telefone_recebedora: mascaraCelular(col.telefone || ''),
+        ...(temPix
+          ? { tipo_pagamento: 'PIX', chave_pix: tipoMapeado, dados_pagamento: col.pix_chave || '' }
+          : temContaBancaria
+            ? { tipo_pagamento: 'TRANSFERÊNCIA', banco_tipo: col.banco_tipo || 'CORRENTE', banco_codigo: col.banco_codigo, banco_agencia: col.banco_agencia, banco_conta: col.banco_conta, dados_pagamento: '' }
+            : {}),
+      },
+    } : atual);
+    setModalColaboradorAberto(false);
+
+    setDialog({
+      open: true,
+      type: (temPix || temContaBancaria) ? 'success' : 'error',
+      title: (temPix || temContaBancaria) ? 'Dados Importados' : 'Sem PIX/Conta Cadastrados',
+      msg: (temPix || temContaBancaria)
+        ? 'Nome/CPF/endereço preenchidos e PIX/conta encontrados no cadastro de funcionário com o mesmo CPF.'
+        : col.dados_bancarios_obs
+          ? `Nome/CPF/endereço preenchidos. Sem PIX/conta estruturados — dados bancários (PrimeStart, texto livre): ${col.dados_bancarios_obs}`
+          : 'Nome/CPF/endereço preenchidos. Sem PIX/conta cadastrados (nem no PrimeStart, nem na folha) — preencha manualmente.',
+    });
+  };
+
+  const colaboradoresFiltrados = useMemo(() => {
+    if (!termoBuscaColaborador) return listaColaboradores;
+    const termo = termoBuscaColaborador.toLowerCase();
+    const termoDigitos = termo.replace(/\D/g, '');
+    return listaColaboradores.filter(c =>
+      c.nome.toLowerCase().includes(termo) ||
+      (termoDigitos && c.cpf && c.cpf.replace(/\D/g, '').includes(termoDigitos))
+    );
+  }, [listaColaboradores, termoBuscaColaborador]);
+
   const salvarEdicao = async () => {
     if (!modalEdit.op?.id || !perfil) return;
     // Grava só os campos canônicos (descricao/qtd/valor_unitario/total) — os
@@ -250,9 +416,13 @@ export default function PainelResponsavel() {
     const payloadAtualizacao = {
       os_cliente: modalEdit.op.os_cliente, os_evento: modalEdit.op.os_evento,
       os_periodo: modalEdit.op.os_periodo, natureza_pagamento: modalEdit.op.natureza_pagamento,
-      empresa_recebedora: modalEdit.op.empresa_recebedora, tipo_pagamento: modalEdit.op.tipo_pagamento,
+      empresa_recebedora: modalEdit.op.empresa_recebedora,
+      cnpj_cpf_recebedora: modalEdit.op.cnpj_cpf_recebedora, endereco_recebedora: modalEdit.op.endereco_recebedora,
+      tipo_pagamento: modalEdit.op.tipo_pagamento,
       chave_pix: modalEdit.op.chave_pix,
       dados_pagamento: modalEdit.op.dados_pagamento, data_vencimento: modalEdit.op.data_vencimento,
+      banco_codigo: modalEdit.op.banco_codigo, banco_agencia: modalEdit.op.banco_agencia,
+      banco_conta: modalEdit.op.banco_conta, banco_tipo: modalEdit.op.banco_tipo,
       observacao: modalEdit.op.observacao, itens: itensValidos, total_geral: totalEdit,
       cpf_signatario: modalEdit.op.cpf_signatario, telefone_recebedora: modalEdit.op.telefone_recebedora,
     };
@@ -520,6 +690,105 @@ export default function PainelResponsavel() {
         </div>
       )}
 
+      {/* MODAL: Banco de Talentos (freelancers) — "puxar dados" dentro da EDIÇÃO */}
+      {modalFreelanceAberto && (
+        <div className="fixed inset-0 z-[8000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white">
+              <h3 className="font-black uppercase tracking-wider text-sm">👷 Buscar no Banco de Talentos</h3>
+              <button onClick={() => setModalFreelanceAberto(false)} className="text-white hover:text-red-400 text-2xl leading-none">&times;</button>
+            </div>
+            <div className="p-4 border-b border-[#E2E8F0] bg-[#F8FAFC]">
+              <input
+                type="text"
+                placeholder="Pesquisar por nome ou CPF..."
+                className="w-full p-3 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] outline-none focus:border-[#336699]"
+                value={termoBuscaFree}
+                onChange={(e) => setTermoBuscaFree(e.target.value)}
+              />
+            </div>
+            <div className="overflow-y-auto flex-grow p-4 bg-white">
+              {loadingFree ? (
+                <div className="text-center py-10 text-[#64748B] font-bold text-sm">Carregando freelancers...</div>
+              ) : freelancersFiltrados.length === 0 ? (
+                <div className="text-center py-10 text-[#64748B] font-bold text-sm">Nenhum profissional encontrado.</div>
+              ) : (
+                <div className="space-y-3">
+                  {freelancersFiltrados.map((free) => (
+                    <div key={free.id} className="border border-[#E2E8F0] rounded-xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-[#336699] transition-colors">
+                      <div>
+                        <strong className="block text-sm font-black text-[#0C1D4D]">{free.nome}</strong>
+                        <p className="text-xs text-[#64748B] mt-1">CPF: {free.cpf || 'Não info.'} | Cel: {free.telefone}</p>
+                      </div>
+                      <button
+                        onClick={() => selecionarFreelancer(free)}
+                        className="w-full sm:w-auto bg-[#E0F2FE] text-[#0369A1] hover:bg-[#BAE6FD] font-bold text-[10px] uppercase tracking-wider px-4 py-2 rounded-lg transition-colors flex-shrink-0"
+                      >
+                        Selecionar Dados
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Banco de Colaboradores (P2S) — "puxar dados" dentro da EDIÇÃO */}
+      {modalColaboradorAberto && (
+        <div className="fixed inset-0 z-[8000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white">
+              <h3 className="font-black uppercase tracking-wider text-sm">🪪 Buscar no Banco de Colaboradores</h3>
+              <button onClick={() => setModalColaboradorAberto(false)} className="text-white hover:text-red-400 text-2xl leading-none">&times;</button>
+            </div>
+            <div className="p-4 border-b border-[#E2E8F0] bg-[#F8FAFC]">
+              <input
+                type="text"
+                placeholder="Pesquisar por nome ou CPF..."
+                className="w-full p-3 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] outline-none focus:border-[#336699]"
+                value={termoBuscaColaborador}
+                onChange={(e) => setTermoBuscaColaborador(e.target.value)}
+              />
+              <p className="text-[10px] text-[#94A3B8] font-semibold mt-2">
+                ℹ Nome/CPF/endereço/celular vêm do PrimeStart e/ou da folha. PIX/conta bancária vêm da folha quando cadastrados.
+              </p>
+            </div>
+            <div className="overflow-y-auto flex-grow p-4 bg-white">
+              {loadingColaborador ? (
+                <div className="text-center py-10 text-[#64748B] font-bold text-sm">Carregando colaboradores...</div>
+              ) : colaboradoresFiltrados.length === 0 ? (
+                <div className="text-center py-10 text-[#64748B] font-bold text-sm">Nenhum colaborador encontrado.</div>
+              ) : (
+                <div className="space-y-3">
+                  {colaboradoresFiltrados.map((col) => (
+                    <div key={col.chave} className="border border-[#E2E8F0] rounded-xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-[#336699] transition-colors">
+                      <div>
+                        <strong className="block text-sm font-black text-[#0C1D4D]">{col.nome}</strong>
+                        <p className="text-xs text-[#64748B] mt-1">CPF: {col.cpf || 'Não info.'} | Cel: {col.telefone || 'Não info.'}</p>
+                        {(col.pix_chave || col.banco_conta) && (
+                          <p className="text-[10px] text-emerald-600 mt-1 font-bold">✓ PIX/conta cadastrados (folha)</p>
+                        )}
+                        {!col.pix_chave && !col.banco_conta && col.dados_bancarios_obs && (
+                          <p className="text-[10px] text-[#0369A1] mt-1 italic">💳 {col.dados_bancarios_obs}</p>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => selecionarColaborador(col)}
+                        className="w-full sm:w-auto bg-[#E0F2FE] text-[#0369A1] hover:bg-[#BAE6FD] font-bold text-[10px] uppercase tracking-wider px-4 py-2 rounded-lg transition-colors flex-shrink-0"
+                      >
+                        Selecionar Dados
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL: EDIÇÃO */}
       {modalEdit.open && modalEdit.op && (
         <div className="fixed inset-0 z-[200] flex items-start justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto py-10">
@@ -548,9 +817,21 @@ export default function PainelResponsavel() {
                 </div>
               </div>
               <div>
-                <h4 className="text-[10px] font-black uppercase text-white bg-[#0A2A4A] inline-block px-3 py-1 rounded mb-3">Financeiro e Pagamento</h4>
+                <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
+                  <h4 className="text-[10px] font-black uppercase text-white bg-[#0A2A4A] inline-block px-3 py-1 rounded">Financeiro e Pagamento</h4>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={abrirModalFreelance} className="bg-[#0C1D4D] text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-[#284B8C] transition-colors flex items-center gap-2 shadow-sm">
+                      👷 Puxar do Banco de Talentos
+                    </button>
+                    <button type="button" onClick={abrirModalColaborador} className="bg-white text-[#0C1D4D] border border-[#CBD5E1] px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-[#F0F4F8] transition-colors flex items-center gap-2 shadow-sm">
+                      🪪 Puxar do Banco de Colaboradores
+                    </button>
+                  </div>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div><label className="block text-[10px] font-bold text-[#64748B] mb-1">FAVORECIDO</label><input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded uppercase text-sm font-bold outline-none focus:border-[#336699]" value={modalEdit.op.empresa_recebedora || ''} onChange={e => updateEditField('empresa_recebedora', e.target.value)} /></div>
+                  <div><label className="block text-[10px] font-bold text-[#64748B] mb-1">CNPJ OU CPF</label><input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded text-sm font-bold outline-none focus:border-[#336699]" value={modalEdit.op.cnpj_cpf_recebedora || ''} onChange={e => updateEditField('cnpj_cpf_recebedora', mascaraCpfCnpj(e.target.value))} /></div>
+                  <div className="md:col-span-2"><label className="block text-[10px] font-bold text-[#64748B] mb-1">ENDEREÇO (OPCIONAL)</label><input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded uppercase text-sm outline-none focus:border-[#336699]" value={modalEdit.op.endereco_recebedora || ''} onChange={e => updateEditField('endereco_recebedora', e.target.value)} /></div>
                   <div>
                     <label className="block text-[10px] font-bold text-[#64748B] mb-1">FORMA</label>
                     <select className="w-full p-2.5 border border-[#CBD5E1] rounded text-sm outline-none focus:border-[#336699]" value={modalEdit.op.tipo_pagamento || 'PIX'} onChange={e => updateEditField('tipo_pagamento', e.target.value)}>
@@ -568,10 +849,25 @@ export default function PainelResponsavel() {
                       </select>
                     </div>
                   )}
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#64748B] mb-1">{modalEdit.op.tipo_pagamento === 'PIX' ? 'CHAVE PIX' : 'DADOS BANCÁRIOS'}</label>
-                    <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded uppercase text-sm outline-none focus:border-[#336699]" value={modalEdit.op.dados_pagamento || ''} onChange={e => updateEditField('dados_pagamento', e.target.value)} />
-                  </div>
+                  {modalEdit.op.tipo_pagamento === 'TRANSFERÊNCIA' ? (
+                    <div className="md:col-span-2 grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-bold text-[#64748B] mb-1">TIPO DE CONTA</label>
+                        <select className="w-full p-2.5 border border-[#CBD5E1] rounded text-sm outline-none focus:border-[#336699]" value={modalEdit.op.banco_tipo || 'CORRENTE'} onChange={e => updateEditField('banco_tipo', e.target.value)}>
+                          <option value="CORRENTE">Corrente</option>
+                          <option value="POUPANCA">Poupança</option>
+                        </select>
+                      </div>
+                      <div><label className="block text-[10px] font-bold text-[#64748B] mb-1">BANCO (CÓDIGO)</label><input type="text" placeholder="341" className="w-full p-2.5 border border-[#CBD5E1] rounded text-sm font-bold outline-none focus:border-[#336699]" value={modalEdit.op.banco_codigo || ''} onChange={e => updateEditField('banco_codigo', e.target.value)} /></div>
+                      <div><label className="block text-[10px] font-bold text-[#64748B] mb-1">AGÊNCIA</label><input type="text" placeholder="0000" className="w-full p-2.5 border border-[#CBD5E1] rounded text-sm font-bold outline-none focus:border-[#336699]" value={modalEdit.op.banco_agencia || ''} onChange={e => updateEditField('banco_agencia', e.target.value)} /></div>
+                      <div><label className="block text-[10px] font-bold text-[#64748B] mb-1">CONTA</label><input type="text" placeholder="00000-0" className="w-full p-2.5 border border-[#CBD5E1] rounded text-sm font-bold outline-none focus:border-[#336699]" value={modalEdit.op.banco_conta || ''} onChange={e => updateEditField('banco_conta', e.target.value)} /></div>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#64748B] mb-1">{modalEdit.op.tipo_pagamento === 'PIX' ? 'CHAVE PIX' : 'DADOS BANCÁRIOS'}</label>
+                      <input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded uppercase text-sm outline-none focus:border-[#336699]" value={modalEdit.op.dados_pagamento || ''} onChange={e => updateEditField('dados_pagamento', e.target.value)} />
+                    </div>
+                  )}
                   <div><label className="block text-[10px] font-bold text-red-500 mb-1">VENCIMENTO</label><input type="date" className="w-full p-2.5 border border-red-300 rounded text-sm outline-none focus:border-red-500 font-bold" value={modalEdit.op.data_vencimento || ''} onChange={e => updateEditField('data_vencimento', e.target.value)} /></div>
                   <div><label className="block text-[10px] font-bold text-[#64748B] mb-1">CPF DO SIGNATÁRIO (ASSINATURA DIGITAL)</label><input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded text-sm outline-none focus:border-[#336699] font-bold" value={modalEdit.op.cpf_signatario || ''} onChange={e => updateEditField('cpf_signatario', e.target.value)} /></div>
                   <div><label className="block text-[10px] font-bold text-[#64748B] mb-1">CELULAR DO SIGNATÁRIO (ASSINATURA DIGITAL)</label><input type="text" className="w-full p-2.5 border border-[#CBD5E1] rounded text-sm outline-none focus:border-[#336699] font-bold" value={modalEdit.op.telefone_recebedora || ''} onChange={e => updateEditField('telefone_recebedora', e.target.value)} /></div>

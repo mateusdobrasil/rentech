@@ -10,6 +10,7 @@ import { useToast } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { obterDadosPagamentoRescisaoAction } from '../../rh/actions/actions-rescisao';
 import { listarNaturezasPagamentoParaSelectAction } from '../actions-naturezas';
+import { buscarColaboradoresParaOpAction, type ColaboradorParaOp } from '../../comercial/parceiros/actions';
 
 interface ItemOP {
   id: number;
@@ -44,6 +45,7 @@ interface FuncionarioBusca {
   banco_conta: string | null;
   banco_tipo: string | null;
 }
+
 
 export default function NovaOrdemPagamento() {
   return (
@@ -133,6 +135,13 @@ function NovaOrdemPagamentoForm() {
   const [listaFuncionarios, setListaFuncionarios] = useState<FuncionarioBusca[]>([]);
   const [termoBuscaFunc, setTermoBuscaFunc] = useState('');
   const [loadingFunc, setLoadingFunc] = useState(false);
+
+  // Modais e Estados da Busca de Colaboradores (P2S) — botão sempre visível,
+  // independente da Natureza do Pagamento escolhida (diferente dos dois acima).
+  const [modalColaboradorAberto, setModalColaboradorAberto] = useState(false);
+  const [listaColaboradores, setListaColaboradores] = useState<ColaboradorParaOp[]>([]);
+  const [termoBuscaColaborador, setTermoBuscaColaborador] = useState('');
+  const [loadingColaborador, setLoadingColaborador] = useState(false);
 
   // Gestão Dinâmica de Itens
   const [itens, setItens] = useState<ItemOP[]>(
@@ -482,7 +491,73 @@ function NovaOrdemPagamentoForm() {
   }, [listaFuncionarios, termoBuscaFunc]);
 
   // ============================================================================
-  // ENVIO DO FORMULÁRIO 
+  // FUNÇÕES DE BUSCA DE COLABORADOR (MODAL — sempre disponível, qualquer Natureza)
+  // ============================================================================
+  const abrirModalColaborador = async () => {
+    if (!perfil?.accessToken) return;
+    setModalColaboradorAberto(true);
+    setLoadingColaborador(true);
+    const res = await buscarColaboradoresParaOpAction(perfil.accessToken);
+    if (res.ok) setListaColaboradores(res.info.registros);
+    else toast('Não foi possível carregar o Banco de Colaboradores: ' + res.erro, 'error');
+    setLoadingColaborador(false);
+  };
+
+  // buscarColaboradoresParaOpAction já une PrimeStart + folha_funcionarios e
+  // resolve PIX/conta no servidor — aqui é só aplicar o registro escolhido.
+  const selecionarColaborador = (col: ColaboradorParaOp) => {
+    setEmpresaRecebedora(col.nome);
+    setCnpjCpf(col.cpf || '');
+    aplicarMascaraCpfCnpj(col.cpf || '');
+    setEndereco(col.endereco || '');
+    // Colaborador é sempre pessoa física — o CPF acima já serve como
+    // signatário; não precisa preencher o campo separado.
+    aplicarMascaraCelularSignatario(col.telefone || '');
+    setModalColaboradorAberto(false);
+
+    const temPix = !!col.pix_chave;
+    const temContaBancaria = !!(col.banco_codigo && col.banco_agencia && col.banco_conta);
+    if (temPix) {
+      setTipoPagamento('PIX');
+      let tipoMapeado = 'CELULAR';
+      const tipoPix = (col.pix_tipo || '').toUpperCase();
+      if (tipoPix.includes('CPF') || tipoPix.includes('CNPJ')) tipoMapeado = 'CPF/CNPJ';
+      if (tipoPix.includes('EMAIL') || tipoPix.includes('E-MAIL')) tipoMapeado = 'EMAIL';
+      if (tipoPix.includes('ALEAT')) tipoMapeado = 'ALEATÓRIO';
+      setChavePix(tipoMapeado);
+      setDadosPagamento(col.pix_chave || '');
+    } else if (temContaBancaria) {
+      setTipoPagamento('TRANSFERÊNCIA');
+      setBancoTipo(col.banco_tipo || 'CORRENTE');
+      setBancoCodigo(col.banco_codigo || '');
+      setBancoAgencia(col.banco_agencia || '');
+      setBancoConta(col.banco_conta || '');
+      setDadosPagamento('');
+    }
+
+    if (temPix || temContaBancaria) {
+      toast('Dados de pagamento (PIX/conta) preenchidos a partir do cadastro de funcionário com o mesmo CPF.', 'success');
+    } else if (col.dados_bancarios_obs) {
+      // Sem estruturado em lugar nenhum — mostra o texto livre do PrimeStart
+      // como dica, mas o usuário ainda precisa digitar a chave/conta à mão.
+      toast(`Sem PIX/conta cadastrados — dados bancários (PrimeStart, texto livre): ${col.dados_bancarios_obs}`, 'info');
+    } else {
+      toast('Sem PIX/conta bancária cadastrados para este colaborador (nem no PrimeStart, nem na folha) — preencha manualmente.', 'info');
+    }
+  };
+
+  const colaboradoresFiltrados = useMemo(() => {
+    if (!termoBuscaColaborador) return listaColaboradores;
+    const termo = termoBuscaColaborador.toLowerCase();
+    const termoDigitos = termo.replace(/\D/g, '');
+    return listaColaboradores.filter(c =>
+      c.nome.toLowerCase().includes(termo) ||
+      (termoDigitos && c.cpf && c.cpf.replace(/\D/g, '').includes(termoDigitos))
+    );
+  }, [listaColaboradores, termoBuscaColaborador]);
+
+  // ============================================================================
+  // ENVIO DO FORMULÁRIO
   // ============================================================================
   const handleSubmeterFormulario = async () => {
     setLoading(true);
@@ -732,6 +807,62 @@ function NovaOrdemPagamentoForm() {
         </div>
       )}
 
+      {/* Modal do Banco de Colaboradores (P2S) — independente da Natureza */}
+      {modalColaboradorAberto && (
+        <div className="fixed inset-0 z-[8000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white">
+              <h3 className="font-black uppercase tracking-wider text-sm">🪪 Buscar no Banco de Colaboradores</h3>
+              <button onClick={() => setModalColaboradorAberto(false)} className="text-white hover:text-red-400 text-2xl leading-none">&times;</button>
+            </div>
+
+            <div className="p-4 border-b border-[#E2E8F0] bg-[#F8FAFC]">
+              <input
+                type="text"
+                placeholder="Pesquisar por nome ou CPF..."
+                className="w-full p-3 border border-[#CBD5E1] rounded-lg text-sm text-[#0A2A4A] outline-none focus:border-[#336699]"
+                value={termoBuscaColaborador}
+                onChange={(e) => setTermoBuscaColaborador(e.target.value)}
+              />
+              <p className="text-[10px] text-[#94A3B8] font-semibold mt-2">
+                ℹ Nome/CPF/endereço/celular vêm do PrimeStart e/ou da folha. PIX/conta bancária vêm da folha quando cadastrados — quando não achar, mostra o texto livre do PrimeStart (se houver) como dica pra digitar manualmente.
+              </p>
+            </div>
+
+            <div className="overflow-y-auto flex-grow p-4 bg-white">
+              {loadingColaborador ? (
+                <div className="text-center py-10 text-[#64748B] font-bold text-sm">Carregando colaboradores...</div>
+              ) : colaboradoresFiltrados.length === 0 ? (
+                <div className="text-center py-10 text-[#64748B] font-bold text-sm">Nenhum colaborador encontrado.</div>
+              ) : (
+                <div className="space-y-3">
+                  {colaboradoresFiltrados.map((col) => (
+                    <div key={col.chave} className="border border-[#E2E8F0] rounded-xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-[#336699] transition-colors">
+                      <div>
+                        <strong className="block text-sm font-black text-[#0C1D4D]">{col.nome}</strong>
+                        <p className="text-xs text-[#64748B] mt-1">CPF: {col.cpf || 'Não info.'} | Cel: {col.telefone || 'Não info.'}</p>
+                        {(col.pix_chave || col.banco_conta) && (
+                          <p className="text-[10px] text-emerald-600 mt-1 font-bold">✓ PIX/conta cadastrados (folha)</p>
+                        )}
+                        {!col.pix_chave && !col.banco_conta && col.dados_bancarios_obs && (
+                          <p className="text-[10px] text-[#0369A1] mt-1 italic">💳 {col.dados_bancarios_obs}</p>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => selecionarColaborador(col)}
+                        className="w-full sm:w-auto bg-[#E0F2FE] text-[#0369A1] hover:bg-[#BAE6FD] font-bold text-[10px] uppercase tracking-wider px-4 py-2 rounded-lg transition-colors flex-shrink-0"
+                      >
+                        Selecionar Dados
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-lg border border-[#E2E8F0] overflow-hidden print:border-none print:shadow-none">
         
         {/* Cabeçalho — sem logo fixa: a tela é usada por qualquer empresa do grupo (Rentech, AlfaLight, ...) */}
@@ -810,22 +941,32 @@ function NovaOrdemPagamentoForm() {
             <div className="flex justify-between items-center border-b border-[#E2E8F0] pb-2 mb-2">
               <h3 className="text-sm font-black text-[#0A2A4A] uppercase tracking-widest">Dados do Favorecido (Recebedor)</h3>
               
-              {natureza === 'FREELANCE' && (
+              <div className="flex flex-wrap gap-2 justify-end">
+                {natureza === 'FREELANCE' && (
+                  <button
+                    onClick={abrirModalFreelance}
+                    className="bg-[#0C1D4D] text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-[#284B8C] transition-colors flex items-center gap-2 shadow-sm"
+                  >
+                    👷 Autocompletar do Banco de Talentos
+                  </button>
+                )}
+                {natureza === 'REEMBOLSO' && (
+                  <button
+                    onClick={abrirModalFuncionario}
+                    className="bg-[#0C1D4D] text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-[#284B8C] transition-colors flex items-center gap-2 shadow-sm"
+                  >
+                    👷 Autocompletar do Banco de Funcionários
+                  </button>
+                )}
+                {/* Independente da Natureza escolhida — pedido explícito do
+                    usuário 2026-09-17, diferente dos dois acima. */}
                 <button
-                  onClick={abrirModalFreelance}
-                  className="bg-[#0C1D4D] text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-[#284B8C] transition-colors flex items-center gap-2 shadow-sm"
+                  onClick={abrirModalColaborador}
+                  className="bg-white text-[#0C1D4D] border border-[#CBD5E1] px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-[#F0F4F8] transition-colors flex items-center gap-2 shadow-sm"
                 >
-                  👷 Autocompletar do Banco de Talentos
+                  🪪 Importar Dados de Colaborador
                 </button>
-              )}
-              {natureza === 'REEMBOLSO' && (
-                <button
-                  onClick={abrirModalFuncionario}
-                  className="bg-[#0C1D4D] text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-[#284B8C] transition-colors flex items-center gap-2 shadow-sm"
-                >
-                  👷 Autocompletar do Banco de Funcionários
-                </button>
-              )}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -14,6 +14,7 @@ import { consultarAssinaturaAction, baixarAssinadoAction } from './actions-assin
 import { autentiqueCriarDocumento } from '../../../lib/autentique';
 import { gerarRescisaoPdf } from '../../../lib/gerarRescisaoPdf';
 import { mergePdfs } from '../../../lib/mergePdf';
+import { PDFDocument } from 'pdf-lib';
 import {
   calcularRescisao, calcularDiasAvisoPrevio, calcularPercentualMultaFgts, calcularEstimativaFgts,
   type MotivoRescisao, type TipoAvisoPrevio, type ItemRescisao
@@ -369,7 +370,18 @@ export async function obterRescisaoAction(payload: { id: number }, accessToken: 
 
     const anexos = await buscarAnexosRescisao(db, payload.id);
 
-    return { ok: true, info: { rescisao: data, salarioFolha, salarioContrato, anexos } };
+    // OP já criada pra esta rescisão (ver rescisao_id em op_ordens_pagamento,
+    // .sql/op_ordens_pagamento_rescisao_id.sql) — enquanto existir uma não
+    // reprovada, a tela desabilita "Criar OP de Pagamento" e mostra qual é.
+    const { data: opVinculada } = await db.from('op_ordens_pagamento')
+      .select('id, numero_op, status')
+      .eq('rescisao_id', payload.id)
+      .neq('status', 'REPROVADA')
+      .order('data_criacao', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    return { ok: true, info: { rescisao: data, salarioFolha, salarioContrato, anexos, opVinculada: opVinculada || null } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
@@ -397,6 +409,21 @@ export async function obterDadosPagamentoRescisaoAction(payload: { id: number },
     if (r.tipo_folha !== 'PROPRIO') return { ok: false, erro: 'Este caso não tem valor calculado pelo sistema — a folha é administrada pela contabilidade.' };
     if (r.status !== 'HOMOLOGADA') return { ok: false, erro: 'Só é possível gerar a OP de pagamento depois da rescisão homologada.' };
     if (!(Number(r.valor_total_liquido) > 0)) return { ok: false, erro: 'O valor líquido desta rescisão está zerado.' };
+
+    // Barra a pré-carga (e, por consequência, a tela de Nova OP) se já existir
+    // uma OP não reprovada pra esta rescisão — o gate de verdade (contra
+    // chamada direta da action, sem passar por esta tela) é o mesmo check
+    // dentro de criarOP() em app/admin/op/actions.ts.
+    const { data: opExistente } = await db.from('op_ordens_pagamento')
+      .select('numero_op, status')
+      .eq('rescisao_id', payload.id)
+      .neq('status', 'REPROVADA')
+      .order('data_criacao', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (opExistente) {
+      return { ok: false, erro: `Já existe a OP #${opExistente.numero_op} (${opExistente.status}) para esta rescisão. Reprove-a em /admin/financeiro/ops antes de criar uma nova.` };
+    }
 
     const { data: func } = await db.from('folha_funcionarios')
       .select('cpf, celular, endereco, pix_chave, pix_tipo, banco_codigo, banco_agencia, banco_conta, banco_tipo')
@@ -873,35 +900,8 @@ export async function enviarRescisaoParaAssinaturaAction(payload: {
     if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
     if (r.status !== 'HOMOLOGADA') return { ok: false, erro: 'Só é possível enviar para assinatura depois da rescisão homologada.' };
 
-    // Folha própria: o termo é sempre o que o sistema calculou — se também
-    // houver anexo(s) da contabilidade (folha_rescisoes_anexos, múltiplos —
-    // ver .sql/rescisao_multiplos_anexos.sql), todos viram UM documento só,
-    // nessa ordem (termo primeiro, depois os anexos na ordem de envio), pro
-    // colaborador assinar tudo de uma vez (ver mergePdfs). Antes o anexo
-    // SUBSTITUÍA o termo calculado em vez de complementar — bug reportado
-    // pelo usuário em 2026-09-14.
-    // Sem folha própria (contabilidade administra): o(s) TRCT que ela mesma
-    // enviou são o único documento, não há termo nosso pra juntar.
-    const anexos = await buscarAnexosRescisao(db, r.id);
-    const baixarAnexos = async () => Promise.all(anexos.map(async a => {
-      const { data: arquivo, error: dlErr } = await db.storage.from(BUCKET).download(a.storage_path);
-      if (dlErr || !arquivo) throw new Error(dlErr?.message || `Falha ao baixar o anexo "${a.nome_arquivo}".`);
-      return new Uint8Array(await arquivo.arrayBuffer());
-    }));
-
-    let pdfBase64: string;
-    if (r.tipo_folha === 'PROPRIO' && r.dados_calculo) {
-      const termoBytes = await montarPdfBytesRescisao(db, r);
-      const anexoBytesList = await baixarAnexos();
-      const pdfBytes = anexoBytesList.length > 0 ? await mergePdfs([termoBytes, ...anexoBytesList]) : termoBytes;
-      pdfBase64 = Buffer.from(pdfBytes).toString('base64');
-    } else if (anexos.length > 0) {
-      const anexoBytesList = await baixarAnexos();
-      const pdfBytes = anexoBytesList.length > 1 ? await mergePdfs(anexoBytesList) : anexoBytesList[0];
-      pdfBase64 = Buffer.from(pdfBytes).toString('base64');
-    } else {
-      return { ok: false, erro: 'Nenhum TRCT anexado para enviar.' };
-    }
+    const pdfBytes = await montarPdfCompletoBytesRescisao(db, r);
+    const pdfBase64 = Buffer.from(pdfBytes).toString('base64');
 
     const { data: func } = await db.from('folha_funcionarios')
       .select('cpf, celular, email').eq('nome_completo', r.funcionario_nome).maybeSingle();
@@ -1093,6 +1093,70 @@ export async function gerarPdfRescisaoAction(payload: { id: number }, accessToke
     }
 
     const pdfBytes = await montarPdfBytesRescisao(db, r);
+    return { ok: true, info: { pdfBase64: Buffer.from(pdfBytes).toString('base64') } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// Junta o termo calculado (se PROPRIO) com TODOS os anexos, nessa ordem, num
+// único PDF — mesma lógica já usada pro envio pra assinatura (Autentique),
+// agora reaproveitada também só pra VISUALIZAR (sem enviar nada). Sem
+// PROPRIO ou sem dados_calculo, o "documento" é só os anexos entre si
+// (caso CONTABILIDADE, onde o TRCT é o que a própria contabilidade envia).
+// Anexo pode ser PDF ou foto (ListaAnexos aceita application/pdf,image/* —
+// ver componente em app/admin/rh/rescisao/[id]/page.tsx), mas mergePdfs só
+// entende PDF de verdade. Uma foto (ex.: exame demissional fotografado)
+// vira uma página PDF de uma imagem só antes de entrar no merge — sem isso,
+// PDFDocument.load quebra com "No PDF header found".
+async function anexoParaPdfBytes(bytes: Uint8Array, tipoMime: string | null): Promise<Uint8Array> {
+  const mime = (tipoMime || '').toLowerCase();
+  if (!mime.startsWith('image/')) return bytes; // já é PDF (ou tenta como tal)
+  const doc = await PDFDocument.create();
+  const imagem = mime.includes('png') ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
+  const pagina = doc.addPage([imagem.width, imagem.height]);
+  pagina.drawImage(imagem, { x: 0, y: 0, width: imagem.width, height: imagem.height });
+  return doc.save();
+}
+
+async function montarPdfCompletoBytesRescisao(db: ReturnType<typeof supabaseAdmin>, r: any): Promise<Uint8Array> {
+  const anexos = await buscarAnexosRescisao(db, r.id);
+  const baixarAnexos = async () => Promise.all(anexos.map(async a => {
+    const { data: arquivo, error: dlErr } = await db.storage.from(BUCKET).download(a.storage_path);
+    if (dlErr || !arquivo) throw new Error(dlErr?.message || `Falha ao baixar o anexo "${a.nome_arquivo}".`);
+    const bytes = new Uint8Array(await arquivo.arrayBuffer());
+    try {
+      return await anexoParaPdfBytes(bytes, a.tipo_mime);
+    } catch (e: any) {
+      throw new Error(`Falha ao processar o anexo "${a.nome_arquivo}": ${e.message}`);
+    }
+  }));
+
+  if (r.tipo_folha === 'PROPRIO' && r.dados_calculo) {
+    const termoBytes = await montarPdfBytesRescisao(db, r);
+    const anexoBytesList = await baixarAnexos();
+    return anexoBytesList.length > 0 ? await mergePdfs([termoBytes, ...anexoBytesList]) : termoBytes;
+  }
+  if (anexos.length > 0) {
+    const anexoBytesList = await baixarAnexos();
+    return anexoBytesList.length > 1 ? await mergePdfs(anexoBytesList) : anexoBytesList[0];
+  }
+  throw new Error('Nenhum termo calculado nem TRCT anexado para visualizar.');
+}
+
+export async function gerarPdfCompletoRescisaoAction(payload: { id: number }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoRescisao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const { data: r, error } = await db.from('folha_rescisoes').select('*').eq('id', payload.id).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
+
+    const pdfBytes = await montarPdfCompletoBytesRescisao(db, r);
     return { ok: true, info: { pdfBase64: Buffer.from(pdfBytes).toString('base64') } };
   } catch (e: any) {
     return { ok: false, erro: e.message };

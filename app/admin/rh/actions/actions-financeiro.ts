@@ -114,7 +114,7 @@ function validarDadosPagamentoItem(item: {
 // ============================================================================
 // MONTAR LOTE DE PAGAMENTO — 4 fontes selecionáveis por funcionário
 // ============================================================================
-export type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO' | 'OP' | 'CONTAS_PAGAR';
+export type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO_CONTABILIDADE' | 'RESCISAO' | 'OP' | 'CONTAS_PAGAR';
 
 export async function montarLoteSalariosAction(payload: {
   mesReferencia: string;
@@ -124,6 +124,7 @@ export async function montarLoteSalariosAction(payload: {
   valoresPagamento?: Record<string, number>;        // OCR do HOLERITE_MENSAL
   valoresDecimoTerceiro?: Record<string, number>;   // OCR do DECIMO_TERCEIRO
   valoresFerias?: Record<string, number>;           // OCR do FERIAS
+  valoresRescisaoContabilidade?: Record<string, number>; // OCR do recibo de rescisão da contabilidade
 }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
@@ -172,10 +173,12 @@ export async function montarLoteSalariosAction(payload: {
     const temPagamento = new Set<string>();
     const temDecimoTerceiro = new Set<string>();
     const temFerias = new Set<string>();
+    const temRescisaoContabilidade = new Set<string>();
     const valorOcrAdiantPorNome: Record<string, number> = {};
     const valorOcrPagtoPorNome: Record<string, number> = {};
     const valorOcrDecimoTerceiroPorNome: Record<string, number> = {};
     const valorOcrFeriasPorNome: Record<string, number> = {};
+    const valorOcrRescisaoContabPorNome: Record<string, number> = {};
     if (fontes.includes('ADIANTAMENTO') || fontes.includes('PAGAMENTO') || fontes.includes('DECIMO_TERCEIRO') || fontes.includes('FERIAS')) {
       const { data: docs } = await db.from('folha_documentos_contabeis')
         .select('funcionario_nome, tipo, valor_ocr').eq('mes_referencia', mesReferencia);
@@ -193,6 +196,23 @@ export async function montarLoteSalariosAction(payload: {
           temFerias.add(d.funcionario_nome);
           if (d.valor_ocr != null) valorOcrFeriasPorNome[d.funcionario_nome] = Number(d.valor_ocr);
         }
+      });
+    }
+    // RESCISAO_CONTABILIDADE é uma consulta À PARTE, SEM o filtro de
+    // mes_referencia acima — diferente de ADIANTAMENTO/PAGAMENTO/13º/Férias
+    // (que são de fato mensais), rescisão não é um evento do mês corrente: o
+    // recibo pode ter sido importado num mês de competência qualquer (não
+    // existe "competência" real pra rescisão, é só o campo do formulário de
+    // Separar Holerites). Filtrar por mês fazia o item nunca aparecer se a
+    // competência escolhida na montagem do lote não batesse com a usada na
+    // importação — bug reportado pelo usuário 2026-09-18. Mesmo critério de
+    // "não escopado por mês" já usado pela fonte RESCISAO (nossa) abaixo.
+    if (fontes.includes('RESCISAO_CONTABILIDADE')) {
+      const { data: docsRescisao } = await db.from('folha_documentos_contabeis')
+        .select('funcionario_nome, valor_ocr').eq('tipo', 'RESCISAO_CONTABILIDADE');
+      (docsRescisao || []).forEach(d => {
+        temRescisaoContabilidade.add(d.funcionario_nome);
+        if (d.valor_ocr != null) valorOcrRescisaoContabPorNome[d.funcionario_nome] = Number(d.valor_ocr);
       });
     }
 
@@ -215,7 +235,15 @@ export async function montarLoteSalariosAction(payload: {
     // só a mais recente (ordenado por homologado_em desc).
     const rescisaoPorNome: Record<string, number> = {};
     const rescisaoIdPorNome: Record<string, number> = {};
-    if (fontes.includes('RESCISAO')) {
+    // Calculada também quando só RESCISAO_CONTABILIDADE está selecionada
+    // (sem RESCISAO): é a mesma consulta usada por
+    // listarElegiveisRescisaoContabilidadeAction pra decidir quem é
+    // elegível a esse tipo de documento — reaproveitada aqui como o sinal
+    // de "ainda em aberto" (rescisaoPorNome[nome] !== undefined), pra
+    // RESCISAO_CONTABILIDADE parar de aparecer quando a rescisão for
+    // marcada paga, já que folha_documentos_contabeis não tem pago_em
+    // próprio pra isso.
+    if (fontes.includes('RESCISAO') || fontes.includes('RESCISAO_CONTABILIDADE')) {
       const { data: rescisoes } = await db.from('folha_rescisoes')
         .select('id, funcionario_nome, valor_total_liquido')
         .eq('status', 'HOMOLOGADA').eq('tipo_folha', 'PROPRIO').is('pago_em', null)
@@ -224,6 +252,22 @@ export async function montarLoteSalariosAction(payload: {
         if (rescisaoPorNome[r.funcionario_nome] !== undefined) return; // já pegou a mais recente
         rescisaoPorNome[r.funcionario_nome] = Number(r.valor_total_liquido || 0);
         rescisaoIdPorNome[r.funcionario_nome] = r.id;
+      });
+    }
+
+    // Rescisões que já têm uma OP não reprovada (ver rescisao_id em
+    // op_ordens_pagamento, .sql/op_ordens_pagamento_rescisao_id.sql) — pedido
+    // do usuário 2026-09-18: o item da fonte RESCISAO some pronto pra pagar
+    // pelo lote se já foi (ou está sendo) paga por uma OP manual, evitando
+    // pagar a mesma rescisão duas vezes por caminhos diferentes.
+    const opPorRescisaoId: Record<number, { numero_op: number; status: string }> = {};
+    if (fontes.includes('RESCISAO') && Object.keys(rescisaoIdPorNome).length > 0) {
+      const { data: opsDeRescisao } = await db.from('op_ordens_pagamento')
+        .select('rescisao_id, numero_op, status')
+        .in('rescisao_id', Object.values(rescisaoIdPorNome))
+        .neq('status', 'REPROVADA');
+      (opsDeRescisao || []).forEach(o => {
+        if (o.rescisao_id != null) opPorRescisaoId[o.rescisao_id] = { numero_op: o.numero_op, status: o.status };
       });
     }
 
@@ -265,6 +309,7 @@ export async function montarLoteSalariosAction(payload: {
     const valoresPagto = payload.valoresPagamento || {};
     const valoresDecimoTerceiro = payload.valoresDecimoTerceiro || {};
     const valoresFerias = payload.valoresFerias || {};
+    const valoresRescisaoContab = payload.valoresRescisaoContabilidade || {};
 
     // União dos nomes de todas as fontes selecionadas
     const nomes = new Set<string>();
@@ -278,6 +323,7 @@ export async function montarLoteSalariosAction(payload: {
     if (fontes.includes('DECIMO_TERCEIRO')) temDecimoTerceiro.forEach(n => nomes.add(n));
     if (fontes.includes('FERIAS')) temFerias.forEach(n => nomes.add(n));
     if (fontes.includes('RESCISAO')) Object.keys(rescisaoPorNome).forEach(n => nomes.add(n));
+    if (fontes.includes('RESCISAO_CONTABILIDADE')) temRescisaoContabilidade.forEach(n => nomes.add(n));
 
     // Dados bancários + valor de adiantamento da ficha
     const { data: funcs } = await db.from('folha_funcionarios')
@@ -340,7 +386,8 @@ export async function montarLoteSalariosAction(payload: {
     const rotuloFonte: Record<FonteLote, string> = {
       FOLHA: 'Nossa folha', ADIANTAMENTO: 'Adiantamento',
       PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios',
-      DECIMO_TERCEIRO: '13º Salário', FERIAS: 'Férias', RESCISAO: 'Rescisão',
+      DECIMO_TERCEIRO: '13º Salário', FERIAS: 'Férias',
+      RESCISAO_CONTABILIDADE: 'Rescisão (contabilidade)', RESCISAO: 'Rescisão',
       OP: 'Ordem de Pagamento', CONTAS_PAGAR: 'Contas a Pagar (P2S)'
     };
 
@@ -363,7 +410,7 @@ export async function montarLoteSalariosAction(payload: {
       const alertaDados = metodo === 'SEM_DADOS' ? null : validarDadosPagamentoItem({ funcionario_nome: nome, ...bancoInfo });
 
       const resolvido = fontesResolvidas[nome] || { recebeFechamento: true, recebeHolerite: true };
-      const entradas: { fonte: FonteLote; valor: number; temDoc?: boolean; origem?: string; rescisaoId?: number }[] = [];
+      const entradas: { fonte: FonteLote; valor: number; temDoc?: boolean; origem?: string; rescisaoId?: number; alerta?: string | null }[] = [];
 
       if (fontes.includes('FOLHA') && resolvido.recebeFechamento && folhaPorNome[nome] !== undefined && elegivelNoMes(nome)) {
         entradas.push({ fonte: 'FOLHA', valor: folhaPorNome[nome] });
@@ -400,10 +447,34 @@ export async function montarLoteSalariosAction(payload: {
       // a elegibilidade já foi fixada em tipo_folha='PROPRIO' no momento em
       // que a rescisão foi criada (ver actions-rescisao.ts).
       if (fontes.includes('RESCISAO') && rescisaoPorNome[nome] !== undefined) {
-        entradas.push({ fonte: 'RESCISAO', valor: rescisaoPorNome[nome], rescisaoId: rescisaoIdPorNome[nome] });
+        const idRescisao = rescisaoIdPorNome[nome];
+        const opExistente = opPorRescisaoId[idRescisao];
+        const alertaOp = opExistente ? `Já existe a OP #${opExistente.numero_op} (${opExistente.status}) para esta rescisão — reprove-a em /admin/financeiro/ops antes de pagar por aqui, senão paga em dobro.` : null;
+        entradas.push({ fonte: 'RESCISAO', valor: rescisaoPorNome[nome], rescisaoId: idRescisao, alerta: alertaOp });
+      }
+      // RESCISÃO DA CONTABILIDADE (recibo próprio dela, lido por OCR) — mesmo
+      // caso da RESCISAO acima: por natureza é sempre de alguém já desligado,
+      // então também não passa por elegivelNoMes nem pela hierarquia de
+      // recebeFechamento/recebeHolerite. Pedido do usuário 2026-09-18: quando
+      // o funcionário tem NOSSA rescisão calculada (fonte RESCISAO) E também
+      // um recibo separado vindo da contabilidade, os dois entram como itens
+      // distintos no mesmo lote (não se combinam num valor só).
+      // Só aparece enquanto a rescisão do funcionário ainda está em aberto
+      // (rescisaoPorNome[nome] !== undefined — mesma consulta HOMOLOGADA/
+      // pago_em null acima). folha_documentos_contabeis não tem seu próprio
+      // pago_em pra marcar "este recibo já foi pago"; sem essa checagem o
+      // item reapareceria pra sempre em qualquer lote futuro, mesmo depois
+      // de pago, já que a consulta não é mais escopada por mês.
+      if (fontes.includes('RESCISAO_CONTABILIDADE') && temRescisaoContabilidade.has(nome) && rescisaoPorNome[nome] !== undefined) {
+        const valor = valoresRescisaoContab[nome] ?? valorOcrRescisaoContabPorNome[nome] ?? 0;
+        entradas.push({ fonte: 'RESCISAO_CONTABILIDADE', valor, temDoc: true });
       }
 
       entradas.forEach(e => {
+        // Alerta específico da entrada (ex.: RESCISAO com OP já existente)
+        // prevalece sobre o alerta genérico de dados bancários — os dois
+        // motivos nunca se combinam num item só, mas ambos bloqueiam "pronto".
+        const alertaFinal = e.alerta ?? alertaDados;
         itens.push({
           funcionario_nome: nome,
           empresa_id: empresaPorNomeFunc[nome] ?? null,
@@ -415,11 +486,11 @@ export async function montarLoteSalariosAction(payload: {
           opId: null,
           contaPagarId: null,
           nota: null,
-          alerta: alertaDados,
+          alerta: alertaFinal,
           dataPagamento: null,
           valor: e.valor,
           ...bancoInfo,
-          pronto: (temPix || temConta) && e.valor > 0 && !alertaDados
+          pronto: (temPix || temConta) && e.valor > 0 && !alertaFinal
         });
       });
     });
@@ -555,12 +626,42 @@ export async function montarLoteSalariosAction(payload: {
           BENEFICIOS: itens.filter(i => i.fonte === 'BENEFICIOS').reduce((s, i) => s + i.valor, 0),
           DECIMO_TERCEIRO: itens.filter(i => i.fonte === 'DECIMO_TERCEIRO').reduce((s, i) => s + i.valor, 0),
           FERIAS: itens.filter(i => i.fonte === 'FERIAS').reduce((s, i) => s + i.valor, 0),
+          RESCISAO_CONTABILIDADE: itens.filter(i => i.fonte === 'RESCISAO_CONTABILIDADE').reduce((s, i) => s + i.valor, 0),
           RESCISAO: itens.filter(i => i.fonte === 'RESCISAO').reduce((s, i) => s + i.valor, 0),
           OP: itens.filter(i => i.fonte === 'OP').reduce((s, i) => s + i.valor, 0),
           CONTAS_PAGAR: itens.filter(i => i.fonte === 'CONTAS_PAGAR').reduce((s, i) => s + i.valor, 0)
         }
       }
     };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// ELEGÍVEIS PARA "RESCISÃO (CONTABILIDADE)" em Separar Holerites — diferente
+// dos elegíveis normais (ativos com recebe_holerite_contabilidade), aqui é
+// justamente quem JÁ FOI desligado e tem uma rescisão NOSSA (folha_rescisoes,
+// tipo_folha='PROPRIO') homologada e ainda não paga — mesmo critério da fonte
+// RESCISAO acima. É o cenário descrito pelo usuário (2026-09-18): funcionário
+// com rescisão calculada por nós E um recibo à parte vindo da contabilidade.
+// ============================================================================
+export async function listarElegiveisRescisaoContabilidadeAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const { data: rescisoes } = await db.from('folha_rescisoes')
+      .select('funcionario_nome, empresa_id')
+      .eq('status', 'HOMOLOGADA').eq('tipo_folha', 'PROPRIO').is('pago_em', null);
+    const nomes = Array.from(new Set(
+      (rescisoes || [])
+        .filter(r => empresaPermitida(empresasPermitidas, r.empresa_id))
+        .map(r => r.funcionario_nome)
+    )).sort((a, b) => a.localeCompare(b));
+    return { ok: true, info: { elegiveis: nomes.map(nome_completo => ({ nome_completo, tipo_contrato: 'RESCISÃO' })) } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
@@ -641,7 +742,7 @@ export async function processarOcrAwsAction(
 export async function salvarValorOcrManualAction(payload: {
   funcionarioNome: string;
   mesReferencia: string;
-  tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS';
+  tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO_CONTABILIDADE';
   valor: number;
 }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
@@ -677,7 +778,7 @@ export async function salvarValorOcrManualAction(payload: {
 // ============================================================================
 export async function listarPdfsContabilidadeAction(payload: {
   mesReferencia: string;
-  tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS';
+  tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO_CONTABILIDADE';
   forcar?: boolean;
 }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
@@ -1271,6 +1372,11 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
   }
 }
 
+// Espelha STATUS_ITAU_FALHA (definida mais abaixo, junto de
+// reabrirItemParaReenvioAction) — "efetuado" é o par de sucesso de "não
+// efetuado" na mesma enumeração de status do SISPAG.
+const STATUS_ITAU_EFETUADO = 'efetuado';
+
 // ============================================================================
 // CONSULTAR STATUS ATUAL NO ITAÚ — o api_status salvo em financeiro_lotes_pagamento
 // fica congelado no momento do envio (ex.: "Sucesso" só significa "aceito
@@ -1279,8 +1385,23 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
 // se sabe consultando de novo — GET /pagamentos_sispag/{id}, ver
 // consultarPagamentoSispag em itauSispag.ts. Usado pela aba "🔌 Retorno API
 // Itaú" (botão "Consultar status atual").
+//
+// DÁ BAIXA NA OP (pedido do usuário 2026-09-18, "finalizar a integração"):
+// quando o Itaú confirma "Efetuado" (pagamento de fato liquidado, não só
+// aceito), a OP muda de PENDENTE pra PAGO automaticamente aqui — sem isso,
+// a única forma de uma OP paga via API sair de PENDENTE era o clique manual
+// em "Baixar OP" (/admin/financeiro/ops) ou a conciliação com uma Conta a
+// Pagar já quitada NO PrimeStart — que nunca acontece sozinha pra pagamento
+// feito por aqui, já que o PrimeStart não sabe que o Itaú pagou (ver
+// FlagQuitado em enviarOpP2sCore.ts: só muda por baixa manual lá dentro).
+// Não mexe em financeiro_contas_pagar/FlagQuitado — só a OP. Baixar a Conta
+// a Pagar correspondente NO PRIMESTART continua pendente: uma tentativa
+// anterior de forçar FlagQuitado por PUT genérico já se mostrou não
+// confiável (ver comentário em enviarOpP2sCore.ts), então esse lado da
+// integração fica de fora até confirmar com a P2S o método correto —
+// perguntar ao usuário antes de tentar de novo.
 // ============================================================================
-export async function consultarStatusAtualItauAction(payload: { idPagamentoSispag: string }, accessToken: string): Promise<Resultado> {
+export async function consultarStatusAtualItauAction(payload: { idPagamentoSispag: string; loteId?: number }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
@@ -1296,13 +1417,38 @@ export async function consultarStatusAtualItauAction(payload: { idPagamentoSispa
     // em app/admin/financeiro/integracao/actions.ts.
     const pagamento = data?.data ?? data;
 
+    let opBaixada: { numeroOp: number } | null = null;
+    const statusItau = semAcento(pagamento?.dados_pagamento?.status || '');
+    if (statusItau === STATUS_ITAU_EFETUADO && payload.loteId) {
+      const db = supabaseAdmin();
+      const { data: lote } = await db.from('financeiro_lotes_pagamento').select('itens').eq('id', payload.loteId).maybeSingle();
+      const itens: any[] = Array.isArray(lote?.itens) ? lote!.itens : [];
+      const item = itens.find(i => i.api_cod_pagamento === payload.idPagamentoSispag);
+      if (item?.fonte === 'OP' && item.opId) {
+        const { data: opAtualizada } = await db.from('op_ordens_pagamento')
+          .update({ status: 'PAGO', updated_at: new Date().toISOString() })
+          .eq('id', item.opId).neq('status', 'REPROVADA').neq('status', 'PAGO')
+          .select('numero_op').maybeSingle();
+        if (opAtualizada) {
+          opBaixada = { numeroOp: opAtualizada.numero_op };
+          registrarLogAuditoria({
+            usuario_nome: acesso.perfil.nome,
+            acao: `BAIXOU OP #${opAtualizada.numero_op} — STATUS: PAGO (CONFIRMADO NO ITAÚ VIA API, PAGAMENTO ${payload.idPagamentoSispag})`,
+            setor: 'OP',
+            equipamento_id: item.opId,
+            equipamento_nome: `OP #${opAtualizada.numero_op}`,
+          });
+        }
+      }
+    }
+
     registrarLogAuditoria({
       usuario_nome: acesso.perfil.nome,
       acao: `CONSULTOU STATUS ATUAL NO ITAÚ (SISPAG ${payload.idPagamentoSispag})`,
       setor: 'FINANCEIRO / RH',
     });
 
-    return { ok: true, info: { ambiente: ctx.ambiente, pagamento } };
+    return { ok: true, info: { ambiente: ctx.ambiente, pagamento, opBaixada } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

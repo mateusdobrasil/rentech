@@ -62,6 +62,9 @@ function NovaOrdemPagamentoForm() {
   // abaixo. O RH ainda revisa e confirma aqui antes do envio de verdade
   // (e-mail/WhatsApp/PrimeStart só disparam ao clicar em "Enviar OP").
   const rescisaoId = useSearchParams().get('rescisaoId');
+  // Preenchido quando a rescisão de origem já tem uma OP não reprovada —
+  // trava a tela inteira em vez de deixar um formulário vazio/confuso.
+  const [opRescisaoBloqueada, setOpRescisaoBloqueada] = useState<string | null>(null);
 
   // Sessão + permissão da rota, resolvidas pelo hook compartilhado do módulo.
   const { authLoading, acessoNegado, perfil } = useAcessoRota('/admin/op/nova');
@@ -437,7 +440,11 @@ function NovaOrdemPagamentoForm() {
     if (!rescisaoId || !perfil?.accessToken) return;
     (async () => {
       const res = await obterDadosPagamentoRescisaoAction({ id: Number(rescisaoId) }, perfil.accessToken);
-      if (!res.ok) { toast('Não foi possível carregar os dados da rescisão: ' + res.erro, 'error'); return; }
+      if (!res.ok) {
+        if (res.erro?.startsWith('Já existe a OP')) { setOpRescisaoBloqueada(res.erro); return; }
+        toast('Não foi possível carregar os dados da rescisão: ' + res.erro, 'error');
+        return;
+      }
       const d = res.info;
 
       setNatureza('RESCISÃO');
@@ -651,6 +658,7 @@ function NovaOrdemPagamentoForm() {
       total_geral: totalGeral,
       file_url: urlsAnexos[0] || '',
       file_urls: urlsAnexos,
+      rescisao_id: rescisaoId ? Number(rescisaoId) : null,
     };
 
     const resposta = await criarOP(payload, perfil?.accessToken || '');
@@ -681,6 +689,21 @@ function NovaOrdemPagamentoForm() {
           <p className="text-sm text-gray-500 mb-6">Você não possui permissão para criar Ordens de Pagamento.</p>
           <button onClick={() => router.push('/admin')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
             Voltar ao Menu Principal
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (opRescisaoBloqueada) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-amber-200">
+          <div className="text-5xl mb-4">🔒</div>
+          <h2 className="text-xl font-black text-amber-600 uppercase tracking-wider mb-2">OP já existe pra esta rescisão</h2>
+          <p className="text-sm text-gray-500 mb-6">{opRescisaoBloqueada}</p>
+          <button onClick={() => router.push(`/admin/rh/rescisao/${rescisaoId}`)} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
+            ⬅ Voltar para a Rescisão
           </button>
         </div>
       </div>

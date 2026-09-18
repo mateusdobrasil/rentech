@@ -65,6 +65,12 @@ export interface NovaOPData {
   // file_url continua guardando o primeiro, por compatibilidade com telas que
   // ainda só mostram um único link (e-mail, painel financeiro).
   file_urls?: string[];
+  // Preenchido só quando a OP nasce do botão "Criar OP de Pagamento" em
+  // /admin/rh/rescisao/[id] (?rescisaoId=). Liga a OP à rescisão de origem
+  // (ver .sql/op_ordens_pagamento_rescisao_id.sql) — usado pra barrar uma
+  // segunda OP pra mesma rescisão e pra sinalizar isso no lote do Financeiro
+  // RH (fonte RESCISAO em montarLoteSalariosAction).
+  rescisao_id?: number | null;
 }
 
 // ============================================================================
@@ -162,6 +168,23 @@ export async function criarOP(data: NovaOPData, accessToken: string) {
   const empresasPermitidas = await obterEmpresasPermitidas(perfil.id, perfil.permissaoNormalizada);
   if (!empresaPermitida(empresasPermitidas, data.empresa_id)) {
     return { success: false, message: 'Você não tem permissão para criar uma OP para esta empresa.' };
+  }
+
+  // Regra do usuário (2026-09-18): uma rescisão só pode ter UMA OP em aberto
+  // por vez — a segunda só é permitida depois que a primeira for reprovada.
+  // Revalida aqui (não só na pré-carga de nova/page.tsx) porque a action é um
+  // endpoint HTTP de verdade, chamável direto sem passar pela tela.
+  if (data.rescisao_id) {
+    const { data: opExistente } = await supabaseAdmin
+      .from('op_ordens_pagamento')
+      .select('numero_op, status')
+      .eq('rescisao_id', data.rescisao_id)
+      .neq('status', 'REPROVADA')
+      .limit(1)
+      .maybeSingle();
+    if (opExistente) {
+      return { success: false, message: `Já existe a OP #${opExistente.numero_op} (${opExistente.status}) para esta rescisão. Reprove-a antes de criar uma nova.` };
+    }
   }
 
   try {

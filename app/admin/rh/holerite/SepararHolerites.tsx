@@ -33,7 +33,7 @@ interface Props {
 export default function SepararHolerites({ mesReferencia, usuarioAtual, accessToken, elegiveis, onFechar }: Props) {
   const toast = useToast();
   const [competencia, setCompetencia] = useState(mesReferencia);
-  const [tipo, setTipo] = useState<'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS'>('ADIANTAMENTO');
+  const [tipo, setTipo] = useState<'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO_CONTABILIDADE'>('ADIANTAMENTO');
   const [processando, setProcessando] = useState(false);
   const [progresso, setProgresso] = useState('');
   const [paginas, setPaginas] = useState<PaginaSeparada[]>([]);
@@ -266,6 +266,7 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, accessTo
               <option value="HOLERITE_MENSAL">Holerite de pagamento mensal</option>
               <option value="DECIMO_TERCEIRO">Décimo Terceiro (13º)</option>
               <option value="FERIAS">Férias</option>
+              <option value="RESCISAO_CONTABILIDADE">Rescisão (recibo da contabilidade)</option>
             </select>
           </div>
           <div className="flex-1">

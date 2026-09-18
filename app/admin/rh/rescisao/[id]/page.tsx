@@ -2,12 +2,14 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
+import Image from 'next/image';
 import { Analytics } from "@vercel/analytics/next";
+import logoColorido from '../../../../imgs/logo.png';
 import {
   obterRescisaoAction, atualizarItemCalculoAction, recalcularRescisaoAction, atualizarFgtsAction,
   adicionarAnexoRescisaoAction, urlAnexoRescisaoAction, removerAnexoRescisaoAction, homologarRescisaoAction, cancelarRescisaoAction,
   enviarRescisaoParaAssinaturaAction, obterAssinaturaRescisaoAction, atualizarAssinaturaRescisaoAction,
-  baixarAssinadoRescisaoAction, gerarPdfRescisaoAction, marcarRescisaoPagaAction,
+  baixarAssinadoRescisaoAction, gerarPdfRescisaoAction, gerarPdfCompletoRescisaoAction, marcarRescisaoPagaAction,
   type BaseSalarialRescisao
 } from '../../actions/actions-rescisao';
 import type { ItemRescisao, MotivoRescisao } from '../../../../lib/calculoRescisao';
@@ -17,6 +19,58 @@ import { useToast } from '../../../../components/ui/NotificationProvider';
 
 const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 const fmtMoeda = (v: number | null | undefined) => (v == null ? 'R$ 0,00' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
+
+// ============================================================================
+// VALOR POR EXTENSO (pt-BR) — mesmo texto usado na prévia do Holerite
+// (app/admin/rh/holerite/page.tsx), duplicado aqui porque é uma função local
+// não exportada por lá.
+// ============================================================================
+const UNIDADES = ['', 'UM', 'DOIS', 'TRÊS', 'QUATRO', 'CINCO', 'SEIS', 'SETE', 'OITO', 'NOVE'];
+const DEZ_A_DEZENOVE = ['DEZ', 'ONZE', 'DOZE', 'TREZE', 'QUATORZE', 'QUINZE', 'DEZESSEIS', 'DEZESSETE', 'DEZOITO', 'DEZENOVE'];
+const DEZENAS = ['', '', 'VINTE', 'TRINTA', 'QUARENTA', 'CINQUENTA', 'SESSENTA', 'SETENTA', 'OITENTA', 'NOVENTA'];
+const CENTENAS = ['', 'CENTO', 'DUZENTOS', 'TREZENTOS', 'QUATROCENTOS', 'QUINHENTOS', 'SEISCENTOS', 'SETECENTOS', 'OITOCENTOS', 'NOVECENTOS'];
+
+const trioParaExtenso = (n: number): string => {
+  if (n === 0) return '';
+  if (n === 100) return 'CEM';
+  const c = Math.floor(n / 100);
+  const resto = n % 100;
+  const d = Math.floor(resto / 10);
+  const u = resto % 10;
+  const partes: string[] = [];
+  if (c > 0) partes.push(CENTENAS[c]);
+  if (resto >= 10 && resto <= 19) {
+    partes.push(DEZ_A_DEZENOVE[resto - 10]);
+  } else {
+    if (d > 0) partes.push(DEZENAS[d]);
+    if (u > 0) partes.push(UNIDADES[u]);
+  }
+  return partes.join(' E ');
+};
+
+const numeroParaExtenso = (valor: number): string => {
+  const negativo = valor < 0;
+  const absoluto = Math.abs(valor || 0);
+  let reais = Math.floor(absoluto);
+  let centavos = Math.round((absoluto - reais) * 100);
+  if (centavos === 100) { reais += 1; centavos = 0; }
+
+  const milhoes = Math.floor(reais / 1_000_000);
+  const milhares = Math.floor((reais % 1_000_000) / 1000);
+  const resto = reais % 1000;
+
+  const partes: string[] = [];
+  if (milhoes > 0) partes.push(`${trioParaExtenso(milhoes)} ${milhoes === 1 ? 'MILHÃO' : 'MILHÕES'}`);
+  if (milhares > 0) partes.push(milhares === 1 ? 'MIL' : `${trioParaExtenso(milhares)} MIL`);
+  if (resto > 0) partes.push(trioParaExtenso(resto));
+
+  let texto = partes.length > 0 ? partes.join(' E ') : 'ZERO';
+  if (reais === 1) texto += ' REAL';
+  else if (milhoes > 0 && reais % 1_000_000 === 0) texto += ' DE REAIS';
+  else texto += ' REAIS';
+  if (centavos > 0) texto += ` E ${trioParaExtenso(centavos)} ${centavos === 1 ? 'CENTAVO' : 'CENTAVOS'}`;
+  return `${negativo ? 'MENOS ' : ''}${texto}`;
+};
 
 // ============================================================================
 // INPUT COM MÁSCARA DE MOEDA (R$) — mesmo componente usado em holerite/page.tsx
@@ -131,6 +185,139 @@ const BASES_SALARIAIS: { value: BaseSalarialRescisao; label: string }[] = [
   { value: 'DIFERENCA', label: 'Diferença (Contrato − Folha)' }
 ];
 
+// ============================================================================
+// DOCUMENTO DO TERMO DE RESCISÃO — mesmo estilo visual da prévia do Holerite
+// (HoleriteDoc em app/admin/rh/holerite/page.tsx): logo, cabeçalho de dados,
+// duas colunas CRÉDITOS/DÉBITOS e valor líquido por extenso. Pedido do
+// usuário 2026-09-18: visualizar a rescisão "igual a previsualização do
+// Holerite" em vez de só abrir o PDF gerado numa aba nova.
+// ============================================================================
+const TermoRescisaoDoc = ({ rescisao, itens, totais, saldoFgts, valorMultaFgts, percentualFgts }: {
+  rescisao: RescisaoRow; itens: ItemRescisao[];
+  totais: { totalProventos: number; totalDescontos: number; valorLiquido: number };
+  saldoFgts: number; valorMultaFgts: number; percentualFgts: string;
+}) => {
+  const creditos = itens.filter(i => i.tipo === 'PROVENTO');
+  const debitos = itens.filter(i => i.tipo === 'DESCONTO');
+  const informativos = itens.filter(i => i.tipo === 'INFORMATIVO' && i.valor !== 0);
+  const linhasMax = Math.max(creditos.length, debitos.length, 1);
+
+  return (
+    <div className="termo-rescisao-doc w-full max-w-5xl bg-white p-2 md:p-8 border border-gray-200 shadow-lg print:border-none print:shadow-none print:p-0 print:max-w-none mx-auto">
+      <div className="flex justify-between items-start border-b-2 border-black pb-3 mb-3">
+        <Image src={logoColorido} alt="Rentech Logo" width={140} height={44} />
+        <div className="text-right">
+          <h1 className="text-lg font-black uppercase text-[#0C1D4D] print:text-black">Termo de Rescisão do Contrato de Trabalho</h1>
+          <p className="text-sm font-bold text-gray-700">Desligamento: {fmtData(rescisao.data_desligamento)}</p>
+          {rescisao.status !== 'HOMOLOGADA' && <p className="text-[10px] font-black text-amber-600 uppercase print:hidden">Prévia — ainda não homologada</p>}
+        </div>
+      </div>
+
+      <table className="w-full text-xs border-2 border-black mb-3 uppercase font-bold">
+        <tbody>
+          <tr className="border-b border-black">
+            <td className="p-1.5 w-32 border-r border-black bg-gray-100">NOME:</td>
+            <td className="p-1.5" colSpan={3}>{rescisao.funcionario_nome}</td>
+          </tr>
+          <tr className="border-b border-black">
+            <td className="p-1.5 w-32 border-r border-black bg-gray-100">FUNÇÃO:</td>
+            <td className="p-1.5 border-r border-black">{rescisao.cargo || '—'}</td>
+            <td className="p-1.5 w-28 border-r border-black bg-gray-100">DEPARTAMENTO:</td>
+            <td className="p-1.5">{rescisao.departamento || '—'}</td>
+          </tr>
+          <tr className="border-b border-black">
+            <td className="p-1.5 w-32 border-r border-black bg-gray-100">ADMISSÃO:</td>
+            <td className="p-1.5 border-r border-black">{fmtData(rescisao.data_admissao)}</td>
+            <td className="p-1.5 w-28 border-r border-black bg-gray-100">DESLIGAMENTO:</td>
+            <td className="p-1.5">{fmtData(rescisao.data_desligamento)}</td>
+          </tr>
+          <tr>
+            <td className="p-1.5 w-32 border-r border-black bg-gray-100">MOTIVO:</td>
+            <td className="p-1.5 border-r border-black">{MOTIVO_LABEL[rescisao.motivo] || rescisao.motivo}</td>
+            <td className="p-1.5 w-28 border-r border-black bg-gray-100">AVISO PRÉVIO:</td>
+            <td className="p-1.5">{AVISO_LABEL[rescisao.tipo_aviso_previo || ''] || '—'} {rescisao.dias_aviso_previo ? `(${rescisao.dias_aviso_previo}d)` : ''}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div className="grid grid-cols-2 border-2 border-black border-b-0">
+        <div className="text-center font-black uppercase py-0.5 border-r-2 border-black bg-gray-100 text-[#0C1D4D] print:text-black text-xs">CRÉDITOS</div>
+        <div className="text-center font-black uppercase py-0.5 bg-gray-100 text-[#0C1D4D] print:text-black text-xs">DÉBITOS</div>
+      </div>
+
+      <div className="grid grid-cols-2 border-2 border-black">
+        <div className="border-r-2 border-black flex flex-col">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b-2 border-black bg-[#E2E8F0] text-[#0C1D4D] print:text-black">
+                <th className="p-1 text-left uppercase tracking-wider">Descrição</th>
+                <th className="p-1 text-right uppercase tracking-wider">Valores</th>
+              </tr>
+            </thead>
+            <tbody className="font-semibold text-gray-800">
+              {creditos.map(item => (
+                <tr key={item.codigo}><td className="p-1">{item.descricao}</td><td className="p-1 text-right">{fmtMoeda(item.valor)}</td></tr>
+              ))}
+              {Array.from({ length: Math.max(0, linhasMax - creditos.length) }).map((_, i) => <tr key={`esp-cred-${i}`}><td className="p-1 text-transparent">_</td><td></td></tr>)}
+            </tbody>
+          </table>
+          <div className="mt-auto border-t-2 border-black bg-gray-100 flex justify-between p-1.5 font-black text-xs"><span>TOTAL CRÉDITO</span><span>{fmtMoeda(totais.totalProventos)}</span></div>
+        </div>
+
+        <div className="flex flex-col">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b-2 border-black bg-[#E2E8F0] text-[#0C1D4D] print:text-black">
+                <th className="p-1 text-left uppercase tracking-wider">Descrição</th>
+                <th className="p-1 text-right uppercase tracking-wider">Valores</th>
+              </tr>
+            </thead>
+            <tbody className="font-semibold text-gray-800">
+              {debitos.map(item => (
+                <tr key={item.codigo}><td className="p-1">{item.descricao}</td><td className="p-1 text-right">{fmtMoeda(item.valor)}</td></tr>
+              ))}
+              {Array.from({ length: Math.max(0, linhasMax - debitos.length) }).map((_, i) => <tr key={`esp-deb-${i}`}><td className="p-1 text-transparent">_</td><td></td></tr>)}
+            </tbody>
+          </table>
+          <div className="mt-auto border-t-2 border-black bg-gray-100 flex justify-between p-1.5 font-black text-xs"><span>TOTAL DÉBITO</span><span>{fmtMoeda(totais.totalDescontos)}</span></div>
+        </div>
+      </div>
+
+      {informativos.length > 0 && (
+        <div className="border-x-2 border-b-2 border-black text-[10px] text-gray-500 p-1.5">
+          {informativos.map(i => <p key={i.codigo}>ℹ {i.descricao}: {fmtMoeda(i.valor)}</p>)}
+        </div>
+      )}
+
+      <table className="w-full border-x-2 border-b-2 border-black text-xs">
+        <tbody>
+          <tr className="border-b border-gray-300"><td className="p-1.5 font-bold bg-gray-100 w-2/3">Valor Líquido a Receber</td><td className="p-1.5 font-black text-right text-base text-emerald-700 print:text-black">{fmtMoeda(totais.valorLiquido)}</td></tr>
+          <tr><td className="p-1.5 font-bold bg-gray-100">Valor por Extenso</td><td className="p-1.5 font-bold text-[10px] uppercase">{numeroParaExtenso(totais.valorLiquido)}</td></tr>
+        </tbody>
+      </table>
+
+      <table className="w-full border-x-2 border-b-2 border-black text-xs mt-3">
+        <tbody>
+          <tr className="border-b border-gray-300 bg-gray-50">
+            <td className="p-1.5 font-black uppercase text-[10px] text-gray-500" colSpan={2}>FGTS (depositado à parte — não soma ao valor líquido acima)</td>
+          </tr>
+          <tr>
+            <td className="p-1.5 font-bold w-2/3">Saldo FGTS informado × multa ({percentualFgts || 0}%)</td>
+            <td className="p-1.5 font-black text-right">{fmtMoeda(saldoFgts)} × {percentualFgts || 0}% = {fmtMoeda(valorMultaFgts)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div className="mt-10 print:mt-8 flex-col items-center justify-center w-2/3 mx-auto flex">
+        <div className="border-t-2 border-black w-full mb-1"></div>
+        <strong className="text-sm uppercase tracking-wider">{rescisao.funcionario_nome}</strong>
+        <p className="text-[10px] mt-0.5 text-gray-600">Assinatura de Quitação de Contrato</p>
+        <div className="mt-3 text-[10px] text-gray-500">São Paulo, ____ de ____________________ de 20____.</div>
+      </div>
+    </div>
+  );
+};
+
 export default function DetalheRescisaoPage() {
   const router = useRouter();
   const toast = useToast();
@@ -154,6 +341,8 @@ export default function DetalheRescisaoPage() {
   const [salarioContrato, setSalarioContrato] = useState(0);
   const [baseEscolhida, setBaseEscolhida] = useState<BaseSalarialRescisao>('FOLHA');
   const [anexos, setAnexos] = useState<AnexoRescisao[]>([]);
+  const [mostrarPrevia, setMostrarPrevia] = useState(false);
+  const [opVinculada, setOpVinculada] = useState<{ id: string; numero_op: number; status: string } | null>(null);
 
   const carregar = async () => {
     setLoading(true);
@@ -169,6 +358,7 @@ export default function DetalheRescisaoPage() {
       setSalarioContrato(Number(res.info.salarioContrato) || 0);
       setBaseEscolhida(r.base_salarial_calculo || 'FOLHA');
       setAnexos(res.info.anexos || []);
+      setOpVinculada(res.info.opVinculada || null);
     } catch (e: any) { toast('Erro ao carregar rescisão: ' + e.message, 'error'); }
     finally { setLoading(false); }
   };
@@ -291,6 +481,26 @@ export default function DetalheRescisaoPage() {
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (e: any) { toast('Erro ao gerar o termo: ' + e.message, 'error'); }
     finally { setGerandoPdf(false); }
+  };
+
+  // Mesmo termo calculado ACIMA + TODOS os anexos (extrato FGTS, exame
+  // demissional etc.), juntos num PDF só, na mesma ordem em que vão pra
+  // assinatura (ver gerarPdfCompletoRescisaoAction) — pedido do usuário
+  // 2026-09-18 pra não precisar abrir anexo por anexo pra conferir tudo.
+  const [gerandoPdfCompleto, setGerandoPdfCompleto] = useState(false);
+  const visualizarTermoCompleto = async () => {
+    setGerandoPdfCompleto(true);
+    try {
+      const res = await gerarPdfCompletoRescisaoAction({ id }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      const bin = atob(res.info.pdfBase64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+      window.open(url, '_blank', 'noopener,noreferrer');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e: any) { toast('Erro ao gerar o termo completo: ' + e.message, 'error'); }
+    finally { setGerandoPdfCompleto(false); }
   };
 
   const [homologando, setHomologando] = useState(false);
@@ -488,11 +698,12 @@ export default function DetalheRescisaoPage() {
             <h3 className="text-sm font-black text-[#0C1D4D] uppercase tracking-wider mb-3">Ações</h3>
             <div className="flex flex-wrap items-center gap-3">
               <button
-                onClick={anexos.length > 0 ? () => abrirAnexo(anexos[0].id) : visualizarTermoCalculado}
-                disabled={anexos.length === 0 && (rescisao.tipo_folha !== 'PROPRIO' || gerandoPdf)}
+                onClick={visualizarTermoCompleto}
+                disabled={gerandoPdfCompleto || (rescisao.tipo_folha !== 'PROPRIO' && anexos.length === 0)}
+                title="Junta o termo calculado (se houver) com todos os anexos, num único PDF"
                 className="text-[10px] font-black text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2.5 rounded-lg uppercase disabled:opacity-50"
               >
-                {anexos.length > 0 ? `👁 Visualizar TRCT anexado${anexos.length > 1 ? ` (1/${anexos.length})` : ''}` : gerandoPdf ? 'Gerando...' : '👁 Visualizar Termo Calculado'}
+                {gerandoPdfCompleto ? 'Gerando...' : '👁 Visualizar Termo Calculado'}
               </button>
 
               {!assinatura ? (
@@ -536,13 +747,19 @@ export default function DetalheRescisaoPage() {
 
             <div className="flex items-center gap-3 mt-3 pt-3 border-t border-[#E2E8F0]">
               {rescisao.tipo_folha === 'PROPRIO' && !rescisao.pago_em && (rescisao.valor_total_liquido || 0) > 0 && (
-                <button
-                  onClick={() => router.push(`/admin/op/nova?rescisaoId=${id}`)}
-                  className="text-[10px] font-black text-white bg-[#0C1D4D] hover:bg-[#284B8C] px-4 py-2.5 rounded-lg uppercase"
-                  title="Abre a Nova OP já preenchida com os dados desta rescisão — confira e envie por lá."
-                >
-                  💳 Criar OP de Pagamento
-                </button>
+                opVinculada ? (
+                  <span className="text-[10px] font-black text-amber-700 bg-amber-50 border border-amber-200 px-4 py-2.5 rounded-lg uppercase" title="Reprove a OP existente (em /admin/financeiro/ops) para poder criar uma nova.">
+                    🔒 Já existe a OP #{opVinculada.numero_op} ({opVinculada.status}) para esta rescisão
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => router.push(`/admin/op/nova?rescisaoId=${id}`)}
+                    className="text-[10px] font-black text-white bg-[#0C1D4D] hover:bg-[#284B8C] px-4 py-2.5 rounded-lg uppercase"
+                    title="Abre a Nova OP já preenchida com os dados desta rescisão — confira e envie por lá."
+                  >
+                    💳 Criar OP de Pagamento
+                  </button>
+                )
               )}
               {!rescisao.pago_em ? (
                 <button onClick={() => marcarPago(true)} disabled={marcandoPago} className="text-[10px] font-black text-white bg-emerald-600 hover:bg-emerald-700 px-4 py-2.5 rounded-lg uppercase disabled:opacity-50">
@@ -581,12 +798,15 @@ export default function DetalheRescisaoPage() {
               <p className="text-xs font-bold text-amber-800">⚠️ Valores calculados automaticamente com base em regras gerais da CLT. Confira e ajuste com a contabilidade antes de homologar — não é fonte legal autoritativa.</p>
             </div>
 
-            <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden">
+            <div id="calculo-rescisao-card" className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden">
               <div className="flex justify-between items-center p-4 border-b border-[#E2E8F0]">
                 <h3 className="text-sm font-black text-[#0C1D4D] uppercase tracking-wider">Cálculo da rescisão</h3>
                 <div className="flex gap-2">
+                  <button onClick={() => setMostrarPrevia(m => !m)} className={`text-[10px] font-black px-3 py-1.5 rounded-lg uppercase ${mostrarPrevia ? 'text-white bg-indigo-700' : 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100'}`}>
+                    {mostrarPrevia ? '✕ Fechar prévia' : '👁 Prévia'}
+                  </button>
                   <button onClick={visualizarTermoCalculado} disabled={gerandoPdf} className="text-[10px] font-black text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg uppercase disabled:opacity-50">
-                    {gerandoPdf ? 'Gerando...' : '👁 Visualizar Termo Calculado'}
+                    {gerandoPdf ? 'Gerando...' : '⬇ Baixar PDF do Termo'}
                   </button>
                   {!ehFinal && (
                     <button onClick={recalcular} disabled={recalculando} className="text-[10px] font-black text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg uppercase disabled:opacity-50">
@@ -595,6 +815,12 @@ export default function DetalheRescisaoPage() {
                   )}
                 </div>
               </div>
+
+              {mostrarPrevia && (
+                <div className="p-4 bg-[#F0F4F8] border-b border-[#E2E8F0]">
+                  <TermoRescisaoDoc rescisao={rescisao} itens={itens} totais={totaisLocais} saldoFgts={saldoFgts} valorMultaFgts={valorMultaFgts} percentualFgts={percentualFgts} />
+                </div>
+              )}
 
               <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-4 py-3 border-b border-[#E2E8F0] bg-gray-50">
                 <label className="text-[10px] font-black text-gray-500 uppercase whitespace-nowrap">Base salarial do cálculo</label>

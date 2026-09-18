@@ -33,7 +33,7 @@ const slug = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 // ============================================================================
 export async function salvarDocumentosContabeisAction(payload: {
   mesReferencia: string;
-  tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS';
+  tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO_CONTABILIDADE';
   nomeArquivoOrigem: string;
   importadoPor: string;
   itens: { funcionarioNome: string; pdfBase64: string; paginaOrigem: number; confiancaMatch?: 'ALTA' | 'MEDIA' | 'MANUAL' }[];
@@ -153,7 +153,7 @@ export async function listarDocumentosContabeisAction(payload: {
 // GERAR SIGNED URL para baixar/visualizar um documento
 // ============================================================================
 export async function urlDocumentoContabilAction(payload: {
-  funcionarioNome: string; mesReferencia: string; tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS';
+  funcionarioNome: string; mesReferencia: string; tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO_CONTABILIDADE';
 }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcessoDocumentos(accessToken);
   if (!acesso.ok) return { ok: false, erro: acesso.message };

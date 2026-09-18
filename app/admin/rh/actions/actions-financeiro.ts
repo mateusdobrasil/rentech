@@ -13,6 +13,7 @@ import { resolverFontesPagamento } from './actions-fontes-pagamento';
 import { extrairTextoPdf } from '../../../lib/textract';
 import { registrarLogAuditoria } from '../../../actions';
 import { enviarPixPorChave, enviarPixPorDadosBancarios, consultarPagamentoSispag, credenciaisItauConfiguradas, contextoEnvioItau, semAcento, STATUS_ITAU_EFETUADO, type PagadorSispag } from '../../../lib/itauSispag';
+import { marcarContaPagarQuitada } from '../../../lib/p2s';
 import { ispbPorCompe } from '../../../lib/bancosCompeIspb';
 
 const ROTA = '/admin/financeiro/rh';
@@ -1381,20 +1382,21 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
 // consultarPagamentoSispag em itauSispag.ts. Usado pela aba "🔌 Retorno API
 // Itaú" (botão "Consultar status atual").
 //
-// DÁ BAIXA NA OP (pedido do usuário 2026-09-18, "finalizar a integração"):
-// quando o Itaú confirma "Efetuado" (pagamento de fato liquidado, não só
-// aceito), a OP muda de PENDENTE pra PAGO automaticamente aqui — sem isso,
-// a única forma de uma OP paga via API sair de PENDENTE era o clique manual
-// em "Baixar OP" (/admin/financeiro/ops) ou a conciliação com uma Conta a
-// Pagar já quitada NO PrimeStart — que nunca acontece sozinha pra pagamento
-// feito por aqui, já que o PrimeStart não sabe que o Itaú pagou (ver
-// FlagQuitado em enviarOpP2sCore.ts: só muda por baixa manual lá dentro).
-// Não mexe em financeiro_contas_pagar/FlagQuitado — só a OP. Baixar a Conta
-// a Pagar correspondente NO PRIMESTART continua pendente: uma tentativa
-// anterior de forçar FlagQuitado por PUT genérico já se mostrou não
-// confiável (ver comentário em enviarOpP2sCore.ts), então esse lado da
-// integração fica de fora até confirmar com a P2S o método correto —
-// perguntar ao usuário antes de tentar de novo.
+// DÁ BAIXA NA OP E NO PRIMESTART (pedido do usuário 2026-09-18, "finalizar a
+// integração"): quando o Itaú confirma "Efetuado" (pagamento de fato
+// liquidado, não só aceito), esta action agora fecha o ciclo dos dois lados:
+//   1) OP local: status PENDENTE -> PAGO (já existia).
+//   2) Conta a Pagar NO PRIMESTART (TCustomContaPagar.p2s_conta_pagar_oid ou
+//      financeiro_contas_pagar.p2s_oid, conforme a fonte): FlagQuitado ->
+//      true, via TCustomContaPagar.MarcarComoQuitado — método e parâmetro
+//      (AData, obrigatório) confirmados com o suporte da P2S em 2026-09-18
+//      (ver marcarContaPagarQuitada em app/lib/p2s.ts para o histórico
+//      completo da descoberta). Testado ponta a ponta na OP #487 antes de
+//      entrar no fluxo automático aqui.
+// Se a Conta a Pagar não puder ser quitada por alguma regra de negócio do
+// PrimeStart (ex.: "período bloqueado"), a OP/conta local AINDA assim vira
+// PAGO — o motivo do bloqueio só é devolvido como aviso pra quem clicou,
+// pra tentar a baixa manualmente lá dentro depois.
 // ============================================================================
 export async function consultarStatusAtualItauAction(payload: { idPagamentoSispag: string; loteId?: number }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
@@ -1413,17 +1415,20 @@ export async function consultarStatusAtualItauAction(payload: { idPagamentoSispa
     const pagamento = data?.data ?? data;
 
     let opBaixada: { numeroOp: number } | null = null;
+    let contaPagarBaixada: { descricao: string } | null = null;
+    let avisoP2s: string | null = null;
     const statusItau = semAcento(pagamento?.dados_pagamento?.status || '');
     if (statusItau === STATUS_ITAU_EFETUADO && payload.loteId) {
       const db = supabaseAdmin();
       const { data: lote } = await db.from('financeiro_lotes_pagamento').select('itens').eq('id', payload.loteId).maybeSingle();
       const itens: any[] = Array.isArray(lote?.itens) ? lote!.itens : [];
       const item = itens.find(i => i.api_cod_pagamento === payload.idPagamentoSispag);
+
       if (item?.fonte === 'OP' && item.opId) {
         const { data: opAtualizada } = await db.from('op_ordens_pagamento')
           .update({ status: 'PAGO', updated_at: new Date().toISOString() })
           .eq('id', item.opId).neq('status', 'REPROVADA').neq('status', 'PAGO')
-          .select('numero_op').maybeSingle();
+          .select('numero_op, p2s_conta_pagar_oid').maybeSingle();
         if (opAtualizada) {
           opBaixada = { numeroOp: opAtualizada.numero_op };
           registrarLogAuditoria({
@@ -1433,6 +1438,47 @@ export async function consultarStatusAtualItauAction(payload: { idPagamentoSispa
             equipamento_id: item.opId,
             equipamento_nome: `OP #${opAtualizada.numero_op}`,
           });
+          if (opAtualizada.p2s_conta_pagar_oid) {
+            try {
+              const baixa = await marcarContaPagarQuitada('PRODUCAO', opAtualizada.p2s_conta_pagar_oid, new Date());
+              if (baixa.ok) {
+                contaPagarBaixada = { descricao: `OP #${opAtualizada.numero_op}` };
+                registrarLogAuditoria({
+                  usuario_nome: acesso.perfil.nome,
+                  acao: `DEU BAIXA NO PRIMESTART (${opAtualizada.p2s_conta_pagar_oid}) — CONTA A PAGAR DA OP #${opAtualizada.numero_op} QUITADA`,
+                  setor: 'OP',
+                  equipamento_id: item.opId,
+                  equipamento_nome: `OP #${opAtualizada.numero_op}`,
+                });
+              } else {
+                avisoP2s = `OP #${opAtualizada.numero_op} baixada aqui, mas o PrimeStart recusou a quitação da conta: ${baixa.motivo}`;
+              }
+            } catch (e: any) {
+              avisoP2s = `OP #${opAtualizada.numero_op} baixada aqui, mas falhou ao dar baixa no PrimeStart: ${e.message}`;
+            }
+          }
+        }
+      } else if (item?.fonte === 'CONTAS_PAGAR' && item.contaPagarId) {
+        const { data: contaAtualizada } = await db.from('financeiro_contas_pagar')
+          .update({ quitado: true, data_quitacao: new Date().toISOString().slice(0, 10) })
+          .eq('id', item.contaPagarId).eq('quitado', false)
+          .select('descricao, p2s_oid').maybeSingle();
+        if (contaAtualizada?.p2s_oid) {
+          try {
+            const baixa = await marcarContaPagarQuitada('PRODUCAO', contaAtualizada.p2s_oid, new Date());
+            if (baixa.ok) {
+              contaPagarBaixada = { descricao: contaAtualizada.descricao || 'Conta a Pagar' };
+              registrarLogAuditoria({
+                usuario_nome: acesso.perfil.nome,
+                acao: `DEU BAIXA NO PRIMESTART (${contaAtualizada.p2s_oid}) — CONTA A PAGAR QUITADA (CONFIRMADO NO ITAÚ VIA API, PAGAMENTO ${payload.idPagamentoSispag})`,
+                setor: 'FINANCEIRO / RH',
+              });
+            } else {
+              avisoP2s = `Marcada como paga aqui, mas o PrimeStart recusou a quitação: ${baixa.motivo}`;
+            }
+          } catch (e: any) {
+            avisoP2s = `Marcada como paga aqui, mas falhou ao dar baixa no PrimeStart: ${e.message}`;
+          }
         }
       }
     }
@@ -1443,7 +1489,7 @@ export async function consultarStatusAtualItauAction(payload: { idPagamentoSispa
       setor: 'FINANCEIRO / RH',
     });
 
-    return { ok: true, info: { ambiente: ctx.ambiente, pagamento, opBaixada } };
+    return { ok: true, info: { ambiente: ctx.ambiente, pagamento, opBaixada, contaPagarBaixada, avisoP2s } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

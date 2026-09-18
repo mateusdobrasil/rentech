@@ -348,6 +348,41 @@ export async function invocarMetodo(ambiente: AmbienteP2s, classname: string, me
   return resp.data;
 }
 
+export interface ResultadoBaixaContaPagar {
+  ok: boolean;
+  bloqueado?: boolean; // true quando PodeMarcarQuitado negou (regra de negócio, não erro de rede/API)
+  motivo?: string;
+}
+
+// Dá baixa numa Conta a Pagar (TCustomContaPagar) — usado quando o Itaú
+// confirma que um pagamento feito pela NOSSA integração (Itaú SISPAG) foi de
+// fato efetivado, já que o PrimeStart nunca fica sabendo disso sozinho (a
+// quitação lá dentro normalmente só muda pelo workflow de pagamento do
+// próprio PrimeStart). Confirmado com o suporte da P2S em 2026-09-18, com
+// bastante tentativa e erro:
+//   - PodeMarcarQuitado (SEM "Como") checa impedimento antes — retorna
+//     Result (bool) + AMensagemRetorno (motivo, se bloqueado).
+//   - MarcarComoQuitado (COM "Como") é quem quita de verdade.
+//   - Os DOIS exigem o parâmetro AData (double, formato de data do
+//     PrimeStart — ver dataParaP2s) — sem ele, o servidor responde "Method
+//     ... not found in interface metadata", um erro enganoso que não tem
+//     nada a ver com o nome do método estar errado.
+export async function marcarContaPagarQuitada(ambiente: AmbienteP2s, oid: string, dataQuitacao: Date): Promise<ResultadoBaixaContaPagar> {
+  const paramlist: ParametroMetodoP2s[] = [
+    { paramname: 'AData', paramtype: 'dbl', paramvalue: String(dataParaP2s(dataQuitacao)) },
+  ];
+
+  const checagem = await invocarMetodo(ambiente, 'TCustomContaPagar', 'PodeMarcarQuitado', oid, paramlist);
+  const podeQuitar = checagem.paramlist.find(p => p.paramname === 'Result')?.paramvalue === 'true';
+  if (!podeQuitar) {
+    const motivo = checagem.paramlist.find(p => p.paramname === 'AMensagemRetorno')?.paramvalue;
+    return { ok: false, bloqueado: true, motivo: String(motivo || 'Não é possível quitar esta conta no momento.').trim() || 'Não é possível quitar esta conta no momento.' };
+  }
+
+  await invocarMetodo(ambiente, 'TCustomContaPagar', 'MarcarComoQuitado', oid, paramlist);
+  return { ok: true };
+}
+
 // Teste de conectividade/autenticação leve — consulta TCustomParceiro com um
 // critério que nunca bate (CodigoParceiro = -1), então count vem sempre 0
 // independente do tamanho da base, mas o round-trip completo (rede + Basic

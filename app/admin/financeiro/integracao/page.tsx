@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { consultarPagamentosItauAction, consultarPagamentoItauAction, type FiltrosConsultaItau } from './actions';
 import { listarIntegracoesAction, statusItauApiAction } from '../../parametros/integracao/actions';
+import { conciliarOpsComContasPagarAction, conciliarOpsComItauAction } from '../ops/actions';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
@@ -194,6 +195,62 @@ export default function IntegracaoFinanceiraPage() {
     if (statusRes.ok) setStatusItauApi(statusRes.info);
   };
 
+  // "🔗 Conciliar Contas" — mesma conciliação de duas pontas já usada em
+  // /admin/financeiro/ops (botão "Conciliar Contas Pagas"), exposta aqui
+  // também (pedido do usuário 2026-09-18) pra quem cuida da integração
+  // bancária não precisar ir noutra tela: 1) PrimeStart — contas já quitadas
+  // lá citando "OP: número" na descrição; 2) Itaú — reconsulta pagamentos já
+  // enviados (aceitos pela API) mas ainda não confirmados como efetivados de
+  // fato, e já dá baixa na Conta a Pagar correspondente no PrimeStart quando
+  // confirma (ver conciliarOpsComItauAction).
+  const [conciliando, setConciliando] = useState(false);
+  const conciliarContas = async () => {
+    setConciliando(true);
+    try {
+      const [resP2s, resItau] = await Promise.all([
+        conciliarOpsComContasPagarAction(accessToken),
+        conciliarOpsComItauAction(accessToken),
+      ]);
+
+      if (!resP2s.ok && !resItau.ok) {
+        toast(`Erro na conciliação — PrimeStart: ${resP2s.erro} — Itaú: ${resItau.erro}`, 'error');
+        return;
+      }
+
+      const partes: string[] = [];
+      let houveProblema = false;
+
+      if (resP2s.ok) {
+        const { baixadas, semCorrespondencia, jaEstavamPagas } = resP2s.info;
+        if (baixadas.length > 0) partes.push(`PrimeStart: ${baixadas.length} OP(s) baixada(s): ${baixadas.map((b: any) => `#${b.numero_op}`).join(', ')}.`);
+        if (jaEstavamPagas > 0) partes.push(`PrimeStart: ${jaEstavamPagas} já estava(m) paga(s).`);
+        if (semCorrespondencia.length > 0) { partes.push(`⚠ PrimeStart: ${semCorrespondencia.length} conta(s) citam OP inexistente: ${semCorrespondencia.map((s: any) => `#${s.numero_op}`).join(', ')}.`); houveProblema = true; }
+      } else {
+        partes.push(`⚠ PrimeStart: ${resP2s.erro}`); houveProblema = true;
+      }
+
+      if (resItau.ok) {
+        const { baixadas, aindaPendentes, falhasConsulta } = resItau.info;
+        if (baixadas.length > 0) partes.push(`Itaú: ${baixadas.length} OP(s) confirmada(s) e baixada(s) (PAGO + quitada no PrimeStart): ${baixadas.map(b => `#${b.numero_op} (${b.status_itau})`).join(', ')}.`);
+        const avisosP2s = baixadas.filter(b => b.avisoP2s);
+        if (avisosP2s.length > 0) { partes.push(`⚠ PrimeStart não quitou automaticamente: ${avisosP2s.map(b => `#${b.numero_op} (${b.avisoP2s})`).join('; ')}.`); houveProblema = true; }
+        if (aindaPendentes.length > 0) partes.push(`Itaú: ${aindaPendentes.length} OP(s) ainda não efetivada(s): ${aindaPendentes.map(p => `#${p.numero_op} (${p.status_itau})`).join(', ')}.`);
+        if (falhasConsulta.length > 0) { partes.push(`⚠ Itaú: falha ao consultar ${falhasConsulta.length} OP(s): ${falhasConsulta.map(f => `#${f.numero_op}`).join(', ')}.`); houveProblema = true; }
+      } else {
+        partes.push(`⚠ Itaú: ${resItau.erro}`); houveProblema = true;
+      }
+
+      if (partes.length === 0) {
+        toast('Nada a conciliar — nenhuma conta paga no PrimeStart citando uma OP, e nenhuma OP pendente de confirmação no Itaú.', 'info');
+        return;
+      }
+
+      toast(partes.join(' '), houveProblema ? 'error' : 'success');
+    } finally {
+      setConciliando(false);
+    }
+  };
+
   // `pagina` é 0-based, igual ao que a API do Itaú devolve em pagination.page.
   const consultar = async (pagina = 0) => {
     setConsultando(true);
@@ -311,6 +368,19 @@ export default function IntegracaoFinanceiraPage() {
                 ⚙ Configurar
               </button>
             </div>
+          </div>
+
+          {/* Conciliação de duas pontas — PrimeStart (contas já quitadas lá
+              citando "OP: número") e Itaú (pagamentos aceitos pela API, mas
+              ainda não confirmados como efetivados) */}
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] mb-4 flex flex-wrap items-center gap-4">
+            <div>
+              <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider mb-1">🔗 Conciliação de Pagamentos</h3>
+              <p className="text-[11px] text-gray-500">Confere OPs pagas no PrimeStart (contas com "OP: número" na descrição) e no Itaú (reconsulta pagamentos aceitos pela API) — baixa pra PAGO e quita a Conta a Pagar no PrimeStart automaticamente.</p>
+            </div>
+            <button onClick={conciliarContas} disabled={conciliando} className="text-xs font-black bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-5 py-2.5 rounded-lg uppercase tracking-wider ml-auto">
+              {conciliando ? '⏳ Conciliando...' : '🔗 Conciliar Contas'}
+            </button>
           </div>
 
           {/* Consulta de pagamentos — GET /pagamentos_sispag */}

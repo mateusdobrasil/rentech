@@ -1026,9 +1026,12 @@ export default function FinanceiroPage() {
       const res = await consultarStatusAtualItauAction({ idPagamentoSispag: item.api_cod_pagamento, loteId: loteRetornoId ?? undefined }, accessToken);
       if (!res.ok) { toast(res.erro || 'Não foi possível consultar o status atual.', 'error'); return; }
       setStatusAtual({ item, ambiente: res.info.ambiente, pagamento: res.info.pagamento });
-      // Confirmado "Efetuado" no Itaú — a OP já saiu de PENDENTE pra PAGO no
-      // servidor (ver consultarStatusAtualItauAction); só falta avisar.
-      if (res.info.opBaixada) toast(`✓ Pagamento confirmado no Itaú — OP #${res.info.opBaixada.numeroOp} baixada (PAGO).`, 'success');
+      // Confirmado "Efetuado" no Itaú — a OP/conta já saiu de PENDENTE pra
+      // PAGO no servidor, e a Conta a Pagar correspondente já foi quitada no
+      // PrimeStart também (ver consultarStatusAtualItauAction); só falta avisar.
+      if (res.info.opBaixada) toast(`✓ Pagamento confirmado no Itaú — OP #${res.info.opBaixada.numeroOp} baixada (PAGO)${res.info.contaPagarBaixada ? ' e quitada no PrimeStart.' : '.'}`, 'success');
+      else if (res.info.contaPagarBaixada) toast(`✓ Pagamento confirmado no Itaú — conta marcada como paga e quitada no PrimeStart.`, 'success');
+      if (res.info.avisoP2s) toast(`⚠ ${res.info.avisoP2s}`, 'error');
     } finally {
       setConsultandoStatusId(null);
     }

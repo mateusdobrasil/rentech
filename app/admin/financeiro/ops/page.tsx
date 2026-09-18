@@ -404,7 +404,9 @@ export default function PainelFinanceiro() {
 
       if (resItau.ok) {
         const { baixadas, aindaPendentes, falhasConsulta } = resItau.info;
-        if (baixadas.length > 0) { partes.push(`Itaú: ${baixadas.length} OP(s) confirmada(s) e baixada(s): ${baixadas.map(b => `#${b.numero_op} (${b.status_itau})`).join(', ')}.`); houveBaixa = true; }
+        if (baixadas.length > 0) { partes.push(`Itaú: ${baixadas.length} OP(s) confirmada(s) e baixada(s) (PAGO + quitada no PrimeStart): ${baixadas.map(b => `#${b.numero_op} (${b.status_itau})`).join(', ')}.`); houveBaixa = true; }
+        const avisosP2s = baixadas.filter(b => b.avisoP2s);
+        if (avisosP2s.length > 0) { partes.push(`⚠ PrimeStart não quitou automaticamente: ${avisosP2s.map(b => `#${b.numero_op} (${b.avisoP2s})`).join('; ')}.`); houveProblema = true; }
         if (aindaPendentes.length > 0) partes.push(`Itaú: ${aindaPendentes.length} OP(s) ainda não efetivada(s): ${aindaPendentes.map(p => `#${p.numero_op} (${p.status_itau})`).join(', ')}.`);
         if (falhasConsulta.length > 0) { partes.push(`⚠ Itaú: falha ao consultar ${falhasConsulta.length} OP(s): ${falhasConsulta.map(f => `#${f.numero_op}`).join(', ')}.`); houveProblema = true; }
       } else {

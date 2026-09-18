@@ -13,8 +13,22 @@ import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso } from '../../../lib/serverAuth';
 import { criarContaPagarParaOP, type ResultadoEnvioP2s } from './enviarOpP2sCore';
 import { contextoEnvioItau, consultarPagamentoSispag, semAcento, STATUS_ITAU_EFETUADO } from '../../../lib/itauSispag';
+import { marcarContaPagarQuitada } from '../../../lib/p2s';
 
 const ROTA = '/admin/financeiro/ops';
+
+// As duas conciliações (P2S e Itaú) também são acessíveis pelo botão
+// "🔗 Conciliar Contas" em /admin/financeiro/integracao (pedido do usuário
+// 2026-09-18) — quem só tem acesso àquela tela (não a /admin/financeiro/ops
+// em si) precisa poder rodar a conciliação de lá também.
+const ROTAS_CONCILIACAO = [ROTA, '/admin/financeiro/integracao'];
+async function validarAcessoConciliacao(accessToken: string) {
+  for (const rota of ROTAS_CONCILIACAO) {
+    const acesso = await validarAcesso(accessToken, rota);
+    if (acesso.ok) return acesso;
+  }
+  return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
+}
 
 // Aceita dois padrões: "OP: 252" / "OP:252" / "OP : 252" (case-insensitive)
 // ou "#252". Global pra pegar mais de uma referência na mesma descrição (ex:
@@ -43,7 +57,7 @@ type Resultado =
   | { ok: false; erro: string };
 
 export async function conciliarOpsComContasPagarAction(accessToken: string): Promise<Resultado> {
-  const acesso = await validarAcesso(accessToken, ROTA);
+  const acesso = await validarAcessoConciliacao(accessToken);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
   const { perfil } = acesso;
 
@@ -152,8 +166,14 @@ export async function conciliarOpsComContasPagarAction(accessToken: string): Pro
 // ainda não viraram PAGO nem foram REPROVADA. "Aceito pela API" não é
 // "pago de fato" — pagamento SISPAG passa por aprovação manual no Itaú
 // Empresas antes de ser efetivado, por isso a reconsulta aqui.
+//
+// Confirmada a baixa no Itaú, tenta dar baixa TAMBÉM na Conta a Pagar
+// correspondente no PrimeStart (p2s_conta_pagar_oid), via
+// marcarContaPagarQuitada (app/lib/p2s.ts) — método/parâmetro confirmados
+// com o suporte da P2S em 2026-09-18. Se o PrimeStart recusar (ex.: período
+// bloqueado), a OP AINDA ASSIM vira PAGO aqui; só avisa o motivo.
 // ============================================================================
-export interface OPBaixadaItau { numero_op: number; os_numero: string | null; status_itau: string; }
+export interface OPBaixadaItau { numero_op: number; os_numero: string | null; status_itau: string; avisoP2s?: string; }
 export interface OPPendenteItau { numero_op: number; os_numero: string | null; status_itau: string; }
 export interface OPFalhaConsultaItau { numero_op: number; erro: string; }
 
@@ -169,7 +189,7 @@ type ResultadoItau =
   | { ok: false; erro: string };
 
 export async function conciliarOpsComItauAction(accessToken: string): Promise<ResultadoItau> {
-  const acesso = await validarAcesso(accessToken, ROTA);
+  const acesso = await validarAcessoConciliacao(accessToken);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
   const { perfil } = acesso;
 
@@ -180,7 +200,7 @@ export async function conciliarOpsComItauAction(accessToken: string): Promise<Re
 
     const { data: opsCandidatas, error: erroOps } = await db
       .from('op_ordens_pagamento')
-      .select('id, numero_op, os_numero, pago_lote_id')
+      .select('id, numero_op, os_numero, pago_lote_id, p2s_conta_pagar_oid')
       .neq('status', 'PAGO').neq('status', 'REPROVADA')
       .not('pago_lote_id', 'is', null);
     if (erroOps) throw new Error(erroOps.message);
@@ -221,10 +241,19 @@ export async function conciliarOpsComItauAction(accessToken: string): Promise<Re
           .eq('id', op.id).neq('status', 'REPROVADA').neq('status', 'PAGO')
           .select('numero_op').maybeSingle();
         if (opAtualizada) {
-          resultado.baixadas.push({ numero_op: op.numero_op, os_numero: op.os_numero, status_itau: statusItauBruto });
+          let avisoP2s: string | undefined;
+          if (op.p2s_conta_pagar_oid) {
+            try {
+              const baixa = await marcarContaPagarQuitada('PRODUCAO', op.p2s_conta_pagar_oid, new Date());
+              if (!baixa.ok) avisoP2s = `PrimeStart recusou a quitação: ${baixa.motivo}`;
+            } catch (e: any) {
+              avisoP2s = `Falha ao dar baixa no PrimeStart: ${e.message}`;
+            }
+          }
+          resultado.baixadas.push({ numero_op: op.numero_op, os_numero: op.os_numero, status_itau: statusItauBruto, avisoP2s });
           registrarLogAuditoria({
             usuario_nome: perfil.nome,
-            acao: `BAIXOU OP #${op.numero_op} — STATUS: PAGO (CONCILIAÇÃO AUTOMÁTICA VIA API ITAÚ, "${statusItauBruto}")`,
+            acao: `BAIXOU OP #${op.numero_op} — STATUS: PAGO (CONCILIAÇÃO AUTOMÁTICA VIA API ITAÚ, "${statusItauBruto}")${avisoP2s ? ` — PRIMESTART: ${avisoP2s}` : op.p2s_conta_pagar_oid ? ' — PRIMESTART: QUITADO TAMBÉM' : ''}`,
             setor: 'OP',
             equipamento_id: op.id,
             equipamento_nome: `OP #${op.numero_op} — OS ${op.os_numero || 'S/N'}`,

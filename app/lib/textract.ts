@@ -6,7 +6,6 @@
 // AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION (lidas
 // automaticamente pelo SDK a partir do ambiente).
 import { TextractClient, DetectDocumentTextCommand } from "@aws-sdk/client-textract";
-import { PDFParse } from "pdf-parse";
 
 const textractClient = new TextractClient({
   region: process.env.AWS_REGION || "us-east-1"
@@ -21,7 +20,20 @@ const textractClient = new TextractClient({
 // o nome do funcionário ou o "VALOR LÍQUIDO" não baterem com o texto lido.
 // Só PDF realmente escaneado (foto, sem OCR prévio) não tem essa camada —
 // devolve string vazia/curta e cai para o Textract abaixo.
+//
+// import() DINÂMICO DE PROPÓSITO (não no topo do arquivo): "pdf-parse" carrega
+// pdfjs-dist, que referencia DOMMatrix (API de navegador) na avaliação do
+// módulo. Um import estático quebrava a IMPORTAÇÃO DO ARQUIVO INTEIRO no
+// servidor Vercel ("ReferenceError: DOMMatrix is not defined") — e como
+// app/admin/rh/actions/actions-financeiro.ts importa este arquivo, isso
+// derrubava TODAS as Server Actions de lá (inclusive montarLoteSalariosAction,
+// que nem usa OCR) com "Server Components render error" genérico. Bug
+// reportado pelo usuário 2026-09-18, poucas horas depois de eu ter adicionado
+// esta lib. Com import() aqui dentro, o carregamento só acontece quando esta
+// função É CHAMADA DE VERDADE, dentro do try/catch de extrairTextoPdf — se
+// travar de novo pelo mesmo motivo, cai pro Textract em vez de derrubar tudo.
 async function extrairTextoNativoPdf(pdfBase64: string): Promise<string> {
+  const { PDFParse } = await import('pdf-parse');
   const bytes = Buffer.from(pdfBase64, 'base64');
   const parser = new PDFParse({ data: bytes });
   try {

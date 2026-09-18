@@ -12,7 +12,7 @@ import { calcularBeneficiosMes } from './actions-beneficios';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
 import { extrairTextoPdf } from '../../../lib/textract';
 import { registrarLogAuditoria } from '../../../actions';
-import { enviarPixPorChave, enviarPixPorDadosBancarios, consultarPagamentoSispag, credenciaisItauConfiguradas, type PagadorSispag } from '../../../lib/itauSispag';
+import { enviarPixPorChave, enviarPixPorDadosBancarios, consultarPagamentoSispag, credenciaisItauConfiguradas, contextoEnvioItau, semAcento, STATUS_ITAU_EFETUADO, type PagadorSispag } from '../../../lib/itauSispag';
 import { ispbPorCompe } from '../../../lib/bancosCompeIspb';
 
 const ROTA = '/admin/financeiro/rh';
@@ -1372,11 +1372,6 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
   }
 }
 
-// Espelha STATUS_ITAU_FALHA (definida mais abaixo, junto de
-// reabrirItemParaReenvioAction) — "efetuado" é o par de sucesso de "não
-// efetuado" na mesma enumeração de status do SISPAG.
-const STATUS_ITAU_EFETUADO = 'efetuado';
-
 // ============================================================================
 // CONSULTAR STATUS ATUAL NO ITAÚ — o api_status salvo em financeiro_lotes_pagamento
 // fica congelado no momento do envio (ex.: "Sucesso" só significa "aceito
@@ -1454,23 +1449,6 @@ export async function consultarStatusAtualItauAction(payload: { idPagamentoSispa
   }
 }
 
-// Ambiente + validações da integração ITAÚ, compartilhado pelas ações que
-// falam com a API (consulta de status e reabertura de item). O envio do lote
-// faz as mesmas checagens inline porque precisa também do `config` pro
-// pagador.
-async function contextoEnvioItau(): Promise<{ ok: true; ambiente: 'SANDBOX' | 'PRODUCAO' } | { ok: false; erro: string }> {
-  const db = supabaseAdmin();
-  const { data: integ } = await db.from('parametros_integracoes')
-    .select('ativo, ambiente').eq('parceiro', 'ITAU').maybeSingle();
-  if (!integ) return { ok: false, erro: 'Integração com o Itaú não encontrada (ver Integrações).' };
-  if (!integ.ativo) return { ok: false, erro: 'A integração com o Itaú não está ativa (ver Integrações → ⚙ Configurar).' };
-  const ambiente: 'SANDBOX' | 'PRODUCAO' = integ.ambiente === 'PRODUCAO' ? 'PRODUCAO' : 'SANDBOX';
-  if (!credenciaisItauConfiguradas(ambiente)) {
-    return { ok: false, erro: `Credenciais da API do Itaú não configuradas no servidor para o ambiente ${ambiente}.` };
-  }
-  return { ok: true, ambiente };
-}
-
 // ============================================================================
 // REABRIR ITEM PARA REENVIO — conserta a armadilha do "Sucesso" que não é
 // pagamento: `api_status: 'Sucesso'` só diz que a API aceitou a inclusão, mas
@@ -1484,7 +1462,6 @@ async function contextoEnvioItau(): Promise<{ ok: true; ambiente: 'SANDBOX' | 'P
 // falhou — nunca com base no que está salvo no nosso banco, pra não haver
 // risco de reabrir (e repagar) algo que na verdade foi efetivado.
 // ============================================================================
-const semAcento = (s: string) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 // Só estes status contam como "falhou de vez" e liberam o reenvio. Qualquer
 // outro (inclusive "Pendente de autorização" e "Efetuado") bloqueia.
 const STATUS_ITAU_FALHA = ['nao efetuado', 'rejeitado', 'cancelado', 'estornado'];

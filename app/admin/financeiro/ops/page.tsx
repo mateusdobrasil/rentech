@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { listarOPs, atualizarStatus, dispararEmailOP, reprovarOPAction, reabrirOPAction } from '../../op/actions';
-import { conciliarOpsComContasPagarAction, enviarOpParaPrimeStartAction } from './actions';
+import { conciliarOpsComContasPagarAction, conciliarOpsComItauAction, enviarOpParaPrimeStartAction } from './actions';
 import { sincronizarContasPagarP2sAction } from '../contas-pagar/actions';
 import { sincronizarParceirosP2sAction, sincronizarColaboradoresP2sAction } from '../../comercial/parceiros/actions';
 import { registrarLogAuditoria } from '../../../actions';
@@ -365,40 +365,59 @@ export default function PainelFinanceiro() {
     }
   };
 
-  // Lê as Contas a Pagar já quitadas (sincronizadas do PrimeStart) em busca do
-  // padrão "OP: <número>" ou "#<número>" na descrição e baixa automaticamente
-  // as Ordens de Pagamento correspondentes para PAGO — evita clicar em
-  // "Baixar OP" uma por uma quando o Financeiro já identificou a OP na hora
-  // de lançar a conta.
+  // Concilia por DOIS caminhos, no mesmo clique:
+  // 1) PrimeStart — lê as Contas a Pagar já quitadas lá (sincronizadas) em
+  //    busca do padrão "OP: <número>" ou "#<número>" na descrição.
+  // 2) Itaú — reconsulta a API pra OPs que já foram enviadas num lote (ver
+  //    enviarLoteAoBancoAction) mas ainda não confirmadas como pagas de fato
+  //    (aceito pela API ≠ efetivado; passa por aprovação manual no Itaú
+  //    Empresas). Cobre o pagamento feito direto pela nossa integração, que o
+  //    PrimeStart nunca fica sabendo sozinho (ver
+  //    project_p2s_baixa_conta_pagar.md).
+  // Os dois baixam a OP pra PAGO sem precisar clicar "Baixar OP" uma por uma.
   const conciliarPagamentos = async () => {
     if (!perfil) return;
     setConciliando(true);
     try {
-      const res = await conciliarOpsComContasPagarAction(perfil.accessToken);
-      if (!res.ok) {
-        setDialog({ open: true, type: 'error', title: 'Erro na Conciliação', msg: res.erro });
-        return;
-      }
+      const [resP2s, resItau] = await Promise.all([
+        conciliarOpsComContasPagarAction(perfil.accessToken),
+        conciliarOpsComItauAction(perfil.accessToken),
+      ]);
 
-      const { baixadas, semCorrespondencia, jaEstavamPagas } = res.info;
-      if (baixadas.length === 0 && semCorrespondencia.length === 0) {
-        setDialog({ open: true, type: 'success', title: 'Nada a Conciliar', msg: 'Nenhuma conta paga com "OP: número" ou "#número" na descrição foi encontrada.' });
+      if (!resP2s.ok && !resItau.ok) {
+        setDialog({ open: true, type: 'error', title: 'Erro na Conciliação', msg: `PrimeStart: ${resP2s.erro} — Itaú: ${resItau.erro}` });
         return;
       }
 
       const partes: string[] = [];
-      if (baixadas.length > 0) partes.push(`${baixadas.length} OP(s) baixada(s) para PAGO: ${baixadas.map(b => `#${b.numero_op}`).join(', ')}.`);
-      if (jaEstavamPagas > 0) partes.push(`${jaEstavamPagas} já estava(m) paga(s).`);
-      if (semCorrespondencia.length > 0) partes.push(`⚠ ${semCorrespondencia.length} conta(s) citam uma OP que não existe no sistema: ${semCorrespondencia.map(s => `#${s.numero_op}`).join(', ')} — confira o número digitado na descrição da conta.`);
+      let houveBaixa = false;
+      let houveProblema = false;
 
-      setDialog({
-        open: true,
-        type: semCorrespondencia.length > 0 && baixadas.length === 0 ? 'error' : 'success',
-        title: 'Conciliação Concluída',
-        msg: partes.join(' '),
-      });
+      if (resP2s.ok) {
+        const { baixadas, semCorrespondencia, jaEstavamPagas } = resP2s.info;
+        if (baixadas.length > 0) { partes.push(`PrimeStart: ${baixadas.length} OP(s) baixada(s): ${baixadas.map((b: any) => `#${b.numero_op}`).join(', ')}.`); houveBaixa = true; }
+        if (jaEstavamPagas > 0) partes.push(`PrimeStart: ${jaEstavamPagas} já estava(m) paga(s).`);
+        if (semCorrespondencia.length > 0) { partes.push(`⚠ PrimeStart: ${semCorrespondencia.length} conta(s) citam uma OP que não existe: ${semCorrespondencia.map((s: any) => `#${s.numero_op}`).join(', ')}.`); houveProblema = true; }
+      } else {
+        partes.push(`⚠ PrimeStart: ${resP2s.erro}`); houveProblema = true;
+      }
 
-      if (baixadas.length > 0) await carregarDados();
+      if (resItau.ok) {
+        const { baixadas, aindaPendentes, falhasConsulta } = resItau.info;
+        if (baixadas.length > 0) { partes.push(`Itaú: ${baixadas.length} OP(s) confirmada(s) e baixada(s): ${baixadas.map(b => `#${b.numero_op} (${b.status_itau})`).join(', ')}.`); houveBaixa = true; }
+        if (aindaPendentes.length > 0) partes.push(`Itaú: ${aindaPendentes.length} OP(s) ainda não efetivada(s): ${aindaPendentes.map(p => `#${p.numero_op} (${p.status_itau})`).join(', ')}.`);
+        if (falhasConsulta.length > 0) { partes.push(`⚠ Itaú: falha ao consultar ${falhasConsulta.length} OP(s): ${falhasConsulta.map(f => `#${f.numero_op}`).join(', ')}.`); houveProblema = true; }
+      } else {
+        partes.push(`⚠ Itaú: ${resItau.erro}`); houveProblema = true;
+      }
+
+      if (partes.length === 0) {
+        setDialog({ open: true, type: 'success', title: 'Nada a Conciliar', msg: 'Nenhuma conta paga no PrimeStart citando uma OP, e nenhuma OP pendente de confirmação no Itaú.' });
+        return;
+      }
+
+      setDialog({ open: true, type: houveBaixa || !houveProblema ? 'success' : 'error', title: 'Conciliação Concluída', msg: partes.join(' ') });
+      if (houveBaixa) await carregarDados();
     } finally {
       setConciliando(false);
     }
@@ -583,7 +602,7 @@ export default function PainelFinanceiro() {
             <button
               onClick={conciliarPagamentos}
               disabled={conciliando}
-              title='Busca contas a pagar já quitadas com "OP: número" ou "#número" na descrição e baixa as OPs correspondentes'
+              title='Busca contas a pagar já quitadas no PrimeStart com "OP: número" ou "#número" na descrição, E reconsulta o Itaú pras OPs já enviadas via nosso lote — baixa pra PAGO o que confirmar nos dois'
               className="text-[10px] md:text-xs font-black bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase"
             >
               {conciliando ? 'Conciliando...' : '🔗 Conciliar Contas Pagas'}

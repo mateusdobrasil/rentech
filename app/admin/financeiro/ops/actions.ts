@@ -12,6 +12,7 @@ import { registrarLogAuditoria } from '../../../actions';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso } from '../../../lib/serverAuth';
 import { criarContaPagarParaOP, type ResultadoEnvioP2s } from './enviarOpP2sCore';
+import { contextoEnvioItau, consultarPagamentoSispag, semAcento, STATUS_ITAU_EFETUADO } from '../../../lib/itauSispag';
 
 const ROTA = '/admin/financeiro/ops';
 
@@ -133,6 +134,110 @@ export async function conciliarOpsComContasPagarAction(accessToken: string): Pro
     }));
 
     return { ok: true, info: { baixadas, semCorrespondencia, jaEstavamPagas } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// CONCILIAÇÃO COM O ITAÚ — irmã da conciliação com o PrimeStart acima, mas
+// pro caminho de pagamento direto pela nossa integração SISPAG (que o
+// PrimeStart nunca fica sabendo que aconteceu — ver
+// project_p2s_baixa_conta_pagar.md). Pedido do usuário 2026-09-18: o mesmo
+// clique em "Conciliar Contas Pagas" também confere no Itaú, sem precisar ir
+// em /admin/financeiro/rh consultar item por item.
+//
+// Candidatas: OPs com `pago_lote_id` preenchido (já foram incluídas num
+// envio ao banco que a API aceitou — ver enviarLoteAoBancoAction) mas que
+// ainda não viraram PAGO nem foram REPROVADA. "Aceito pela API" não é
+// "pago de fato" — pagamento SISPAG passa por aprovação manual no Itaú
+// Empresas antes de ser efetivado, por isso a reconsulta aqui.
+// ============================================================================
+export interface OPBaixadaItau { numero_op: number; os_numero: string | null; status_itau: string; }
+export interface OPPendenteItau { numero_op: number; os_numero: string | null; status_itau: string; }
+export interface OPFalhaConsultaItau { numero_op: number; erro: string; }
+
+export interface ResultadoConciliacaoItau {
+  baixadas: OPBaixadaItau[];
+  aindaPendentes: OPPendenteItau[];
+  falhasConsulta: OPFalhaConsultaItau[];
+  semReferenciaItau: number; // pago_lote_id preenchido, mas sem api_cod_pagamento achado no lote (não deveria ocorrer)
+}
+
+type ResultadoItau =
+  | { ok: true; info: ResultadoConciliacaoItau }
+  | { ok: false; erro: string };
+
+export async function conciliarOpsComItauAction(accessToken: string): Promise<ResultadoItau> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  const { perfil } = acesso;
+
+  try {
+    const db = supabaseAdmin();
+    const ctx = await contextoEnvioItau();
+    if (!ctx.ok) return { ok: false, erro: ctx.erro };
+
+    const { data: opsCandidatas, error: erroOps } = await db
+      .from('op_ordens_pagamento')
+      .select('id, numero_op, os_numero, pago_lote_id')
+      .neq('status', 'PAGO').neq('status', 'REPROVADA')
+      .not('pago_lote_id', 'is', null);
+    if (erroOps) throw new Error(erroOps.message);
+
+    const resultado: ResultadoConciliacaoItau = { baixadas: [], aindaPendentes: [], falhasConsulta: [], semReferenciaItau: 0 };
+    if (!opsCandidatas || opsCandidatas.length === 0) return { ok: true, info: resultado };
+
+    // Um mesmo lote pode ter várias OPs — busca os lotes distintos de uma vez
+    // só, em vez de um SELECT por OP.
+    const loteIds = [...new Set(opsCandidatas.map(op => op.pago_lote_id as number))];
+    const { data: lotes, error: erroLotes } = await db
+      .from('financeiro_lotes_pagamento').select('id, itens').in('id', loteIds);
+    if (erroLotes) throw new Error(erroLotes.message);
+
+    const itemPorOpId = new Map<string, any>();
+    (lotes || []).forEach(lote => {
+      const itens: any[] = Array.isArray(lote.itens) ? lote.itens : [];
+      itens.forEach(it => { if (it.fonte === 'OP' && it.opId) itemPorOpId.set(it.opId, it); });
+    });
+
+    // Sequencial de propósito (não Promise.all) — mesmo cuidado já usado no
+    // envio real do lote, pra não estourar limite de taxa da API do Itaú com
+    // muitas OPs pendentes de uma vez.
+    for (const op of opsCandidatas) {
+      const item = itemPorOpId.get(op.id);
+      if (!item?.api_cod_pagamento) { resultado.semReferenciaItau++; continue; }
+
+      const { ok, status, data } = await consultarPagamentoSispag(ctx.ambiente, item.api_cod_pagamento);
+      if (!ok) {
+        resultado.falhasConsulta.push({ numero_op: op.numero_op, erro: `HTTP ${status}` });
+        continue;
+      }
+      const statusItauBruto = String((data?.data ?? data)?.dados_pagamento?.status || '');
+
+      if (semAcento(statusItauBruto) === STATUS_ITAU_EFETUADO) {
+        const { data: opAtualizada } = await db.from('op_ordens_pagamento')
+          .update({ status: 'PAGO', updated_at: new Date().toISOString() })
+          .eq('id', op.id).neq('status', 'REPROVADA').neq('status', 'PAGO')
+          .select('numero_op').maybeSingle();
+        if (opAtualizada) {
+          resultado.baixadas.push({ numero_op: op.numero_op, os_numero: op.os_numero, status_itau: statusItauBruto });
+          registrarLogAuditoria({
+            usuario_nome: perfil.nome,
+            acao: `BAIXOU OP #${op.numero_op} — STATUS: PAGO (CONCILIAÇÃO AUTOMÁTICA VIA API ITAÚ, "${statusItauBruto}")`,
+            setor: 'OP',
+            equipamento_id: op.id,
+            equipamento_nome: `OP #${op.numero_op} — OS ${op.os_numero || 'S/N'}`,
+          });
+        }
+      } else {
+        resultado.aindaPendentes.push({ numero_op: op.numero_op, os_numero: op.os_numero, status_itau: statusItauBruto || 'desconhecido' });
+      }
+    }
+
+    if (resultado.baixadas.length > 0) revalidatePath('/admin');
+
+    return { ok: true, info: resultado };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

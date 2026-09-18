@@ -44,6 +44,7 @@
 import { randomUUID } from 'crypto';
 import https from 'node:https';
 import fs from 'node:fs';
+import { supabaseAdmin } from './supabase';
 
 export type AmbienteItau = 'SANDBOX' | 'PRODUCAO';
 
@@ -524,4 +525,38 @@ export async function consultarPagamentosSispag(filtros: ConsultaPagamentosSispa
 
 export async function consultarPagamentoSispag(ambiente: AmbienteItau, idPagamentoSispag: string) {
   return chamarApi(ambiente, `/pagamentos_sispag/${encodeURIComponent(idPagamentoSispag)}`);
+}
+
+// ============================================================================
+// HELPERS COMPARTILHADOS — status do SISPAG e contexto da integração. Vivem
+// aqui (lib pura, sem 'use server') porque são usados por mais de um módulo
+// 'use server' (app/admin/rh/actions/actions-financeiro.ts e
+// app/admin/financeiro/ops/actions.ts, ver conciliarOpsComItauAction) — um
+// arquivo 'use server' só pode exportar async functions, então const/função
+// síncrona compartilhada não pode morar lá.
+// ============================================================================
+
+// Normaliza pra comparar status do Itaú sem acento/maiúscula ("Não Efetuado"
+// -> "nao efetuado").
+export const semAcento = (s: string) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+
+// "Efetuado" = pagamento liquidado de fato (não só aceito pela API). Ver
+// STATUS_ITAU_FALHA em actions-financeiro.ts pro par de falha definitiva
+// ("não efetuado", "rejeitado", "cancelado", "estornado").
+export const STATUS_ITAU_EFETUADO = 'efetuado';
+
+// Ambiente + validações da integração ITAÚ, compartilhado por quem precisa
+// falar com a API fora do envio do lote (que faz as mesmas checagens inline
+// porque também precisa do `config` pro pagador).
+export async function contextoEnvioItau(): Promise<{ ok: true; ambiente: AmbienteItau } | { ok: false; erro: string }> {
+  const db = supabaseAdmin();
+  const { data: integ } = await db.from('parametros_integracoes')
+    .select('ativo, ambiente').eq('parceiro', 'ITAU').maybeSingle();
+  if (!integ) return { ok: false, erro: 'Integração com o Itaú não encontrada (ver Integrações).' };
+  if (!integ.ativo) return { ok: false, erro: 'A integração com o Itaú não está ativa (ver Integrações → ⚙ Configurar).' };
+  const ambiente: AmbienteItau = integ.ambiente === 'PRODUCAO' ? 'PRODUCAO' : 'SANDBOX';
+  if (!credenciaisItauConfiguradas(ambiente)) {
+    return { ok: false, erro: `Credenciais da API do Itaú não configuradas no servidor para o ambiente ${ambiente}.` };
+  }
+  return { ok: true, ambiente };
 }

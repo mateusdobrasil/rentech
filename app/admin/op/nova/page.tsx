@@ -139,7 +139,7 @@ function NovaOrdemPagamentoForm() {
   const [termoBuscaFunc, setTermoBuscaFunc] = useState('');
   const [loadingFunc, setLoadingFunc] = useState(false);
 
-  // Modais e Estados da Busca de Colaboradores (P2S) — botão sempre visível,
+  // Modais e Estados da Busca de Colaboradores (folha_funcionarios) — botão sempre visível,
   // independente da Natureza do Pagamento escolhida (diferente dos dois acima).
   const [modalColaboradorAberto, setModalColaboradorAberto] = useState(false);
   const [listaColaboradores, setListaColaboradores] = useState<ColaboradorParaOp[]>([]);
@@ -510,8 +510,8 @@ function NovaOrdemPagamentoForm() {
     setLoadingColaborador(false);
   };
 
-  // buscarColaboradoresParaOpAction já une PrimeStart + folha_funcionarios e
-  // resolve PIX/conta no servidor — aqui é só aplicar o registro escolhido.
+  // buscarColaboradoresParaOpAction busca só em folha_funcionarios (nossa
+  // própria base, não o PrimeStart) — aqui é só aplicar o registro escolhido.
   const selecionarColaborador = (col: ColaboradorParaOp) => {
     setEmpresaRecebedora(col.nome);
     setCnpjCpf(col.cpf || '');
@@ -543,13 +543,9 @@ function NovaOrdemPagamentoForm() {
     }
 
     if (temPix || temContaBancaria) {
-      toast('Dados de pagamento (PIX/conta) preenchidos a partir do cadastro de funcionário com o mesmo CPF.', 'success');
-    } else if (col.dados_bancarios_obs) {
-      // Sem estruturado em lugar nenhum — mostra o texto livre do PrimeStart
-      // como dica, mas o usuário ainda precisa digitar a chave/conta à mão.
-      toast(`Sem PIX/conta cadastrados — dados bancários (PrimeStart, texto livre): ${col.dados_bancarios_obs}`, 'info');
+      toast('Dados de pagamento (PIX/conta) preenchidos a partir do cadastro de funcionário.', 'success');
     } else {
-      toast('Sem PIX/conta bancária cadastrados para este colaborador (nem no PrimeStart, nem na folha) — preencha manualmente.', 'info');
+      toast('Sem PIX/conta bancária cadastrados na folha para este colaborador — preencha manualmente.', 'info');
     }
   };
 
@@ -830,7 +826,7 @@ function NovaOrdemPagamentoForm() {
         </div>
       )}
 
-      {/* Modal do Banco de Colaboradores (P2S) — independente da Natureza */}
+      {/* Modal do Banco de Colaboradores (folha_funcionarios) — independente da Natureza */}
       {modalColaboradorAberto && (
         <div className="fixed inset-0 z-[8000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
@@ -866,9 +862,6 @@ function NovaOrdemPagamentoForm() {
                         <p className="text-xs text-[#64748B] mt-1">CPF: {col.cpf || 'Não info.'} | Cel: {col.telefone || 'Não info.'}</p>
                         {(col.pix_chave || col.banco_conta) && (
                           <p className="text-[10px] text-emerald-600 mt-1 font-bold">✓ PIX/conta cadastrados (folha)</p>
-                        )}
-                        {!col.pix_chave && !col.banco_conta && col.dados_bancarios_obs && (
-                          <p className="text-[10px] text-[#0369A1] mt-1 italic">💳 {col.dados_bancarios_obs}</p>
                         )}
                       </div>
                       <button

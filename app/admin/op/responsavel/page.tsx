@@ -282,7 +282,7 @@ export default function PainelResponsavel() {
 
   // ============================================================================
   // "PUXAR DADOS" NO MODAL DE EDIÇÃO — Banco de Talentos (freelancers) e
-  // Banco de Colaboradores (P2S), pra corrigir favorecido/CPF/PIX errados sem
+  // Banco de Colaboradores (folha_funcionarios), pra corrigir favorecido/CPF/PIX errados sem
   // recriar a OP. Mesma lógica de /admin/op/nova, adaptada pra escrever em
   // modalEdit.op via updateEditField em vez de setters individuais.
   // ============================================================================
@@ -342,8 +342,8 @@ export default function PainelResponsavel() {
     setLoadingColaborador(false);
   };
 
-  // buscarColaboradoresParaOpAction já une PrimeStart + folha_funcionarios e
-  // resolve PIX/conta no servidor — aqui é só aplicar o registro escolhido.
+  // buscarColaboradoresParaOpAction busca só em folha_funcionarios (nossa
+  // própria base, não o PrimeStart) — aqui é só aplicar o registro escolhido.
   const selecionarColaborador = (col: ColaboradorParaOp) => {
     if (!modalEdit.op) return;
     const temPix = !!col.pix_chave;
@@ -379,10 +379,8 @@ export default function PainelResponsavel() {
       type: (temPix || temContaBancaria) ? 'success' : 'error',
       title: (temPix || temContaBancaria) ? 'Dados Importados' : 'Sem PIX/Conta Cadastrados',
       msg: (temPix || temContaBancaria)
-        ? 'Nome/CPF/endereço preenchidos e PIX/conta encontrados no cadastro de funcionário com o mesmo CPF.'
-        : col.dados_bancarios_obs
-          ? `Nome/CPF/endereço preenchidos. Sem PIX/conta estruturados — dados bancários (PrimeStart, texto livre): ${col.dados_bancarios_obs}`
-          : 'Nome/CPF/endereço preenchidos. Sem PIX/conta cadastrados (nem no PrimeStart, nem na folha) — preencha manualmente.',
+        ? 'Nome/CPF/endereço preenchidos e PIX/conta encontrados no cadastro de funcionário.'
+        : 'Nome/CPF/endereço preenchidos. Sem PIX/conta cadastrados na folha — preencha manualmente.',
     });
   };
 
@@ -735,7 +733,7 @@ export default function PainelResponsavel() {
         </div>
       )}
 
-      {/* MODAL: Banco de Colaboradores (P2S) — "puxar dados" dentro da EDIÇÃO */}
+      {/* MODAL: Banco de Colaboradores (folha_funcionarios) — "puxar dados" dentro da EDIÇÃO */}
       {modalColaboradorAberto && (
         <div className="fixed inset-0 z-[8000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
@@ -769,9 +767,6 @@ export default function PainelResponsavel() {
                         <p className="text-xs text-[#64748B] mt-1">CPF: {col.cpf || 'Não info.'} | Cel: {col.telefone || 'Não info.'}</p>
                         {(col.pix_chave || col.banco_conta) && (
                           <p className="text-[10px] text-emerald-600 mt-1 font-bold">✓ PIX/conta cadastrados (folha)</p>
-                        )}
-                        {!col.pix_chave && !col.banco_conta && col.dados_bancarios_obs && (
-                          <p className="text-[10px] text-[#0369A1] mt-1 italic">💳 {col.dados_bancarios_obs}</p>
                         )}
                       </div>
                       <button

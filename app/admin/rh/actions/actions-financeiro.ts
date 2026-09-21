@@ -392,6 +392,31 @@ export async function montarLoteSalariosAction(payload: {
       OP: 'Ordem de Pagamento', CONTAS_PAGAR: 'Contas a Pagar (P2S)'
     };
 
+    // ==========================================================================
+    // LOTES JÁ GERADOS NO MESMO PERÍODO — pedido do usuário (2026-09-21):
+    // remontar o lote pro mesmo mês/fonte/funcionário NÃO é bloqueado (pode
+    // ser uma correção legítima, ex.: um item ficou de fora por engano), mas
+    // o item nasce com um AVISO e DESMARCADO por padrão — reduz o risco de
+    // reenviar/pagar em dobro por distração, sem travar quem realmente
+    // precisa gerar de novo. Só conta lote ATIVO (ativo !== false, igual ao
+    // "ativo ?? true" já usado em listarLotesAction) — um lote marcado
+    // "Inativo" na tela deixa de valer como "já gerado".
+    // ==========================================================================
+    const loteExistentePorChave = new Map<string, { loteId: number; nomeLote: string | null }>();
+    {
+      const { data: lotesDoMes } = await db.from('financeiro_lotes_pagamento')
+        .select('id, nome_lote, itens')
+        .eq('mes_referencia', mesReferencia)
+        .or('ativo.is.null,ativo.eq.true');
+      (lotesDoMes || []).forEach(l => {
+        const itensLote = Array.isArray(l.itens) ? l.itens : [];
+        itensLote.forEach((it: any) => {
+          if (!it?.funcionario_nome || !it?.fonte) return;
+          loteExistentePorChave.set(`${it.funcionario_nome}::${it.fonte}`, { loteId: l.id, nomeLote: l.nome_lote });
+        });
+      });
+    }
+
     const itens: any[] = [];
     Array.from(nomes).sort((a, b) => a.localeCompare(b)).forEach(nome => {
       const b = bancoPorNome[nome] || {};
@@ -476,6 +501,10 @@ export async function montarLoteSalariosAction(payload: {
         // prevalece sobre o alerta genérico de dados bancários — os dois
         // motivos nunca se combinam num item só, mas ambos bloqueiam "pronto".
         const alertaFinal = e.alerta ?? alertaDados;
+        const loteExistente = loteExistentePorChave.get(`${nome}::${e.fonte}`);
+        const avisoLoteExistente = loteExistente
+          ? `Já existe um lote gerado para ${rotuloFonte[e.fonte]} neste período (${loteExistente.nomeLote ? `"${loteExistente.nomeLote}"` : `lote #${loteExistente.loteId}`}) — confira antes de marcar de novo, para não pagar em dobro.`
+          : null;
         itens.push({
           funcionario_nome: nome,
           empresa_id: empresaPorNomeFunc[nome] ?? null,
@@ -488,10 +517,14 @@ export async function montarLoteSalariosAction(payload: {
           contaPagarId: null,
           nota: null,
           alerta: alertaFinal,
+          avisoLoteExistente,
           dataPagamento: null,
           valor: e.valor,
           ...bancoInfo,
-          pronto: (temPix || temConta) && e.valor > 0 && !alertaFinal
+          // Nasce desmarcado quando já existe lote (evita pagar em dobro por
+          // distração), mas continua CLICÁVEL — diferente de `alerta`, que
+          // desabilita o checkbox: aqui é só um aviso, não um bloqueio.
+          pronto: (temPix || temConta) && e.valor > 0 && !alertaFinal && !loteExistente
         });
       });
     });

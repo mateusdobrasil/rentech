@@ -141,6 +141,12 @@ interface ItemLote {
   // lote remontado. Mesma checagem roda de novo em enviarLoteAoBancoAction
   // como trava final, mas aqui já avisa sem precisar tentar enviar.
   alerta: string | null;
+  // Preenchido por montarLoteSalariosAction quando já existe um lote ATIVO
+  // pra este mesmo funcionário+fonte+período (financeiro_lotes_pagamento) —
+  // diferente de `alerta`, NÃO trava o checkbox (o usuário pode marcar assim
+  // mesmo, ex.: correção legítima de um item que ficou de fora); só nasce
+  // desmarcado por padrão pra reduzir o risco de pagar em dobro por distração.
+  avisoLoteExistente: string | null;
   pronto: boolean;
   // Preenchidos por enviarLoteAoBancoAction após a chamada à API do Itaú
   // (app/lib/itauSispag.ts) — ausentes até o item ser realmente enviado.
@@ -476,7 +482,7 @@ export default function FinanceiroPage() {
     else if (fonte === 'FERIAS') setValoresFerias(v => ({ ...v, [nome]: valor }));
     else if (fonte === 'RESCISAO_CONTABILIDADE') setValoresRescisaoContab(v => ({ ...v, [nome]: valor }));
     setItens(prev => prev.map(i => (i.funcionario_nome === nome && i.fonte === fonte)
-      ? { ...i, valor, pronto: i.metodo !== 'SEM_DADOS' && valor > 0 && !i.alerta } : i));
+      ? { ...i, valor, pronto: i.metodo !== 'SEM_DADOS' && valor > 0 && !i.alerta && !i.avisoLoteExistente } : i));
 
     // Grava também em folha_documentos_contabeis.valor_ocr — é de lá que
     // /admin/rh/holerite lê o valor pago pela contabilidade na hora de gerar
@@ -498,10 +504,12 @@ export default function FinanceiroPage() {
   // Marca/desmarca todas as linhas de uma vez — respeita a mesma regra do
   // toggle individual: linhas sem dados bancários, sem valor ou com dados
   // suspeitos (ver alerta/validarDadosPagamentoItem) nunca ficam "pronto",
-  // mesmo em "Marcar Todos".
+  // mesmo em "Marcar Todos". Item com avisoLoteExistente também fica de fora
+  // ao MARCAR todos (senão "Marcar Todos" pularia por cima do aviso de
+  // possível pagamento em dobro) — mas entra normalmente ao DESMARCAR.
   const marcarTodos = (marcar: boolean) => {
     setItens(prev => prev.map(i => itemVisivel(i)
-      ? { ...i, pronto: (i.metodo !== 'SEM_DADOS' && i.valor > 0 && !i.alerta) ? marcar : false }
+      ? { ...i, pronto: (i.metodo !== 'SEM_DADOS' && i.valor > 0 && !i.alerta && (!marcar || !i.avisoLoteExistente)) ? marcar : false }
       : i));
   };
 
@@ -1459,6 +1467,9 @@ export default function FinanceiroPage() {
                                 <button type="button" onClick={() => abrirEdicaoPagamentoCP(it)} className="ml-1 text-gray-400 hover:text-orange-600 underline">✏ editar</button>
                               )}
                             </span>
+                            {it.avisoLoteExistente && (
+                              <span className="block text-[10px] text-amber-600 font-black mt-0.5" title={it.avisoLoteExistente}>⚠ {it.avisoLoteExistente}</span>
+                            )}
 
                             {editandoPagamentoCP?.chaveEdit === chaveEdit && (
                               <div className="mt-2 p-3 bg-orange-50 border border-orange-200 rounded-lg space-y-2 max-w-sm">

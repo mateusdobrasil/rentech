@@ -3,7 +3,10 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
-import { consultarPagamentosItauAction, consultarPagamentoItauAction, type FiltrosConsultaItau } from './actions';
+import {
+  consultarPagamentosItauAction, consultarPagamentoItauAction, conciliarP2sComItauAction, darBaixaContaPagarConciliacaoAction,
+  type FiltrosConsultaItau, type CandidatoConciliacaoP2sItau, type CandidatoJaQuitadoP2s,
+} from './actions';
 import { listarIntegracoesAction, statusItauApiAction } from '../../parametros/integracao/actions';
 import { conciliarOpsComContasPagarAction, conciliarOpsComItauAction } from '../ops/actions';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
@@ -251,6 +254,92 @@ export default function IntegracaoFinanceiraPage() {
     }
   };
 
+  // "🔍 Conciliar P2S x Itaú" — cobre o caso de contas lançadas direto no
+  // PrimeStart e pagas direto no banco, sem passar pela OP do Rentech (por
+  // isso não têm o "OP: número" que a conciliação acima procura). Casa por
+  // valor + nome do favorecido/fornecedor; nenhuma baixa é automática aqui —
+  // o usuário revisa o grid e confirma.
+  const CONFIANCA_LABEL: Record<string, string> = { alta: 'Alta', media: 'Média', baixa: 'Baixa' };
+  const CONFIANCA_COR: Record<string, string> = {
+    alta: 'bg-emerald-100 text-emerald-700', media: 'bg-amber-100 text-amber-700', baixa: 'bg-gray-100 text-gray-500',
+  };
+  const centoOitentaDiasAtras = () => new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const [filtrosP2sItau, setFiltrosP2sItau] = useState({
+    dataInicial: trintaDiasAtras(), dataFinal: hoje(),
+    vencimentoInicial: centoOitentaDiasAtras(), vencimentoFinal: hoje(),
+  });
+  const [conciliandoP2s, setConciliandoP2s] = useState(false);
+  const [jaConciliouP2s, setJaConciliouP2s] = useState(false);
+  const [candidatosP2s, setCandidatosP2s] = useState<CandidatoConciliacaoP2sItau[]>([]);
+  const [jaQuitadasP2s, setJaQuitadasP2s] = useState<CandidatoJaQuitadoP2s[]>([]);
+  const [resumoP2s, setResumoP2s] = useState<{ totalPagamentosItau: number; totalContasEncontradas: number; valoresTruncados: boolean; pagamentosTruncados: boolean } | null>(null);
+  const [selecionadosP2s, setSelecionadosP2s] = useState<Set<string>>(new Set());
+  const [baixandoP2s, setBaixandoP2s] = useState<Set<string>>(new Set());
+  const [confirmacaoP2s, setConfirmacaoP2s] = useState<CandidatoConciliacaoP2sItau[] | null>(null);
+
+  const conciliarP2sItau = async () => {
+    setConciliandoP2s(true);
+    setSelecionadosP2s(new Set());
+    try {
+      const res = await conciliarP2sComItauAction(filtrosP2sItau, accessToken);
+      if (!res.ok) { toast(res.erro || 'Não foi possível conciliar.', 'error'); return; }
+      const candidatos: CandidatoConciliacaoP2sItau[] = res.info.candidatos || [];
+      setCandidatosP2s(candidatos);
+      setJaQuitadasP2s(res.info.jaQuitadas || []);
+      setResumoP2s(res.info);
+      setJaConciliouP2s(true);
+      if (candidatos.length === 0) {
+        toast('Nenhuma correspondência encontrada no período — confira se há pagamentos "Efetuado" no Itaú com valor igual ao de alguma conta em aberto no PrimeStart.', 'info');
+      }
+    } finally {
+      setConciliandoP2s(false);
+    }
+  };
+
+  const alternarSelecaoP2s = (oid: string) => {
+    setSelecionadosP2s(prev => {
+      const next = new Set(prev);
+      if (next.has(oid)) next.delete(oid); else next.add(oid);
+      return next;
+    });
+  };
+
+  const executarBaixasP2s = async (candidatos: CandidatoConciliacaoP2sItau[]) => {
+    setConfirmacaoP2s(null);
+    const oids = candidatos.map(c => c.p2sOid);
+    setBaixandoP2s(prev => new Set([...prev, ...oids]));
+    const sucesso: string[] = [];
+    let jaEstavamQuitadas = 0;
+    const falhas: { fornecedor: string | null; erro: string }[] = [];
+    for (const cand of candidatos) {
+      try {
+        const res = await darBaixaContaPagarConciliacaoAction({
+          p2sOid: cand.p2sOid, valor: cand.valor, fornecedor: cand.fornecedor, descricao: cand.descricao,
+          dataQuitacao: cand.pagamentoItau.dataPagamento || undefined,
+        }, accessToken);
+        if (res.ok) {
+          sucesso.push(cand.p2sOid);
+          if (res.info?.jaEstavaQuitada) jaEstavamQuitadas++;
+        } else {
+          falhas.push({ fornecedor: cand.fornecedor, erro: res.erro || 'erro desconhecido' });
+        }
+      } catch (e: any) {
+        falhas.push({ fornecedor: cand.fornecedor, erro: e.message });
+      }
+    }
+    setBaixandoP2s(prev => { const next = new Set(prev); oids.forEach(o => next.delete(o)); return next; });
+    if (sucesso.length > 0) {
+      setCandidatosP2s(prev => prev.filter(c => !sucesso.includes(c.p2sOid)));
+      setSelecionadosP2s(prev => { const next = new Set(prev); sucesso.forEach(o => next.delete(o)); return next; });
+    }
+    const baixadasDeVerdade = sucesso.length - jaEstavamQuitadas;
+    const partes: string[] = [];
+    if (baixadasDeVerdade > 0) partes.push(`${baixadasDeVerdade} conta(s) baixada(s) no PrimeStart.`);
+    if (jaEstavamQuitadas > 0) partes.push(`${jaEstavamQuitadas} já estava(m) quitada(s) no PrimeStart (nenhuma ação necessária).`);
+    if (falhas.length > 0) partes.push(`Falha(s): ${falhas.map(f => `${f.fornecedor || 's/nome'} (${f.erro})`).join('; ')}`);
+    if (partes.length > 0) toast(partes.join(' '), falhas.length > 0 ? 'error' : 'success');
+  };
+
   // `pagina` é 0-based, igual ao que a API do Itaú devolve em pagination.page.
   const consultar = async (pagina = 0) => {
     setConsultando(true);
@@ -381,6 +470,156 @@ export default function IntegracaoFinanceiraPage() {
             <button onClick={conciliarContas} disabled={conciliando} className="text-xs font-black bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-5 py-2.5 rounded-lg uppercase tracking-wider ml-auto">
               {conciliando ? '⏳ Conciliando...' : '🔗 Conciliar Contas'}
             </button>
+          </div>
+
+          {/* Conciliação P2S x Itaú — contas lançadas direto no PrimeStart e
+              pagas direto no banco, fora do fluxo de OP (por isso não têm
+              "OP: número" e não entram na conciliação acima). Casa por valor
+              + nome do favorecido; baixa sempre manual, mediante confirmação. */}
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] mb-4">
+            <div className="mb-3">
+              <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider mb-1">🔍 Conciliar P2S x Itaú</h3>
+              <p className="text-[11px] text-gray-500 max-w-lg">Para contas lançadas direto no PrimeStart e pagas direto no banco (sem passar por uma OP). Casa contas em aberto por valor e nome do favorecido com pagamentos já Efetuados no Itaú — você confere e confirma a baixa.</p>
+            </div>
+
+            <div className="bg-[#F8FAFC] rounded-xl p-3 mb-2 border border-gray-100">
+              <p className="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-2">🏦 Pagamento no Itaú (data efetiva do pagamento)</p>
+              <div className="flex flex-wrap items-end gap-3">
+                <div>
+                  <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">De</label>
+                  <input type="date" value={filtrosP2sItau.dataInicial} onChange={e => setFiltrosP2sItau(f => ({ ...f, dataInicial: e.target.value }))} className="p-2 border border-gray-300 rounded-lg text-xs font-bold bg-white" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Até</label>
+                  <input type="date" value={filtrosP2sItau.dataFinal} onChange={e => setFiltrosP2sItau(f => ({ ...f, dataFinal: e.target.value }))} className="p-2 border border-gray-300 rounded-lg text-xs font-bold bg-white" />
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-[#F8FAFC] rounded-xl p-3 mb-3 border border-gray-100">
+              <p className="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-2">🏢 Vencimento no PrimeStart (data de vencimento da conta, não a de lançamento)</p>
+              <div className="flex flex-wrap items-end gap-3">
+                <div>
+                  <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">De</label>
+                  <input type="date" value={filtrosP2sItau.vencimentoInicial} onChange={e => setFiltrosP2sItau(f => ({ ...f, vencimentoInicial: e.target.value }))} className="p-2 border border-gray-300 rounded-lg text-xs font-bold bg-white" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Até</label>
+                  <input type="date" value={filtrosP2sItau.vencimentoFinal} onChange={e => setFiltrosP2sItau(f => ({ ...f, vencimentoFinal: e.target.value }))} className="p-2 border border-gray-300 rounded-lg text-xs font-bold bg-white" />
+                </div>
+              </div>
+            </div>
+
+            <button onClick={conciliarP2sItau} disabled={conciliandoP2s} className="w-full md:w-auto text-xs font-black bg-[#0C1D4D] hover:bg-[#284B8C] disabled:opacity-50 text-white px-5 py-2.5 rounded-lg uppercase tracking-wider">
+              {conciliandoP2s ? '⏳ Buscando...' : '🔍 Conciliar P2S x Itaú'}
+            </button>
+
+            {jaConciliouP2s && (
+              <div className="pt-3 border-t border-gray-100 mt-2">
+                <p className="text-[11px] text-gray-500 font-bold mb-2">
+                  {candidatosP2s.length} correspondência(s) encontrada(s)
+                  {resumoP2s ? ` · ${resumoP2s.totalPagamentosItau} pagamento(s) Efetuado(s) no Itaú no período` : ''}
+                </p>
+                {resumoP2s?.pagamentosTruncados && (
+                  <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-2 font-bold">
+                    ⚠ Muitos pagamentos no período — nem todos foram considerados. Estreite o intervalo de datas para um resultado completo.
+                  </p>
+                )}
+                {resumoP2s?.valoresTruncados && (
+                  <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-2 font-bold">
+                    ⚠ Muitos valores distintos no período — nem todos foram consultados no PrimeStart. Estreite o intervalo de datas.
+                  </p>
+                )}
+
+                {candidatosP2s.length === 0 ? (
+                  <p className="text-xs text-gray-400 italic py-4 text-center">Nenhuma correspondência para o período informado.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <div className="flex items-center justify-between mb-2">
+                      <button onClick={() => setSelecionadosP2s(new Set(candidatosP2s.filter(c => c.confianca === 'alta').map(c => c.p2sOid)))} className="text-[10px] font-black text-[#1E40AF] hover:underline uppercase">
+                        Selecionar todas de alta confiança
+                      </button>
+                      <button
+                        onClick={() => setConfirmacaoP2s(candidatosP2s.filter(c => selecionadosP2s.has(c.p2sOid)))}
+                        disabled={selecionadosP2s.size === 0}
+                        className="text-[10px] font-black bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white px-3 py-1.5 rounded-lg uppercase tracking-wider"
+                      >
+                        Dar baixa nos selecionados ({selecionadosP2s.size})
+                      </button>
+                    </div>
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-left text-[9px] font-black text-gray-400 uppercase border-b border-gray-200">
+                          <th className="py-2 pr-2"></th>
+                          <th className="py-2 pr-3">Conta a Pagar (PrimeStart)</th>
+                          <th className="py-2 pr-3">Pagamento (Itaú)</th>
+                          <th className="py-2 pr-3">Confiança</th>
+                          <th className="py-2 pr-3"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {candidatosP2s.map(cand => (
+                          <tr key={cand.p2sOid} className="border-b border-gray-100 hover:bg-[#F8FAFC] align-top">
+                            <td className="py-2 pr-2 pt-3">
+                              <input type="checkbox" checked={selecionadosP2s.has(cand.p2sOid)} onChange={() => alternarSelecaoP2s(cand.p2sOid)} />
+                            </td>
+                            <td className="py-2 pr-3">
+                              <p className="font-bold">{cand.fornecedor || '— sem fornecedor —'}</p>
+                              <p className="text-gray-400">{cand.descricao || '—'} {cand.dataVencimento ? `· venc. ${fmtData(cand.dataVencimento)}` : ''}</p>
+                              <p className="font-bold">{BRL(cand.valor)}</p>
+                            </td>
+                            <td className="py-2 pr-3">
+                              <p className="font-bold">{cand.pagamentoItau.nomeFavorecido || '—'}</p>
+                              <p className="text-gray-400">{fmtData(cand.pagamentoItau.dataPagamento)}{cand.pagamentoItau.numeroLote ? ` · lote ${cand.pagamentoItau.numeroLote}` : ''}</p>
+                              <p className="font-bold">{BRL(cand.pagamentoItau.valor)}</p>
+                            </td>
+                            <td className="py-2 pr-3 pt-3">
+                              <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${CONFIANCA_COR[cand.confianca]}`}>
+                                {CONFIANCA_LABEL[cand.confianca]}
+                              </span>
+                            </td>
+                            <td className="py-2 pr-3 pt-3">
+                              <button
+                                onClick={() => setConfirmacaoP2s([cand])}
+                                disabled={baixandoP2s.has(cand.p2sOid)}
+                                className="text-[10px] font-black bg-[#F8FAFC] border border-gray-300 hover:bg-gray-100 disabled:opacity-40 text-gray-700 px-3 py-1.5 rounded-lg uppercase tracking-wider"
+                              >
+                                {baixandoP2s.has(cand.p2sOid) ? '⏳' : 'Dar baixa'}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Contas que o /qpo trouxe como candidatas (valor + vencimento
+                    batendo) mas que, na reconferência direta do objeto, já
+                    estão quitadas no PrimeStart de verdade — só informativo,
+                    nenhuma ação necessária. */}
+                {jaQuitadasP2s.length > 0 && (
+                  <div className="mt-4 pt-3 border-t border-gray-100">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">
+                      ✓ {jaQuitadasP2s.length} conta(s) já quitada(s) no PrimeStart (nenhuma ação necessária)
+                    </p>
+                    <div className="space-y-1.5">
+                      {jaQuitadasP2s.map(c => (
+                        <div key={c.p2sOid} className="flex justify-between gap-3 text-xs bg-gray-50 rounded-lg px-3 py-2">
+                          <div>
+                            <span className="font-bold">{c.fornecedor || '— sem fornecedor —'}</span>
+                            <span className="text-gray-400"> {c.descricao ? `· ${c.descricao}` : ''}</span>
+                          </div>
+                          <div className="text-gray-400 whitespace-nowrap">
+                            {BRL(c.valor)}{c.dataQuitacao ? ` · quitada em ${fmtData(c.dataQuitacao)}` : ''}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Consulta de pagamentos — GET /pagamentos_sispag */}
@@ -530,6 +769,42 @@ export default function IntegracaoFinanceiraPage() {
           </div>
         </>)}
       </div>
+
+      {/* Confirmação de baixa — ação real no PrimeStart (marcarContaPagarQuitada),
+          sem desfazer fácil, por isso sempre passa por esta revisão antes de disparar,
+          seja baixa única ou em lote. */}
+      {confirmacaoP2s && confirmacaoP2s.length > 0 && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setConfirmacaoP2s(null)}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-5" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-xs font-black text-[#0C1D4D] uppercase tracking-wider">Confirmar Baixa no PrimeStart</h3>
+              <button onClick={() => setConfirmacaoP2s(null)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
+            </div>
+            <p className="text-[11px] text-gray-500 mb-3">
+              {confirmacaoP2s.length === 1 ? 'Esta conta será marcada como quitada no PrimeStart.' : `Estas ${confirmacaoP2s.length} contas serão marcadas como quitadas no PrimeStart.`} Esta ação altera o ERP e não tem desfazer automático.
+            </p>
+            <div className="space-y-2 mb-4">
+              {confirmacaoP2s.map(cand => (
+                <div key={cand.p2sOid} className="bg-[#F8FAFC] rounded-lg p-2.5 text-xs flex justify-between gap-3">
+                  <div>
+                    <p className="font-bold">{cand.fornecedor || '— sem fornecedor —'}</p>
+                    <p className="text-gray-400">{cand.descricao || '—'}</p>
+                  </div>
+                  <p className="font-bold whitespace-nowrap">{BRL(cand.valor)}</p>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setConfirmacaoP2s(null)} className="text-xs font-black bg-[#F8FAFC] border border-gray-300 text-gray-600 hover:bg-gray-100 px-4 py-2 rounded-lg uppercase tracking-wider">
+                Cancelar
+              </button>
+              <button onClick={() => executarBaixasP2s(confirmacaoP2s)} className="text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg uppercase tracking-wider">
+                Confirmar Baixa
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal de detalhe — GET /pagamentos_sispag/{id}, inclui histórico de etapas */}
       {detalheId && (

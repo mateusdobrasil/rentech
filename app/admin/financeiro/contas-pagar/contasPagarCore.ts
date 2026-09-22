@@ -27,13 +27,16 @@ import { registrarSincronizacao } from '../../../lib/syncLog';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
-function nomeExibicao(obj: ObjetoP2s | null): string | null {
+// Exportadas para reuso em app/admin/financeiro/integracao/actions.ts
+// (conciliarP2sComItauAction) — resolve nome de fornecedor a partir do oid
+// de Entidade sem duplicar a mesma lógica de lote/fallback aqui.
+export function nomeExibicao(obj: ObjetoP2s | null): string | null {
   if (!obj) return null;
   const nome = (obj.NomeExibicao || obj.NomeCompleto || obj.Nome || '') as string;
   return nome || null;
 }
 
-async function resolverNomes(ambiente: AmbienteP2s, oids: (string | undefined)[]): Promise<Map<string, string>> {
+export async function resolverNomes(ambiente: AmbienteP2s, oids: (string | undefined)[]): Promise<Map<string, string>> {
   const unicos = [...new Set(oids.filter((oid): oid is string => !!oid && oid !== 'null'))];
   const mapa = new Map<string, string>();
   const TAMANHO_LOTE = 8;
@@ -51,19 +54,19 @@ async function resolverNomes(ambiente: AmbienteP2s, oids: (string | undefined)[]
 // Serial fora dessa faixa (aprox. anos 1900–2173) é lixo, não data real — ver
 // nota no topo do arquivo sobre DataVencimento corrompida encontrada em
 // produção.
-function paraDataISO(serial: unknown): string | null {
+export function paraDataISO(serial: unknown): string | null {
   const n = Number(serial);
   if (!n || n < 1 || n > 100_000) return null;
   const data = p2sParaData(n);
   return data ? data.toISOString().slice(0, 10) : null;
 }
 
-function refOuNull(v: unknown): string | undefined {
+export function refOuNull(v: unknown): string | undefined {
   const s = v ? String(v) : '';
   return s && s !== 'null' ? s : undefined;
 }
 
-function textoOuNull(v: unknown): string | null {
+export function textoOuNull(v: unknown): string | null {
   const s = String(v ?? '').trim();
   return s || null;
 }

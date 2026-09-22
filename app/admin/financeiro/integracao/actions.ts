@@ -10,9 +10,12 @@ import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
 import {
-  consultarPagamentosSispag, consultarPagamentoSispag, credenciaisItauConfiguradas,
+  consultarPagamentosSispag, consultarPagamentoSispag, credenciaisItauConfiguradas, semAcento,
   type AmbienteItau,
 } from '../../../lib/itauSispag';
+import { consultarObjetos, buscarObjeto, criterio, marcarContaPagarQuitada, dataParaP2s, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
+import { resolverNomes, paraDataISO, refOuNull, textoOuNull } from '../contas-pagar/contasPagarCore';
+import { revalidatePath } from 'next/cache';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 const ROTA = '/admin/financeiro/integracao';
@@ -255,6 +258,380 @@ export async function consultarPagamentoItauAction(idPagamentoSispag: string, ac
 
     // Mesmo embrulho extra "data" do endpoint de listagem, ver nota acima.
     return { ok: true, info: { pagamento: data?.data ?? data, ambiente: ctx.ambiente } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// CONCILIAÇÃO P2S x ITAÚ — cobre contas a pagar lançadas DIRETO no PrimeStart
+// (fora do fluxo de OP do Rentech Web) e pagas direto no banco, que por isso
+// nunca recebem baixa automática (marcarContaPagarQuitada só roda hoje a
+// partir de uma OP nossa, ver conciliarOpsComItauAction em
+// app/admin/financeiro/ops/actions.ts). Casa por VALOR (busca ancorada no
+// P2S por valor exato) + nome do favorecido/fornecedor.
+//
+// Por que buscar o P2S ao vivo por valor, em vez de usar o cache local
+// financeiro_contas_pagar: esse cache só guarda contas em aberto com
+// vencimento >= hoje (ver contasPagarCore.ts) — contas em aberto VENCIDAS,
+// o perfil mais provável de "esqueceram de baixar", ficam de fora dele de
+// propósito. Uma consulta por valor distinto dos pagamentos do Itaú no
+// período é bem mais barata que varrer todas as contas em aberto (~4700
+// num teste anterior) e ainda cobre as vencidas.
+// ============================================================================
+
+const SUFIXOS_EMPRESA_CONCILIACAO = /\b(ltda|me|epp|eireli|s\s?\/?\s?a|sa|cia|comercio|comercial|servicos?|industria|distribuidora|participacoes)\b\.?/g;
+
+function normalizarNomeConciliacao(s: string | null | undefined): string {
+  return semAcento(s || '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(SUFIXOS_EMPRESA_CONCILIACAO, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// 1 = nomes iguais após normalizar; 0.7 = um contém o outro; 0–0.6 =
+// interseção de palavras (nomes reordenados/parciais); 0 = nada em comum —
+// ainda assim mostrado, pois o valor já bateu (ver casarPorValor abaixo) e
+// cabe ao usuário decidir visualmente.
+function similaridadeNomesConciliacao(a: string | null | undefined, b: string | null | undefined): number {
+  const na = normalizarNomeConciliacao(a);
+  const nb = normalizarNomeConciliacao(b);
+  if (!na || !nb) return 0;
+  if (na === nb) return 1;
+  if (na.includes(nb) || nb.includes(na)) return 0.7;
+  const ta = new Set(na.split(' ').filter(Boolean));
+  const tb = new Set(nb.split(' ').filter(Boolean));
+  const inter = [...ta].filter(t => tb.has(t)).length;
+  if (inter === 0) return 0;
+  const uniao = new Set([...ta, ...tb]).size || 1;
+  return inter / uniao;
+}
+
+function confiancaPorScore(score: number): 'alta' | 'media' | 'baixa' {
+  if (score >= 1) return 'alta';
+  if (score >= 0.7) return 'media';
+  return 'baixa';
+}
+
+export interface PagamentoItauConciliacao {
+  idPagamento: string | null;
+  nomeFavorecido: string | null;
+  valor: number;
+  dataPagamento: string | null;
+  numeroLote: string | null;
+}
+
+export interface CandidatoConciliacaoP2sItau {
+  p2sOid: string;
+  fornecedor: string | null;
+  descricao: string | null;
+  numDocumento: string | null;
+  valor: number;
+  dataVencimento: string | null;
+  pagamentoItau: PagamentoItauConciliacao;
+  confianca: 'alta' | 'media' | 'baixa';
+}
+
+// Conta que o /qpo devolveu como candidata (Valor batendo, dentro do
+// vencimento pedido), mas que na reconferência (GET /objects/{oid}, fora do
+// proxy) já está com FlagQuitado=true — mostrada só informativamente, sem
+// pedir baixa de novo.
+export interface CandidatoJaQuitadoP2s {
+  p2sOid: string;
+  fornecedor: string | null;
+  descricao: string | null;
+  valor: number;
+  dataQuitacao: string | null;
+}
+
+export interface FiltrosConciliacaoP2sItau {
+  dataInicial: string;
+  dataFinal: string;
+  vencimentoInicial: string;
+  vencimentoFinal: string;
+}
+
+// Quantas consultas por valor distinto rodam ao mesmo tempo contra o P2S —
+// mesmo cuidado de PAGINAS_EM_PARALELO acima, pra não estourar rate limit.
+const VALORES_EM_PARALELO = 5;
+// Teto de valores distintos consultados numa chamada só — acima disso pede
+// pra estreitar o período em vez de disparar centenas de consultas ao P2S.
+const MAX_VALORES_CONSULTADOS = 150;
+
+export async function conciliarP2sComItauAction(filtros: FiltrosConciliacaoP2sItau, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  if (!filtros.dataInicial || !filtros.dataFinal) {
+    return { ok: false, erro: 'Informe a data inicial e a data final do pagamento.' };
+  }
+  if (!filtros.vencimentoInicial || !filtros.vencimentoFinal) {
+    return { ok: false, erro: 'Informe o período de vencimento a buscar no PrimeStart.' };
+  }
+
+  try {
+    // Serial P2S (dias desde 30/12/1899) do início/fim do período de
+    // vencimento pedido na tela — construído à meia-noite UTC pra bater
+    // exatamente com a data escolhida, sem deslizar um dia por fuso horário.
+    const serialVencimentoInicial = dataParaP2s(new Date(`${filtros.vencimentoInicial}T00:00:00Z`));
+    const serialVencimentoFinal = dataParaP2s(new Date(`${filtros.vencimentoFinal}T00:00:00Z`));
+    const ctxItau = await resolverContextoItau(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!ctxItau.ok) return { ok: false, erro: ctxItau.erro };
+
+    // Só pagamentos EFETUADOS entram na conciliação — pendente/não efetuado
+    // não justificam baixa nenhuma.
+    const filtrosItau: FiltrosConsultaItau = { dataInicial: filtros.dataInicial, dataFinal: filtros.dataFinal, tipoLista: 'Detalhada', status: 'EF' };
+    const primeira = await buscarPaginaItau(ctxItau, filtrosItau, 0);
+    const itens = [...primeira.itens];
+    const pagamentosTruncados = primeira.totalPaginas > MAX_PAGINAS_AGREGADAS;
+    if (primeira.totalPaginas > 1) {
+      const restantes = Array.from({ length: Math.min(primeira.totalPaginas, MAX_PAGINAS_AGREGADAS) - 1 }, (_, i) => i + 1);
+      for (let i = 0; i < restantes.length; i += PAGINAS_EM_PARALELO) {
+        const bloco = await Promise.all(
+          restantes.slice(i, i + PAGINAS_EM_PARALELO).map(p => buscarPaginaItau(ctxItau, filtrosItau, p))
+        );
+        for (const pagina of bloco) itens.push(...pagina.itens);
+      }
+    }
+
+    const pagamentos: PagamentoItauConciliacao[] = itens.map(it => ({
+      idPagamento: (it.id_pagamento as string) || null,
+      nomeFavorecido: (it.nome_favorecido as string) || (it.nome_beneficiario as string) || null,
+      valor: Number(it.valor_pagamento) || 0,
+      dataPagamento: (it.data_pagamento as string) || null,
+      numeroLote: (it.numero_lote as string) || null,
+    })).filter(p => p.valor > 0);
+
+    registrarLogAuditoria({
+      usuario_nome: acesso.perfil.nome,
+      acao: `CONCILIOU P2S x ITAÚ (${filtros.dataInicial} a ${filtros.dataFinal})`,
+      setor: 'FINANCEIRO / RH',
+    });
+
+    if (pagamentos.length === 0) {
+      return { ok: true, info: { candidatos: [], jaQuitadas: [], totalPagamentosItau: 0, totalContasEncontradas: 0, valoresConsultados: 0, valoresTruncados: false, pagamentosTruncados } };
+    }
+
+    // Agrupa por valor (2 casas decimais) — cada bucket vira uma consulta só
+    // no P2S, mesmo que vários pagamentos do Itaú compartilhem o valor.
+    const porValor = new Map<string, PagamentoItauConciliacao[]>();
+    for (const p of pagamentos) {
+      const chave = p.valor.toFixed(2);
+      if (!porValor.has(chave)) porValor.set(chave, []);
+      porValor.get(chave)!.push(p);
+    }
+
+    const chavesValor = [...porValor.keys()];
+    const valoresTruncados = chavesValor.length > MAX_VALORES_CONSULTADOS;
+    const chavesConsultadas = chavesValor.slice(0, MAX_VALORES_CONSULTADOS);
+
+    const ambienteP2s: AmbienteP2s = 'PRODUCAO';
+    const contasPorValor = new Map<string, ObjetoP2s[]>();
+
+    for (let i = 0; i < chavesConsultadas.length; i += VALORES_EM_PARALELO) {
+      const bloco = chavesConsultadas.slice(i, i + VALORES_EM_PARALELO);
+      const resultados = await Promise.all(bloco.map(async chave => {
+        const valor = Number(chave);
+        const { objectlist } = await consultarObjetos(ambienteP2s, 'TCustomContaPagar', [
+          criterio('FlagQuitado', 'eq', 'bool', false),
+          criterio('Valor', 'eq', 'dbl', valor),
+          criterio('DataVencimento', 'ge', 'dbl', serialVencimentoInicial),
+          criterio('DataVencimento', 'le', 'dbl', serialVencimentoFinal),
+        ], { proxy: true });
+        return { chave, objectlist };
+      }));
+      for (const r of resultados) contasPorValor.set(r.chave, r.objectlist);
+    }
+
+    const todasContas = [...contasPorValor.values()].flat();
+    if (todasContas.length === 0) {
+      return {
+        ok: true,
+        info: {
+          candidatos: [], jaQuitadas: [], totalPagamentosItau: pagamentos.length, totalContasEncontradas: 0,
+          valoresConsultados: chavesConsultadas.length, valoresTruncados, pagamentosTruncados,
+        },
+      };
+    }
+
+    const mapaNomes = await resolverNomes(ambienteP2s, todasContas.map(c => refOuNull(c.Entidade)));
+
+    // Reconferência: o /qpo (proxy=true) já pediu FlagQuitado=false, mas em
+    // teoria pode devolver estado levemente desatualizado logo após uma
+    // baixa recente (índice de busca vs. objeto de verdade). Como o
+    // GET /objects/{oid} não passa pelo proxy, é a fonte mais confiável pra
+    // decidir "está mesmo em aberto?" — quem já está quitada de verdade sai
+    // da lista de candidatos (não pede baixa de novo) e vira só informativa.
+    const oidsUnicos = [...new Set(todasContas.map(c => c.oid))];
+    const statusFresco = new Map<string, ObjetoP2s | null>();
+    for (let i = 0; i < oidsUnicos.length; i += VALORES_EM_PARALELO) {
+      const lote = oidsUnicos.slice(i, i + VALORES_EM_PARALELO);
+      const resultados = await Promise.all(lote.map(oid => buscarObjeto(ambienteP2s, oid).catch(() => null)));
+      lote.forEach((oid, idx) => statusFresco.set(oid, resultados[idx]));
+    }
+
+    const contasAbertasPorValor = new Map<string, ObjetoP2s[]>();
+    const jaQuitadas: CandidatoJaQuitadoP2s[] = [];
+    for (const [chave, contas] of contasPorValor) {
+      const abertas: ObjetoP2s[] = [];
+      for (const conta of contas) {
+        const fresca = statusFresco.get(conta.oid);
+        const quitadaDeVerdade = !!fresca && String(fresca.FlagQuitado) === 'true';
+        if (quitadaDeVerdade) {
+          const entidadeOid = refOuNull(conta.Entidade);
+          jaQuitadas.push({
+            p2sOid: conta.oid,
+            fornecedor: entidadeOid ? (mapaNomes.get(entidadeOid) || null) : null,
+            descricao: textoOuNull(conta.Descricao),
+            valor: Number(conta.Valor) || 0,
+            dataQuitacao: paraDataISO(fresca!.DataQuitacao),
+          });
+        } else {
+          abertas.push(conta);
+        }
+      }
+      if (abertas.length > 0) contasAbertasPorValor.set(chave, abertas);
+    }
+
+    // Corrige o cache local pras contas que já estavam quitadas de verdade
+    // no PrimeStart — evita que a mesma divergência apareça de novo na
+    // próxima conciliação.
+    if (jaQuitadas.length > 0) {
+      const db = supabaseAdmin();
+      await db.from('financeiro_contas_pagar').upsert(
+        jaQuitadas.map(c => ({
+          p2s_oid: c.p2sOid,
+          fornecedor: c.fornecedor,
+          descricao: c.descricao,
+          valor: c.valor,
+          valor_pago: c.valor,
+          quitado: true,
+          data_quitacao: c.dataQuitacao,
+          updated_at: new Date().toISOString(),
+        })),
+        { onConflict: 'p2s_oid' },
+      );
+    }
+
+    const candidatos: CandidatoConciliacaoP2sItau[] = [];
+    for (const chave of chavesConsultadas) {
+      const contas = contasAbertasPorValor.get(chave) || [];
+      const pagamentosDoValor = porValor.get(chave) || [];
+      if (contas.length === 0) continue;
+
+      // Casamento guloso dentro do bucket: ordena todos os pares conta x
+      // pagamento por similaridade de nome (desc) e atribui 1-para-1 — cobre
+      // tanto o caso comum (1 conta / 1 pagamento) quanto empates de valor
+      // entre fornecedores diferentes no mesmo bucket.
+      const pares: { contaIdx: number; pagIdx: number; score: number }[] = [];
+      contas.forEach((conta, contaIdx) => {
+        const entidadeOid = refOuNull(conta.Entidade);
+        const fornecedor = entidadeOid ? (mapaNomes.get(entidadeOid) || null) : null;
+        pagamentosDoValor.forEach((pag, pagIdx) => {
+          pares.push({ contaIdx, pagIdx, score: similaridadeNomesConciliacao(fornecedor, pag.nomeFavorecido) });
+        });
+      });
+      pares.sort((a, b) => b.score - a.score);
+
+      const contasUsadas = new Set<number>();
+      const pagamentosUsados = new Set<number>();
+      for (const par of pares) {
+        if (contasUsadas.has(par.contaIdx) || pagamentosUsados.has(par.pagIdx)) continue;
+        contasUsadas.add(par.contaIdx);
+        pagamentosUsados.add(par.pagIdx);
+
+        const conta = contas[par.contaIdx];
+        const entidadeOid = refOuNull(conta.Entidade);
+        const fornecedor = entidadeOid ? (mapaNomes.get(entidadeOid) || null) : null;
+
+        candidatos.push({
+          p2sOid: conta.oid,
+          fornecedor,
+          descricao: textoOuNull(conta.Descricao),
+          numDocumento: textoOuNull(conta.NumDocumento),
+          valor: Number(conta.Valor) || 0,
+          dataVencimento: paraDataISO(conta.DataVencimento),
+          pagamentoItau: pagamentosDoValor[par.pagIdx],
+          confianca: confiancaPorScore(par.score),
+        });
+      }
+      // Contas do bucket que sobraram sem par (mais contas do que pagamentos
+      // com o mesmo valor) ficam de fora — sem um pagamento pra comparar, não
+      // há o que mostrar de conciliação pra elas.
+    }
+
+    const ORDEM_CONFIANCA = { alta: 0, media: 1, baixa: 2 } as const;
+    candidatos.sort((a, b) => ORDEM_CONFIANCA[a.confianca] - ORDEM_CONFIANCA[b.confianca]);
+
+    return {
+      ok: true,
+      info: {
+        candidatos,
+        jaQuitadas,
+        totalPagamentosItau: pagamentos.length,
+        totalContasEncontradas: todasContas.length,
+        valoresConsultados: chavesConsultadas.length,
+        valoresTruncados,
+        pagamentosTruncados,
+      },
+    };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+export async function darBaixaContaPagarConciliacaoAction(payload: {
+  p2sOid: string; valor: number; fornecedor?: string | null; descricao?: string | null; dataQuitacao?: string;
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  try {
+    const data = payload.dataQuitacao ? new Date(`${payload.dataQuitacao}T12:00:00`) : new Date();
+
+    // Reconfere direto no objeto (fora do proxy) antes de chamar o método de
+    // baixa — cobre a corrida entre a busca que montou o grid e o clique
+    // aqui (alguém já deu baixa nesse meio-tempo, por outra tela). Se já
+    // estiver quitada de verdade, não tenta baixar de novo: só sincroniza o
+    // cache local e avisa.
+    const objetoAtual = await buscarObjeto('PRODUCAO', payload.p2sOid).catch(() => null);
+    const jaEstavaQuitada = !!objetoAtual && String(objetoAtual.FlagQuitado) === 'true';
+
+    if (!jaEstavaQuitada) {
+      const baixa = await marcarContaPagarQuitada('PRODUCAO', payload.p2sOid, data);
+      if (!baixa.ok) {
+        return { ok: false, erro: baixa.motivo || 'PrimeStart recusou a quitação desta conta.' };
+      }
+    }
+
+    // Reflete a baixa no cache local imediatamente, sem esperar o próximo
+    // sync de /admin/financeiro/contas-pagar (mesmo formato de registro de
+    // sincronizarContasPagarCore, ver contasPagarCore.ts).
+    const dataQuitacaoIso = (jaEstavaQuitada && objetoAtual ? paraDataISO(objetoAtual.DataQuitacao) : null) || data.toISOString().slice(0, 10);
+    const db = supabaseAdmin();
+    await db.from('financeiro_contas_pagar').upsert({
+      p2s_oid: payload.p2sOid,
+      fornecedor: payload.fornecedor || null,
+      descricao: payload.descricao || null,
+      valor: payload.valor,
+      valor_pago: payload.valor,
+      quitado: true,
+      data_quitacao: dataQuitacaoIso,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'p2s_oid' });
+
+    if (!jaEstavaQuitada) {
+      registrarLogAuditoria({
+        usuario_nome: acesso.perfil.nome,
+        acao: `DEU BAIXA NA CONTA A PAGAR (P2S ${payload.p2sOid}) VIA CONCILIAÇÃO COM ITAÚ — FORNECEDOR: ${payload.fornecedor || 's/nome'} — VALOR: R$ ${payload.valor.toFixed(2)}`,
+        setor: 'FINANCEIRO / RH',
+      });
+    }
+
+    revalidatePath('/admin/financeiro/contas-pagar');
+
+    return { ok: true, info: { p2sOid: payload.p2sOid, jaEstavaQuitada } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

@@ -303,7 +303,17 @@ export async function montarLoteSalariosAction(payload: {
       const { data: contas } = await db.from('financeiro_contas_pagar')
         .select('id, descricao, fornecedor, centro, valor, valor_pago, data_vencimento, documento_fornecedor, pix_tipo, pix_chave, banco_codigo, banco_agencia, banco_conta, banco_tipo')
         .eq('quitado', false).is('pago_em', null);
-      contasPagarPendentes = contas || [];
+      // Conta cuja Descricao cita "OP: <número>" (ou "#<número>") nasceu de
+      // uma Ordem de Pagamento nossa (ver criarContaPagarParaOP) — já tem
+      // caminho próprio de pagamento pela fonte 'OP' (ou pela conciliação
+      // automática em conciliarOpsComContasPagarAction). Oferecer ela
+      // TAMBÉM aqui deixa fácil pagar a mesma obrigação duas vezes por
+      // fontes diferentes — foi exatamente o que causou um PIX de R$900
+      // enviado por engano em produção (2026-09-22, ver
+      // project_lote_contas_pagar_envio_bugs.md). Mesmo padrão de
+      // reconhecimento usado em conciliarOpsComContasPagarAction (ops/actions.ts).
+      const PADRAO_OP_DESCRICAO = /(?:OP\s*:\s*|#)\d+/i;
+      contasPagarPendentes = (contas || []).filter(c => !PADRAO_OP_DESCRICAO.test(c.descricao || ''));
     }
 
     const valoresAdiant = payload.valoresAdiantamento || {};

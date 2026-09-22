@@ -1267,8 +1267,14 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
       }
 
       // referencia_empresa: maxLength 20 no schema oficial.
+      // identificacao_comprovante: CONFIRMADO EM PRODUÇÃO (2026-09-22, lote
+      // #52) — o schema "oficial" documentava 100, mas o Itaú rejeitou com
+      // HTTP 400 "size must be between 0 and 60" pra TODOS os itens de um
+      // lote Contas a Pagar (P2S), cujo funcionario_nome é bem mais longo
+      // ("Fornecedor — Descrição (#id)") que nome de funcionário/OP — nunca
+      // tinha estourado antes por coincidência. Limite real é 60, não 100.
       const referencia_empresa = textoSispag(`FOLHA ${lote.mes_referencia}`, 20);
-      const identificacao_comprovante = textoSispag(`Pagamento - ${item.funcionario_nome}`, 100);
+      const identificacao_comprovante = textoSispag(`Pagamento - ${item.funcionario_nome}`, 60);
       const informacoes_entre_usuarios = textoSispag(`Pagamento de ${item.fonte_rotulo || 'folha'} - ${lote.mes_referencia}`, 100);
       // Itens de OP usam a própria data de vencimento (item.dataPagamento),
       // nunca a data digitada na tela de montagem do lote — ver

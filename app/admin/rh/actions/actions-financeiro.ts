@@ -1276,10 +1276,18 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
       const referencia_empresa = textoSispag(`FOLHA ${lote.mes_referencia}`, 20);
       const identificacao_comprovante = textoSispag(`Pagamento - ${item.funcionario_nome}`, 60);
       const informacoes_entre_usuarios = textoSispag(`Pagamento de ${item.fonte_rotulo || 'folha'} - ${lote.mes_referencia}`, 100);
-      // Itens de OP usam a própria data de vencimento (item.dataPagamento),
-      // nunca a data digitada na tela de montagem do lote — ver
-      // montarLoteSalariosAction, onde esse campo é preenchido só pra OP.
-      const dataPagamentoItem = item.dataPagamento || payload.dataPagamento;
+      // Itens de OP/Contas a Pagar usam a própria data de vencimento
+      // (item.dataPagamento) em vez da digitada na tela de montagem do lote
+      // — ver montarLoteSalariosAction. CONFIRMADO EM PRODUÇÃO (2026-09-22):
+      // o Itaú recusa com motivo_recusa código 580 "Data pagamento - repasse
+      // invalido" quando essa data cai no passado — o que é comum pra Contas
+      // a Pagar (P2S) já VENCIDAS (justamente o caso de conta esquecida que
+      // se paga atrasada). Nunca manda o SISPAG agendar num dia que já
+      // passou: usa o vencimento só quando ele ainda não venceu, senão cai
+      // pra hoje.
+      const hojeIso = new Date().toISOString().slice(0, 10);
+      const dataBasePagamento = item.dataPagamento || payload.dataPagamento;
+      const dataPagamentoItem = dataBasePagamento && dataBasePagamento >= hojeIso ? dataBasePagamento : hojeIso;
 
       let resultado;
       if (item.pix_chave) {

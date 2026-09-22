@@ -116,6 +116,7 @@ export default function SolicitacoesFolga({ usuarioAtual, accessToken, onCountCh
   const [solicitacoes, setSolicitacoes] = useState<SolicitacaoHistorico[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [processandoId, setProcessandoId] = useState<number | null>(null);
+  const [respostaAberta, setRespostaAberta] = useState<SolicitacaoHistorico | null>(null);
 
   // onCountChange fica numa ref (não numa dependência do useCallback abaixo)
   // de propósito: se o chamador passar uma função nova a cada render (como
@@ -222,6 +223,8 @@ export default function SolicitacoesFolga({ usuarioAtual, accessToken, onCountCh
                           <button disabled={processandoId !== null} onClick={() => aprovar(s.id)} className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors">{processandoId === s.id ? '...' : '✓ Aprovar'}</button>
                           <button disabled={processandoId !== null} onClick={() => rejeitar(s.id)} className="bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-600 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors">{processandoId === s.id ? '...' : '✕ Rejeitar'}</button>
                         </div>
+                      ) : s.status === 'REJEITADA' ? (
+                        <button onClick={() => setRespostaAberta(s)} className="text-[#336699] hover:underline font-bold text-[10px] uppercase tracking-wider">👁 Ver resposta</button>
                       ) : <span className="text-gray-300 text-xs">—</span>}
                     </td>
                   </tr>
@@ -231,6 +234,21 @@ export default function SolicitacoesFolga({ usuarioAtual, accessToken, onCountCh
           </table>
         </div>
       </main>
+
+      {respostaAberta && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setRespostaAberta(null)}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
+            <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Resposta do RH</h2>
+            <p className="text-sm text-gray-500 mb-4">{respostaAberta.funcionario_nome} — {formatarPeriodo(respostaAberta)}</p>
+            <p className="text-sm text-gray-700 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-3 whitespace-pre-wrap">
+              {respostaAberta.motivo_rejeicao || 'Nenhum motivo foi registrado.'}
+            </p>
+            <div className="flex justify-end mt-4">
+              <button onClick={() => setRespostaAberta(null)} className="bg-[#0C1D4D] hover:bg-[#132a66] text-white px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors">Fechar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

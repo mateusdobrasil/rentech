@@ -21,7 +21,7 @@ const ERRO_SESSAO = 'Sessão inválida ou expirada. Faça login novamente.';
 export async function buscarCrachaDados(db: ReturnType<typeof supabaseAdmin>, funcionarioNome: string) {
   const { data, error } = await db
     .from('folha_funcionarios')
-    .select('nome_completo, cargo, cpf, foto_path, data_nascimento')
+    .select('nome_completo, cargo, cpf, foto_path, data_nascimento, empresa_id')
     .eq('nome_completo', funcionarioNome)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -33,12 +33,24 @@ export async function buscarCrachaDados(db: ReturnType<typeof supabaseAdmin>, fu
     fotoUrl = signed?.signedUrl || null;
   }
 
+  // A empresa do PRÓPRIO funcionário (não o domínio usado pra acessar o
+  // Portal) decide a marca impressa no crachá — mesmo critério já adotado no
+  // auto-cadastro de freelancer (app/freelance/page.tsx): usa o dado
+  // cadastrado, não o link usado pra entrar, pra não depender de qual
+  // domínio a pessoa digitou.
+  let ehAlfaLight = false;
+  if (data.empresa_id) {
+    const { data: empresa } = await db.from('empresas').select('nome').eq('id', data.empresa_id).maybeSingle();
+    ehAlfaLight = (empresa?.nome || '').toLowerCase().includes('alfa');
+  }
+
   return {
     nome: data.nome_completo,
     cargo: data.cargo,
     cpf: data.cpf,
     dataNascimento: data.data_nascimento,
     fotoUrl,
+    ehAlfaLight,
   };
 }
 

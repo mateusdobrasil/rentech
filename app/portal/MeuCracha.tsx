@@ -27,6 +27,9 @@ export interface DadosCracha {
   cpf: string | null;
   dataNascimento: string | null;
   fotoUrl: string | null;
+  // Empresa do próprio funcionário (não o domínio de acesso) — decide qual
+  // logo aparece no crachá. Ver buscarCrachaDados em actions-cracha.ts.
+  ehAlfaLight?: boolean;
 }
 
 const fmtDataNascimento = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
@@ -50,7 +53,11 @@ function Cartao({ dados, qrDataUrl }: { dados: DadosCracha; qrDataUrl: string })
 
       <div style={{ background: NAVY, marginTop: 10, padding: "12px 20px", display: "flex", justifyContent: "center" }}>
         <div style={{ background: "#fff", borderRadius: 8, padding: "5px 12px" }}>
-          <Image src={logoColorido} alt="Rentech" height={34} style={{ width: "auto", height: 34, display: "block" }} />
+          {dados.ehAlfaLight ? (
+            <Image src="/logo-alfalight.png" alt="AlfaLight" width={120} height={34} style={{ width: "auto", height: 34, display: "block" }} />
+          ) : (
+            <Image src={logoColorido} alt="Rentech" height={34} style={{ width: "auto", height: 34, display: "block" }} />
+          )}
         </div>
       </div>
 

@@ -90,6 +90,8 @@ export default function PainelResponsavel() {
   const [filtroResponsavel, setFiltroResponsavel] = useState('');
   const [filtroFavorecido, setFiltroFavorecido] = useState('');
   const [filtroEmpresa, setFiltroEmpresa] = useState<number | null>(null);
+  const [vencimentoDe, setVencimentoDe] = useState('');
+  const [vencimentoAte, setVencimentoAte] = useState('');
 
   // Empresa(s) que o usuário pode enxergar (Rentech × AlfaLight): só quem é
   // literalmente "Administrador" (ehAdministradorGlobal) vê todas — Diretoria/
@@ -212,20 +214,29 @@ export default function PainelResponsavel() {
       // já usado no resto do sistema (empresaPermitida em app/lib/serverAuth.ts).
       const matchEmpresa = !filtroEmpresa || op.empresa_id == null || op.empresa_id === filtroEmpresa;
 
-      return matchBusca && matchResponsavel && matchFavorecido && matchEmpresa;
+      // data_vencimento vem como "YYYY-MM-DD" (ou ISO com hora); os 10 primeiros
+      // caracteres comparam direto com o valor do <input type="date">. OP sem
+      // vencimento some quando qualquer um dos limites está preenchido.
+      const venc = (op.data_vencimento || '').slice(0, 10);
+      const matchVencimento = (!vencimentoDe && !vencimentoAte)
+        || (!!venc && (!vencimentoDe || venc >= vencimentoDe) && (!vencimentoAte || venc <= vencimentoAte));
+
+      return matchBusca && matchResponsavel && matchFavorecido && matchEmpresa && matchVencimento;
     });
-  }, [ops, busca, filtroResponsavel, filtroFavorecido, filtroEmpresa]);
+  }, [ops, busca, filtroResponsavel, filtroFavorecido, filtroEmpresa, vencimentoDe, vencimentoAte]);
 
   const limparFiltros = () => {
     setBusca('');
     setFiltroResponsavel('');
     setFiltroFavorecido('');
+    setVencimentoDe('');
+    setVencimentoAte('');
     // Só libera "Todas" se o usuário de fato tem mais de uma empresa — senão
     // o filtro fica travado e não é uma opção pra limpar.
     if (empresasCatalogoVisivel.length > 1) setFiltroEmpresa(null);
   };
 
-  const filtrosAtivos = busca || filtroResponsavel || filtroFavorecido || (empresasCatalogoVisivel.length > 1 && filtroEmpresa);
+  const filtrosAtivos = busca || filtroResponsavel || filtroFavorecido || vencimentoDe || vencimentoAte || (empresasCatalogoVisivel.length > 1 && filtroEmpresa);
 
   // Utilitários
   const formatarMoeda = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
@@ -500,8 +511,8 @@ export default function PainelResponsavel() {
 
       {/* BARRA DE FILTROS */}
       <div className="px-4 md:px-8 pt-5 pb-3 flex-shrink-0">
-        <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm px-4 py-4 flex flex-col md:flex-row gap-3 items-stretch md:items-center">
-          <div className="relative flex-1 min-w-0">
+        <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm px-4 py-4 flex flex-col md:flex-row md:flex-wrap gap-3 items-stretch md:items-center">
+          <div className="relative flex-1 min-w-[220px]">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
@@ -550,6 +561,25 @@ export default function PainelResponsavel() {
             ))}
           </select>
 
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-[10px] font-bold text-[#64748B] uppercase whitespace-nowrap">Venc. de</span>
+            <input
+              type="date"
+              value={vencimentoDe}
+              max={vencimentoAte || undefined}
+              onChange={(e) => setVencimentoDe(e.target.value)}
+              className="py-2.5 px-2 border border-[#CBD5E1] rounded-lg text-sm outline-none focus:border-[#336699] focus:ring-1 focus:ring-[#336699]/30 transition-all text-[#0A2A4A] bg-white"
+            />
+            <span className="text-[10px] font-bold text-[#64748B] uppercase">até</span>
+            <input
+              type="date"
+              value={vencimentoAte}
+              min={vencimentoDe || undefined}
+              onChange={(e) => setVencimentoAte(e.target.value)}
+              className="py-2.5 px-2 border border-[#CBD5E1] rounded-lg text-sm outline-none focus:border-[#336699] focus:ring-1 focus:ring-[#336699]/30 transition-all text-[#0A2A4A] bg-white"
+            />
+          </div>
+
           {filtrosAtivos && (
             <button
               onClick={limparFiltros}
@@ -569,10 +599,11 @@ export default function PainelResponsavel() {
       {/* TABELA RECALIBRADA */}
       <div className="px-4 md:px-8 pb-6 flex-grow overflow-hidden flex flex-col">
         <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] flex-grow overflow-auto">
-          <table className="w-full text-left border-collapse min-w-[920px]">
+          <table className="w-full text-left border-collapse min-w-[1000px]">
             <thead className="bg-[#F8FAFC] sticky top-0 shadow-sm z-10">
               <tr className="text-[#64748B] text-[10px] uppercase tracking-wider font-bold">
                 <th className="p-2.5 border-b-2 border-[#E2E8F0] w-20">Data OP</th>
+                <th className="p-2.5 border-b-2 border-[#E2E8F0] w-20">Vencimento</th>
                 <th className="p-2.5 border-b-2 border-[#E2E8F0] w-16">Nº OP</th>
                 <th className="p-2.5 border-b-2 border-[#E2E8F0] min-w-[120px] max-w-[135px]">OS / Evento / Período</th>
                 <th className="p-2.5 border-b-2 border-[#E2E8F0] w-28">Responsável</th>
@@ -586,10 +617,10 @@ export default function PainelResponsavel() {
             </thead>
             <tbody className="divide-y divide-[#E2E8F0] text-xs">
               {loading ? (
-                <tr><td colSpan={10} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Buscando as solicitações...</td></tr>
+                <tr><td colSpan={11} className="text-center py-12 text-[#94A3B8] font-bold text-sm">Buscando as solicitações...</td></tr>
               ) : opsFiltradas.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="text-center py-12">
+                  <td colSpan={11} className="text-center py-12">
                     <p className="text-[#94A3B8] font-bold text-sm">Nenhuma OP encontrada.</p>
                     {filtrosAtivos && (
                       <button onClick={limparFiltros} className="mt-3 text-[#336699] font-bold text-xs underline">
@@ -604,6 +635,7 @@ export default function PainelResponsavel() {
                   return (
                     <tr key={op.id} className="hover:bg-[#F8FAFC] transition-colors">
                       <td className="p-2.5 font-semibold text-[#94A3B8] whitespace-nowrap">{formatarData(op.data_criacao)}</td>
+                      <td className="p-2.5 font-semibold text-[#0C1D4D] whitespace-nowrap">{formatarData(op.data_vencimento)}</td>
                       <td className="p-2.5 font-black text-[#0C1D4D]">#{op.numero_op}</td>
                       <td className="p-2.5">
                         <span className="bg-[#E0F2FE] text-[#0369A1] font-bold px-2 py-1 rounded-md text-xs whitespace-nowrap inline-block mb-1">{op.os_numero || 'S/N'}</span>

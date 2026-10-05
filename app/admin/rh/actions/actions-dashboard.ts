@@ -87,7 +87,11 @@ export async function painelRhAction(accessToken: string): Promise<Resultado> {
     const holeritesAbertos = elegiveis.filter(f => !fechados.has(f.nome_completo)).length;
 
     // Pontos ímpares (batidas incompletas) no mês de competência aberto.
-    const pontosImpares = (pontoMesRes.data || []).filter(r => !diaComBatidasOk(r)).length;
+    // folha_ponto_diaria não guarda se o funcionário está ativo — sem esse
+    // cruzamento, um colaborador desligado no meio do mês (que ainda tem
+    // batidas registradas na competência) inflava a contagem.
+    const nomesAtivos = new Set((funcsRes.data || []).map(f => f.nome_completo));
+    const pontosImpares = (pontoMesRes.data || []).filter(r => nomesAtivos.has(r.funcionario_nome) && !diaComBatidasOk(r)).length;
 
     // Aniversariantes do mês corrente (não da competência — é sobre hoje).
     const aniversariantes = (funcsRes.data || [])

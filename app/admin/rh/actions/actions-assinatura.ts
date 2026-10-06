@@ -10,7 +10,7 @@ import { supabaseAdmin } from '../../../lib/supabase';
 import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
-import { autentiqueCriarDocumento, autentiqueConsultarDocumento } from '../../../lib/autentique';
+import { autentiqueCriarDocumento, autentiqueConsultarDocumento, autentiqueCancelarDocumento } from '../../../lib/autentique';
 import { gerarHoleritePdf } from '../../../lib/gerarHoleritePdf';
 import { gerarEspelhoPontoPdf, RegistroPontoDia } from '../../../lib/gerarEspelhoPontoPdf';
 import { gerarReciboPdf } from '../../../lib/gerarReciboPdf';
@@ -824,7 +824,7 @@ export async function atualizarTodasAssinaturasAction(payload: {
       .from('folha_holerite_assinaturas')
       .select('funcionario_nome, mes_referencia, status')
       .or(`mes_referencia.eq.${payload.mesReferencia},mes_referencia.like.AVULSO-${payload.mesReferencia}-%`)
-      .not('status', 'in', '("ASSINADO","REJEITADO")');
+      .not('status', 'in', '("ASSINADO","REJEITADO","CANCELADO")');
     if (empresasPermitidas) qPendentes = qPendentes.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
     const { data: pendentes } = await qPendentes;
 
@@ -900,6 +900,9 @@ export async function consultarAssinaturaAction(payload: {
     if (!ctrl?.autentique_doc_id) return { ok: false, erro: 'Nenhum envio encontrado para este holerite.' };
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     if (!empresaPermitida(empresasPermitidas, ctrl.empresa_id)) return { ok: false, erro: 'Nenhum envio encontrado para este holerite.' };
+    // Envio cancelado não se "reabre" sozinho: sem este guard, consultar a
+    // Autentique sobrescreveria o status de volta pra ENVIADO/VISUALIZADO.
+    if (ctrl.status === 'CANCELADO') return { ok: false, erro: 'Este envio foi cancelado.' };
 
     const doc = await autentiqueConsultarDocumento(ctrl.autentique_doc_id);
     // A primeira signature é o AUTOR (a Rentech, action: null), que nunca assina.
@@ -934,6 +937,81 @@ export async function consultarAssinaturaAction(payload: {
     }).eq('autentique_doc_id', ctrl.autentique_doc_id);
 
     return { ok: true, info: { status: novoStatus } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// CANCELAR ENVIO — nunca apaga a linha de folha_holerite_assinaturas (histórico
+// de quem mandou o quê fica preservado), só marca status='CANCELADO'. Serve
+// para retratar um envio errado (ex.: holerite que saiu com valor zerado) sem
+// perder o rastro, e libera o funcionário pra receber um novo envio corrigido
+// no mesmo mês (o upsert de enviarHoleriteAssinaturaAction sobrescreve a linha
+// normalmente, menos quando já está ASSINADO).
+// ============================================================================
+export async function cancelarAssinaturaAction(payload: {
+  funcionarioNome: string;
+  mesReferencia: string;
+  canceladoPor: string;
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  const { funcionarioNome, mesReferencia, canceladoPor } = payload;
+
+  try {
+    const { data: atual } = await db
+      .from('folha_holerite_assinaturas')
+      .select('status, autentique_doc_id, empresa_id')
+      .eq('funcionario_nome', funcionarioNome)
+      .eq('mes_referencia', mesReferencia)
+      .maybeSingle();
+    if (!atual) return { ok: false, erro: 'Nenhum envio encontrado para este holerite.' };
+
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, atual.empresa_id)) {
+      return { ok: false, erro: 'Nenhum envio encontrado para este holerite.' };
+    }
+    if (atual.status === 'ASSINADO') {
+      return { ok: false, erro: 'Este holerite já foi assinado. Não é possível cancelar um documento já assinado.' };
+    }
+    if (atual.status === 'CANCELADO') {
+      return { ok: false, erro: 'Este envio já está cancelado.' };
+    }
+
+    // Bloqueia a assinatura do lado da Autentique. Falha aqui não impede o
+    // cancelamento interno — se o funcionário já abriu o link antes de
+    // cancelarmos, não há o que fazer do nosso lado de qualquer forma.
+    if (atual.autentique_doc_id) {
+      try {
+        await autentiqueCancelarDocumento(atual.autentique_doc_id);
+      } catch (e: any) {
+        console.error('Falha ao bloquear documento na Autentique ao cancelar:', e.message);
+      }
+    }
+
+    const { error } = await db
+      .from('folha_holerite_assinaturas')
+      .update({
+        status: 'CANCELADO',
+        cancelado_por: canceladoPor || null,
+        cancelado_em: new Date().toISOString(),
+        atualizado_em: new Date().toISOString()
+      })
+      .eq('funcionario_nome', funcionarioNome)
+      .eq('mes_referencia', mesReferencia);
+    if (error) throw new Error(error.message);
+
+    registrarLogAuditoria({
+      usuario_nome: canceladoPor || 'Sistema',
+      acao: `CANCELOU ENVIO DE HOLERITE PARA ASSINATURA: ${mesReferencia}`,
+      setor: 'RECURSOS HUMANOS',
+      equipamento_nome: funcionarioNome,
+    });
+
+    return { ok: true };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

@@ -7,7 +7,8 @@ import { Analytics } from "@vercel/analytics/next";
 import
   {
     listarAssinaturasAction, consultarAssinaturaAction, enviarDocumentoAvulsoAction,
-    listarFuncionariosAtivosAction, baixarAssinadoAction, atualizarTodasAssinaturasAction
+    listarFuncionariosAtivosAction, baixarAssinadoAction, atualizarTodasAssinaturasAction,
+    cancelarAssinaturaAction
   } from '../actions/actions-assinatura';
 import { listarAssinaturasRescisaoAction } from '../actions/actions-rescisao';
 import logoColorido from '../../../../app/imgs/logo.png';
@@ -47,6 +48,7 @@ const STATUS_INFO: Record<string, { label: string; cor: string; bg: string; icon
   ASSINADO:    { label: 'Assinado',    cor: '#16A34A', bg: '#F0FDF4', icone: '✅' },
   REJEITADO:   { label: 'Rejeitado',   cor: '#DC2626', bg: '#FEF2F2', icone: '✖' },
   PENDENTE:    { label: 'Pendente',    cor: '#64748B', bg: '#F8FAFC', icone: '⏳' },
+  CANCELADO:   { label: 'Cancelado',   cor: '#94A3B8', bg: '#F1F5F9', icone: '🚫' },
 };
 
 export default function AssinaturasPage() {
@@ -60,7 +62,8 @@ export default function AssinaturasPage() {
   const [atualizando, setAtualizando] = useState<string | null>(null);
   const [baixandoAssinado, setBaixandoAssinado] = useState<string | null>(null);
   const [atualizandoTodas, setAtualizandoTodas] = useState(false);
-  const [filtro, setFiltro] = useState<'TODOS' | 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO'>('TODOS');
+  const [filtro, setFiltro] = useState<'TODOS' | 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO' | 'CANCELADO'>('TODOS');
+  const [cancelando, setCancelando] = useState<string | null>(null);
   // Empresa: as actions já cortam o que o usuário não pode ver (servidor). Aqui é
   // só a escolha dele dentro do que sobrou — mesmo padrão de /admin/rh/holerite.
   const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
@@ -106,7 +109,8 @@ export default function AssinaturasPage() {
   const [loadingRescisao, setLoadingRescisao] = useState(true);
   const [atualizandoRescisao, setAtualizandoRescisao] = useState<string | null>(null);
   const [baixandoRescisao, setBaixandoRescisao] = useState<string | null>(null);
-  const [filtroRescisao, setFiltroRescisao] = useState<'TODOS' | 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO'>('TODOS');
+  const [filtroRescisao, setFiltroRescisao] = useState<'TODOS' | 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO' | 'CANCELADO'>('TODOS');
+  const [cancelandoRescisao, setCancelandoRescisao] = useState<string | null>(null);
 
   const carregarRescisoes = async () => {
     setLoadingRescisao(true);
@@ -136,6 +140,24 @@ export default function AssinaturasPage() {
     }
   };
 
+  const cancelarEnvioRescisao = async (a: Assinatura) => {
+    if (!confirm(
+      `Cancelar o envio do TRCT de ${a.funcionario_nome}?\n\n` +
+      `O link de assinatura deixa de funcionar e o registro fica marcado como CANCELADO (não é apagado).`
+    )) return;
+    setCancelandoRescisao(a.funcionario_nome);
+    try {
+      const res = await cancelarAssinaturaAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia, canceladoPor: usuarioAtual }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      toast('Envio cancelado.', 'success');
+      carregarRescisoes();
+    } catch (e: any) {
+      toast('Erro ao cancelar: ' + e.message, 'error');
+    } finally {
+      setCancelandoRescisao(null);
+    }
+  };
+
   const abrirAssinadoRescisao = async (a: Assinatura) => {
     setBaixandoRescisao(a.funcionario_nome);
     try {
@@ -155,7 +177,7 @@ export default function AssinaturasPage() {
 
   const contagemRescisao = useMemo(() => {
     const daEmpresa = assinaturasRescisao.filter(daEmpresaEscolhida);
-    const c = { total: daEmpresa.length, ENVIADO: 0, VISUALIZADO: 0, ASSINADO: 0, REJEITADO: 0 };
+    const c = { total: daEmpresa.length, ENVIADO: 0, VISUALIZADO: 0, ASSINADO: 0, REJEITADO: 0, CANCELADO: 0 };
     daEmpresa.forEach(a => { if (a.status in c) (c as any)[a.status]++; });
     return c;
   }, [assinaturasRescisao, filtroEmpresa]);
@@ -210,8 +232,27 @@ export default function AssinaturasPage() {
     }
   };
 
+  const cancelarEnvio = async (a: Assinatura) => {
+    if (!confirm(
+      `Cancelar o envio de "${a.titulo_avulso || 'Holerite'}" para ${a.funcionario_nome}?\n\n` +
+      `O link de assinatura deixa de funcionar e o registro fica marcado como CANCELADO (não é apagado).\n` +
+      `Você pode enviar um novo documento para este funcionário depois.`
+    )) return;
+    setCancelando(a.funcionario_nome);
+    try {
+      const res = await cancelarAssinaturaAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia, canceladoPor: usuarioAtual }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      toast('Envio cancelado.', 'success');
+      carregar(mesReferencia);
+    } catch (e: any) {
+      toast('Erro ao cancelar: ' + e.message, 'error');
+    } finally {
+      setCancelando(null);
+    }
+  };
+
   const atualizarTodas = async () => {
-    const pendentes = assinaturas.filter(a => a.status !== 'ASSINADO' && a.status !== 'REJEITADO').length;
+    const pendentes = assinaturas.filter(a => a.status !== 'ASSINADO' && a.status !== 'REJEITADO' && a.status !== 'CANCELADO').length;
     if (pendentes === 0) { toast('Não há assinaturas pendentes para atualizar.', 'info'); return; }
 
     setAtualizandoTodas(true);
@@ -296,7 +337,7 @@ export default function AssinaturasPage() {
 
   const contagem = useMemo(() => {
     const daEmpresa = assinaturas.filter(daEmpresaEscolhida);
-    const c = { total: daEmpresa.length, ENVIADO: 0, VISUALIZADO: 0, ASSINADO: 0, REJEITADO: 0 };
+    const c = { total: daEmpresa.length, ENVIADO: 0, VISUALIZADO: 0, ASSINADO: 0, REJEITADO: 0, CANCELADO: 0 };
     daEmpresa.forEach(a => { if (a.status in c) (c as any)[a.status]++; });
     return c;
   }, [assinaturas, filtroEmpresa]);
@@ -446,7 +487,7 @@ export default function AssinaturasPage() {
         {/* Barra de Seleção de Filtros */}
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex bg-white p-1 rounded-xl border border-[#E2E8F0] w-fit shadow-sm gap-1 flex-wrap">
-            {(['TODOS', 'ENVIADO', 'VISUALIZADO', 'ASSINADO', 'REJEITADO'] as const).map(f => (
+            {(['TODOS', 'ENVIADO', 'VISUALIZADO', 'ASSINADO', 'REJEITADO', 'CANCELADO'] as const).map(f => (
               <button key={f} onClick={() => setFiltro(f)} className={`px-4 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${filtro === f ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D] hover:bg-gray-50'}`}>
                 {f === 'TODOS' ? 'Todos' : STATUS_INFO[f].label}
               </button>
@@ -518,15 +559,20 @@ export default function AssinaturasPage() {
                         <td className="p-4 text-[11px] text-gray-600">{dataHora(a.assinado_em)}</td>
                         <td className="p-4 text-center">
                           <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                            {a.status !== 'ASSINADO' && a.status !== 'REJEITADO' && (
+                            {a.status !== 'ASSINADO' && a.status !== 'REJEITADO' && a.status !== 'CANCELADO' && (
                               <button onClick={() => atualizarStatus(a)} disabled={atualizando !== null} className="text-[10px] font-black text-[#336699] uppercase tracking-wider hover:bg-blue-50 px-2.5 py-1.5 rounded-lg disabled:opacity-50 border border-blue-200 bg-white transition-colors">
                                 {atualizando === a.funcionario_nome ? '...' : '↻ Consultar'}
                               </button>
                             )}
-                            {a.link_assinatura && a.status !== 'ASSINADO' && (
+                            {a.link_assinatura && a.status !== 'ASSINADO' && a.status !== 'CANCELADO' && (
                               <a href={a.link_assinatura} target="_blank" rel="noopener noreferrer" className="text-[10px] font-black text-indigo-600 uppercase tracking-wider hover:bg-indigo-50 px-2.5 py-1.5 rounded-lg border border-indigo-200 bg-white transition-colors inline-block">
                                 🔗 Link
                               </a>
+                            )}
+                            {a.status !== 'ASSINADO' && a.status !== 'CANCELADO' && (
+                              <button onClick={() => cancelarEnvio(a)} disabled={cancelando !== null} className="text-[10px] font-black text-red-600 uppercase tracking-wider hover:bg-red-50 px-2.5 py-1.5 rounded-lg disabled:opacity-50 border border-red-200 bg-white transition-colors">
+                                {cancelando === a.funcionario_nome ? '...' : '🚫 Cancelar'}
+                              </button>
                             )}
                             {a.status === 'ASSINADO' && (
                               <button onClick={() => abrirAssinado(a)} disabled={baixandoAssinado !== null} className="text-[10px] font-black text-green-700 uppercase tracking-wider hover:bg-green-50 px-2.5 py-1.5 rounded-lg border border-green-200 disabled:opacity-50 bg-white transition-colors">
@@ -580,7 +626,7 @@ export default function AssinaturasPage() {
 
           <div className="flex items-center gap-3 flex-wrap">
             <div className="flex bg-white p-1 rounded-xl border border-[#E2E8F0] w-fit shadow-sm gap-1 flex-wrap">
-              {(['TODOS', 'ENVIADO', 'VISUALIZADO', 'ASSINADO', 'REJEITADO'] as const).map(f => (
+              {(['TODOS', 'ENVIADO', 'VISUALIZADO', 'ASSINADO', 'REJEITADO', 'CANCELADO'] as const).map(f => (
                 <button key={f} onClick={() => setFiltroRescisao(f)} className={`px-4 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${filtroRescisao === f ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D] hover:bg-gray-50'}`}>
                   {f === 'TODOS' ? 'Todos' : STATUS_INFO[f].label}
                 </button>
@@ -654,15 +700,20 @@ export default function AssinaturasPage() {
                                   ↗ Rescisão
                                 </button>
                               )}
-                              {a.status !== 'ASSINADO' && a.status !== 'REJEITADO' && (
+                              {a.status !== 'ASSINADO' && a.status !== 'REJEITADO' && a.status !== 'CANCELADO' && (
                                 <button onClick={() => atualizarStatusRescisao(a)} disabled={atualizandoRescisao !== null} className="text-[10px] font-black text-[#336699] uppercase tracking-wider hover:bg-blue-50 px-2.5 py-1.5 rounded-lg disabled:opacity-50 border border-blue-200 bg-white transition-colors">
                                   {atualizandoRescisao === a.funcionario_nome ? '...' : '↻ Consultar'}
                                 </button>
                               )}
-                              {a.link_assinatura && a.status !== 'ASSINADO' && (
+                              {a.link_assinatura && a.status !== 'ASSINADO' && a.status !== 'CANCELADO' && (
                                 <a href={a.link_assinatura} target="_blank" rel="noopener noreferrer" className="text-[10px] font-black text-indigo-600 uppercase tracking-wider hover:bg-indigo-50 px-2.5 py-1.5 rounded-lg border border-indigo-200 bg-white transition-colors inline-block">
                                   🔗 Link
                                 </a>
+                              )}
+                              {a.status !== 'ASSINADO' && a.status !== 'CANCELADO' && (
+                                <button onClick={() => cancelarEnvioRescisao(a)} disabled={cancelandoRescisao !== null} className="text-[10px] font-black text-red-600 uppercase tracking-wider hover:bg-red-50 px-2.5 py-1.5 rounded-lg disabled:opacity-50 border border-red-200 bg-white transition-colors">
+                                  {cancelandoRescisao === a.funcionario_nome ? '...' : '🚫 Cancelar'}
+                                </button>
                               )}
                               {a.status === 'ASSINADO' && (
                                 <button onClick={() => abrirAssinadoRescisao(a)} disabled={baixandoRescisao !== null} className="text-[10px] font-black text-green-700 uppercase tracking-wider hover:bg-green-50 px-2.5 py-1.5 rounded-lg border border-green-200 disabled:opacity-50 bg-white transition-colors">

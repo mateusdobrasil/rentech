@@ -1899,11 +1899,13 @@ export default function HoleritePage() {
                           item.statusAssinatura === 'ASSINADO' ? 'bg-green-100 text-green-700' :
                           item.statusAssinatura === 'VISUALIZADO' ? 'bg-blue-100 text-blue-700' :
                           item.statusAssinatura === 'REJEITADO' ? 'bg-red-100 text-red-700' :
+                          item.statusAssinatura === 'CANCELADO' ? 'bg-gray-100 text-gray-500' :
                           'bg-indigo-100 text-indigo-700'
                         }`}>
                           {item.statusAssinatura === 'ASSINADO' ? '✅ Assinado' :
                            item.statusAssinatura === 'VISUALIZADO' ? '👁 Visualizado' :
-                           item.statusAssinatura === 'REJEITADO' ? '✖ Rejeitado' : '📤 Enviado'}
+                           item.statusAssinatura === 'REJEITADO' ? '✖ Rejeitado' :
+                           item.statusAssinatura === 'CANCELADO' ? '🚫 Cancelado' : '📤 Enviado'}
                         </span>
                       )}
                       {item.statusAssinatura !== 'ASSINADO' && (
@@ -1929,11 +1931,13 @@ export default function HoleritePage() {
                         item.statusAssinatura === 'ASSINADO' ? 'bg-green-100 text-green-700' :
                         item.statusAssinatura === 'VISUALIZADO' ? 'bg-blue-100 text-blue-700' :
                         item.statusAssinatura === 'REJEITADO' ? 'bg-red-100 text-red-700' :
+                        item.statusAssinatura === 'CANCELADO' ? 'bg-gray-100 text-gray-500' :
                         'bg-indigo-100 text-indigo-700'
                       }`}>
                         {item.statusAssinatura === 'ASSINADO' ? '✅ Assinado' :
                          item.statusAssinatura === 'VISUALIZADO' ? '👁 Visualizado' :
-                         item.statusAssinatura === 'REJEITADO' ? '✖ Rejeitado' : '📤 Enviado'}
+                         item.statusAssinatura === 'REJEITADO' ? '✖ Rejeitado' :
+                         item.statusAssinatura === 'CANCELADO' ? '🚫 Cancelado' : '📤 Enviado'}
                       </span>
                     )}
                   </div>

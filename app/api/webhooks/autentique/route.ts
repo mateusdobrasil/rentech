@@ -97,20 +97,29 @@ export async function POST(req: NextRequest) {
     const db = supabaseAdmin();
     const atualizadoEm = new Date().toISOString();
 
-    // 1) Tenta RH primeiro (folha_holerite_assinaturas) — .select() devolve as
-    // linhas afetadas, o que dá pra saber se o docId pertence a este fluxo.
-    const { data: folhaAtualizada, error: folhaError } = await db
+    // 1) Tenta RH primeiro (folha_holerite_assinaturas). Confere se o docId
+    // pertence a este fluxo ANTES de decidir se atualiza — um envio CANCELADO
+    // nunca é reaberto por um evento atrasado da Autentique (ex.: alguém que
+    // abriu o link antes do cancelamento bloquear o prazo), mas ainda assim
+    // pertence a este fluxo, então não deve cair na tentativa de OP abaixo.
+    const { data: folhaExistente } = await db
       .from('folha_holerite_assinaturas')
-      .update({ status, trilha, visualizado_em: dados.visualizadoEm || null, assinado_em: dados.assinadoEm || null, atualizado_em: atualizadoEm })
+      .select('status')
       .eq('autentique_doc_id', dados.docId)
-      .select('id');
+      .maybeSingle();
 
-    if (folhaError) {
-      console.error('Webhook Autentique — falha ao atualizar folha_holerite_assinaturas:', folhaError.message);
-      return NextResponse.json({ ok: false, erro: folhaError.message }, { status: 200 });
-    }
-
-    if (folhaAtualizada && folhaAtualizada.length > 0) {
+    if (folhaExistente) {
+      if (folhaExistente.status === 'CANCELADO') {
+        return NextResponse.json({ ok: true, status: 'CANCELADO', origem: 'RH', motivo: 'envio cancelado — evento ignorado' });
+      }
+      const { error: folhaError } = await db
+        .from('folha_holerite_assinaturas')
+        .update({ status, trilha, visualizado_em: dados.visualizadoEm || null, assinado_em: dados.assinadoEm || null, atualizado_em: atualizadoEm })
+        .eq('autentique_doc_id', dados.docId);
+      if (folhaError) {
+        console.error('Webhook Autentique — falha ao atualizar folha_holerite_assinaturas:', folhaError.message);
+        return NextResponse.json({ ok: false, erro: folhaError.message }, { status: 200 });
+      }
       return NextResponse.json({ ok: true, status, origem: 'RH' });
     }
 

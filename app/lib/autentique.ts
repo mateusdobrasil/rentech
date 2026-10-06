@@ -170,3 +170,43 @@ export async function autentiqueConsultarDocumento(docId: string) {
 
   return json.data?.document;
 }
+
+// ============================================================================
+// CANCELAR DOCUMENTO (bloquear assinatura, sem apagar do painel da Autentique)
+// A mutation deleteDocument NÃO garante bloquear quem já recebeu o link —
+// documentado pela própria Autentique como equivalente a mover pra lixeira,
+// não a travar a assinatura. A forma oficial de bloquear é antecipar o prazo
+// (deadline_at) para agora: o link para de aceitar assinatura imediatamente.
+// Doc: https://docs.autentique.com.br/api/mutations/editing-a-document
+// ============================================================================
+export async function autentiqueCancelarDocumento(docId: string): Promise<void> {
+  const token = getToken();
+
+  const query = `
+    mutation CancelDocument($id: UUID!, $document: UpdateDocumentInput!) {
+      updateDocument(id: $id, document: $document) {
+        id
+        deadline_at
+      }
+    }
+  `;
+
+  const resp = await fetch(AUTENTIQUE_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query,
+      variables: { id: docId, document: { deadline_at: new Date().toISOString() } }
+    })
+  });
+
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`Autentique retornou HTTP ${resp.status}: ${txt.slice(0, 300)}`);
+  }
+
+  const json = await resp.json();
+  if (json.errors?.length) {
+    throw new Error(`Autentique: ${json.errors.map((e: any) => e.message).join('; ')}`);
+  }
+}

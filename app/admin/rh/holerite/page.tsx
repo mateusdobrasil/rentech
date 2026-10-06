@@ -1188,6 +1188,25 @@ export default function HoleritePage() {
         toast(msg, 'error');
         return;
       }
+
+      // Holerite fechado com valor zerado/negativo passava direto pro "Enviar
+      // para assinatura em lote" sem nenhum aviso — caso real do Inácio
+      // (AlfaLight), que saiu pra assinatura com R$0,00. Contratos que pagam
+      // o salário base pela contabilidade (paga_salario_base=false) ficam de
+      // fora dessa trava: pra eles o valor da NOSSA folha é legitimamente
+      // zero todo mês — quem valida o valor real é o OCR, no envio.
+      const zerados = abertos.filter(l => l.dados.regra?.paga_salario_base !== false && l.dados.valorLiquidoReceber <= 0);
+      if (zerados.length > 0) {
+        toast(
+          'Não é possível fechar a folha:\n\n' +
+          '💰 HOLERITE ZERADO OU NEGATIVO\n' +
+          zerados.map(l => `• ${l.func.nome_completo}: ${formatCurrency(l.dados.valorLiquidoReceber)}`).join('\n') +
+          '\n\nConfira o salário na ficha do funcionário, benefícios e descontos antes de fechar.' +
+          '\n\nCorrija e tente fechar a folha novamente.',
+          'error'
+        );
+        return;
+      }
     } catch (e: any) {
       toast('Erro ao validar o fechamento: ' + e.message, 'error');
       return;

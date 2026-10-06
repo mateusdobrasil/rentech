@@ -440,8 +440,12 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     const valorOcrPagamento = (gatilhoDoisPagamentos || soDocumental)
       ? await buscarValorOcrPagamento(db, funcionarioNome, mesReferencia)
       : null;
-    if (gatilhoDoisPagamentos && valorOcrPagamento === null) {
-      return { ok: false, erro: `Este funcionário recebe o salário base pelo holerite da contabilidade, mas o valor ainda não foi lido (OCR) para ${funcionarioNome} neste mês. Rode o OCR na tela de Financeiro antes de enviar.` };
+    // "=== null" sozinho não bastava: uma linha de folha_documentos_contabeis
+    // com valor_ocr = 0 (OCR leu errado, ou a linha foi criada sem valor)
+    // passava direto por aqui e seguia pro recibo zerado — caso real do
+    // Inácio (AlfaLight) em 2026-10, enviado pra assinatura com R$0,00.
+    if (gatilhoDoisPagamentos && (valorOcrPagamento === null || valorOcrPagamento <= 0)) {
+      return { ok: false, erro: `Este funcionário recebe o salário base pelo holerite da contabilidade, mas o valor lido (OCR) para ${funcionarioNome} neste mês está ausente ou zerado. Confira/rode o OCR na tela de Financeiro antes de enviar.` };
     }
     if (soDocumental && valorManual === undefined && (valorOcrPagamento === null || valorOcrPagamento <= 0)) {
       return { ok: false, erro: `O holerite da contabilidade de ${funcionarioNome} ainda não foi lido (OCR) neste mês. Rode o OCR na tela de Financeiro antes de enviar.` };
@@ -458,6 +462,15 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     const detalhamentoRecibo = montarDetalhamentoRecibo(
       soDocumental, fechamento?.dados?.valorLiquidoReceber || 0, gatilhoDoisPagamentos, valorOcrPagamento, valorManual
     );
+
+    // Trava final: nenhum holerite sai para assinatura com recibo zerado ou
+    // negativo, seja qual for o caminho que levou a esse valor. Um caso
+    // legítimo (ex.: afastamento o mês inteiro, sem nenhum crédito) precisa
+    // de decisão manual de quem está enviando — não existe envio automático
+    // silencioso para R$0,00.
+    if (valorRecibo <= 0) {
+      return { ok: false, erro: `O recibo de ${funcionarioNome} ficou em ${valorRecibo < 0 ? 'valor negativo' : 'R$ 0,00'} neste mês. Confira o cálculo da folha e o OCR do holerite da contabilidade antes de enviar para assinatura.` };
+    }
 
     const cpfLimpo = (func?.cpf || '').replace(/\D/g, '');
     if (cpfLimpo.length !== 11) {

@@ -64,7 +64,7 @@ export async function painelRhAction(accessToken: string): Promise<Resultado> {
       filtroEmpresa(db.from('folha_funcionarios').select('nome_completo, tipo_contrato, ativo, data_admissao, data_nascimento, departamento').eq('ativo', true)),
       db.from('folha_parametros').select('nome_regra, so_documental'),
       filtroEmpresa(db.from('folha_holerites').select('funcionario_nome').eq('mes_referencia', mesAno)),
-      filtroEmpresa(db.from('folha_holerite_assinaturas').select('id, status').not('status', 'in', '("ASSINADO","REJEITADO")')),
+      filtroEmpresa(db.from('folha_holerite_assinaturas').select('id, status').not('status', 'in', '("ASSINADO","REJEITADO","CANCELADO")')),
       filtroEmpresa(db.from('folha_ponto_whatsapp_solicitacoes').select('id').eq('status', 'PENDENTE')),
       filtroEmpresa(db.from('folha_ponto_diaria').select('funcionario_nome, data_registro, entrada_1, saida_1, entrada_2, saida_2')
         .gte('data_registro', dataInicio).lte('data_registro', dataFim)),

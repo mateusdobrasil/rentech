@@ -342,7 +342,10 @@ export default function AssinaturasPage() {
     return c;
   }, [assinaturas, filtroEmpresa]);
 
-  const pctAssinado = contagem.total > 0 ? Math.round((contagem.ASSINADO / contagem.total) * 100) : 0;
+  // Cancelados saem do cálculo: não são nem pendência nem conclusão, são um
+  // envio retratado — contá-los no total deprimiria o progresso artificialmente.
+  const totalParaProgresso = contagem.total - contagem.CANCELADO;
+  const pctAssinado = totalParaProgresso > 0 ? Math.round((contagem.ASSINADO / totalParaProgresso) * 100) : 0;
 
   if (authLoading) {
     return (
@@ -456,13 +459,14 @@ export default function AssinaturasPage() {
         )}
 
         {/* Grelha de Indicadores Operacionais */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
           {[
             { k: 'total', lbl: 'Total Enviados', val: contagem.total, cor: '#0C1D4D', bg: 'border-t-[#0C1D4D]' },
             { k: 'ENVIADO', lbl: 'Aguardando', val: contagem.ENVIADO, cor: '#4F46E5', bg: 'border-t-[#4F46E5]' },
             { k: 'VISUALIZADO', lbl: 'Visualizados', val: contagem.VISUALIZADO, cor: '#2563EB', bg: 'border-t-[#2563EB]' },
             { k: 'ASSINADO', lbl: 'Assinados', val: contagem.ASSINADO, cor: '#16A34A', bg: 'border-t-[#16A34A]' },
             { k: 'REJEITADO', lbl: 'Rejeitados', val: contagem.REJEITADO, cor: '#DC2626', bg: 'border-t-[#DC2626]' },
+            { k: 'CANCELADO', lbl: 'Cancelados', val: contagem.CANCELADO, cor: '#94A3B8', bg: 'border-t-[#94A3B8]' },
           ].map(c => (
             <div key={c.k} className={`bg-white rounded-2xl shadow-sm border border-[#E2E8F0] border-t-4 ${c.bg} p-4 text-center`}>
               <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">{c.lbl}</p>
@@ -471,7 +475,8 @@ export default function AssinaturasPage() {
           ))}
         </div>
 
-        {/* Progresso de Assinatura */}
+        {/* Progresso de Assinatura — cancelados saem do denominador: não
+            representam trabalho pendente nem concluído, são retratados. */}
         {contagem.total > 0 && (
           <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-5">
             <div className="flex justify-between items-center mb-2">
@@ -609,13 +614,14 @@ export default function AssinaturasPage() {
             </button>
           </div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
             {[
               { k: 'total', lbl: 'Total Enviados', val: contagemRescisao.total, cor: '#0C1D4D', bg: 'border-t-[#0C1D4D]' },
               { k: 'ENVIADO', lbl: 'Aguardando', val: contagemRescisao.ENVIADO, cor: '#4F46E5', bg: 'border-t-[#4F46E5]' },
               { k: 'VISUALIZADO', lbl: 'Visualizados', val: contagemRescisao.VISUALIZADO, cor: '#2563EB', bg: 'border-t-[#2563EB]' },
               { k: 'ASSINADO', lbl: 'Assinados', val: contagemRescisao.ASSINADO, cor: '#16A34A', bg: 'border-t-[#16A34A]' },
               { k: 'REJEITADO', lbl: 'Rejeitados', val: contagemRescisao.REJEITADO, cor: '#DC2626', bg: 'border-t-[#DC2626]' },
+              { k: 'CANCELADO', lbl: 'Cancelados', val: contagemRescisao.CANCELADO, cor: '#94A3B8', bg: 'border-t-[#94A3B8]' },
             ].map(c => (
               <div key={c.k} className={`bg-white rounded-2xl shadow-sm border border-[#E2E8F0] border-t-4 ${c.bg} p-4 text-center`}>
                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">{c.lbl}</p>

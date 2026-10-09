@@ -481,15 +481,22 @@ export async function enviarHoleriteAssinaturaAction(payload: {
       return { ok: false, erro: `Informe celular ou e-mail de ${funcionarioNome} na ficha para enviar o link de assinatura.` };
     }
 
-    // 3) Impede reenvio se já assinado
+    // 3) Impede reenvio se já assinado — EXCETO quando a folha foi reaberta e
+    // fechada de novo depois desse envio/assinatura: nesse caso o documento
+    // assinado é de uma versão antiga do holerite (reabrirFolhaAction só
+    // apaga o snapshot em folha_holerites, nunca toca nesta tabela), então
+    // precisa deixar passar um novo envio com os valores corrigidos.
     const { data: existente } = await db
       .from('folha_holerite_assinaturas')
-      .select('status')
+      .select('status, enviado_em')
       .eq('funcionario_nome', funcionarioNome)
       .eq('mes_referencia', mesReferencia)
       .maybeSingle();
     if (existente?.status === 'ASSINADO') {
-      return { ok: false, erro: 'Este holerite já foi assinado. Não é possível reenviar.' };
+      const assinaturaDesatualizada = !!(fechamento?.fechado_em && existente.enviado_em && fechamento.fechado_em > existente.enviado_em);
+      if (!assinaturaDesatualizada) {
+        return { ok: false, erro: 'Este holerite já foi assinado. Não é possível reenviar.' };
+      }
     }
 
     // 4) Nosso resumo — só para contratos com cálculo (folha fechada).
@@ -594,8 +601,9 @@ export async function enviarHoleritesLoteAction(payload: {
     // 1) Funcionários com folha FECHADA no mês (contratos com cálculo)
     const { data: fechados } = await db
       .from('folha_holerites')
-      .select('funcionario_nome')
+      .select('funcionario_nome, fechado_em')
       .eq('mes_referencia', mesReferencia);
+    const fechadoEmPorNome = new Map((fechados || []).map(f => [f.funcionario_nome, f.fechado_em]));
 
     // 2) Funcionários de contrato SÓ DOCUMENTAL (sem folha), que têm anexos da
     //    contabilidade neste mês — também vão para assinatura.
@@ -638,13 +646,22 @@ export async function enviarHoleritesLoteAction(payload: {
       return { ok: false, erro: 'Nenhuma folha fechada nem documento documental neste mês. Feche a folha ou separe os holerites da contabilidade antes de enviar.' };
     }
 
-    // Já assinados/enviados: não reenviar
+    // Já assinados/enviados: não reenviar — EXCETO um ASSINADO cuja folha foi
+    // reaberta e fechada de novo depois dessa assinatura (mesma exceção de
+    // enviarHoleriteAssinaturaAction): o documento assinado é de uma versão
+    // antiga do holerite, então entra de novo nos alvos do lote.
     const { data: jaEnviados } = await db
       .from('folha_holerite_assinaturas')
-      .select('funcionario_nome, status')
+      .select('funcionario_nome, status, enviado_em')
       .eq('mes_referencia', mesReferencia);
     const bloqueados = new Set((jaEnviados || [])
-      .filter(a => a.status === 'ASSINADO' || a.status === 'ENVIADO' || a.status === 'VISUALIZADO')
+      .filter(a => {
+        if (a.status === 'ENVIADO' || a.status === 'VISUALIZADO') return true;
+        if (a.status !== 'ASSINADO') return false;
+        const fechadoEm = fechadoEmPorNome.get(a.funcionario_nome);
+        const desatualizada = fechadoEm && a.enviado_em && fechadoEm > a.enviado_em;
+        return !desatualizada;
+      })
       .map(a => a.funcionario_nome));
 
     const alvos = todosNomes.filter(n => !bloqueados.has(n));

@@ -214,6 +214,10 @@ interface ItemLote {
   dados: DadosHolerite;
   fechamento: Fechamento | null;
   statusAssinatura: string | null;
+  // true quando a folha foi reaberta e fechada de novo DEPOIS do envio/
+  // assinatura atual — o documento assinado é de uma versão antiga do
+  // holerite, então precisa de reenvio mesmo estando "ASSINADO".
+  assinaturaDesatualizada: boolean;
   soDocumental: boolean;
 }
 
@@ -781,6 +785,21 @@ export default function HoleritePage() {
     if (!authLoading && empresasPermitidas !== undefined) carregarLote(mesReferencia);
   }, [mesReferencia, authLoading, empresasPermitidas]);
 
+  // Reenvio/cancelamento de assinatura acontece em /admin/rh/assinaturas —
+  // uma aba desta página aberta ao lado fica com o status (ASSINADO/CANCELADO)
+  // desatualizado até alguém recarregar. Revalida sozinha quando a aba volta
+  // a ficar visível, sem precisar de F5.
+  useEffect(() => {
+    if (authLoading || empresasPermitidas === undefined) return;
+    const aoVoltarFoco = () => { if (document.visibilityState === 'visible') carregarLote(mesReferencia); };
+    document.addEventListener('visibilitychange', aoVoltarFoco);
+    window.addEventListener('focus', aoVoltarFoco);
+    return () => {
+      document.removeEventListener('visibilitychange', aoVoltarFoco);
+      window.removeEventListener('focus', aoVoltarFoco);
+    };
+  }, [mesReferencia, authLoading, empresasPermitidas]);
+
   const carregarListaFuncionarios = async () => {
     const { data } = await supabase.from('folha_funcionarios').select('*').order('nome_completo');
     if (data) setListaFuncionarios(data);
@@ -1067,7 +1086,7 @@ export default function HoleritePage() {
         nomesAtivos.length ? supabase.from('folha_descontos').select('*').in('funcionario_nome', nomesAtivos) : Promise.resolve({ data: [] as Desconto[], error: null }),
         nomesAtivos.length ? supabase.from('folha_bonus').select('*').in('funcionario_nome', nomesAtivos) : Promise.resolve({ data: [] as Bonus[], error: null }),
         supabase.from('folha_holerites').select('*').eq('mes_referencia', mesAno),
-        supabase.from('folha_holerite_assinaturas').select('funcionario_nome, status').eq('mes_referencia', mesAno),
+        supabase.from('folha_holerite_assinaturas').select('funcionario_nome, status, enviado_em').eq('mes_referencia', mesAno),
         buscarPontoDoMes(mesAno)
       ]);
 
@@ -1081,7 +1100,8 @@ export default function HoleritePage() {
       }
 
       const assinPorFunc: Record<string, string> = {};
-      (assins || []).forEach(a => { assinPorFunc[a.funcionario_nome] = a.status; });
+      const assinEnviadoEmPorFunc: Record<string, string | null> = {};
+      (assins || []).forEach(a => { assinPorFunc[a.funcionario_nome] = a.status; assinEnviadoEmPorFunc[a.funcionario_nome] = a.enviado_em; });
 
       const descPorFunc: Record<string, Desconto[]> = {};
       (descs || []).forEach(d => {
@@ -1117,7 +1137,10 @@ export default function HoleritePage() {
             bonusPorFunc[f.nome_completo] || [],
             apuracao, mesAno, beneficiosVrVt[f.nome_completo] || { vr: 0, vt: 0 }
           );
-          return { func: f, dados, fechamento: fechPorFunc[f.nome_completo] || null, statusAssinatura: assinPorFunc[f.nome_completo] || null, soDocumental };
+          const fechamento = fechPorFunc[f.nome_completo] || null;
+          const assinaturaEnviadoEm = assinEnviadoEmPorFunc[f.nome_completo] || null;
+          const assinaturaDesatualizada = !!(fechamento && assinaturaEnviadoEm && fechamento.fechado_em > assinaturaEnviadoEm);
+          return { func: f, dados, fechamento, statusAssinatura: assinPorFunc[f.nome_completo] || null, assinaturaDesatualizada, soDocumental };
         });
 
       setLote(lista);
@@ -1315,14 +1338,17 @@ export default function HoleritePage() {
       toast('Só é possível enviar para assinatura holerites com a folha FECHADA.', 'error');
       return;
     }
-    if (item.statusAssinatura === 'ASSINADO') {
+    if (item.statusAssinatura === 'ASSINADO' && !item.assinaturaDesatualizada) {
       toast('Este holerite já foi assinado.', 'info');
       return;
     }
 
     const jaEnviado = item.statusAssinatura === 'ENVIADO' || item.statusAssinatura === 'VISUALIZADO';
     if (!confirm(
-      `${jaEnviado ? 'REENVIAR' : 'Enviar'} ${item.soDocumental ? 'os holerites da contabilidade' : 'o holerite'} de ${item.func.nome_completo} (${formatarMesAnoBR(mesReferencia)}) para assinatura?\n\n` +
+      (item.assinaturaDesatualizada
+        ? `⚠ A folha foi reaberta e fechada de novo depois da assinatura anterior — o documento assinado é de uma versão antiga do holerite.\n\n`
+        : '') +
+      `${jaEnviado || item.assinaturaDesatualizada ? 'REENVIAR' : 'Enviar'} ${item.soDocumental ? 'os holerites da contabilidade' : 'o holerite'} de ${item.func.nome_completo} (${formatarMesAnoBR(mesReferencia)}) para assinatura?\n\n` +
       `Destino: ${item.func.celular ? 'WhatsApp ' + item.func.celular : item.func.email || 'sem contato'}\n` +
       `CPF exigido na assinatura: ${item.func.cpf || 'NÃO PREENCHIDO ⚠'}\n` +
       (item.soDocumental
@@ -1352,7 +1378,7 @@ export default function HoleritePage() {
   };
 
   const enviarAssinaturaTodos = async () => {
-    const fechadosNaoAssinados = loteEscopo.filter(l => l.fechamento && l.statusAssinatura !== 'ASSINADO' && l.statusAssinatura !== 'ENVIADO' && l.statusAssinatura !== 'VISUALIZADO');
+    const fechadosNaoAssinados = loteEscopo.filter(l => l.fechamento && l.statusAssinatura !== 'ENVIADO' && l.statusAssinatura !== 'VISUALIZADO' && (l.statusAssinatura !== 'ASSINADO' || l.assinaturaDesatualizada));
     if (fechadosNaoAssinados.length === 0) {
       toast('Não há holerites fechados pendentes de envio neste mês.', 'info');
       return;
@@ -1940,6 +1966,11 @@ export default function HoleritePage() {
                          item.statusAssinatura === 'CANCELADO' ? '🚫 Cancelado' : '📤 Enviado'}
                       </span>
                     )}
+                    {item.assinaturaDesatualizada && (
+                      <span className="text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider bg-amber-100 text-amber-700" title="A folha foi reaberta e fechada de novo depois desta assinatura — o documento assinado é de uma versão antiga do holerite.">
+                        ⚠ Reenvio necessário
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-1 flex-wrap">
                     <button onClick={() => toggleHoleriteExpandido(item.func.nome_completo)} className="text-[10px] font-black text-[#336699] uppercase tracking-wider hover:bg-blue-50 px-3 py-1 rounded disabled:opacity-50 border border-blue-200">
@@ -1948,7 +1979,7 @@ export default function HoleritePage() {
                     <button onClick={() => previaPdf(item)} disabled={gerandoPrevia !== null} className="text-[10px] font-black text-gray-500 uppercase tracking-wider hover:bg-gray-100 px-3 py-1 rounded disabled:opacity-50 border border-gray-200">
                       {gerandoPrevia === item.func.nome_completo ? '⏳' : '👁 Prévia PDF'}
                     </button>
-                    {item.fechamento && item.statusAssinatura !== 'ASSINADO' && (
+                    {item.fechamento && (item.statusAssinatura !== 'ASSINADO' || item.assinaturaDesatualizada) && (
                       <button onClick={() => enviarAssinatura(item)} disabled={enviandoAssinatura !== null} className="text-[10px] font-black text-indigo-600 uppercase tracking-wider hover:bg-indigo-50 px-3 py-1 rounded disabled:opacity-50 border border-indigo-200">
                         {enviandoAssinatura === item.func.nome_completo ? '⏳ Enviando...' : item.statusAssinatura ? '↻ Reenviar' : '📤 Assinatura'}
                       </button>

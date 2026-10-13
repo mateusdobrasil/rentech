@@ -135,6 +135,9 @@ export default function CallTimeMontagem() {
   // com as outras duas, e é ela que o encarregado viu quando dividiu a equipe.
   const [emTurno] = useState(() => turnoDoPosto('video') !== null);
   const [postoDoTurno] = useState(() => posicaoNoTurno('video'));
+  // No turno, quantos montadores aparecem no palco é quantos o encarregado pôs
+  // aqui. Fora dele, a dupla de sempre.
+  const [montadoresNoPalco] = useState(() => turnoDoPosto('video')?.equipe.video ?? 2);
   const [estado, setEstado] = useState<Estado>(() => {
     const turno = turnoDoPosto('video');
     return turno ? criarPartida(turno.obras.video) : criarPartida();
@@ -746,6 +749,7 @@ export default function CallTimeMontagem() {
                   orbitar={montagemLimpa && fase === 'vistoria'}
                   telaModo={estado.finalizado ? 'show' : 'teste'}
                   selecionadas={selecionadas}
+                  montadores={montadoresNoPalco}
                 />
               </div>
             )}

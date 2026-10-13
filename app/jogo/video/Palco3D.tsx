@@ -17,6 +17,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Grid, Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { buildPortalGeometry3D, type Seg3D } from '../../simulador/boxtruss/geometry3d';
+import EquipeLED from './EquipeLED';
 import {
   COLUNAS_MAX,
   LINHAS_MAX,
@@ -746,10 +747,13 @@ const lerMovimento = () => window.matchMedia(CONSULTA_MOVIMENTO).matches;
 
 export default function Palco3D({
   estado, camada, onPintar, vistoriando = false, foco = null, orbitar = false, telaModo = 'teste', selecionadas,
+  montadores = 2,
 }: {
   estado: Estado;
   camada: Camada;
   onPintar: (i: number) => void;
+  /** Quantos montadores aparecem no palco. A dupla é o padrão; no turno, é a equipe do posto. */
+  montadores?: number;
   /** Prévia do retângulo que o técnico está arrastando. */
   selecionadas?: Set<number>;
   /** Na vistoria a câmera é dirigida e o jogador não mexe em nada. */
@@ -804,6 +808,21 @@ export default function Palco3D({
     () => [...portal.chords, ...portal.frames],
     [portal],
   );
+
+  // Geometria que a equipe precisa para saber onde trabalhar. Memorizadas:
+  // a cena da equipe reage a mudança, e array novo a cada render seria mudança.
+  const xTorres = useMemo<[number, number]>(() => [-vaoPortal / 2, vaoPortal / 2], [vaoPortal]);
+  // os cases dos gabinetes ficam do lado de fora das torres, um monte de cada lado
+  const pilhas = useMemo<[[number, number, number], [number, number, number]]>(
+    () => [[-vaoPortal / 2 - 2.2, 0, 2.6], [vaoPortal / 2 + 2.2, 0, 2.6]],
+    [vaoPortal],
+  );
+  const ondeNoChao = useCallback(
+    (i: number): [number, number, number] =>
+      [gradeX(colunaDe(i)), 0, Z_DEITADO - gradeY(linhaDe(i))],
+    [],
+  );
+  const ondeNoAr = useCallback((i: number) => posicaoMundo(estado, i), [estado]);
 
   return (
     <Canvas
@@ -870,6 +889,18 @@ export default function Palco3D({
         alertas={alertas}
         selecionadas={selecionadas ?? VAZIO}
         telaModo={telaModo}
+      />
+
+      <EquipeLED
+        estado={estado}
+        montadores={montadores}
+        vistoriando={vistoriando}
+        reduzirMovimento={reduzirMovimento}
+        ondeNoChao={ondeNoChao}
+        ondeNoAr={ondeNoAr}
+        xTorres={xTorres}
+        pilhas={pilhas}
+        duracaoIcamento={DURACAO_ICAMENTO}
       />
 
       {vistoriando && foco && foco.celulas.length > 0 && <EtiquetaProblema estado={estado} foco={foco} />}

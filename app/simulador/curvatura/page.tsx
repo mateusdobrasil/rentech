@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { Analytics } from "@vercel/analytics/next";
+import ResumoMobile, { ID_RESULTADO } from '../ResumoMobile';
 
 const MOD_W = 0.5; // Largura exata do chassi em metros
 
@@ -34,6 +35,22 @@ export default function SimuladorCurvatura() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isPrintMode, setIsPrintMode] = useState(false);
 
+  // O canvas desenha no tamanho REAL que ocupa na tela (× devicePixelRatio).
+  // Antes era fixo em 2000×1200 e reduzido via CSS: num celular (~330px de
+  // largura) os textos desenhados ficavam com ~4px, ilegíveis.
+  const canvasWrapRef = useRef<HTMLDivElement>(null);
+  const [tamanhoCanvas, setTamanhoCanvas] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = canvasWrapRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      setTamanhoCanvas({ w: Math.round(width), h: Math.round(height) });
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   useEffect(() => {
     const handleBeforePrint = () => setIsPrintMode(true);
     const handleAfterPrint = () => setIsPrintMode(false);
@@ -47,7 +64,7 @@ export default function SimuladorCurvatura() {
 
   useEffect(() => {
     calcularEDesenhar();
-  }, [projeto, cliente, modeloPainel, usoFlex, modoAngulo, angleInput, sizeMode, qty, inputCorda, inputLinear, isPrintMode]);
+  }, [projeto, cliente, modeloPainel, usoFlex, modoAngulo, angleInput, sizeMode, qty, inputCorda, inputLinear, isPrintMode, tamanhoCanvas]);
 
   // ============================================================================
   // MOTOR MATEMÁTICO (FÍSICA POLIGONAL EXATA)
@@ -188,6 +205,36 @@ export default function SimuladorCurvatura() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // Resolução interna = tamanho em tela × densidade de pixels; "u" é
+    // 1px de tela, então todo tamanho abaixo é em pixels reais de tela.
+    const u = window.devicePixelRatio || 1;
+    const cssW = tamanhoCanvas.w || 1000;
+    const cssH = tamanhoCanvas.h || 600;
+    const alvoW = Math.round(cssW * u);
+    const alvoH = Math.round(cssH * u);
+    if (canvas.width !== alvoW) canvas.width = alvoW;
+    if (canvas.height !== alvoH) canvas.height = alvoH;
+    const compacto = cssW < 640;
+
+    const fTitulo = (compacto ? 15 : 26) * u;
+    const fSub = (compacto ? 11 : 15) * u;
+    const fCorda = (compacto ? 11 : 15) * u;
+    const fRodape = (compacto ? 10 : 14) * u;
+
+    // Escreve centralizado numa linha só, reduzindo a fonte se não couber na
+    // largura (nomes de projeto/cliente longos no celular).
+    const textoAjustado = (txt: string, y: number, tamanho: number, peso: string, cor: string) => {
+      let t = tamanho;
+      ctx.font = `${peso} ${t}px sans-serif`;
+      while (t > 8 * u && ctx.measureText(txt).width > canvas.width * 0.94) {
+        t -= u;
+        ctx.font = `${peso} ${t}px sans-serif`;
+      }
+      ctx.fillStyle = cor;
+      ctx.textAlign = "center";
+      ctx.fillText(txt, canvas.width / 2, y);
+    };
+
     ctx.fillStyle = isPrintMode ? '#ffffff' : '#F8FAFC';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -201,26 +248,33 @@ export default function SimuladorCurvatura() {
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
 
-    let escala = Math.min(canvas.width * 0.80 / (width || 0.001), canvas.height * 0.60 / (height || 0.001));
-    if (escala > 400) escala = 400;
+    // Faixas reservadas pro título (topo) e rodapé — a curva é escalada pra
+    // caber no espaço entre elas.
+    const yTitulo = fTitulo * 1.4;
+    const ySub = yTitulo + fSub * 1.7;
+    const topoReservado = ySub + fCorda * 3;
+    const rodapeReservado = fRodape * 3;
+    const areaW = canvas.width * 0.88;
+    const areaH = Math.max(canvas.height - topoReservado - rodapeReservado, canvas.height * 0.3);
+
+    let escala = Math.min(areaW / (width || 0.001), areaH / (height || 0.001));
+    const escalaMax = canvas.width * 0.2; // 1 placa (0,5m) nunca passa de 10% da largura
+    if (escala > escalaMax) escala = escalaMax;
 
     const offsetX = (canvas.width / 2) - (cx * escala);
-    const offsetY = (canvas.height / 2) - (cy * escala) + 50;
+    const offsetY = topoReservado + areaH / 2 - (cy * escala);
 
     if (pts.length > 1 && !isPrintMode) {
       ctx.beginPath();
-      ctx.setLineDash([15, 15]);
+      ctx.setLineDash([8 * u, 8 * u]);
       ctx.moveTo(pts[0].x * escala + offsetX, pts[0].y * escala + offsetY);
       ctx.lineTo(pts[pts.length - 1].x * escala + offsetX, pts[pts.length - 1].y * escala + offsetY);
-      ctx.strokeStyle = '#336699'; 
-      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#336699';
+      ctx.lineWidth = 2 * u;
       ctx.stroke();
-      ctx.setLineDash([]); 
+      ctx.setLineDash([]);
 
-      ctx.fillStyle = '#336699';
-      ctx.font = "bold 22px sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText(`Corda Real: ${corda.toFixed(2)}m`, canvas.width / 2, pts[0].y * escala + offsetY - 20);
+      textoAjustado(`Corda Real: ${corda.toFixed(2)}m`, pts[0].y * escala + offsetY - fCorda * 1.2, fCorda, 'bold', '#336699');
     }
 
     const screenPts = pts.map(p => ({ x: p.x * escala + offsetX, y: p.y * escala + offsetY }));
@@ -247,47 +301,42 @@ export default function SimuladorCurvatura() {
     }
 
     if (!isPrintMode) {
-      ctx.shadowBlur = 20;
+      ctx.shadowBlur = 12 * u;
       ctx.shadowColor = 'rgba(12, 29, 77, 0.4)';
-      ctx.strokeStyle = '#0C1D4D';
-    } else {
-      ctx.strokeStyle = '#0C1D4D';
     }
-    
-    ctx.lineWidth = 20;
+    ctx.strokeStyle = '#0C1D4D';
+    ctx.lineWidth = (compacto ? 7 : 12) * u;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.stroke();
     ctx.restore();
 
     ctx.fillStyle = isPrintMode ? '#ffffff' : '#336699';
+    const raioJunta = (compacto ? 2.5 : 4) * u;
     for (let i = 1; i < screenPts.length - 1; i++) {
       ctx.beginPath();
-      ctx.arc(screenPts[i].x, screenPts[i].y, 6, 0, Math.PI * 2);
+      ctx.arc(screenPts[i].x, screenPts[i].y, raioJunta, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    ctx.textAlign = "center";
     const baseColor = isPrintMode ? '#000000' : '#0C1D4D';
     const subColor = isPrintMode ? '#666666' : '#64748B';
 
-    ctx.fillStyle = baseColor;
-    ctx.font = "900 42px sans-serif";
-    ctx.fillText(`${pName.toUpperCase()}`, canvas.width / 2, 70);
-
-    ctx.fillStyle = subColor;
-    ctx.font = "bold 24px sans-serif";
-    ctx.fillText(`Cliente: ${cName} | Equipamento: ${nomeModelo}`, canvas.width / 2, 110);
-
-    ctx.fillStyle = subColor;
-    ctx.font = "italic 22px sans-serif";
-    ctx.fillText(`Curvatura Total: ${totalAngle.toFixed(1)}° | Raio Técnico: ${raioDisplay}`, canvas.width / 2, canvas.height - 40);
+    textoAjustado(pName.toUpperCase(), yTitulo, fTitulo, '900', baseColor);
+    textoAjustado(`Cliente: ${cName} | Equipamento: ${nomeModelo}`, ySub, fSub, 'bold', subColor);
+    textoAjustado(`Curvatura Total: ${totalAngle.toFixed(1)}° | Raio Técnico: ${raioDisplay}`, canvas.height - fRodape * 1.2, fRodape, 'italic', subColor);
   };
 
   return (
-    <div className="flex flex-col lg:flex-row gap-4 px-4 md:px-8 py-6 bg-[#F0F4F8] text-[#0F172A] min-h-screen font-sans print:bg-white print:text-black print:block print:p-0">
+    <div className="flex flex-col lg:flex-row gap-4 px-4 md:px-8 pt-6 pb-36 lg:pb-6 bg-[#F0F4F8] text-[#0F172A] min-h-screen font-sans print:bg-white print:text-black print:block print:p-0">
       <Analytics/>
-      
+      <ResumoMobile itens={[
+        { label: 'Gabinetes', valor: `${resultados.n} un.` },
+        { label: 'Linear', valor: `${resultados.linear.toFixed(2)}m` },
+        { label: 'Corda', valor: `${resultados.corda.toFixed(2)}m` },
+        { label: 'Raio', valor: resultados.raioDisplay },
+      ]} />
+
       <aside className="w-full lg:w-[400px] flex-shrink-0 flex flex-col gap-4 print:hidden">
         
         <div className="bg-[#0C1D4D] p-5 rounded-2xl shadow-md text-white">
@@ -379,39 +428,40 @@ export default function SimuladorCurvatura() {
         </div>
       </aside>
 
-      <main className="flex-grow flex flex-col gap-4 relative print:p-8">
-        
-        {/* CARDS DE RESULTADOS - AGORA COM 5 MÉTRICAS */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 flex-shrink-0 print:gap-4">
+      <main id={ID_RESULTADO} className="flex-grow flex flex-col gap-4 relative scroll-mt-24 min-w-0 print:p-8">
+
+        {/* CARDS DE RESULTADOS */}
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 md:gap-4 flex-shrink-0 print:gap-4">
           <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#0C1D4D] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
             <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Total Gabinetes</span>
-            <strong className="block text-2xl text-[#0C1D4D] font-black print:text-black">{resultados.n} un.</strong>
+            <strong className="block text-xl md:text-2xl text-[#0C1D4D] font-black print:text-black">{resultados.n} un.</strong>
           </div>
           <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#336699] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
             <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Metragem Linear</span>
-            <strong className="block text-2xl text-[#336699] font-black print:text-black">{resultados.linear.toFixed(2)}m</strong>
+            <strong className="block text-xl md:text-2xl text-[#336699] font-black print:text-black">{resultados.linear.toFixed(2)}m</strong>
+          </div>
+          <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#0EA5E9] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
+            <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Corda Real</span>
+            <strong className="block text-xl md:text-2xl text-[#0EA5E9] font-black print:text-black">{resultados.corda.toFixed(2)}m</strong>
           </div>
           <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#16A34A] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
             <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Raio</span>
-            <strong className="block text-2xl text-[#16A34A] font-black print:text-black">{resultados.raioDisplay}</strong>
+            <strong className="block text-xl md:text-2xl text-[#16A34A] font-black print:text-black">{resultados.raioDisplay}</strong>
           </div>
           <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#D97706] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
             <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Diâmetro</span>
-            <strong className="block text-2xl text-[#D97706] font-black print:text-black">{resultados.diamDisplay}</strong>
+            <strong className="block text-xl md:text-2xl text-[#D97706] font-black print:text-black">{resultados.diamDisplay}</strong>
           </div>
           <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#7C3AED] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
             <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Circunferência</span>
-            <strong className="block text-2xl text-[#7C3AED] font-black print:text-black">{resultados.circDisplay}</strong>
+            <strong className="block text-xl md:text-2xl text-[#7C3AED] font-black print:text-black">{resultados.circDisplay}</strong>
           </div>
         </div>
 
-        <div className="flex-grow bg-white border border-[#E2E8F0] rounded-2xl relative overflow-hidden shadow-sm bg-[radial-gradient(#CBD5E1_1px,transparent_1px)] bg-[size:32px_32px] print:bg-transparent print:border-none print:shadow-none flex items-center justify-center min-h-[400px]">
-          <canvas 
-            ref={canvasRef} 
-            width={2000} 
-            height={1200} 
-            className="w-full h-full object-contain p-4 print:p-0"
-          />
+        <div className="flex-grow bg-white border border-[#E2E8F0] rounded-2xl relative overflow-hidden shadow-sm bg-[radial-gradient(#CBD5E1_1px,transparent_1px)] bg-[size:32px_32px] print:bg-transparent print:border-none print:shadow-none min-h-[320px] md:min-h-[400px] print:min-h-[500px]">
+          <div ref={canvasWrapRef} className="absolute inset-2 md:inset-4 print:inset-0">
+            <canvas ref={canvasRef} className="block w-full h-full" />
+          </div>
         </div>
       </main>
     </div>

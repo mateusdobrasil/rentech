@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect } from 'react';
 import Image from 'next/image';
 import logoColorido from '../../../app/imgs/logo.png';
 import { Analytics } from "@vercel/analytics/next";
+import ResumoMobile, { ID_RESULTADO } from '../ResumoMobile';
 
 const TAMANHO_FISICO_MOD = 0.5; // Módulo padrão de 50x50cm
 const PESO_MEDIO_MODULO_KG = 8; // Média de peso por gabinete 50x50
@@ -33,10 +34,14 @@ export default function SimuladorGrid() {
   useEffect(() => {
     gerarGrid(10, 6);
     
-    // Finaliza o arraste mesmo se o rato soltar fora do grid
-    const handleMouseUpGlobal = () => setIsDragging(false);
-    window.addEventListener('mouseup', handleMouseUpGlobal);
-    return () => window.removeEventListener('mouseup', handleMouseUpGlobal);
+    // Finaliza o arraste mesmo se o dedo/mouse soltar fora do grid
+    const handlePointerUpGlobal = () => setIsDragging(false);
+    window.addEventListener('pointerup', handlePointerUpGlobal);
+    window.addEventListener('pointercancel', handlePointerUpGlobal);
+    return () => {
+      window.removeEventListener('pointerup', handlePointerUpGlobal);
+      window.removeEventListener('pointercancel', handlePointerUpGlobal);
+    };
   }, []);
 
   const processarNovoGrid = () => {
@@ -64,8 +69,14 @@ export default function SimuladorGrid() {
     alterarModulo(index, novoStatus);
   };
 
-  const handleMouseEnter = (index: number) => {
-    if (isDragging) alterarModulo(index, dragMode);
+  // No toque, o navegador "prende" o ponteiro no primeiro módulo tocado — o
+  // pointerenter dos vizinhos nunca dispara. Por isso o arraste é resolvido
+  // no container, achando o módulo que está sob o dedo pela coordenada.
+  const handlePointerMoveGrid = (e: React.PointerEvent) => {
+    if (!isDragging) return;
+    const alvo = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+    const idx = alvo?.dataset.idx;
+    if (idx !== undefined && modulosAtivos[Number(idx)] !== dragMode) alterarModulo(Number(idx), dragMode);
   };
 
   const alterarModulo = (index: number, status: boolean) => {
@@ -104,9 +115,15 @@ export default function SimuladorGrid() {
   }, [modulosAtivos, gridConfig, modelo]);
 
   return (
-    <div className="flex flex-col lg:flex-row gap-4 px-4 md:px-8 py-6 bg-[#F0F4F8] text-[#0F172A] min-h-screen font-sans print:bg-white print:text-black print:block print:p-0">
+    <div className="flex flex-col lg:flex-row gap-4 px-4 md:px-8 pt-6 pb-36 lg:pb-6 bg-[#F0F4F8] text-[#0F172A] min-h-screen font-sans print:bg-white print:text-black print:block print:p-0">
       <Analytics/>
-      
+      <ResumoMobile itens={[
+        { label: 'Dimensão', valor: `${calculos.larguraMetros.toFixed(1)}×${calculos.alturaMetros.toFixed(1)}m` },
+        { label: 'Resolução', valor: `${calculos.resLargura}×${calculos.resAltura}` },
+        { label: 'Painéis', valor: `${calculos.ativos} un.` },
+        { label: 'Peso', valor: `${calculos.pesoTotal} kg` },
+      ]} />
+
       {/* SIDEBAR DE CONTROLES */}
       <aside className="w-full lg:w-[400px] flex-shrink-0 flex flex-col gap-4 print:hidden">
         
@@ -169,7 +186,7 @@ export default function SimuladorGrid() {
           {/* Seção 3: Ações Rápidas */}
           <div>
             <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-xs border-b border-gray-100 pb-2 mb-3">3. Ferramentas do Grid</h3>
-            <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-2">💡 Clique e Arraste no mapa para ligar/desligar painéis rapidamente.</p>
+            <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-2">💡 Clique (ou toque) e arraste no mapa para ligar/desligar painéis rapidamente.</p>
             <div className="grid grid-cols-3 gap-1">
               <button onClick={() => setTodos(true)} className="bg-gray-100 hover:bg-gray-200 text-[#0C1D4D] text-[9px] font-black uppercase py-2 rounded transition-colors">Ligar Tudo</button>
               <button onClick={() => setTodos(false)} className="bg-gray-100 hover:bg-red-100 text-red-600 text-[9px] font-black uppercase py-2 rounded transition-colors">Limpar Tudo</button>
@@ -184,7 +201,7 @@ export default function SimuladorGrid() {
       </aside>
 
       {/* ÁREA PRINCIPAL / WORKSPACE */}
-      <main className="flex-grow flex flex-col gap-4 relative print:bg-white print:p-8 overflow-y-auto">
+      <main id={ID_RESULTADO} className="flex-grow flex flex-col gap-4 relative scroll-mt-24 min-w-0 print:bg-white print:p-8 overflow-y-auto">
         
         <div className="hidden print:flex justify-between items-end border-b-2 border-black pb-4 mb-2 flex-shrink-0">
           <Image src={logoColorido} alt="Rentech Logo" width={180} height={55} />
@@ -240,9 +257,12 @@ export default function SimuladorGrid() {
           // Removemos o scroll e a interação de arraste não causa highlight no texto do navegador
           onDragStart={(e) => e.preventDefault()}
         >
-          <div 
-            className="grid bg-white border-2 border-[#0C1D4D] shadow-md p-1 md:p-1.5 rounded-lg print:bg-white print:border-2 print:border-black print:inline-grid select-none"
-            style={{ 
+          <div
+            onPointerMove={handlePointerMoveGrid}
+            // touch-none: sem isso, arrastar o dedo sobre o grid rolaria a
+            // página em vez de pintar os módulos.
+            className="grid bg-white border-2 border-[#0C1D4D] shadow-md p-1 md:p-1.5 rounded-lg print:bg-white print:border-2 print:border-black print:inline-grid select-none touch-none"
+            style={{
               gridTemplateColumns: `repeat(${gridConfig.cols}, minmax(0, 1fr))`,
               gap: gridConfig.cols > 60 ? '0px' : gridConfig.cols > 30 ? '1px' : '2px',
               // Escalonamento Dinâmico Inteligente
@@ -250,11 +270,12 @@ export default function SimuladorGrid() {
             }}
           >
             {modulosAtivos.map((ativo, index) => (
-              <div 
+              <div
                 key={index}
-                // Eventos Mouse Drag-to-Draw
-                onMouseDown={() => handleMouseDown(index)}
-                onMouseEnter={() => handleMouseEnter(index)}
+                data-idx={index}
+                // Drag-to-Draw por ponteiro (mouse e toque) — o arraste em si
+                // é tratado no container (handlePointerMoveGrid).
+                onPointerDown={(e) => { e.preventDefault(); handleMouseDown(index); }}
                 className={`
                   w-full aspect-square transition-colors duration-75 rounded-[1px] md:rounded-sm
                   print:border print:border-gray-300 print:rounded-none

@@ -65,3 +65,15 @@ html.white-label-hide-navbar [data-abaixo-do-header] {
 html.white-label-alfalight-header [data-alfalight-header] {
   display: block;
 }
+
+/* Simuladores (app/simulador): no iPhone, tocar num campo com fonte menor que
+   16px faz o Safari dar zoom na página e ela fica desalinhada, com os
+   resultados fora da tela. Força 16px só em telas pequenas — no desktop os
+   campos mantêm o tamanho compacto do layout. */
+@media (max-width: 1023px) {
+  .simulador-root input,
+  .simulador-root select,
+  .simulador-root textarea {
+    font-size: 16px;
+  }
+}

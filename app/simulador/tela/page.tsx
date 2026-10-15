@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect } from 'react';
 import Image from 'next/image';
 import { Analytics } from "@vercel/analytics/next";
 import logoColorido from '../../../app/imgs/logo.png';
+import ResumoMobile, { ID_RESULTADO } from '../ResumoMobile';
 
 export default function SimuladorTela() {
   // 1. Dados do Projeto
@@ -112,9 +113,15 @@ export default function SimuladorTela() {
   }, [ratio, mode, inputValue, isPainelLed]);
 
   return (
-    <div className="flex flex-col lg:flex-row gap-4 px-4 md:px-8 py-6 bg-[#F0F4F8] text-[#0F172A] min-h-screen font-sans print:bg-white print:text-black print:block print:p-0">
+    <div className="flex flex-col lg:flex-row gap-4 px-4 md:px-8 pt-6 pb-36 lg:pb-6 bg-[#F0F4F8] text-[#0F172A] min-h-screen font-sans print:bg-white print:text-black print:block print:p-0">
       <Analytics/>
-      
+      <ResumoMobile itens={[
+        { label: 'Largura', valor: `${Math.round(medidas.w)} cm` },
+        { label: 'Altura', valor: `${Math.round(medidas.h)} cm` },
+        { label: 'Diagonal', valor: `${medidas.d_pol.toFixed(1)}"` },
+        { label: 'Área', valor: `${medidas.area_m2.toFixed(2)} m²` },
+      ]} />
+
       {/* SIDEBAR TÉCNICA */}
       <aside className="w-full lg:w-[400px] flex-shrink-0 flex flex-col gap-4 print:hidden">
         
@@ -195,7 +202,7 @@ export default function SimuladorTela() {
       </aside>
 
       {/* ÁREA PRINCIPAL / PREVIEW */}
-      <main className="flex-grow flex flex-col gap-4 relative print:p-8">
+      <main id={ID_RESULTADO} className="flex-grow flex flex-col gap-4 relative scroll-mt-24 min-w-0 print:p-8">
         
         <div className="hidden print:flex justify-between items-end border-b-2 border-black pb-4 mb-2 flex-shrink-0">
           <Image src={logoColorido} alt="Rentech Logo" width={180} height={55} />
@@ -232,36 +239,41 @@ export default function SimuladorTela() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 flex-shrink-0 print:gap-3">
           <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#16A34A] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
             <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Largura Final</span>
-            <strong className="block text-2xl text-[#16A34A] font-black print:text-black">{Math.round(medidas.w)} cm</strong>
+            <strong className="block text-xl md:text-2xl text-[#16A34A] font-black print:text-black">{Math.round(medidas.w)} cm</strong>
             <span className="text-[10px] font-bold text-gray-400">{(medidas.w / 100).toFixed(2)} Metros{isPainelLed ? ' · ajustado' : ''}</span>
           </div>
           <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#336699] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
             <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Altura Final</span>
-            <strong className="block text-2xl text-[#336699] font-black print:text-black">{Math.round(medidas.h)} cm</strong>
+            <strong className="block text-xl md:text-2xl text-[#336699] font-black print:text-black">{Math.round(medidas.h)} cm</strong>
             <span className="text-[10px] font-bold text-gray-400">{(medidas.h / 100).toFixed(2)} Metros{isPainelLed ? ' · ajustado' : ''}</span>
           </div>
           <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#D97706] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
             <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Diagonal Efetiva</span>
-            <strong className="block text-2xl text-[#D97706] font-black print:text-black">{medidas.d_pol.toFixed(1)}&quot;</strong>
+            <strong className="block text-xl md:text-2xl text-[#D97706] font-black print:text-black">{medidas.d_pol.toFixed(1)}&quot;</strong>
             <span className="text-[10px] font-bold text-gray-400">Polegadas Visuais</span>
           </div>
           <div className="bg-white border border-[#E2E8F0] border-t-4 border-t-[#7C3AED] p-4 rounded-xl shadow-sm print:bg-white print:border-gray-400">
             <span className="block text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Área Total Útil</span>
-            <strong className="block text-2xl text-[#7C3AED] font-black print:text-black">{medidas.area_m2.toFixed(2)} m²</strong>
+            <strong className="block text-xl md:text-2xl text-[#7C3AED] font-black print:text-black">{medidas.area_m2.toFixed(2)} m²</strong>
             <span className="text-[10px] font-bold text-gray-400">Metros Quadrados</span>
           </div>
         </div>
 
         {/* WORKSPACE DO PREVIEW VISUAL */}
-        <div className="flex-grow bg-white border border-[#E2E8F0] rounded-2xl flex items-center justify-center p-12 relative overflow-hidden shadow-sm min-h-[400px] bg-[radial-gradient(#CBD5E1_1px,transparent_1px)] bg-[size:32px_32px] print:bg-transparent print:border-none print:shadow-none">
-          
-          <div 
+        {/* Padding à direita/abaixo reserva espaço pras cotas de altura/largura,
+            que ficam FORA da caixa (posição absoluta negativa). */}
+        <div className="flex-grow bg-white border border-[#E2E8F0] rounded-2xl flex items-center justify-center pl-4 pr-20 pt-6 pb-14 md:p-12 md:pr-24 relative overflow-hidden shadow-sm min-h-[260px] md:min-h-[400px] bg-[radial-gradient(#CBD5E1_1px,transparent_1px)] bg-[size:32px_32px] print:bg-transparent print:border-none print:shadow-none">
+
+          {/* Largura limitada a 100% do espaço disponível (antes era fixa em
+              px e cortava no celular) — a altura acompanha pelo aspect-ratio,
+              então a proporção da tela nunca distorce. */}
+          <div
             className="bg-[#0C1D4D] border-[6px] border-[#336699] relative transition-all duration-300 ease-in-out shadow-[0_20px_50px_rgba(12,29,77,0.3)] print:bg-gray-100 print:border-black print:shadow-none rounded-sm"
-            style={{ width: `${medidas.visW}px`, height: `${medidas.visH}px` }}
+            style={{ width: `min(${medidas.visW}px, 100%)`, aspectRatio: `${ratio}` }}
           >
-            {/* SVG perfeito da Diagonal Geométrica */}
+            {/* SVG da Diagonal Geométrica (em %, acompanha o tamanho real da caixa) */}
             <svg className="absolute inset-0 w-full h-full pointer-events-none">
-              <line x1="0" y1={medidas.visH} x2={medidas.visW} y2="0" stroke="#F59E0B" strokeWidth="2.5" strokeDasharray="8,8" />
+              <line x1="0" y1="100%" x2="100%" y2="0" stroke="#F59E0B" strokeWidth="2.5" strokeDasharray="8,8" />
             </svg>
 
             {/* Texto da Diagonal rodado via trigonometria */}

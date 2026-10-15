@@ -9,6 +9,7 @@ import { StraightIcon, CuboIcon, SleeveIcon, SapataIcon, TalhaIcon, PauCargaIcon
 import { TorreSVG, VaoSVG, BoxSVG } from './schematics';
 import { type NoAcessorio, NODE_META, AUTO_CONEXAO_META } from './livre-meta';
 import { buildTorreGeometry3D, buildVaoGeometry3D, buildPortalGeometry3D, buildBoxGeometry3D, buildLivreGeometry3D } from './geometry3d';
+import ResumoMobile, { ID_RESULTADO } from '../ResumoMobile';
 
 const Loading3D = () => (
   <div className="h-[420px] flex items-center justify-center text-[10px] font-bold text-gray-400 uppercase tracking-widest">Carregando visualização 3D…</div>
@@ -518,8 +519,21 @@ export default function SimuladorBoxtruss() {
   }, [retasLivres, diagonaisLivres, nosLivres, qSize, freeModuloM, autoConexoes]);
 
   return (
-    <div className="flex flex-col lg:flex-row gap-4 px-4 md:px-8 py-6 bg-[#F0F4F8] text-[#0F172A] min-h-screen font-sans print:bg-white print:text-black print:block print:p-0">
+    <div className={`flex flex-col lg:flex-row gap-4 px-4 md:px-8 pt-6 ${aba === 'catalogo' ? 'pb-6' : 'pb-36 lg:pb-6'} bg-[#F0F4F8] text-[#0F172A] min-h-screen font-sans print:bg-white print:text-black print:block print:p-0`}>
       <Analytics />
+      <ResumoMobile itens={
+        aba === 'montador' ? [
+          { label: 'Peso', valor: `${resultado.pesoTotal.toFixed(0)} kg` },
+          { label: 'Retas', valor: `${totalRetas} pç` },
+          { label: 'Cubos', valor: `${resultado.cubos} pç` },
+          { label: 'Talha', valor: `CM ${talha.capKg}kg` },
+        ] : aba === 'livre' ? [
+          { label: 'Peso', valor: `${materiaisLivres.pesoTotal.toFixed(0)} kg` },
+          { label: 'Retas', valor: `${materiaisLivres.numRetas} pç` },
+          { label: 'Cubos', valor: `${autoConexoes.cubos} pç` },
+          { label: 'Diagonais', valor: `${materiaisLivres.numDiag} pç` },
+        ] : []
+      } />
 
       {/* SIDEBAR */}
       <aside className="w-full lg:w-[400px] flex-shrink-0 flex flex-col gap-4 print:hidden">
@@ -680,7 +694,7 @@ export default function SimuladorBoxtruss() {
       </aside>
 
       {/* ÁREA PRINCIPAL */}
-      <main className="flex-grow flex flex-col gap-4 relative print:bg-white print:p-8 overflow-y-auto">
+      <main id={ID_RESULTADO} className="flex-grow flex flex-col gap-4 relative scroll-mt-24 min-w-0 print:bg-white print:p-8 overflow-y-auto">
 
         <div className="hidden print:flex justify-between items-end border-b-2 border-black pb-4 mb-2 flex-shrink-0">
           <Image src={logoColorido} alt="Rentech Logo" width={180} height={55} />
@@ -748,7 +762,7 @@ export default function SimuladorBoxtruss() {
 
             {/* DESENHO ESQUEMÁTICO */}
             <div className="bg-white border border-[#E2E8F0] rounded-2xl shadow-sm p-4 flex-shrink-0 print:border">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between gap-2 mb-3">
                 <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider text-xs">Desenho Esquemático — {estrutura === 'torre' ? `Torre ${qSize}` : estrutura === 'vao' ? `Vão ${qSize}` : estrutura === 'box' ? `Box ${qSize}` : `Portal ${qSize}`}</h3>
                 <div className="grid grid-cols-2 gap-1 bg-gray-100 p-1 rounded-lg print:hidden">
                   <button onClick={() => setModo3D(false)} className={`px-3 py-1 text-[9px] font-black uppercase rounded ${!modo3D ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:bg-gray-200'}`}>2D</button>
@@ -797,7 +811,7 @@ export default function SimuladorBoxtruss() {
               </div>
 
               <div className={`${modo3D ? 'block' : 'hidden'} print:hidden`}>
-                <div className="h-[420px] rounded-xl overflow-hidden border border-[#E2E8F0]">
+                <div className="h-[320px] md:h-[420px] rounded-xl overflow-hidden border border-[#E2E8F0]">
                   <MontadorTruss3D geometry={geometria3D} ladoM={Q_INFO[qSize].ladoM} />
                 </div>
                 <p className="text-[9px] text-gray-400 uppercase tracking-widest font-bold mt-2 text-center">Arraste para rotacionar · scroll para zoom · visualização esquemática, não substitui o memorial de cálculo</p>
@@ -913,7 +927,7 @@ export default function SimuladorBoxtruss() {
 
               {modo3D && (
                 <div className="print:hidden">
-                  <div className="h-[420px] rounded-xl overflow-hidden border border-[#E2E8F0]">
+                  <div className="h-[320px] md:h-[420px] rounded-xl overflow-hidden border border-[#E2E8F0]">
                     <LivreTruss3D geometry={geometriaLivre3D} ladoM={Q_INFO[qSize].ladoM} />
                   </div>
                   <p className="text-[9px] text-gray-400 uppercase tracking-widest font-bold mt-2 text-center">Arraste para rotacionar · scroll para zoom · visualização esquemática, não substitui o memorial de cálculo</p>

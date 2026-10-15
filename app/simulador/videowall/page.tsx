@@ -7,6 +7,7 @@ import logoColorido from '../../../app/imgs/logo.png';
 import touchIcon from '../../../app/imgs/touch_icon.png';
 import { supabase } from '../../lib/supabase';
 import { Analytics } from "@vercel/analytics/next"
+import ResumoMobile, { ID_RESULTADO, type ItemResumo } from '../ResumoMobile';
 
 // Interfaces para tipagem estrita do TypeScript
 interface Equipamento {
@@ -82,7 +83,7 @@ function DesenhoTecnicoEquipamento({
   const fmt = (n: number) => n.toFixed(1).replace('.', ',');
 
   return (
-    <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`} className="max-w-full">
+    <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`} className="max-w-full h-auto">
       {/* Cota superior - largura da frente */}
       <g className="stroke-[#336699] print:stroke-black" strokeWidth={1}>
         <line x1={leftDim} y1={topDim - 10} x2={leftDim + fw} y2={topDim - 10} />
@@ -442,10 +443,37 @@ export default function SimuladorVideoWall() {
     return { peso, watts, kva };
   }, [projectList]);
 
+  const resumoMobile: ItemResumo[] = isProjectView
+    ? [
+        { label: 'Itens', valor: `${projectList.length}` },
+        { label: 'Peso', valor: `${totaisProjeto.peso.toFixed(1)} kg` },
+        { label: 'Consumo', valor: `${totaisProjeto.watts} W` },
+        { label: 'Gerador', valor: `${totaisProjeto.kva.toFixed(2)} kVA` },
+      ]
+    : !currentItemDraft
+      ? []
+      : equipType === 'led'
+        ? [
+            { label: 'Dimensão', valor: `${ledActualW}×${ledActualH}m` },
+            { label: 'Módulos', valor: `${totalModulosVisual} un.` },
+            { label: 'Resolução', valor: `${resX}×${resY}` },
+            { label: 'Consumo', valor: `${currentItemDraft.watts} W` },
+          ]
+        : [
+            { label: 'Qtd.', valor: `${quantity}` },
+            { label: 'Peso', valor: pesoBruto },
+            { label: 'Consumo', valor: equipType === 'truss' ? 'Zero' : wattsStr },
+            { label: 'Gerador', valor: kvaStr },
+          ];
+
   return (
-    <div className="flex flex-col lg:flex-row gap-6 px-4 md:px-6 pb-4 md:pb-10 pt-4 bg-[#F0F4F8] text-[#0F172A] h-screen max-h-[800px] overflow-hidden font-sans print:bg-white print:text-black print:block print:h-auto print:max-h-none">
+    // Altura travada (h-screen/overflow-hidden) só a partir de lg: no
+    // celular a coluna de controles empilha ACIMA dos resultados, e com a
+    // altura travada eles ficavam cortados fora da tela, sem como rolar.
+    <div className="flex flex-col lg:flex-row gap-6 px-4 md:px-6 pt-4 pb-36 lg:pb-10 bg-[#F0F4F8] text-[#0F172A] min-h-screen lg:min-h-0 lg:h-screen lg:max-h-[800px] lg:overflow-hidden font-sans print:bg-white print:text-black print:block print:h-auto print:max-h-none">
       <Analytics/>
-      
+      <ResumoMobile itens={resumoMobile} />
+
       {/* MODAL DE SUGESTÃO DE ACESSÓRIOS */}
       {modalOpen && (
         <div className="fixed inset-0 bg-black/50 z-[2000] flex items-center justify-center backdrop-blur-sm print:hidden p-4">
@@ -492,7 +520,7 @@ export default function SimuladorVideoWall() {
       )}
 
       {/* SIDEBAR TÉCNICA */}
-      <aside className="bg-white p-5 rounded-2xl shadow-sm w-full lg:w-80 flex-shrink-0 flex flex-col border border-[#E2E8F0] overflow-y-auto print:hidden">
+      <aside className="bg-white p-5 rounded-2xl shadow-sm w-full lg:w-80 flex-shrink-0 flex flex-col border border-[#E2E8F0] lg:overflow-y-auto print:hidden">
         
         <div className="bg-[#F0F4F8] p-4 rounded-xl mb-5 border-l-4 border-l-[#336699]">
           <label className="block text-[#0C1D4D] font-black text-[10px] tracking-widest uppercase mb-2">Setor do Projeto</label>
@@ -578,7 +606,7 @@ export default function SimuladorVideoWall() {
       </aside>
 
       {/* ESPAÇO DE TRABALHO CENTRAL */}
-      <main className="flex-grow flex flex-col gap-5 relative print:p-0 overflow-y-auto pb-6 pr-2">
+      <main id={ID_RESULTADO} className="flex-grow flex flex-col gap-5 relative scroll-mt-24 min-w-0 print:p-0 lg:overflow-y-auto pb-6 lg:pr-2">
         
         {/* Header de Impressão Profissional */}
         <div className="hidden print:flex justify-between items-end border-b-2 border-black pb-4 mb-6">
@@ -703,12 +731,12 @@ export default function SimuladorVideoWall() {
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 flex-shrink-0 print:grid-cols-3 print:gap-4">
                 <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                   <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Dimensão Un.</span>
-                  <strong className="block text-base text-[#0C1D4D] font-black leading-none truncate print:text-black" title={dimUn}>{dimUn}</strong>
+                  <strong className="block text-base text-[#0C1D4D] font-black leading-tight break-words print:text-black" title={dimUn}>{dimUn}</strong>
                 </div>
 
                 <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                   <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Equipamento</span>
-                  <strong className="block text-sm text-[#0C1D4D] font-black leading-tight truncate print:text-black" title={equipName}>{equipName}</strong>
+                  <strong className="block text-sm text-[#0C1D4D] font-black leading-tight break-words line-clamp-2 print:text-black" title={equipName}>{equipName}</strong>
                   <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1 print:text-gray-600">{equipQtd}</span>
                 </div>
 
@@ -729,21 +757,21 @@ export default function SimuladorVideoWall() {
                 {equipType === 'light' && (
                   <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                     <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Controle DMX</span>
-                    <strong className="block text-base text-[#0C1D4D] font-black leading-none truncate print:text-black" title={selectedDeviceRaw?.dmx || 'DMX512'}>{selectedDeviceRaw?.dmx || 'DMX512'}</strong>
+                    <strong className="block text-base text-[#0C1D4D] font-black leading-tight break-words print:text-black" title={selectedDeviceRaw?.dmx || 'DMX512'}>{selectedDeviceRaw?.dmx || 'DMX512'}</strong>
                     <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1 print:text-gray-600">Sinal DMX512</span>
                   </div>
                 )}
                 {equipType === 'truss' && (
                   <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                     <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Detalhes Técnicos</span>
-                    <strong className="block text-sm text-[#0C1D4D] font-black leading-tight truncate print:text-black" title={selectedDeviceRaw?.detalhes || 'Alumínio'}>{selectedDeviceRaw?.detalhes || 'Alumínio'}</strong>
+                    <strong className="block text-sm text-[#0C1D4D] font-black leading-tight break-words line-clamp-2 print:text-black" title={selectedDeviceRaw?.detalhes || 'Alumínio'}>{selectedDeviceRaw?.detalhes || 'Alumínio'}</strong>
                     <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1 print:text-gray-600">Ferragem / Alumínio</span>
                   </div>
                 )}
                 {equipType === 'acc' && (
                   <div className="bg-white p-3 rounded-xl shadow-sm border border-[#E2E8F0] border-t-4 border-t-[#336699] flex flex-col justify-center print:border-black">
                     <span className="block text-[9px] text-[#64748B] uppercase font-bold tracking-wider mb-1">Detalhes Técnicos</span>
-                    <strong className="block text-sm text-[#0C1D4D] font-black leading-tight truncate print:text-black" title={selectedDeviceRaw?.detalhes || 'Acessório'}>{selectedDeviceRaw?.detalhes || 'Acessório'}</strong>
+                    <strong className="block text-sm text-[#0C1D4D] font-black leading-tight break-words line-clamp-2 print:text-black" title={selectedDeviceRaw?.detalhes || 'Acessório'}>{selectedDeviceRaw?.detalhes || 'Acessório'}</strong>
                     <span className="block text-[10px] text-[#94A3B8] font-semibold mt-1 print:text-gray-600">Periférico / Cabeamento</span>
                   </div>
                 )}
@@ -770,14 +798,16 @@ export default function SimuladorVideoWall() {
           </div>
         ) : (
           /* View da Tabela Estruturada do Projeto */
-          <div className="bg-white p-6 md:p-8 rounded-2xl border border-[#E2E8F0] shadow-sm flex-col flex flex-grow min-h-0 print:border-none print:p-0 print:shadow-none">
-            <div className="flex justify-between items-center border-b border-[#E2E8F0] pb-4 mb-4 flex-shrink-0">
-              <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Especificação da Carga</h2>
+          <div className="bg-white p-4 md:p-8 rounded-2xl border border-[#E2E8F0] shadow-sm flex-col flex flex-grow min-h-0 print:border-none print:p-0 print:shadow-none">
+            <div className="flex justify-between items-center gap-2 border-b border-[#E2E8F0] pb-4 mb-4 flex-shrink-0">
+              <h2 className="text-base md:text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Especificação da Carga</h2>
               <button onClick={() => { if(confirm('Limpar o projeto inteiro?')) setProjectList([]); }} className="text-[10px] font-bold text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition-colors print:hidden uppercase tracking-wider">🗑️ Limpar</button>
             </div>
 
-            <div className="overflow-y-auto flex-grow pr-2">
-              <table className="w-full text-left border-collapse">
+            {/* overflow-x: no celular a tabela de 6 colunas rola de lado em
+                vez de espremer/cortar as colunas. */}
+            <div className="overflow-x-auto lg:overflow-y-auto flex-grow lg:pr-2">
+              <table className="w-full min-w-[560px] text-left border-collapse print:min-w-0">
                 <thead className="sticky top-0 bg-white z-10">
                   <tr className="text-[#64748B] text-[10px] uppercase font-bold tracking-wider border-b-2 border-[#E2E8F0] bg-[#F8FAFC]">
                     <th className="p-3 rounded-tl-lg">Qtd</th>

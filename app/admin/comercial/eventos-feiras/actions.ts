@@ -13,8 +13,17 @@ type Resultado = { ok: boolean; erro?: string; info?: any };
 
 const ROTA = '/admin/comercial/eventos-feiras';
 
+// O botão "Sincronizar Fichas/Eventos" de /admin/estoque/expedicao também
+// chama esta action — quem tem acesso à Expedição precisa conseguir usar o
+// botão da própria página, mesmo sem acesso ao módulo Comercial.
+const ROTAS_SINCRONIZAR = [ROTA, '/admin/estoque/expedicao'];
+
 export async function sincronizarEventosFeirasP2sAction(opcoes: SincronizarEventosOpcoes, accessToken: string): Promise<Resultado> {
-  const acesso = await validarAcesso(accessToken, ROTA);
+  let acesso = await validarAcesso(accessToken, ROTAS_SINCRONIZAR[0]);
+  for (const rota of ROTAS_SINCRONIZAR.slice(1)) {
+    if (acesso.ok) break;
+    acesso = await validarAcesso(accessToken, rota);
+  }
   if (!acesso.ok) return { ok: false, erro: acesso.message };
   return sincronizarEventosFeirasCore(opcoes);
 }

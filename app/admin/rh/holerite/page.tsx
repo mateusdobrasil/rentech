@@ -1048,13 +1048,22 @@ export default function HoleritePage() {
       }),
     [funcVisiveis, buscaGrid, filtroContrato, filtroEmpresa]);
 
+  // d.id/b.id só existe depois de SALVO (vem do select('*') no carregamento —
+  // ver carregarFuncionario). Um item recém-adicionado por addDesconto/
+  // addBonus ainda não tem id: calcular "quitado"/"encerrado" nele fazia o
+  // item sumir da lista (filtro abaixo) assim que a data digitada caía antes
+  // da competência vigente, no meio do próprio lançamento — sem chance de
+  // terminar de preencher ou corrigir. Rascunho (sem id) nunca é tratado
+  // como quitado/encerrado; o travamento só vale depois de salvar de verdade.
   const descontosComIndice = useMemo(() => descontosSelecionado.map((d, idx) => {
     let quitado = false;
-    if (d.tipo === 'PARCELADO' && d.mes_inicio && d.parcelas > 0) {
-      const fimReal = calcularMesFim(d.mes_inicio, d.parcelas);
-      quitado = mesReferencia > fimReal;
-    } else if (d.tipo === 'FIXO' && d.mes_fim && d.mes_fim !== '2099-12') {
-      quitado = mesReferencia > d.mes_fim;
+    if (d.id) {
+      if (d.tipo === 'PARCELADO' && d.mes_inicio && d.parcelas > 0) {
+        const fimReal = calcularMesFim(d.mes_inicio, d.parcelas);
+        quitado = mesReferencia > fimReal;
+      } else if (d.tipo === 'FIXO' && d.mes_fim && d.mes_fim !== '2099-12') {
+        quitado = mesReferencia > d.mes_fim;
+      }
     }
     return { d, idx, quitado };
   }), [descontosSelecionado, mesReferencia]);
@@ -1062,8 +1071,10 @@ export default function HoleritePage() {
 
   const bonusComIndice = useMemo(() => bonusSelecionado.map((b, idx) => ({
     b, idx,
-    encerrado: (b.recorrencia === 'UNICO' && !!b.mes_referencia && mesReferencia > b.mes_referencia)
+    encerrado: !!b.id && (
+      (b.recorrencia === 'UNICO' && !!b.mes_referencia && mesReferencia > b.mes_referencia)
       || (b.recorrencia === 'MENSAL' && !!b.mes_fim && mesReferencia > b.mes_fim)
+    )
   })), [bonusSelecionado, mesReferencia]);
   const qtdBonusEncerrados = useMemo(() => bonusComIndice.filter(x => x.encerrado).length, [bonusComIndice]);
 

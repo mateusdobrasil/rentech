@@ -98,6 +98,13 @@ export default function AssinaturasPage() {
   const daEmpresaEscolhida = (a: Assinatura) =>
     filtroEmpresa === 'TODAS' || String(a.empresa_id) === filtroEmpresa;
 
+  // Filtro por colaborador — um por aba ('' = todos), já que a lista de
+  // nomes de cada aba é diferente (quem tem holerite ≠ quem tem rescisão).
+  const [filtroFuncionario, setFiltroFuncionario] = useState('');
+  const [filtroFuncionarioRescisao, setFiltroFuncionarioRescisao] = useState('');
+  const nomesUnicos = (lista: Assinatura[]) =>
+    [...new Set(lista.filter(daEmpresaEscolhida).map(a => a.funcionario_nome).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
 
   // ==========================================================================
   // ABA RESCISÃO — mesmo mecanismo de assinatura (folha_holerite_assinaturas),
@@ -171,16 +178,19 @@ export default function AssinaturasPage() {
     }
   };
 
+  const doFuncionarioRescisao = (a: Assinatura) => !filtroFuncionarioRescisao || a.funcionario_nome === filtroFuncionarioRescisao;
+  const nomesRescisao = useMemo(() => nomesUnicos(assinaturasRescisao), [assinaturasRescisao, filtroEmpresa]);
+
   const filtradasRescisao = useMemo(() =>
-    assinaturasRescisao.filter(daEmpresaEscolhida).filter(a => filtroRescisao === 'TODOS' || a.status === filtroRescisao),
-    [assinaturasRescisao, filtroRescisao, filtroEmpresa]);
+    assinaturasRescisao.filter(daEmpresaEscolhida).filter(doFuncionarioRescisao).filter(a => filtroRescisao === 'TODOS' || a.status === filtroRescisao),
+    [assinaturasRescisao, filtroRescisao, filtroEmpresa, filtroFuncionarioRescisao]);
 
   const contagemRescisao = useMemo(() => {
-    const daEmpresa = assinaturasRescisao.filter(daEmpresaEscolhida);
+    const daEmpresa = assinaturasRescisao.filter(daEmpresaEscolhida).filter(doFuncionarioRescisao);
     const c = { total: daEmpresa.length, ENVIADO: 0, VISUALIZADO: 0, ASSINADO: 0, REJEITADO: 0, CANCELADO: 0 };
     daEmpresa.forEach(a => { if (a.status in c) (c as any)[a.status]++; });
     return c;
-  }, [assinaturasRescisao, filtroEmpresa]);
+  }, [assinaturasRescisao, filtroEmpresa, filtroFuncionarioRescisao]);
   // Selo vermelho da aba: só o que ainda precisa de atenção (aguardando ou
   // visualizado, mas não assinado ainda) — contagemRescisao.total conta TUDO
   // que já foi enviado, inclusive o que já foi assinado, então usava o
@@ -331,16 +341,19 @@ export default function AssinaturasPage() {
     }
   };
 
+  const doFuncionario = (a: Assinatura) => !filtroFuncionario || a.funcionario_nome === filtroFuncionario;
+  const nomesHolerites = useMemo(() => nomesUnicos(assinaturas), [assinaturas, filtroEmpresa]);
+
   const filtradas = useMemo(() =>
-    assinaturas.filter(daEmpresaEscolhida).filter(a => filtro === 'TODOS' || a.status === filtro),
-    [assinaturas, filtro, filtroEmpresa]);
+    assinaturas.filter(daEmpresaEscolhida).filter(doFuncionario).filter(a => filtro === 'TODOS' || a.status === filtro),
+    [assinaturas, filtro, filtroEmpresa, filtroFuncionario]);
 
   const contagem = useMemo(() => {
-    const daEmpresa = assinaturas.filter(daEmpresaEscolhida);
+    const daEmpresa = assinaturas.filter(daEmpresaEscolhida).filter(doFuncionario);
     const c = { total: daEmpresa.length, ENVIADO: 0, VISUALIZADO: 0, ASSINADO: 0, REJEITADO: 0, CANCELADO: 0 };
     daEmpresa.forEach(a => { if (a.status in c) (c as any)[a.status]++; });
     return c;
-  }, [assinaturas, filtroEmpresa]);
+  }, [assinaturas, filtroEmpresa, filtroFuncionario]);
 
   // Cancelados saem do cálculo: não são nem pendência nem conclusão, são um
   // envio retratado — contá-los no total deprimiria o progresso artificialmente.
@@ -507,6 +520,18 @@ export default function AssinaturasPage() {
               {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
             </select>
           )}
+          <select
+            value={filtroFuncionario} onChange={e => setFiltroFuncionario(e.target.value)}
+            className="p-2.5 border border-[#E2E8F0] rounded-xl text-xs font-black uppercase tracking-wider bg-white text-[#0C1D4D] shadow-sm cursor-pointer max-w-full"
+          >
+            <option value="">👤 Todos os colaboradores</option>
+            {/* Mantém o escolhido na lista mesmo se ele não tiver nada no mês atual */}
+            {(filtroFuncionario && !nomesHolerites.includes(filtroFuncionario) ? [filtroFuncionario, ...nomesHolerites] : nomesHolerites)
+              .map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+          {filtroFuncionario && (
+            <button onClick={() => setFiltroFuncionario('')} className="text-[10px] font-black uppercase tracking-wider text-[#64748B] hover:text-red-600 underline">Limpar</button>
+          )}
         </div>
 
         {/* Tabela de Dados Concretos */}
@@ -646,6 +671,17 @@ export default function AssinaturasPage() {
                 <option value="TODAS">🏭 Todas as empresas</option>
                 {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
               </select>
+            )}
+            <select
+              value={filtroFuncionarioRescisao} onChange={e => setFiltroFuncionarioRescisao(e.target.value)}
+              className="p-2.5 border border-[#E2E8F0] rounded-xl text-xs font-black uppercase tracking-wider bg-white text-[#0C1D4D] shadow-sm cursor-pointer max-w-full"
+            >
+              <option value="">👤 Todos os colaboradores</option>
+              {(filtroFuncionarioRescisao && !nomesRescisao.includes(filtroFuncionarioRescisao) ? [filtroFuncionarioRescisao, ...nomesRescisao] : nomesRescisao)
+                .map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+            {filtroFuncionarioRescisao && (
+              <button onClick={() => setFiltroFuncionarioRescisao('')} className="text-[10px] font-black uppercase tracking-wider text-[#64748B] hover:text-red-600 underline">Limpar</button>
             )}
           </div>
 

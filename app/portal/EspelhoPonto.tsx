@@ -3,11 +3,16 @@
 // app/portal/EspelhoPonto.tsx
 // Aba "Espelho de Ponto" do Portal do Funcionário: mostra as batidas dia a
 // dia do mês selecionado (mesma leitura usada no PDF anexado ao holerite,
-// ver app/lib/gerarEspelhoPontoPdf.ts) e permite baixar o PDF equivalente.
-import { useEffect, useMemo, useState } from 'react';
-import { buscarMeuEspelhoPontoAction, baixarMeuEspelhoPontoPdfAction } from './actions/actions-ponto';
+// ver app/lib/gerarEspelhoPontoPdf.ts), permite baixar o PDF equivalente e,
+// num dia com ponto incompleto (ímpar) ou falta, abrir JustificarPonto pra
+// pedir justificativa/abono — sempre indo pra fila de aprovação do RH/
+// Operacional (app/admin/rh/ponto, app/admin/operacional/registro-ponto),
+// nunca gravando o ajuste/abono direto.
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { buscarMeuEspelhoPontoAction, baixarMeuEspelhoPontoPdfAction, listarMinhasSolicitacoesPontoAction, type MinhaSolicitacaoPonto } from './actions/actions-ponto';
+import JustificarPonto from './JustificarPonto';
 
-interface RegistroDia {
+export interface RegistroDia {
   data: string;
   entrada_1: string | null;
   saida_1: string | null;
@@ -57,6 +62,15 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
   const [baixando, setBaixando] = useState(false);
   const [erro, setErro] = useState('');
 
+  const [solicitacoes, setSolicitacoes] = useState<MinhaSolicitacaoPonto[]>([]);
+  const [diaSelecionado, setDiaSelecionado] = useState<{ dataIso: string; reg: RegistroDia | undefined; falta: boolean } | null>(null);
+
+  const carregarSolicitacoes = useCallback(() => {
+    listarMinhasSolicitacoesPontoAction(accessToken, mesReferencia).then(res => {
+      if (res.ok) setSolicitacoes(res.info);
+    });
+  }, [accessToken, mesReferencia]);
+
   useEffect(() => {
     let cancelado = false;
     setCarregando(true);
@@ -76,6 +90,8 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
     return () => { cancelado = true; };
   }, [accessToken, mesReferencia]);
 
+  useEffect(() => { carregarSolicitacoes(); }, [carregarSolicitacoes]);
+
   const linhas = useMemo(() => {
     const porDia: Record<string, RegistroDia> = {};
     registros.forEach(r => { porDia[r.data] = r; });
@@ -84,7 +100,7 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
     const diasNoMes = new Date(ano, mesNum, 0).getDate();
     const hoje = new Date(); hoje.setHours(23, 59, 59, 999);
 
-    const dias: { dataIso: string; diaSemana: number; reg: RegistroDia | undefined; observacao: string; alerta: boolean }[] = [];
+    const dias: { dataIso: string; diaSemana: number; reg: RegistroDia | undefined; observacao: string; alerta: boolean; incompleto: boolean; clicavel: boolean }[] = [];
     for (let d = 1; d <= diasNoMes; d++) {
       const data = new Date(ano, mesNum - 1, d);
       if (data > hoje) break;
@@ -98,18 +114,40 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
       const trabalhados = reg?.minutosTrabalhados || 0;
       const abonados = reg?.minutosAbonados || 0;
       const temRegistro = trabalhados > 0 || abonados > 0;
+      // Mesma checagem usada no RH/Operacional (RegistroPontoConsulta.tsx):
+      // quantidade par de batidas está OK, ímpar é entrada/saída incompleta.
+      const qtdBatidas = [reg?.entrada_1, reg?.saida_1, reg?.entrada_2, reg?.saida_2].filter(Boolean).length;
+      const incompleto = abonados === 0 && qtdBatidas % 2 === 1;
 
       let observacao = '';
       let alerta = false;
       if (isFeriado) observacao = temRegistro ? 'Trabalhado (feriado)' : 'Feriado';
       else if (diaSemana === 0) observacao = temRegistro ? 'Trabalhado (DSR)' : 'DSR';
       else if (!temRegistro && diaSemana !== 6) { observacao = 'Falta'; alerta = true; }
+      if (incompleto) observacao = 'Ponto incompleto';
       if (abonados > 0) observacao = `Abono ${hhmm(abonados)}${reg?.motivoAbono ? ` — ${reg.motivoAbono}` : ''}`;
 
-      dias.push({ dataIso, diaSemana, reg, observacao, alerta });
+      dias.push({ dataIso, diaSemana, reg, observacao, alerta, incompleto, clicavel: alerta || incompleto });
     }
     return dias;
   }, [registros, feriados, dataAdmissao, dataDesligamento, mesReferencia]);
+
+  const solicitacoesPorDia = useMemo(() => {
+    const mapa: Record<string, MinhaSolicitacaoPonto[]> = {};
+    solicitacoes.forEach(s => { (mapa[s.data_referencia] ||= []).push(s); });
+    return mapa;
+  }, [solicitacoes]);
+
+  // Rótulo curto pra sinalizar, na própria linha, que já existe solicitação
+  // pra aquele dia — prioriza Pendente (é o que mais importa saber antes de
+  // tentar enviar outra), senão mostra o resultado mais recente.
+  function rotuloSolicitacao(dataIso: string): string | null {
+    const sols = solicitacoesPorDia[dataIso];
+    if (!sols || sols.length === 0) return null;
+    if (sols.some(s => s.status === 'PENDENTE')) return 'Solicitação pendente';
+    if (sols.some(s => s.status === 'APROVADA')) return 'Solicitação aprovada';
+    return 'Solicitação rejeitada';
+  }
 
   const totais = useMemo(() => {
     let trabalhado = 0, abonado = 0, faltas = 0;
@@ -174,8 +212,13 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
           <div className="md:hidden space-y-2">
             {linhas.map(l => {
               const diasL = diasSeguintesBatidas(l.reg?.entrada_1 || null, l.reg?.saida_1 || null, l.reg?.entrada_2 || null, l.reg?.saida_2 || null);
+              const rotuloSol = rotuloSolicitacao(l.dataIso);
               return (
-              <div key={l.dataIso} className="bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] p-3">
+              <div
+                key={l.dataIso}
+                onClick={() => l.clicavel && setDiaSelecionado({ dataIso: l.dataIso, reg: l.reg, falta: l.alerta })}
+                className={`bg-[#F8FAFC] rounded-xl border p-3 ${l.clicavel ? 'border-amber-300 cursor-pointer active:bg-amber-50' : 'border-[#E2E8F0]'}`}
+              >
                 <div className="flex items-center justify-between gap-2 mb-2">
                   <span className="font-black text-[#0C1D4D] text-[13px]">
                     {l.dataIso.split('-').reverse().slice(0, 2).join('/')} · {DIAS_SEMANA[l.diaSemana]}
@@ -192,6 +235,11 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
                 </div>
                 {l.observacao && (
                   <p className={`text-[10px] font-bold uppercase break-words ${l.alerta ? 'text-red-600' : 'text-gray-500'}`}>{l.observacao}</p>
+                )}
+                {rotuloSol ? (
+                  <p className="text-[10px] font-bold uppercase text-amber-600 mt-0.5">{rotuloSol}</p>
+                ) : l.clicavel && (
+                  <p className="text-[10px] font-black uppercase text-[#336699] mt-0.5">{l.alerta ? 'Toque para justificar/abonar ›' : 'Toque para justificar ›'}</p>
                 )}
               </div>
               );
@@ -222,8 +270,13 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
                   const diaSaidaAlmoco = temIntervalo && diasL[1];
                   const diaRetAlmoco = temIntervalo && diasL[2];
                   const diaSaida = temIntervalo ? diasL[3] : diasL[1];
+                  const rotuloSol = rotuloSolicitacao(l.dataIso);
                   return (
-                    <tr key={l.dataIso} className="hover:bg-[#F8FAFC] transition-colors">
+                    <tr
+                      key={l.dataIso}
+                      onClick={() => l.clicavel && setDiaSelecionado({ dataIso: l.dataIso, reg: l.reg, falta: l.alerta })}
+                      className={`transition-colors ${l.clicavel ? 'cursor-pointer hover:bg-amber-50' : 'hover:bg-[#F8FAFC]'}`}
+                    >
                       <td className="p-2 text-left font-bold text-[#0C1D4D]">
                         {l.dataIso.split('-').reverse().slice(0, 2).join('/')} <span className="text-gray-400 font-medium">{DIAS_SEMANA[l.diaSemana]}</span>
                       </td>
@@ -232,7 +285,14 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
                       <td className="p-2 font-medium">{hhmmBatida(colRetAlmoco)}{diaRetAlmoco && <div className="text-[8px] font-black text-amber-600 uppercase leading-tight">dia seguinte</div>}</td>
                       <td className="p-2 font-medium">{hhmmBatida(colSaida)}{diaSaida && <div className="text-[8px] font-black text-amber-600 uppercase leading-tight">dia seguinte</div>}</td>
                       <td className="p-2 font-bold">{l.reg?.minutosTrabalhados ? hhmm(l.reg.minutosTrabalhados) : '-'}</td>
-                      <td className={`p-2 text-left text-[11px] font-bold ${l.alerta ? 'text-red-600' : 'text-gray-500'}`}>{l.observacao}</td>
+                      <td className={`p-2 text-left text-[11px] font-bold ${l.alerta ? 'text-red-600' : 'text-gray-500'}`}>
+                        {l.observacao}
+                        {rotuloSol ? (
+                          <span className="block text-amber-600 normal-case">{rotuloSol}</span>
+                        ) : l.clicavel && (
+                          <span className="block text-[#336699] normal-case">{l.alerta ? 'Justificar/abonar ›' : 'Justificar ›'}</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -246,6 +306,18 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
             <span className={`text-xs font-black ${totais.faltas > 0 ? 'text-red-600' : 'text-[#0C1D4D]'}`}>Faltas: {totais.faltas}</span>
           </div>
         </>
+      )}
+
+      {diaSelecionado && (
+        <JustificarPonto
+          accessToken={accessToken}
+          dataIso={diaSelecionado.dataIso}
+          reg={diaSelecionado.reg}
+          falta={diaSelecionado.falta}
+          solicitacoesDoDia={solicitacoesPorDia[diaSelecionado.dataIso] || []}
+          onClose={() => setDiaSelecionado(null)}
+          onEnviado={carregarSolicitacoes}
+        />
       )}
     </div>
   );

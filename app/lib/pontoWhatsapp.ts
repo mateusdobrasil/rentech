@@ -252,7 +252,10 @@ async function batidasFaltantesNoDia(db: Db, funcionarioNome: string, dataRefere
   return ORDEM_BATIDAS.filter(t => !jaFeitas.has(t));
 }
 
-async function existeSolicitacaoPendente(db: Db, funcionarioNome: string, dataReferencia: string, tipo: 'JUSTIFICATIVA_BATIDA' | 'ABONO_DIA' | 'FOLGA_DIA', tipoBatida: TipoBatida | null): Promise<boolean> {
+// Exportada porque app/portal/actions/actions-ponto.ts reaproveita o mesmo
+// dedupe antes de inserir uma solicitação nova (justificativa/abono criados
+// direto no Portal, não só via WhatsApp).
+export async function existeSolicitacaoPendente(db: Db, funcionarioNome: string, dataReferencia: string, tipo: 'JUSTIFICATIVA_BATIDA' | 'ABONO_DIA' | 'FOLGA_DIA', tipoBatida: TipoBatida | null): Promise<boolean> {
   let query = db.from('folha_ponto_whatsapp_solicitacoes')
     .select('id')
     .eq('funcionario_nome', funcionarioNome)

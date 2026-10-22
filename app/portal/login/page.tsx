@@ -1,13 +1,25 @@
 "use client";
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../../lib/supabase';
 import { formatarCpf, somenteDigitos, emailSinteticoPortal } from '../lib/cpf';
 
 export default function PortalLoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <PortalLoginForm />
+    </Suspense>
+  );
+}
+
+function PortalLoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Redirecionado aqui pela checagem de inatividade de app/portal/page.tsx
+  // após 30min sem interação.
+  const motivoInatividade = searchParams.get('motivo') === 'inatividade';
   const [cpf, setCpf] = useState('');
   const [senha, setSenha] = useState('');
   const [erro, setErro] = useState('');
@@ -33,6 +45,12 @@ export default function PortalLoginPage() {
           <h1 className="text-xl font-black text-[#0C1D4D] uppercase tracking-wider">Portal do Funcionário</h1>
           <p className="text-xs text-[#64748B] font-medium mt-1">Entrar</p>
         </div>
+
+        {motivoInatividade && (
+          <div className="mb-4 bg-amber-50 border border-amber-200 text-amber-700 text-xs font-bold px-4 py-3 rounded-lg">
+            Sessão encerrada por inatividade. Faça login novamente.
+          </div>
+        )}
 
         {erro && (
           <div className="mb-4 bg-red-50 border border-red-200 text-red-700 text-xs font-bold px-4 py-3 rounded-lg">{erro}</div>

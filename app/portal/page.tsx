@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useEffect, useMemo } from 'react';
+import { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { supabase } from '../lib/supabase';
@@ -9,6 +9,18 @@ import { carregarPortalHomeAction } from './actions/actions-home';
 import MeuCracha, { type DadosCracha } from './MeuCracha';
 import ChecklistVeiculo from './ChecklistVeiculo';
 import EspelhoPonto from './EspelhoPonto';
+
+// Mesma ideia do admin (app/admin/ExigirMFA.tsx), só que com limite de 30min
+// em vez de 1h — funcionário no celular/totem tende a esquecer aberto com
+// mais frequência. Desloga de verdade (supabase.auth.signOut()), não só
+// bloqueia a tela.
+const CHAVE_ULTIMA_ATIVIDADE_PORTAL = 'rentech_portal_ultima_atividade';
+const LIMITE_INATIVIDADE_PORTAL_MS = 30 * 60 * 1000; // 30 minutos
+
+function tempoInativoPortalMs(): number {
+  const ultima = Number(localStorage.getItem(CHAVE_ULTIMA_ATIVIDADE_PORTAL)) || Date.now();
+  return Date.now() - ultima;
+}
 
 interface DocumentoPortal {
   id: number; categoria: string; titulo: string | null; nome_arquivo: string;
@@ -60,6 +72,44 @@ function PortalDashboardConteudo() {
     }
     iniciar();
   }, [router]);
+
+  // Rastreador de atividade — global na página (SPA de aba só, então um único
+  // useEffect já cobre tudo, sem precisar de layout próprio como no admin).
+  // Throttlado pra não gravar no localStorage a cada pixel de mousemove.
+  useEffect(() => {
+    if (localStorage.getItem(CHAVE_ULTIMA_ATIVIDADE_PORTAL) === null) {
+      localStorage.setItem(CHAVE_ULTIMA_ATIVIDADE_PORTAL, String(Date.now()));
+    }
+    let ultimoRegistro = 0;
+    const registrarAtividade = () => {
+      const agora = Date.now();
+      if (agora - ultimoRegistro < 30_000) return;
+      ultimoRegistro = agora;
+      localStorage.setItem(CHAVE_ULTIMA_ATIVIDADE_PORTAL, String(agora));
+    };
+    const eventos = ['click', 'keydown', 'mousemove', 'scroll', 'touchstart'] as const;
+    eventos.forEach(ev => window.addEventListener(ev, registrarAtividade, { passive: true }));
+    return () => eventos.forEach(ev => window.removeEventListener(ev, registrarAtividade));
+  }, []);
+
+  // Mesmo efeito do botão "Sair" (ver `sair` abaixo), só que disparado pela
+  // inatividade em vez de clique.
+  const deslogarPorInatividade = useCallback(async () => {
+    await supabase.auth.signOut();
+    localStorage.removeItem(CHAVE_ULTIMA_ATIVIDADE_PORTAL);
+    router.push('/portal/login?motivo=inatividade');
+  }, [router]);
+
+  // Confere já ao montar (cobre quem deixou a aba aberta ou reabriu o
+  // navegador/app depois de +30min) e depois a cada 1min enquanto a página
+  // ficar aberta.
+  useEffect(() => {
+    if (tempoInativoPortalMs() >= LIMITE_INATIVIDADE_PORTAL_MS) { deslogarPorInatividade(); return; }
+    const id = setInterval(() => {
+      if (tempoInativoPortalMs() >= LIMITE_INATIVIDADE_PORTAL_MS) deslogarPorInatividade();
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [deslogarPorInatividade]);
 
   const carregar = async (token: string) => {
     setLoading(true);

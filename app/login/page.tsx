@@ -20,6 +20,9 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const empresa = searchParams.get('empresa');
+  // Redirecionado aqui pelo ExigirMFA (app/admin/ExigirMFA.tsx) após 1h sem
+  // interação em nenhuma página do admin.
+  const motivoInatividade = searchParams.get('motivo') === 'inatividade';
 
   // O rewrite do proxy.ts (host -> ?empresa=alfalight) roda no servidor e não
   // chega ao cliente porque /login é estático/cacheado na CDN — por isso o
@@ -115,9 +118,17 @@ function LoginForm() {
           </p>
         </div>
 
+        {motivoInatividade && (
+          <div className="bg-amber-500/10 border border-amber-500/50 p-3 rounded-lg text-center mb-5">
+            <p className="text-xs text-amber-400 font-bold uppercase tracking-wider">
+              Sessão encerrada por inatividade. Faça login novamente.
+            </p>
+          </div>
+        )}
+
         {/* Formulário */}
         <form onSubmit={handleLogin} className="space-y-5">
-          
+
           <div>
             <label className="block text-[10px] font-black text-[#999999] uppercase tracking-widest mb-1.5 pl-1">
               E-mail Corporativo

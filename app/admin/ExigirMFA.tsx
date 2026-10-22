@@ -8,12 +8,12 @@
 // Supabase Auth além do login + permissão de rota que já protegem as demais
 // páginas do admin. Ativação/desativação do fator vive em /admin/conta.
 //
-// O Supabase mantém o nível aal2 na própria sessão até logout/expiração do
-// refresh token (dias) — sem controle próprio, o usuário só seria desafiado
-// uma vez e nunca mais. Por isso este componente também rastreia a última
-// interação do usuário em qualquer página do admin (localStorage, global —
-// ver useEffect de atividade abaixo) e força um novo desafio se o usuário
-// ficar mais de 1h sem interagir, mesmo com aal2 ainda válido.
+// Este componente também rastreia a última interação do usuário em qualquer
+// página do admin (localStorage, global — ver useEffect de atividade abaixo)
+// e, se passar de 1h sem interagir, desloga de verdade (mesmo efeito do botão
+// "Sair" da Navbar) — ver deslogarPorInatividade. Isso vale pra TODA página do
+// admin, não só pras que exigem 2FA, já que ExigirMFA está montado em todas
+// via app/admin/layout.tsx.
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabase';
@@ -56,6 +56,29 @@ export default function ExigirMFA({ children, ativo = true }: { children: React.
     return () => eventos.forEach(ev => window.removeEventListener(ev, registrarAtividade));
   }, []);
 
+  // Mesmo efeito do botão "Sair" da Navbar (components/Navbar.tsx), só que
+  // disparado pela inatividade em vez de clique. Limpa a marca de atividade e
+  // o flag de log de acesso pra sessão seguinte começar do zero.
+  const deslogarPorInatividade = useCallback(async () => {
+    await supabase.auth.signOut();
+    document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+    localStorage.removeItem(CHAVE_ULTIMA_ATIVIDADE);
+    sessionStorage.removeItem('logAcessoRegistrado');
+    router.push('/login?motivo=inatividade');
+  }, [router]);
+
+  // Checa a inatividade de toda e qualquer página do admin — independente de
+  // `ativo`/2FA. Confere já no mount (cobre quem deixou a aba aberta ou
+  // reabriu o navegador depois de +1h) e depois a cada 1min enquanto a página
+  // ficar aberta.
+  useEffect(() => {
+    if (tempoInativoMs() >= LIMITE_INATIVIDADE_MS) { deslogarPorInatividade(); return; }
+    const id = setInterval(() => {
+      if (tempoInativoMs() >= LIMITE_INATIVIDADE_MS) deslogarPorInatividade();
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [deslogarPorInatividade]);
+
   const irParaDesafio = useCallback(async () => {
     // Tem fator verificado cadastrado, só falta o desafio.
     const { data: fatores } = await supabase.auth.mfa.listFactors();
@@ -69,13 +92,10 @@ export default function ExigirMFA({ children, ativo = true }: { children: React.
     const { data: aal, error: aalErro } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
     if (aalErro || !aal) { setErro(aalErro?.message || 'Não foi possível verificar a autenticação.'); setEstado('nao_cadastrado'); return; }
 
-    if (aal.currentLevel === 'aal2') {
-      if (tempoInativoMs() < LIMITE_INATIVIDADE_MS) { setEstado('liberado'); return; }
-      // aal2 ainda válido pro Supabase, mas o usuário ficou +1h sem usar o
-      // sistema — cobra o código de novo mesmo assim.
-      await irParaDesafio();
-      return;
-    }
+    // Inatividade >1h já é tratada à parte (deslogarPorInatividade desloga de
+    // verdade antes mesmo de chegar aqui) — chegando até este ponto, aal2
+    // válido já basta.
+    if (aal.currentLevel === 'aal2') { setEstado('liberado'); return; }
 
     if (aal.nextLevel === 'aal2') { await irParaDesafio(); return; }
 
@@ -84,17 +104,6 @@ export default function ExigirMFA({ children, ativo = true }: { children: React.
   }, [irParaDesafio]);
 
   useEffect(() => { if (ativo) checar(); }, [ativo, checar]);
-
-  // Enquanto a página fica aberta e liberada, confere periodicamente se a
-  // inatividade passou de 1h (sem isso, só re-checaríamos na próxima
-  // navegação/remontagem do componente).
-  useEffect(() => {
-    if (!ativo || estado !== 'liberado') return;
-    const id = setInterval(() => {
-      if (tempoInativoMs() >= LIMITE_INATIVIDADE_MS) checar();
-    }, 60_000);
-    return () => clearInterval(id);
-  }, [ativo, estado, checar]);
 
   const confirmar = async () => {
     if (!factorId || codigo.length !== 6) return;

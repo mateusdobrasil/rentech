@@ -427,6 +427,49 @@ export async function montarLoteSalariosAction(payload: {
       });
     }
 
+    // ==========================================================================
+    // BÔNUS/DESCONTOS INTERNOS DE QUEM NÃO TEM FECHAMENTO PRÓPRIO — quem não
+    // recebe nossa folha (recebeFechamento=false, ex.: contrato "só
+    // documental") é pago pelo valor lido do holerite da contabilidade; os
+    // bônus/descontos lançados em /admin/rh/holerite nunca entram nesse valor.
+    // Caso real (2026-10-26): multa da Katia (09/2026, R$ 140) paga cheia no
+    // lote #62. Não muda o valor nem desmarca — só avisa no item de PAGAMENTO,
+    // pra conferir se a contabilidade incluiu antes de pagar. Mesma regra de
+    // "ativo no mês" de montarDadosHolerite (holerite/page.tsx).
+    // ==========================================================================
+    const avisoLancamentosPorNome: Record<string, string> = {};
+    {
+      const semFechamento = Array.from(nomes).filter(n => fontesResolvidas[n]?.recebeFechamento === false);
+      if (fontes.includes('PAGAMENTO') && semFechamento.length > 0) {
+        const mesFimParcelado = (inicio: string, parcelas: number) => {
+          if (!inicio || parcelas < 1) return inicio;
+          const [ano, mes] = inicio.split('-').map(Number);
+          const fim = new Date(ano, (mes - 1) + (parcelas - 1), 1);
+          return `${fim.getFullYear()}-${String(fim.getMonth() + 1).padStart(2, '0')}`;
+        };
+        const brl = (v: number) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        const [{ data: descs }, { data: bonus }] = await Promise.all([
+          db.from('folha_descontos').select('funcionario_nome, descricao, tipo, parcelas, mes_inicio, mes_fim, valor_parcela').in('funcionario_nome', semFechamento),
+          db.from('folha_bonus').select('funcionario_nome, descricao, recorrencia, mes_referencia, mes_fim, valor').in('funcionario_nome', semFechamento),
+        ]);
+        const partesPorNome: Record<string, string[]> = {};
+        (descs || []).forEach(d => {
+          if (!d.mes_inicio || mesReferencia < d.mes_inicio) return;
+          const ativo = d.tipo === 'FIXO'
+            ? (!d.mes_fim || d.mes_fim === '2099-12' || mesReferencia <= d.mes_fim)
+            : mesReferencia <= (d.parcelas > 0 ? mesFimParcelado(d.mes_inicio, d.parcelas) : d.mes_fim);
+          if (ativo) (partesPorNome[d.funcionario_nome] ??= []).push(`desconto "${d.descricao}" −${brl(d.valor_parcela)}`);
+        });
+        (bonus || []).forEach(b => {
+          const ativo = b.recorrencia === 'MENSAL' ? (!b.mes_fim || mesReferencia <= b.mes_fim) : b.mes_referencia === mesReferencia;
+          if (ativo) (partesPorNome[b.funcionario_nome] ??= []).push(`bônus "${b.descricao}" +${brl(b.valor)}`);
+        });
+        Object.entries(partesPorNome).forEach(([nome, partes]) => {
+          avisoLancamentosPorNome[nome] = `Lançado no sistema p/ este mês: ${partes.join('; ')} — NÃO é aplicado automaticamente (holerite vem da contabilidade). Confira se a contabilidade incluiu antes de pagar.`;
+        });
+      }
+    }
+
     const itens: any[] = [];
     Array.from(nomes).sort((a, b) => a.localeCompare(b)).forEach(nome => {
       const b = bancoPorNome[nome] || {};
@@ -528,6 +571,7 @@ export async function montarLoteSalariosAction(payload: {
           nota: null,
           alerta: alertaFinal,
           avisoLoteExistente,
+          avisoLancamentosInternos: e.fonte === 'PAGAMENTO' ? (avisoLancamentosPorNome[nome] ?? null) : null,
           dataPagamento: null,
           valor: e.valor,
           ...bancoInfo,

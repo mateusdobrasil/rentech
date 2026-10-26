@@ -1634,6 +1634,21 @@ export default function HoleritePage() {
                   </div>
                 </div>
 
+                {/* Contrato "só documental" não passa pelo fechamento da nossa
+                    folha (o holerite vem pronto da contabilidade e o lote paga o
+                    valor lido dele) — bônus/descontos lançados aqui ficavam
+                    salvos sem efeito nenhum, sem aviso. Caso real: multa da
+                    Katia em 09/2026 paga sem o desconto. */}
+                {regraAtiva?.so_documental && (
+                  <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4">
+                    <p className="text-xs font-black text-amber-800 uppercase tracking-wider">⚠ Contrato só documental ({formSelecionado.tipo_contrato})</p>
+                    <p className="text-xs font-bold text-amber-800 mt-1">
+                      O holerite deste colaborador vem pronto da contabilidade e o pagamento usa o valor desse holerite.
+                      Bônus e descontos lançados aqui <span className="underline">NÃO são aplicados automaticamente</span> — informe a contabilidade para que entrem no holerite oficial.
+                    </p>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                   <div className="bg-white p-5 rounded-2xl shadow-sm border border-green-200">
                     <div className="flex justify-between items-center border-b border-green-100 pb-2 mb-4">

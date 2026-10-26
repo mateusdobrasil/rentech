@@ -147,6 +147,10 @@ interface ItemLote {
   // mesmo, ex.: correção legítima de um item que ficou de fora); só nasce
   // desmarcado por padrão pra reduzir o risco de pagar em dobro por distração.
   avisoLoteExistente: string | null;
+  // Só no item de PAGAMENTO de quem não tem fechamento próprio (holerite vem
+  // da contabilidade): bônus/descontos lançados em /admin/rh/holerite pro mês
+  // que NÃO entram no valor pago. Só aviso — não muda valor nem desmarca.
+  avisoLancamentosInternos?: string | null;
   pronto: boolean;
   // Preenchidos por enviarLoteAoBancoAction após a chamada à API do Itaú
   // (app/lib/itauSispag.ts) — ausentes até o item ser realmente enviado.
@@ -1469,6 +1473,9 @@ export default function FinanceiroPage() {
                             </span>
                             {it.avisoLoteExistente && (
                               <span className="block text-[10px] text-amber-600 font-black mt-0.5" title={it.avisoLoteExistente}>⚠ {it.avisoLoteExistente}</span>
+                            )}
+                            {it.avisoLancamentosInternos && (
+                              <span className="block text-[10px] text-orange-700 bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5 font-black mt-1" title={it.avisoLancamentosInternos}>💡 {it.avisoLancamentosInternos}</span>
                             )}
 
                             {editandoPagamentoCP?.chaveEdit === chaveEdit && (

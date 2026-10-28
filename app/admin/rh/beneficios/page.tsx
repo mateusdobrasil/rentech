@@ -91,6 +91,32 @@ export default function BeneficiosPage() {
   const [grid, setGrid] = useState<{ diasUteis: number; colunas: string[]; funcionarios: any[]; totaisColuna: Record<string, number>; totalGeral: number } | null>(null);
   const [carregandoGrid, setCarregandoGrid] = useState(false);
   const [gerandoFlash, setGerandoFlash] = useState(false);
+  // Quem entra no CSV do grid (chave = funcionario_nome); nasce tudo marcado a cada geração
+  const [gridSelecionados, setGridSelecionados] = useState<Set<string>>(new Set());
+
+  const alternarSelecaoGrid = (nome: string) => {
+    setGridSelecionados(prev => {
+      const novo = new Set(prev);
+      if (novo.has(nome)) novo.delete(nome); else novo.add(nome);
+      return novo;
+    });
+  };
+
+  const alternarTodosGrid = (marcar: boolean) => {
+    setGridSelecionados(marcar && grid ? new Set(grid.funcionarios.map((f: any) => f.funcionario_nome)) : new Set());
+  };
+
+  // Totais do rodapé recalculados só com os marcados
+  const gridTotaisSelecionados = useMemo(() => {
+    const totaisColuna: Record<string, number> = {};
+    let totalGeral = 0;
+    if (!grid) return { totaisColuna, totalGeral };
+    grid.funcionarios.filter((f: any) => gridSelecionados.has(f.funcionario_nome)).forEach((f: any) => {
+      grid.colunas.forEach(c => { totaisColuna[c] = (totaisColuna[c] || 0) + (f.valores[c] || 0); });
+      totalGeral += f.total;
+    });
+    return { totaisColuna, totalGeral };
+  }, [grid, gridSelecionados]);
 
   // Grid de conferência do Flash: "Gerar Flash" busca os elegíveis do mês
   // (já vem só de quem está ativo — ou desligado dentro do próprio mês —
@@ -253,7 +279,10 @@ export default function BeneficiosPage() {
     setMostrarGrid(true); setCarregandoGrid(true);
     try {
       const res = await gridBeneficiosAction({ mesReferencia: gridMes, meioId: gridFiltroMeio === 'TODOS' ? null : Number(gridFiltroMeio) }, accessToken);
-      if (res.ok) setGrid(res.info);
+      if (res.ok) {
+        setGrid(res.info);
+        setGridSelecionados(new Set(res.info.funcionarios.map((f: any) => f.funcionario_nome)));
+      }
     } catch (e: any) {
       toast('Erro ao gerar grid: ' + e.message, 'error');
     } finally {
@@ -264,19 +293,21 @@ export default function BeneficiosPage() {
   // Exporta o grid como CSV matriz (abre no Excel)
   const exportarCSV = () => {
     if (!grid) return;
+    const selecionados = grid.funcionarios.filter((f: any) => gridSelecionados.has(f.funcionario_nome));
+    if (selecionados.length === 0) { toast('Selecione ao menos um funcionário.', 'error'); return; }
     const sep = ';';
     const cabecalho = ['Funcionário', ...grid.colunas, 'Total'].map(c => `"${c}"`).join(sep);
     const linhas: string[] = [cabecalho];
-    grid.funcionarios.forEach((f: any) => {
+    selecionados.forEach((f: any) => {
       const cels = [`"${f.funcionario_nome}"`];
       grid.colunas.forEach(c => cels.push((f.valores[c] || 0).toFixed(2).replace('.', ',')));
       cels.push(f.total.toFixed(2).replace('.', ','));
       linhas.push(cels.join(sep));
     });
-    // Rodapé de totais
+    // Rodapé de totais (só dos marcados)
     const rodape = ['"TOTAL"'];
-    grid.colunas.forEach(c => rodape.push((grid.totaisColuna[c] || 0).toFixed(2).replace('.', ',')));
-    rodape.push(grid.totalGeral.toFixed(2).replace('.', ','));
+    grid.colunas.forEach(c => rodape.push((gridTotaisSelecionados.totaisColuna[c] || 0).toFixed(2).replace('.', ',')));
+    rodape.push(gridTotaisSelecionados.totalGeral.toFixed(2).replace('.', ','));
     linhas.push(rodape.join(sep));
 
     const csv = '﻿' + linhas.join('\n');
@@ -526,7 +557,9 @@ export default function BeneficiosPage() {
             <div className="flex justify-between items-center p-5 border-b border-gray-200">
               <div>
                 <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider">📊 Grid de Benefícios</h2>
-                <p className="text-sm text-gray-500">{grid ? `${grid.diasUteis} dias úteis no mês` : 'Carregando...'}</p>
+                <p className="text-sm text-gray-500">
+                  {grid ? `${grid.diasUteis} dias úteis no mês · ${gridSelecionados.size} de ${grid.funcionarios.length} selecionado(s) para o CSV` : 'Carregando...'}
+                </p>
               </div>
               <div className="flex items-center gap-2">
                 <input type="month" value={gridMes} onChange={e => setGridMes(e.target.value)} className="p-2 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />
@@ -535,7 +568,7 @@ export default function BeneficiosPage() {
                   {meios.map(m => <option key={m.id} value={m.id}>{m.nome}</option>)}
                 </select>
                 <button onClick={gerarGrid} className="text-[10px] font-black bg-[#336699] text-white px-3 py-2 rounded-lg uppercase">Atualizar</button>
-                <button onClick={exportarCSV} disabled={!grid} className="text-[10px] font-black bg-emerald-600 text-white px-3 py-2 rounded-lg uppercase disabled:opacity-50">⬇ CSV</button>
+                <button onClick={exportarCSV} disabled={!grid || gridSelecionados.size === 0} className="text-[10px] font-black bg-emerald-600 text-white px-3 py-2 rounded-lg uppercase disabled:opacity-50">⬇ CSV ({gridSelecionados.size})</button>
                 <button onClick={() => setMostrarGrid(false)} className="text-[10px] font-black bg-gray-100 px-3 py-2 rounded-lg uppercase">Fechar</button>
               </div>
             </div>
@@ -549,7 +582,13 @@ export default function BeneficiosPage() {
                 <table className="w-full text-sm border-collapse">
                   <thead>
                     <tr className="bg-[#0C1D4D] text-white">
-                      <th className="p-2.5 text-left font-black uppercase text-[10px] tracking-wider sticky left-0 bg-[#0C1D4D] z-10">Funcionário</th>
+                      <th className="p-2.5 text-left font-black uppercase text-[10px] tracking-wider sticky left-0 bg-[#0C1D4D] z-10">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={gridSelecionados.size === grid.funcionarios.length}
+                            onChange={e => alternarTodosGrid(e.target.checked)} title="Marcar / desmarcar todos" className="w-4 h-4" />
+                          Funcionário
+                        </label>
+                      </th>
                       {grid.colunas.map(c => (
                         <th key={c} className="p-2.5 text-right font-black uppercase text-[10px] tracking-wider whitespace-nowrap">{c}</th>
                       ))}
@@ -557,9 +596,20 @@ export default function BeneficiosPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {grid.funcionarios.map((f: any, idx: number) => (
-                      <tr key={f.funcionario_nome} className={idx % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]'}>
-                        <td className={`p-2.5 font-black text-[#0C1D4D] whitespace-nowrap sticky left-0 z-10 ${idx % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]'}`}>{f.funcionario_nome}</td>
+                    {grid.funcionarios.map((f: any, idx: number) => {
+                      const marcado = gridSelecionados.has(f.funcionario_nome);
+                      return (
+                      <tr key={f.funcionario_nome} className={`group ${idx % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]'} ${!marcado ? 'opacity-40' : ''}`}>
+                        <td className={`p-2.5 font-black text-[#0C1D4D] whitespace-nowrap sticky left-0 z-10 ${idx % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]'}`}>
+                          <div className="flex items-center gap-2">
+                            <input type="checkbox" checked={marcado} onChange={() => alternarSelecaoGrid(f.funcionario_nome)} className="w-4 h-4 cursor-pointer" />
+                            <span className="cursor-pointer" onClick={() => alternarSelecaoGrid(f.funcionario_nome)}>{f.funcionario_nome}</span>
+                            <button onClick={() => setGridSelecionados(new Set([f.funcionario_nome]))} title="Deixar só este funcionário selecionado"
+                              className="opacity-0 group-hover:opacity-100 text-[9px] font-black text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-1.5 py-0.5 rounded uppercase">
+                              só este
+                            </button>
+                          </div>
+                        </td>
                         {grid.colunas.map(c => (
                           <td key={c} className="p-2.5 text-right tabular-nums text-gray-700 whitespace-nowrap">
                             {f.valores[c] ? (
@@ -572,15 +622,16 @@ export default function BeneficiosPage() {
                         ))}
                         <td className="p-2.5 text-right font-black text-indigo-700 tabular-nums whitespace-nowrap bg-indigo-50/50">{BRL(f.total)}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                   <tfoot>
                     <tr className="bg-[#F8FAFC] border-t-2 border-[#0C1D4D]">
                       <td className="p-2.5 font-black text-[#0C1D4D] uppercase text-[11px] sticky left-0 bg-[#F8FAFC] z-10">Total</td>
                       {grid.colunas.map(c => (
-                        <td key={c} className="p-2.5 text-right font-black text-[#0C1D4D] tabular-nums whitespace-nowrap">{BRL(grid.totaisColuna[c] || 0)}</td>
+                        <td key={c} className="p-2.5 text-right font-black text-[#0C1D4D] tabular-nums whitespace-nowrap">{BRL(gridTotaisSelecionados.totaisColuna[c] || 0)}</td>
                       ))}
-                      <td className="p-2.5 text-right font-black text-indigo-700 text-base tabular-nums whitespace-nowrap bg-indigo-100">{BRL(grid.totalGeral)}</td>
+                      <td className="p-2.5 text-right font-black text-indigo-700 text-base tabular-nums whitespace-nowrap bg-indigo-100">{BRL(gridTotaisSelecionados.totalGeral)}</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -624,11 +675,17 @@ export default function BeneficiosPage() {
                     const marcado = flashSelecionados.has(chave);
                     const total = (l.mobilidade || 0) + (l.refeicao || 0) + (l.alimentacao || 0) + (l.premiacaoCartao || 0) + (l.refeicaoEAlimentacao || 0) + (l.premiacaoVirtual || 0);
                     return (
-                      <tr key={chave} className={`${idx % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]'} ${!marcado ? 'opacity-40' : ''} cursor-pointer`} onClick={() => alternarSelecaoFlash(chave)}>
+                      <tr key={chave} className={`group ${idx % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]'} ${!marcado ? 'opacity-40' : ''} cursor-pointer`} onClick={() => alternarSelecaoFlash(chave)}>
                         <td className="p-2.5 text-center" onClick={e => e.stopPropagation()}>
                           <input type="checkbox" checked={marcado} onChange={() => alternarSelecaoFlash(chave)} className="w-4 h-4" />
                         </td>
-                        <td className="p-2.5 font-black text-[#0C1D4D] whitespace-nowrap">{l.nome}</td>
+                        <td className="p-2.5 font-black text-[#0C1D4D] whitespace-nowrap">
+                          {l.nome}
+                          <button onClick={e => { e.stopPropagation(); setFlashSelecionados(new Set([chave])); }} title="Deixar só este funcionário selecionado"
+                            className="ml-2 opacity-0 group-hover:opacity-100 text-[9px] font-black text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-1.5 py-0.5 rounded uppercase">
+                            só este
+                          </button>
+                        </td>
                         <td className="p-2.5 text-gray-500 whitespace-nowrap">{l.cpf}</td>
                         <td className="p-2.5 text-right tabular-nums text-gray-700 whitespace-nowrap">{l.mobilidade ? BRL(l.mobilidade) : <span className="text-gray-300">—</span>}</td>
                         <td className="p-2.5 text-right tabular-nums text-gray-700 whitespace-nowrap">{l.refeicaoEAlimentacao ? BRL(l.refeicaoEAlimentacao) : <span className="text-gray-300">—</span>}</td>

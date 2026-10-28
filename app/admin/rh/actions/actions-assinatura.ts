@@ -14,7 +14,9 @@ import { autentiqueCriarDocumento, autentiqueConsultarDocumento, autentiqueCance
 import { gerarHoleritePdf } from '../../../lib/gerarHoleritePdf';
 import { gerarEspelhoPontoPdf, RegistroPontoDia } from '../../../lib/gerarEspelhoPontoPdf';
 import { gerarReciboPdf } from '../../../lib/gerarReciboPdf';
+import { gerarResumoRecebimentosPdf, LinhaResumo, OpResumo } from '../../../lib/gerarResumoRecebimentosPdf';
 import { mergePdfs } from '../../../lib/mergePdf';
+import { normalizarItensOP } from '../../op/utils';
 import { calcularBeneficiosMes } from './actions-beneficios';
 import { baixarAssinado } from './assinaturaDownloadCore';
 
@@ -273,11 +275,14 @@ async function gerarReciboBytes(
   formaPagamento: string,
   detalhamento: { descricao: string; valor: number }[],
   empresaNome: string = 'RENTECH',
-  empresaId: number | null = null
+  empresaId: number | null = null,
+  // Já calculado pelo chamador (o Resumo de Recebimentos usa a mesma lista) —
+  // evita rodar calcularBeneficiosMes duas vezes por envio.
+  beneficiosPre?: Awaited<ReturnType<typeof buscarBeneficiosMesSeguinte>>
 ): Promise<Uint8Array> {
   const [{ data: fData }, { itens: beneficios, mesReferenciaBeneficio }] = await Promise.all([
     db.from('folha_feriados').select('*'),
-    buscarBeneficiosMesSeguinte(db, funcionarioNome, mesReferencia)
+    beneficiosPre ?? buscarBeneficiosMesSeguinte(db, funcionarioNome, mesReferencia)
   ]);
   return gerarReciboPdf({
     nome: funcionarioNome,
@@ -290,6 +295,106 @@ async function gerarReciboBytes(
     detalhamento,
     beneficios,
     mesReferenciaBeneficio
+  });
+}
+
+// Resumo de Recebimentos — página informativa logo antes do recibo, com tudo
+// que o colaborador recebeu na competência: as mesmas linhas do recibo
+// (detalhamento) precedidas do adiantamento, + 13º/Férias da contabilidade
+// lidos no mês, + benefícios (mesma lista do recibo) + OPs em nome dele com
+// vencimento dentro do mês de competência (exceto reprovadas). OP é ligada
+// ao funcionário pelo CPF (favorecido ou signatário), comparando só dígitos.
+async function gerarResumoRecebimentosBytes(
+  db: ReturnType<typeof supabaseAdmin>,
+  p: {
+    funcionarioNome: string;
+    cpf: string | null;
+    mesReferencia: string;
+    dados: any;
+    detalhamentoRecibo: { descricao: string; valor: number }[];
+    beneficios: Awaited<ReturnType<typeof buscarBeneficiosMesSeguinte>>;
+    empresaNome: string;
+  }
+): Promise<Uint8Array> {
+  const { funcionarioNome, mesReferencia, dados } = p;
+  const [ano, mes] = mesReferencia.split('-');
+  const dataInicio = `${ano}-${mes}-01`;
+  const dataFim = `${ano}-${mes}-${new Date(Number(ano), Number(mes), 0).getDate()}`;
+  const cpfDigitos = (p.cpf || '').replace(/\D/g, '');
+
+  const [{ data: docs }, { data: ops }] = await Promise.all([
+    db.from('folha_documentos_contabeis')
+      .select('tipo, valor_ocr')
+      .eq('funcionario_nome', funcionarioNome)
+      .eq('mes_referencia', mesReferencia)
+      .in('tipo', ['ADIANTAMENTO', 'DECIMO_TERCEIRO', 'FERIAS']),
+    cpfDigitos.length === 11
+      ? db.from('op_ordens_pagamento')
+        .select('numero_op, natureza_pagamento, os_numero, os_evento, os_cliente, cnpj_cpf_recebedora, cpf_signatario, total_geral, data_vencimento, status, itens')
+        .neq('status', 'REPROVADA')
+        .gte('data_vencimento', dataInicio).lte('data_vencimento', dataFim)
+        .order('data_vencimento')
+      : Promise.resolve({ data: [] as any[] })
+  ]);
+  const ocrPorTipo: Record<string, number> = {};
+  (docs || []).forEach(d => { if (d.valor_ocr != null) ocrPorTipo[d.tipo] = Number(d.valor_ocr); });
+
+  const salario: LinhaResumo[] = [];
+
+  // Adiantamento: mesma prioridade do lote do Financeiro RH — valor da ficha
+  // (já descontado no nosso holerite) e, sem ele, o holerite de adiantamento
+  // da contabilidade.
+  const adiantFicha = Number(dados?.valorAdiantamento || 0);
+  if (adiantFicha > 0) salario.push({ descricao: 'Adiantamento quinzenal (dia 20)', valor: adiantFicha });
+  else if ((ocrPorTipo.ADIANTAMENTO || 0) > 0) salario.push({ descricao: 'Adiantamento — holerite da contabilidade', valor: ocrPorTipo.ADIANTAMENTO });
+
+  // Linhas do recibo; a do nosso holerite ganha a composição (salário + extras)
+  p.detalhamentoRecibo.forEach((item, i) => {
+    const linha: LinhaResumo = { descricao: item.descricao, valor: item.valor };
+    if (i === 0 && dados && item.descricao.startsWith('Salário líquido')) {
+      const det: { descricao: string; valor?: number }[] = [];
+      const add = (descricao: string, valor: number) => { if (valor > 0) det.push({ descricao, valor }); };
+      add('Salário base contratual', dados.salarioBaseExibido || 0);
+      add('Complemento de acordo classe', dados.complementoContratoExibido || 0);
+      add(`Hora extra ${dados.regra?.percentual_extra_semana ?? ''}% (seg a sáb)`, dados.totalExtra60 || 0);
+      add(`Hora extra ${dados.regra?.percentual_extra_dom_fer ?? ''}% (dom/feriado)`, dados.totalExtra100 || 0);
+      add('Diárias de fim de semana / apoio', dados.totalDiariasFdsFechada || 0);
+      add('Diárias bônus', dados.totalDiariasExcedentes || 0);
+      (dados.bonusAtivos || []).forEach((b: any) => add(b.descricao, Number(b.valor || 0)));
+      add('Vale refeição (VR)', dados.totalVr || 0);
+      add('Vale transporte (VT)', dados.totalVt || 0);
+      if ((dados.totalDebitos || 0) > 0) det.push({ descricao: '(-) Adiantamento, descontos e faltas', valor: dados.totalDebitos });
+      linha.detalhes = det;
+    }
+    salario.push(linha);
+  });
+
+  if ((ocrPorTipo.DECIMO_TERCEIRO || 0) > 0) salario.push({ descricao: '13º salário — holerite da contabilidade', valor: ocrPorTipo.DECIMO_TERCEIRO });
+  if ((ocrPorTipo.FERIAS || 0) > 0) salario.push({ descricao: 'Férias — holerite da contabilidade', valor: ocrPorTipo.FERIAS });
+
+  const opsDoFuncionario: OpResumo[] = (ops || [])
+    .filter((o: any) =>
+      String(o.cnpj_cpf_recebedora || '').replace(/\D/g, '') === cpfDigitos ||
+      String(o.cpf_signatario || '').replace(/\D/g, '') === cpfDigitos)
+    .map((o: any) => ({
+      numero: o.numero_op,
+      natureza: o.natureza_pagamento || '',
+      referencia: [o.os_evento, o.os_numero ? `OS ${o.os_numero}` : null].filter(Boolean).join(' · ') || o.os_cliente || null,
+      vencimento: o.data_vencimento,
+      status: o.status,
+      valor: Number(o.total_geral || 0),
+      itens: normalizarItensOP(o.itens).map(it => ({ descricao: it.descricao, qtd: it.qtd, valorUnitario: it.valor_unitario, total: it.total }))
+    }));
+
+  return gerarResumoRecebimentosPdf({
+    nome: funcionarioNome,
+    cpf: p.cpf,
+    mesReferencia,
+    empresaNome: p.empresaNome,
+    salario,
+    beneficios: p.beneficios.itens,
+    mesReferenciaBeneficio: p.beneficios.mesReferenciaBeneficio,
+    ops: opsDoFuncionario
   });
 }
 
@@ -525,19 +630,26 @@ export async function enviarHoleriteAssinaturaAction(payload: {
       return { ok: false, erro: `Nenhum holerite da contabilidade encontrado para ${funcionarioNome} neste mês. Importe e separe os PDFs antes de enviar.` };
     }
 
-    // 4d) Recibo de pagamento — sempre o ÚLTIMO arquivo do pacote.
+    // 4d) Resumo de Recebimentos (salário + benefícios + OPs) e recibo de
+    // pagamento — o recibo é sempre o ÚLTIMO arquivo do pacote.
+    const beneficiosMes = await buscarBeneficiosMesSeguinte(db, funcionarioNome, mesReferencia);
+    const resumoRecebimentosBytes = await gerarResumoRecebimentosBytes(db, {
+      funcionarioNome, cpf: func?.cpf || null, mesReferencia, dados: soDocumental ? null : fechamento?.dados,
+      detalhamentoRecibo, beneficios: beneficiosMes, empresaNome: nomeEmpresa
+    });
     const formaPagamento = deduzirFormaPagamento(func);
     const reciboBytes = await gerarReciboBytes(
-      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento, detalhamentoRecibo, nomeEmpresa, func?.empresa_id ?? null
+      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento, detalhamentoRecibo, nomeEmpresa, func?.empresa_id ?? null, beneficiosMes
     );
 
-    // Ordem: nosso resumo (se houver) → espelho de ponto → adiantamento → holerite mensal → recibo.
-    const partes = [resumoBytes, espelhoBytes, adiantamento, holeriteMensal, reciboBytes].filter((p): p is Uint8Array => !!p);
+    // Ordem: nosso resumo (se houver) → espelho de ponto → adiantamento → holerite mensal → resumo de recebimentos → recibo.
+    const partes = [resumoBytes, espelhoBytes, adiantamento, holeriteMensal, resumoRecebimentosBytes, reciboBytes].filter((p): p is Uint8Array => !!p);
     const pdfBytes = partes.length > 1 ? await mergePdfs(partes) : partes[0];
     const anexados = [
       espelhoBytes ? 'espelho de ponto' : null,
       adiantamento ? 'adiantamento' : null,
       holeriteMensal ? 'holerite' : null,
+      'resumo de recebimentos',
       'recibo'
     ].filter(Boolean);
 
@@ -795,12 +907,17 @@ export async function previaDocumentoAssinaturaAction(payload: {
     const adiantamento = await baixarAnexoContabil(db, mesReferencia, 'ADIANTAMENTO', funcionarioNome);
     const holeriteMensal = await baixarAnexoContabil(db, mesReferencia, 'HOLERITE_MENSAL', funcionarioNome);
 
+    const beneficiosMes = await buscarBeneficiosMesSeguinte(db, funcionarioNome, mesReferencia);
+    const resumoRecebimentosBytes = await gerarResumoRecebimentosBytes(db, {
+      funcionarioNome, cpf: func?.cpf || null, mesReferencia, dados: soDocumental ? null : dados,
+      detalhamentoRecibo, beneficios: beneficiosMes, empresaNome: nomeEmpresa
+    });
     const formaPagamento = deduzirFormaPagamento(func);
     const reciboBytes = await gerarReciboBytes(
-      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento, detalhamentoRecibo, nomeEmpresa, func?.empresa_id ?? null
+      db, funcionarioNome, func?.cpf || null, mesReferencia, valorRecibo || 0, formaPagamento, detalhamentoRecibo, nomeEmpresa, func?.empresa_id ?? null, beneficiosMes
     );
 
-    const partes = [resumoBytes, espelhoBytes, adiantamento, holeriteMensal, reciboBytes].filter((p): p is Uint8Array => !!p);
+    const partes = [resumoBytes, espelhoBytes, adiantamento, holeriteMensal, resumoRecebimentosBytes, reciboBytes].filter((p): p is Uint8Array => !!p);
     const pdfBytes = partes.length > 1 ? await mergePdfs(partes) : partes[0];
 
     const anexados = [
@@ -808,6 +925,7 @@ export async function previaDocumentoAssinaturaAction(payload: {
       espelhoBytes ? 'espelho de ponto' : null,
       adiantamento ? 'adiantamento' : null,
       holeriteMensal ? 'holerite' : null,
+      'resumo de recebimentos',
       'recibo'
     ].filter(Boolean);
 

@@ -28,10 +28,9 @@ export interface GerarReciboPdfParams {
   // pela Rentech + holerite pago à parte pela contabilidade) — soma sempre
   // igual a `valor`. Puramente informativo/transparência.
   detalhamento?: { descricao: string; valor: number }[];
-  // Benefícios fixos ativos do funcionário referentes ao MÊS SEGUINTE à
-  // competência do holerite (ex.: holerite de julho → benefício de agosto,
-  // já que é creditado em cartão/plano para o mês que está por vir). Só
-  // informativo: NÃO entra na soma de `valor` nem na declaração de quitação.
+  // Benefícios fixos ativos do funcionário na mesma competência do holerite
+  // (mesmo mês do lote de benefícios e do pedido Flash). Só informativo:
+  // NÃO entra na soma de `valor` nem na declaração de quitação.
   beneficios?: { tipo: string; meio: string; valor: number }[];
   mesReferenciaBeneficio?: string; // competência 'AAAA-MM' dos benefícios acima
 }
@@ -203,14 +202,14 @@ export async function gerarReciboPdf(p: GerarReciboPdfParams): Promise<Uint8Arra
   const botDet = topDet - detalhes.length * linhaAltura + 5;
   y = botDet - 24;
 
-  // ===== Benefícios do mês seguinte (informativo — fora da soma acima) =====
+  // ===== Benefícios da competência (informativo — fora da soma acima) =====
   if (p.beneficios && p.beneficios.length > 0) {
     const tituloBenef = p.mesReferenciaBeneficio
       ? `BENEFÍCIOS — COMPETÊNCIA ${mesAnoBR(p.mesReferenciaBeneficio)}`
       : 'BENEFÍCIOS';
     txt(tituloBenef, M, y, 9, bold, azul);
     y -= 12;
-    txt('Creditados para o mês seguinte (cartão/plano); não compõem o valor declarado acima.', M, y, 7, font, cinza);
+    txt('Pagos à parte (cartão/plano/transferência); não compõem o valor declarado acima.', M, y, 7, font, cinza);
     y -= 14;
     p.beneficios.forEach((b) => {
       txt(`${b.tipo}${b.meio ? ` (${b.meio})` : ''}`, M + 4, y, 8.5, font, preto);

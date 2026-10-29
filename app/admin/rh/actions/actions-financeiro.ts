@@ -13,6 +13,7 @@ import { resolverFontesPagamento } from './actions-fontes-pagamento';
 import { extrairTextoPdf } from '../../../lib/textract';
 import { registrarLogAuditoria } from '../../../actions';
 import { enviarPixPorChave, enviarPixPorDadosBancarios, consultarPagamentoSispag, credenciaisItauConfiguradas, contextoEnvioItau, semAcento, STATUS_ITAU_EFETUADO, type PagadorSispag } from '../../../lib/itauSispag';
+import { gravarStatusItauItemLote } from '../../../lib/loteStatusItau';
 import { marcarContaPagarQuitada } from '../../../lib/p2s';
 import { ispbPorCompe } from '../../../lib/bancosCompeIspb';
 
@@ -1519,6 +1520,12 @@ export async function consultarStatusAtualItauAction(payload: { idPagamentoSispa
     let contaPagarBaixada: { descricao: string } | null = null;
     let avisoP2s: string | null = null;
     const statusItau = semAcento(pagamento?.dados_pagamento?.status || '');
+    // Status real fica gravado no item do lote (vale pra qualquer fonte —
+    // é o que o Resumo de Recebimentos do holerite lê pra BENEFÍCIOS).
+    if (payload.loteId) {
+      await gravarStatusItauItemLote(supabaseAdmin(), payload.loteId, payload.idPagamentoSispag, String(pagamento?.dados_pagamento?.status || ''))
+        .catch(() => { /* não impede a consulta nem a baixa abaixo */ });
+    }
     if (statusItau === STATUS_ITAU_EFETUADO && payload.loteId) {
       const db = supabaseAdmin();
       const { data: lote } = await db.from('financeiro_lotes_pagamento').select('itens').eq('id', payload.loteId).maybeSingle();

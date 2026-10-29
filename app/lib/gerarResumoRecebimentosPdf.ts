@@ -41,7 +41,10 @@ export interface GerarResumoRecebimentosParams {
   mesReferencia: string; // competência 'AAAA-MM'
   empresaNome?: string;
   salario: LinhaResumo[];
-  beneficios: { tipo: string; meio: string; valor: number }[];
+  // situacao: texto curto de rastreio do pagamento (ex.: "Pago em 05/10/2026
+  // — Itaú", "Pedido Flash gerado, pagamento não confirmado"); pago = só
+  // quando há confirmação de fato (Itaú "Efetuado" ou pedido Flash confirmado)
+  beneficios: { tipo: string; meio: string; valor: number; situacao?: string; pago?: boolean }[];
   mesReferenciaBeneficio?: string;
   ops: OpResumo[];
 }
@@ -152,7 +155,9 @@ export async function gerarResumoRecebimentosPdf(p: GerarResumoRecebimentosParam
   };
   const linhaDetalhe = (descricao: string, valor?: number, indent = 16) => {
     garantir(12);
-    txt(caber(descricao, larguraDescricao - indent, 7.5), M + indent, y - 5, 7.5, font, cinza);
+    // Sem valor ao lado, a linha pode usar a largura toda
+    const maxW = valor !== undefined ? larguraDescricao - indent : W - 2 * M - indent - 8;
+    txt(caber(descricao, maxW, 7.5), M + indent, y - 5, 7.5, font, cinza);
     if (valor !== undefined) txtRight(BRL(valor), xValor - 70, y - 5, 7.5, font, cinza);
     y -= 11;
   };
@@ -186,14 +191,23 @@ export async function gerarResumoRecebimentosPdf(p: GerarResumoRecebimentosParam
 
   // ===== 2) Benefícios =====
   const totalBeneficios = p.beneficios.reduce((s, b) => s + (b.valor || 0), 0);
+  const totalBeneficiosPagos = p.beneficios.filter(b => b.pago).reduce((s, b) => s + (b.valor || 0), 0);
   tituloSecao(
     p.mesReferenciaBeneficio ? `BENEFÍCIOS — COMPETÊNCIA ${mesAnoBR(p.mesReferenciaBeneficio)}` : 'BENEFÍCIOS',
-    p.beneficios.length > 0 ? 'Creditados para o mês seguinte (cartão/plano/transferência).' : undefined
+    p.beneficios.length > 0 ? 'Pagos à parte do salário (cartão Flash ou transferência), com a situação de cada pagamento.' : undefined
   );
   if (p.beneficios.length === 0) {
     vazio('Nenhum benefício ativo.');
   } else {
-    p.beneficios.forEach(b => linhaValor(`${b.tipo}${b.meio ? ` (${b.meio})` : ''}`, b.valor));
+    p.beneficios.forEach(b => {
+      linhaValor(`${b.tipo}${b.meio ? ` (${b.meio})` : ''}`, b.valor);
+      if (b.situacao) linhaDetalhe(`${b.pago ? '[PAGO] ' : '[NÃO CONFIRMADO] '}${b.situacao}`, undefined, 10);
+    });
+    if (totalBeneficiosPagos !== totalBeneficios) {
+      garantir(12);
+      txtRight(`Pagamento confirmado: ${BRL(totalBeneficiosPagos)} de ${BRL(totalBeneficios)}`, xValor, y - 6, 7.5, bold, cinza);
+      y -= 12;
+    }
     subtotal('SUBTOTAL BENEFÍCIOS', totalBeneficios);
   }
 

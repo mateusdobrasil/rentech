@@ -7,6 +7,7 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
+import { registrarLogAuditoria } from '../../../actions';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -168,13 +169,23 @@ export async function gerarFlashAction(payload: { mesReferencia: string }, acces
   const acesso = await validarAcessoQualquerRota(accessToken);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
-  const db = supabaseAdmin();
-  const CNPJ_RENTECH_FALLBACK = '22.618.891/0001-87';
-
   try {
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const linhas = await montarLinhasFlash(supabaseAdmin(), payload.mesReferencia, empresasPermitidas);
+    return { ok: true, info: { linhas } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// Linhas do arquivo Flash (uma por funcionário) — usado pelo grid de
+// conferência e, de novo no servidor, pra gravar o pedido sem confiar nos
+// valores vindos do cliente.
+async function montarLinhasFlash(db: ReturnType<typeof supabaseAdmin>, mesReferencia: string, empresasPermitidas: number[] | null) {
+  const CNPJ_RENTECH_FALLBACK = '22.618.891/0001-87';
+  {
     // Reutiliza o núcleo de cálculo do mês (já aplica proporcionalidade)
-    const { itens } = await calcularBeneficiosMes(db, payload.mesReferencia, empresasPermitidas);
+    const { itens } = await calcularBeneficiosMes(db, mesReferencia, empresasPermitidas);
 
     // CPF + CNPJ (real da empresa do funcionário, não fixo em Rentech — a
     // planilha Flash é por CNPJ empregador) de cada funcionário.
@@ -190,8 +201,10 @@ export async function gerarFlashAction(payload: { mesReferencia: string }, acces
     (empresasCad || []).forEach(e => { if (e.cnpj) cnpjPorEmpresaId[e.id] = formatarCnpj(e.cnpj); });
     const cpfPorNome: Record<string, string> = {};
     const cnpjPorNome: Record<string, string> = {};
+    const empresaPorNome: Record<string, number | null> = {};
     (funcs || []).forEach(f => {
       cpfPorNome[f.nome_completo] = f.cpf || '';
+      empresaPorNome[f.nome_completo] = f.empresa_id ?? null;
       cnpjPorNome[f.nome_completo] = (f.empresa_id && cnpjPorEmpresaId[f.empresa_id]) || CNPJ_RENTECH_FALLBACK;
     });
 
@@ -221,6 +234,7 @@ export async function gerarFlashAction(payload: { mesReferencia: string }, acces
         cnpj: cnpjPorNome[nome] || CNPJ_RENTECH_FALLBACK,
         nome,
         cpf: cpfPorNome[nome] || '',
+        empresaId: empresaPorNome[nome] ?? null,
         mobilidade: v.mobilidade,
         refeicao: 0,
         alimentacao: 0,
@@ -229,7 +243,145 @@ export async function gerarFlashAction(payload: { mesReferencia: string }, acces
         premiacaoVirtual: 0
       }));
 
-    return { ok: true, info: { linhas } };
+    return linhas;
+  }
+}
+
+// ============================================================================
+// PEDIDOS FLASH — a Flash não devolve nenhum rastreio: o arquivo é carregado
+// e pago na plataforma deles. "Baixar CSV" grava o pedido (GERADO) com quem
+// estava marcado; depois de pagar lá, o RH confirma (PAGO + data). Lido pelo
+// Resumo de Recebimentos do holerite (actions-assinatura.ts).
+// Tabela: .sql/folha_beneficios_flash_pedidos.sql
+// ============================================================================
+const chaveLinhaFlash = (l: { cpf?: string; nome: string }) => l.cpf || l.nome;
+const totalLinhaFlash = (l: any) =>
+  (l.mobilidade || 0) + (l.refeicao || 0) + (l.alimentacao || 0) + (l.premiacaoCartao || 0) + (l.refeicaoEAlimentacao || 0) + (l.premiacaoVirtual || 0);
+
+export async function registrarPedidoFlashAction(payload: {
+  mesReferencia: string;
+  chaves: string[]; // cpf || nome de quem ficou marcado no grid de conferência
+  usuarioNome: string;
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const marcadas = new Set(payload.chaves);
+    const linhas = (await montarLinhasFlash(db, payload.mesReferencia, empresasPermitidas))
+      .filter(l => marcadas.has(chaveLinhaFlash(l)))
+      .map(l => ({ ...l, total: totalLinhaFlash(l) }));
+    if (linhas.length === 0) return { ok: false, erro: 'Nenhum funcionário selecionado.' };
+
+    const valorTotal = linhas.reduce((s, l) => s + l.total, 0);
+    const { data, error } = await db.from('folha_beneficios_flash_pedidos').insert({
+      mes_referencia: payload.mesReferencia,
+      itens: linhas,
+      qtd_funcionarios: linhas.length,
+      valor_total: Math.round(valorTotal * 100) / 100,
+      gerado_por: payload.usuarioNome || acesso.perfil.nome
+    }).select('id').single();
+    if (error) throw new Error(error.message);
+
+    registrarLogAuditoria({
+      usuario_nome: payload.usuarioNome || acesso.perfil.nome,
+      acao: `GEROU PEDIDO FLASH #${data.id} (${payload.mesReferencia}): ${linhas.length} funcionário(s), ${BRLnum(valorTotal)}`,
+      setor: 'RECURSOS HUMANOS',
+    });
+    return { ok: true, info: { id: data.id } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+export async function listarPedidosFlashAction(payload: { mesReferencia: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const { data, error } = await db.from('folha_beneficios_flash_pedidos')
+      .select('*').eq('mes_referencia', payload.mesReferencia).order('gerado_em', { ascending: false });
+    if (error) throw new Error(error.message);
+    // Só mostra pedido que tenha alguém da(s) empresa(s) do usuário
+    const pedidos = (data || []).filter(p =>
+      !empresasPermitidas || (Array.isArray(p.itens) ? p.itens : []).some((l: any) => empresaPermitida(empresasPermitidas, l.empresaId)));
+    return { ok: true, info: { pedidos } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// Pedido inteiro só pode ser confirmado/cancelado por quem enxerga todos os
+// funcionários dele — senão um usuário só-Rentech mexeria em linhas da AlfaLight.
+async function buscarPedidoFlashEditavel(db: ReturnType<typeof supabaseAdmin>, pedidoId: number, empresasPermitidas: number[] | null) {
+  const { data: pedido } = await db.from('folha_beneficios_flash_pedidos').select('*').eq('id', pedidoId).maybeSingle();
+  if (!pedido) return { erro: 'Pedido não encontrado.' };
+  const itens: any[] = Array.isArray(pedido.itens) ? pedido.itens : [];
+  if (empresasPermitidas && !itens.every(l => empresaPermitida(empresasPermitidas, l.empresaId))) {
+    return { erro: 'Este pedido tem funcionários de uma empresa que você não acessa.' };
+  }
+  return { pedido };
+}
+
+export async function confirmarPagamentoFlashAction(payload: {
+  pedidoId: number;
+  dataPagamento: string; // 'AAAA-MM-DD'
+  usuarioNome: string;
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(payload.dataPagamento || '')) return { ok: false, erro: 'Informe a data do pagamento.' };
+
+  const db = supabaseAdmin();
+  try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const r = await buscarPedidoFlashEditavel(db, payload.pedidoId, empresasPermitidas);
+    if (r.erro) return { ok: false, erro: r.erro };
+    if (r.pedido.status !== 'GERADO') return { ok: false, erro: `Pedido já está ${r.pedido.status === 'PAGO' ? 'pago' : 'cancelado'}.` };
+
+    const { error } = await db.from('folha_beneficios_flash_pedidos').update({
+      status: 'PAGO', pago_em: payload.dataPagamento,
+      confirmado_por: payload.usuarioNome || acesso.perfil.nome, confirmado_em: new Date().toISOString()
+    }).eq('id', payload.pedidoId).eq('status', 'GERADO');
+    if (error) throw new Error(error.message);
+
+    registrarLogAuditoria({
+      usuario_nome: payload.usuarioNome || acesso.perfil.nome,
+      acao: `CONFIRMOU PAGAMENTO DO PEDIDO FLASH #${payload.pedidoId} (${r.pedido.mes_referencia}) EM ${payload.dataPagamento.split('-').reverse().join('/')}`,
+      setor: 'RECURSOS HUMANOS',
+    });
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+export async function cancelarPedidoFlashAction(payload: { pedidoId: number; usuarioNome: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const r = await buscarPedidoFlashEditavel(db, payload.pedidoId, empresasPermitidas);
+    if (r.erro) return { ok: false, erro: r.erro };
+    if (r.pedido.status !== 'GERADO') return { ok: false, erro: 'Só é possível cancelar um pedido ainda não pago.' };
+
+    const { error } = await db.from('folha_beneficios_flash_pedidos').update({
+      status: 'CANCELADO', cancelado_por: payload.usuarioNome || acesso.perfil.nome, cancelado_em: new Date().toISOString()
+    }).eq('id', payload.pedidoId).eq('status', 'GERADO');
+    if (error) throw new Error(error.message);
+
+    registrarLogAuditoria({
+      usuario_nome: payload.usuarioNome || acesso.perfil.nome,
+      acao: `CANCELOU PEDIDO FLASH #${payload.pedidoId} (${r.pedido.mes_referencia})`,
+      setor: 'RECURSOS HUMANOS',
+    });
+    return { ok: true };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

@@ -17,6 +17,8 @@ import { gerarReciboPdf } from '../../../lib/gerarReciboPdf';
 import { gerarResumoRecebimentosPdf, LinhaResumo, OpResumo } from '../../../lib/gerarResumoRecebimentosPdf';
 import { mergePdfs } from '../../../lib/mergePdf';
 import { normalizarItensOP } from '../../op/utils';
+import { contextoEnvioItau, consultarPagamentoSispag, semAcento, STATUS_ITAU_EFETUADO } from '../../../lib/itauSispag';
+import { gravarStatusItauItemLote } from '../../../lib/loteStatusItau';
 import { calcularBeneficiosMes } from './actions-beneficios';
 import { baixarAssinado } from './assinaturaDownloadCore';
 
@@ -234,25 +236,16 @@ function montarDetalhamentoRecibo(
   return itens;
 }
 
-// Competência do mês seguinte — mesma regra de "pagamento sai no mês
-// seguinte" usada em todo o módulo de folha (ver calcularDataPagamento em
-// gerarReciboPdf.ts). Benefícios fixos (VA, plano de saúde etc.) são
-// creditados para o mês que está por vir, não para o mês trabalhado.
-function mesSeguinte(mesReferencia: string): string {
-  const [ano, mes] = mesReferencia.split('-').map(Number);
-  const anoSeg = mes === 12 ? ano + 1 : ano;
-  const mesSeg = mes === 12 ? 1 : mes + 1;
-  return `${anoSeg}-${String(mesSeg).padStart(2, '0')}`;
-}
-
-// Benefícios fixos ativos do funcionário referentes ao mês SEGUINTE à
-// competência do holerite sendo fechado — ver mesSeguinte() acima.
-async function buscarBeneficiosMesSeguinte(
+// Benefícios fixos ativos do funcionário na MESMA competência do holerite —
+// mesmo mês que o lote do Financeiro RH (fonte BENEFICIOS) e o pedido Flash
+// usam. Antes era o mês seguinte; alinhado a pedido do usuário (2026-10-28)
+// pra o Resumo de Recebimentos conseguir cruzar com o que foi pago de fato.
+async function buscarBeneficiosCompetencia(
   db: ReturnType<typeof supabaseAdmin>,
   funcionarioNome: string,
   mesReferencia: string
 ): Promise<{ itens: { tipo: string; meio: string; valor: number }[]; mesReferenciaBeneficio: string }> {
-  const mesReferenciaBeneficio = mesSeguinte(mesReferencia);
+  const mesReferenciaBeneficio = mesReferencia;
   const { itens } = await calcularBeneficiosMes(db, mesReferenciaBeneficio);
   const doFuncionario = itens
     .filter(it => it.funcionario_nome === funcionarioNome)
@@ -278,11 +271,11 @@ async function gerarReciboBytes(
   empresaId: number | null = null,
   // Já calculado pelo chamador (o Resumo de Recebimentos usa a mesma lista) —
   // evita rodar calcularBeneficiosMes duas vezes por envio.
-  beneficiosPre?: Awaited<ReturnType<typeof buscarBeneficiosMesSeguinte>>
+  beneficiosPre?: Awaited<ReturnType<typeof buscarBeneficiosCompetencia>>
 ): Promise<Uint8Array> {
   const [{ data: fData }, { itens: beneficios, mesReferenciaBeneficio }] = await Promise.all([
     db.from('folha_feriados').select('*'),
-    beneficiosPre ?? buscarBeneficiosMesSeguinte(db, funcionarioNome, mesReferencia)
+    beneficiosPre ?? buscarBeneficiosCompetencia(db, funcionarioNome, mesReferencia)
   ]);
   return gerarReciboPdf({
     nome: funcionarioNome,
@@ -301,7 +294,8 @@ async function gerarReciboBytes(
 // Resumo de Recebimentos — página informativa logo antes do recibo, com tudo
 // que o colaborador recebeu na competência: as mesmas linhas do recibo
 // (detalhamento) precedidas do adiantamento, + 13º/Férias da contabilidade
-// lidos no mês, + benefícios (mesma lista do recibo) + OPs em nome dele com
+// lidos no mês, + benefícios (mesma lista do recibo, com a situação de
+// pagamento — ver rastrearPagamentoBeneficios) + OPs em nome dele com
 // vencimento dentro do mês de competência (exceto reprovadas). OP é ligada
 // ao funcionário pelo CPF (favorecido ou signatário), comparando só dígitos.
 async function gerarResumoRecebimentosBytes(
@@ -312,7 +306,7 @@ async function gerarResumoRecebimentosBytes(
     mesReferencia: string;
     dados: any;
     detalhamentoRecibo: { descricao: string; valor: number }[];
-    beneficios: Awaited<ReturnType<typeof buscarBeneficiosMesSeguinte>>;
+    beneficios: Awaited<ReturnType<typeof buscarBeneficiosCompetencia>>;
     empresaNome: string;
   }
 ): Promise<Uint8Array> {
@@ -386,15 +380,114 @@ async function gerarResumoRecebimentosBytes(
       itens: normalizarItensOP(o.itens).map(it => ({ descricao: it.descricao, qtd: it.qtd, valorUnitario: it.valor_unitario, total: it.total }))
     }));
 
+  const beneficios = await rastrearPagamentoBeneficios(db, funcionarioNome, cpfDigitos, p.beneficios.mesReferenciaBeneficio, p.beneficios.itens);
+
   return gerarResumoRecebimentosPdf({
     nome: funcionarioNome,
     cpf: p.cpf,
     mesReferencia,
     empresaNome: p.empresaNome,
     salario,
-    beneficios: p.beneficios.itens,
+    beneficios,
     mesReferenciaBeneficio: p.beneficios.mesReferenciaBeneficio,
     ops: opsDoFuncionario
+  });
+}
+
+// Situação de pagamento de cada benefício, por meio:
+// - CARTÃO FLASH: pedido gravado no "Baixar CSV" + confirmação manual do RH
+//   (folha_beneficios_flash_pedidos) — a Flash não devolve rastreio nenhum.
+// - TRANSFERÊNCIA: item BENEFICIOS do lote do Financeiro RH no mês. Só conta
+//   como pago com "Efetuado" no Itaú; se o item foi aceito pela API mas ainda
+//   não tem essa confirmação gravada, consulta o SISPAG agora e grava no item
+//   (gravarStatusItauItemLote) — assim ninguém precisa clicar "Consultar
+//   status" item por item antes de mandar o holerite.
+// - Demais meios: sem rastreio no sistema.
+// Nunca derruba o envio: qualquer falha vira "não foi possível verificar".
+async function rastrearPagamentoBeneficios(
+  db: ReturnType<typeof supabaseAdmin>,
+  funcionarioNome: string,
+  cpfDigitos: string,
+  mesBeneficio: string,
+  itens: { tipo: string; meio: string; valor: number }[]
+): Promise<{ tipo: string; meio: string; valor: number; situacao: string; pago: boolean }[]> {
+  if (itens.length === 0) return [];
+  const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+  const dataBR = (iso: string) => iso.slice(0, 10).split('-').reverse().join('/');
+  const temFlash = itens.some(it => norm(it.meio).includes('FLASH'));
+  const temTransfer = itens.some(it => norm(it.meio).includes('TRANSFER'));
+
+  let situacaoFlash = { situacao: 'Sem rastreio de pagamento no sistema', pago: false };
+  if (temFlash) {
+    try {
+      const { data: pedidos, error } = await db.from('folha_beneficios_flash_pedidos')
+        .select('id, status, gerado_em, pago_em, itens').eq('mes_referencia', mesBeneficio).neq('status', 'CANCELADO');
+      if (error) throw new Error(error.message);
+      const doFuncionario = (pedidos || []).filter(pd => (Array.isArray(pd.itens) ? pd.itens : []).some((l: any) =>
+        (cpfDigitos && String(l.cpf || '').replace(/\D/g, '') === cpfDigitos) || l.nome === funcionarioNome));
+      const pago = doFuncionario.find(pd => pd.status === 'PAGO');
+      const gerado = doFuncionario.find(pd => pd.status === 'GERADO');
+      situacaoFlash = pago
+        ? { situacao: `Pago em ${dataBR(pago.pago_em)} — pedido Flash #${pago.id}`, pago: true }
+        : gerado
+          ? { situacao: `Pedido Flash #${gerado.id} gerado em ${dataBR(gerado.gerado_em)}, pagamento não confirmado pelo RH`, pago: false }
+          : { situacao: 'Nenhum pedido Flash gerado com este funcionário no mês', pago: false };
+    } catch {
+      situacaoFlash = { situacao: 'Não foi possível verificar o pedido Flash', pago: false };
+    }
+  }
+
+  let situacaoTransfer = { situacao: 'Sem rastreio de pagamento no sistema', pago: false };
+  if (temTransfer) {
+    try {
+      const { data: lotes, error } = await db.from('financeiro_lotes_pagamento')
+        .select('id, data_pagamento, itens').eq('mes_referencia', mesBeneficio).or('ativo.is.null,ativo.eq.true');
+      if (error) throw new Error(error.message);
+      const candidatos = (lotes || []).flatMap(l => (Array.isArray(l.itens) ? l.itens : [])
+        .filter((it: any) => it?.fonte === 'BENEFICIOS' && it.funcionario_nome === funcionarioNome)
+        .map((it: any) => ({ lote: l, item: it })));
+
+      const efetuado = (c: { item: any }) => semAcento(c.item.itau_status_atual || '') === STATUS_ITAU_EFETUADO;
+      let confirmado = candidatos.find(efetuado);
+      const aguardando = candidatos.filter(c => !efetuado(c) && c.item.api_cod_pagamento && c.item.api_status !== 'Erro');
+      if (!confirmado && aguardando.length > 0) {
+        const ctx = await contextoEnvioItau();
+        if (ctx.ok) {
+          for (const c of aguardando) {
+            const { ok, data } = await consultarPagamentoSispag(ctx.ambiente, c.item.api_cod_pagamento);
+            if (!ok) continue;
+            const statusBruto = String((data?.data ?? data)?.dados_pagamento?.status || '');
+            await gravarStatusItauItemLote(db, c.lote.id, c.item.api_cod_pagamento, statusBruto);
+            c.item.itau_status_atual = statusBruto;
+            if (efetuado(c)) { confirmado = c; break; }
+          }
+        }
+      }
+
+      if (confirmado) {
+        const quando = confirmado.lote.data_pagamento || confirmado.item.dataPagamento || confirmado.item.itau_efetuado_em || confirmado.item.api_enviado_em;
+        situacaoTransfer = { situacao: `Pago${quando ? ` em ${dataBR(String(quando))}` : ''} — confirmado pelo Itaú (lote #${confirmado.lote.id})`, pago: true };
+      } else if (aguardando.length > 0) {
+        const ultimo = aguardando[aguardando.length - 1];
+        const st = ultimo.item.itau_status_atual;
+        situacaoTransfer = { situacao: `Enviado ao banco (lote #${ultimo.lote.id})${st ? ` — status no Itaú: ${st}` : ', sem confirmação do Itaú'}`, pago: false };
+      } else if (candidatos.length > 0) {
+        const c = candidatos[candidatos.length - 1];
+        situacaoTransfer = { situacao: c.item.api_status === 'Erro' ? `Erro no envio ao banco (lote #${c.lote.id})` : `No lote #${c.lote.id}, ainda não enviado ao banco`, pago: false };
+      } else {
+        situacaoTransfer = { situacao: 'Não incluído em nenhum lote de pagamento do mês', pago: false };
+      }
+    } catch {
+      situacaoTransfer = { situacao: 'Não foi possível verificar o lote de pagamento', pago: false };
+    }
+  }
+
+  return itens.map(it => {
+    const meio = norm(it.meio);
+    const s = meio.includes('FLASH') ? situacaoFlash
+      : meio.includes('TRANSFER') ? situacaoTransfer
+        : { situacao: 'Sem rastreio de pagamento no sistema', pago: false };
+    return { ...it, ...s };
   });
 }
 
@@ -632,7 +725,7 @@ export async function enviarHoleriteAssinaturaAction(payload: {
 
     // 4d) Resumo de Recebimentos (salário + benefícios + OPs) e recibo de
     // pagamento — o recibo é sempre o ÚLTIMO arquivo do pacote.
-    const beneficiosMes = await buscarBeneficiosMesSeguinte(db, funcionarioNome, mesReferencia);
+    const beneficiosMes = await buscarBeneficiosCompetencia(db, funcionarioNome, mesReferencia);
     const resumoRecebimentosBytes = await gerarResumoRecebimentosBytes(db, {
       funcionarioNome, cpf: func?.cpf || null, mesReferencia, dados: soDocumental ? null : fechamento?.dados,
       detalhamentoRecibo, beneficios: beneficiosMes, empresaNome: nomeEmpresa
@@ -907,7 +1000,7 @@ export async function previaDocumentoAssinaturaAction(payload: {
     const adiantamento = await baixarAnexoContabil(db, mesReferencia, 'ADIANTAMENTO', funcionarioNome);
     const holeriteMensal = await baixarAnexoContabil(db, mesReferencia, 'HOLERITE_MENSAL', funcionarioNome);
 
-    const beneficiosMes = await buscarBeneficiosMesSeguinte(db, funcionarioNome, mesReferencia);
+    const beneficiosMes = await buscarBeneficiosCompetencia(db, funcionarioNome, mesReferencia);
     const resumoRecebimentosBytes = await gerarResumoRecebimentosBytes(db, {
       funcionarioNome, cpf: func?.cpf || null, mesReferencia, dados: soDocumental ? null : dados,
       detalhamentoRecibo, beneficios: beneficiosMes, empresaNome: nomeEmpresa

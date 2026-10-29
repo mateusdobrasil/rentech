@@ -6,7 +6,8 @@ import { Analytics } from "@vercel/analytics/next";
 import {
   listarCatalogosBeneficioAction, criarTipoBeneficioAction, criarMeioBeneficioAction,
   salvarBeneficioAction, alternarBeneficioAction, historicoBeneficioAction, painelBeneficiosAction,
-  gridBeneficiosAction, gerarFlashAction
+  gridBeneficiosAction, gerarFlashAction,
+  registrarPedidoFlashAction, listarPedidosFlashAction, confirmarPagamentoFlashAction, cancelarPedidoFlashAction
 } from '../actions/actions-beneficios';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
@@ -160,8 +161,49 @@ export default function BeneficiosPage() {
     setFlashSelecionados(marcar ? new Set(flashLinhas.map(chaveFlash)) : new Set());
   };
 
+  // Pedidos Flash do mês — rastreio interno: o "Baixar CSV" grava o pedido e,
+  // depois de pago na plataforma da Flash, o RH confirma aqui. É o que o
+  // Resumo de Recebimentos do holerite usa pra dizer se o benefício foi pago.
+  const [modalPedidosAberto, setModalPedidosAberto] = useState(false);
+  const [pedidosFlash, setPedidosFlash] = useState<any[]>([]);
+  const [carregandoPedidos, setCarregandoPedidos] = useState(false);
+  const [pedidoExpandido, setPedidoExpandido] = useState<number | null>(null);
+  const [dataPagtoPedido, setDataPagtoPedido] = useState<Record<number, string>>({});
+  const hojeIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+
+  const carregarPedidosFlash = async () => {
+    setCarregandoPedidos(true);
+    try {
+      const res = await listarPedidosFlashAction({ mesReferencia: gridMes }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      setPedidosFlash(res.info.pedidos);
+    } catch (e: any) {
+      toast('Erro ao carregar pedidos Flash: ' + e.message, 'error');
+    } finally {
+      setCarregandoPedidos(false);
+    }
+  };
+
+  const abrirPedidosFlash = () => { setModalPedidosAberto(true); setPedidoExpandido(null); carregarPedidosFlash(); };
+
+  const confirmarPedidoFlash = async (pedido: any) => {
+    const data = dataPagtoPedido[pedido.id] || hojeIso();
+    if (!confirm(`Confirmar que o pedido Flash #${pedido.id} (${pedido.qtd_funcionarios} funcionário(s), ${BRL(Number(pedido.valor_total))}) foi PAGO em ${data.split('-').reverse().join('/')}?`)) return;
+    const res = await confirmarPagamentoFlashAction({ pedidoId: pedido.id, dataPagamento: data, usuarioNome: usuarioAtual }, accessToken);
+    if (!res.ok) { toast(res.erro || 'Erro ao confirmar pagamento.', 'error'); return; }
+    toast('Pagamento do pedido Flash confirmado.', 'success');
+    carregarPedidosFlash();
+  };
+
+  const cancelarPedidoFlash = async (pedido: any) => {
+    if (!confirm(`Cancelar o pedido Flash #${pedido.id}? Use quando o arquivo foi gerado mas NÃO vai ser pago.`)) return;
+    const res = await cancelarPedidoFlashAction({ pedidoId: pedido.id, usuarioNome: usuarioAtual }, accessToken);
+    if (!res.ok) { toast(res.erro || 'Erro ao cancelar pedido.', 'error'); return; }
+    carregarPedidosFlash();
+  };
+
   // Baixa o CSV (colunas idênticas à planilha modelo) só com quem ficou marcado no grid
-  const baixarFlashCsv = () => {
+  const baixarFlashCsv = async () => {
     const selecionadas = flashLinhas.filter(l => flashSelecionados.has(chaveFlash(l)));
     if (selecionadas.length === 0) { toast('Selecione ao menos um funcionário.', 'error'); return; }
 
@@ -180,6 +222,12 @@ export default function BeneficiosPage() {
     a.href = url; a.download = `pedido-flash-${gridMes}.csv`; a.click();
     URL.revokeObjectURL(url);
     setModalFlashAberto(false);
+
+    // Grava o pedido (status GERADO) — o arquivo já saiu de qualquer jeito;
+    // se falhar, só avisa que o rastreio não foi registrado.
+    const res = await registrarPedidoFlashAction({ mesReferencia: gridMes, chaves: selecionadas.map(chaveFlash), usuarioNome: usuarioAtual }, accessToken);
+    if (res.ok) toast(`Pedido Flash #${res.info.id} registrado. Depois de pagar na Flash, confirme em "🧾 Pedidos Flash".`, 'success');
+    else toast('CSV baixado, mas o pedido não foi registrado no sistema: ' + res.erro, 'error');
   };
 
   // Histórico
@@ -440,6 +488,9 @@ export default function BeneficiosPage() {
           </button>
           <button onClick={gerarFlash} disabled={gerandoFlash} className="text-[10px] font-black bg-[#FF6B35] hover:bg-[#E85A28] text-white px-4 py-2.5 rounded-lg uppercase tracking-wider disabled:opacity-50">
             {gerandoFlash ? '⏳' : '⚡ Gerar Flash'}
+          </button>
+          <button onClick={abrirPedidosFlash} title="Pedidos Flash do mês e confirmação de pagamento" className="text-[10px] font-black bg-orange-50 hover:bg-orange-100 text-[#E85A28] border border-orange-200 px-4 py-2.5 rounded-lg uppercase tracking-wider">
+            🧾 Pedidos Flash
           </button>
         </div>
 
@@ -703,6 +754,76 @@ export default function BeneficiosPage() {
               <button onClick={baixarFlashCsv} disabled={flashSelecionados.size === 0} className="bg-[#FF6B35] hover:bg-[#E85A28] text-white font-black uppercase tracking-wider text-xs py-3 px-6 rounded-xl disabled:opacity-50">
                 ⬇ Baixar CSV ({flashSelecionados.size})
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal dos pedidos Flash (confirmação de pagamento) */}
+      {modalPedidosAberto && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setModalPedidosAberto(false)}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center p-5 border-b border-gray-200">
+              <div>
+                <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider">🧾 Pedidos Flash — {gridMes}</h2>
+                <p className="text-sm text-gray-500">Cada &quot;Baixar CSV&quot; gera um pedido. Depois de pagar na plataforma da Flash, confirme aqui.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="month" value={gridMes} onChange={e => setGridMes(e.target.value)} className="p-2 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />
+                <button onClick={carregarPedidosFlash} className="text-[10px] font-black bg-[#336699] text-white px-3 py-2 rounded-lg uppercase">Atualizar</button>
+                <button onClick={() => setModalPedidosAberto(false)} className="text-[10px] font-black bg-gray-100 px-3 py-2 rounded-lg uppercase">Fechar</button>
+              </div>
+            </div>
+
+            <div className="overflow-auto p-5 flex-1 space-y-3">
+              {carregandoPedidos ? (
+                <p className="text-center py-12 text-gray-400 font-bold uppercase">Carregando...</p>
+              ) : pedidosFlash.length === 0 ? (
+                <p className="text-center py-12 text-gray-400 font-bold uppercase">Nenhum pedido Flash gerado neste mês.</p>
+              ) : pedidosFlash.map(pd => {
+                const itensPedido: any[] = Array.isArray(pd.itens) ? pd.itens : [];
+                const corStatus = pd.status === 'PAGO' ? 'bg-emerald-100 text-emerald-700' : pd.status === 'CANCELADO' ? 'bg-gray-100 text-gray-400' : 'bg-amber-100 text-amber-700';
+                return (
+                  <div key={pd.id} className={`border border-[#E2E8F0] rounded-xl ${pd.status === 'CANCELADO' ? 'opacity-50' : ''}`}>
+                    <div className="flex flex-wrap items-center gap-3 p-3">
+                      <span className={`text-[10px] font-black px-2 py-1 rounded uppercase ${corStatus}`}>
+                        {pd.status === 'PAGO' ? `✓ Pago em ${String(pd.pago_em).split('-').reverse().join('/')}` : pd.status === 'CANCELADO' ? 'Cancelado' : 'Aguardando pagamento'}
+                      </span>
+                      <div className="flex-1 min-w-[180px]">
+                        <span className="font-black text-[#0C1D4D] text-sm">Pedido #{pd.id}</span>
+                        <span className="text-[11px] text-gray-500 ml-2">
+                          {pd.qtd_funcionarios} funcionário(s) · {BRL(Number(pd.valor_total))} · gerado {new Date(pd.gerado_em).toLocaleString('pt-BR')}{pd.gerado_por ? ` por ${pd.gerado_por}` : ''}
+                        </span>
+                        {pd.status === 'PAGO' && pd.confirmado_por && <span className="block text-[10px] text-gray-400">Confirmado por {pd.confirmado_por}</span>}
+                      </div>
+                      <button onClick={() => setPedidoExpandido(pedidoExpandido === pd.id ? null : pd.id)} className="text-[10px] font-black text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 rounded-lg uppercase">
+                        {pedidoExpandido === pd.id ? 'Ocultar' : 'Ver nomes'}
+                      </button>
+                      {pd.status === 'GERADO' && (
+                        <>
+                          <input type="date" value={dataPagtoPedido[pd.id] || hojeIso()} onChange={e => setDataPagtoPedido(prev => ({ ...prev, [pd.id]: e.target.value }))}
+                            title="Data em que o pedido foi pago na Flash" className="p-1.5 border border-gray-300 rounded-lg text-[11px] font-bold bg-[#F8FAFC]" />
+                          <button onClick={() => confirmarPedidoFlash(pd)} className="text-[10px] font-black bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg uppercase">✓ Confirmar pagamento</button>
+                          <button onClick={() => cancelarPedidoFlash(pd)} title="Arquivo gerado mas não vai ser pago" className="text-[10px] font-black text-gray-500 hover:text-red-600 px-2 py-1.5 uppercase">Cancelar</button>
+                        </>
+                      )}
+                    </div>
+                    {pedidoExpandido === pd.id && (
+                      <table className="w-full text-sm border-collapse border-t border-[#E2E8F0]">
+                        <tbody>
+                          {itensPedido.map((l, idx) => (
+                            <tr key={l.cpf || l.nome} className={idx % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]'}>
+                              <td className="p-2 pl-4 font-black text-[#0C1D4D] whitespace-nowrap">{l.nome}</td>
+                              <td className="p-2 text-gray-500 whitespace-nowrap">{l.cpf}</td>
+                              <td className="p-2 pr-4 text-right font-black text-indigo-700 tabular-nums whitespace-nowrap">{BRL(Number(l.total))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

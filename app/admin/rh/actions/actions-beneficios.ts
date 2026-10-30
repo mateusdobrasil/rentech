@@ -680,31 +680,35 @@ export async function painelBeneficiosAction(accessToken: string): Promise<Resul
     if (empresasPermitidas) qFuncs = qFuncs.in('empresa_id', empresasPermitidas);
     const { data: funcs } = await qFuncs;
 
-    // Benefícios fixos ativos, com nomes de tipo e meio — a linha de cada
-    // funcionário é montada a partir de `funcs` (já escopado acima), então
-    // um `folha_beneficios` de funcionário fora do escopo simplesmente não
+    // Benefícios fixos (ativos e removidos), com nomes de tipo e meio — a linha
+    // de cada funcionário é montada a partir de `funcs` (já escopado acima),
+    // então um `folha_beneficios` de funcionário fora do escopo simplesmente não
     // acha correspondência abaixo (benefPorFunc só é lido por nome de `funcs`).
+    // Removidos (ativo=false) vêm à parte, só pra tela "Mostrar removidos".
     const { data: beneficios } = await db.from('folha_beneficios')
-      .select('id, funcionario_nome, valor_mensal, modalidade, qtd_dias, ativo, observacao, tipo_id, meio_id')
-      .eq('ativo', true);
+      .select('id, funcionario_nome, valor_mensal, modalidade, qtd_dias, ativo, observacao, tipo_id, meio_id, atualizado_em');
     const { data: tipos } = await db.from('folha_beneficio_tipos').select('id, nome');
     const { data: meios } = await db.from('folha_beneficio_meios').select('id, nome');
     const nomeTipo = (id: number) => tipos?.find(t => t.id === id)?.nome || '—';
     const nomeMeio = (id: number) => meios?.find(m => m.id === id)?.nome || '—';
 
     const benefPorFunc: Record<string, any[]> = {};
+    const removidosPorFunc: Record<string, any[]> = {};
     (beneficios || []).forEach(b => {
-      (benefPorFunc[b.funcionario_nome] ||= []).push({
+      const destino = b.ativo === false ? removidosPorFunc : benefPorFunc;
+      (destino[b.funcionario_nome] ||= []).push({
         id: b.id, tipoId: b.tipo_id, meioId: b.meio_id,
         tipo: nomeTipo(b.tipo_id), meio: nomeMeio(b.meio_id),
         valor: Number(b.valor_mensal), modalidade: b.modalidade || 'VALOR_UNICO',
-        qtdDias: b.qtd_dias, observacao: b.observacao
+        qtdDias: b.qtd_dias, observacao: b.observacao,
+        ...(b.ativo === false ? { removidoEm: b.atualizado_em || null } : {})
       });
     });
 
     // Monta a linha de cada funcionário (só benefícios fixos; VR/VT vive no holerite)
     const linhas = (funcs || []).map(f => {
       const fixos = benefPorFunc[f.nome_completo] || [];
+      const removidos = removidosPorFunc[f.nome_completo] || [];
       const totalFixos = fixos.filter(b => b.modalidade === 'VALOR_UNICO').reduce((s, b) => s + b.valor, 0);
       const temVariavel = fixos.some(b => b.modalidade !== 'VALOR_UNICO');
       return {
@@ -713,6 +717,7 @@ export async function painelBeneficiosAction(accessToken: string): Promise<Resul
         contrato: f.tipo_contrato,
         empresaId: f.empresa_id ?? null,
         beneficiosFixos: fixos,
+        removidos,
         totalFixos,
         temVariavel,
         semNenhum: fixos.length === 0

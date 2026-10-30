@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from 'react';
+import { Fragment, useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import {
@@ -20,7 +20,8 @@ const BRL = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', c
 
 interface LinhaFunc {
   nome: string; cargo: string; contrato: string; empresaId?: number | null;
-  beneficiosFixos: { id: number; tipoId: number; meioId: number; tipo: string; meio: string; valor: number; modalidade: string; qtdDias: number | null; observacao: string | null }[];
+  beneficiosFixos: { id: number; tipoId: number; meioId: number; tipo: string; meio: string; valor: number; modalidade: string; qtdDias: number | null; observacao: string | null; removidoEm?: string | null }[];
+  removidos: LinhaFunc['beneficiosFixos'];   // ativo=false — só aparecem com "Mostrar removidos"
   totalFixos: number;
   temVariavel: boolean;
   semNenhum: boolean;
@@ -35,6 +36,7 @@ export default function BeneficiosPage() {
   const [busca, setBusca] = useState('');
   const [filtro, setFiltro] = useState<'TODOS' | 'COM' | 'SEM'>('TODOS');
   const [filtroMeio, setFiltroMeio] = useState('TODOS');       // filtro da aba
+  const [mostrarRemovidos, setMostrarRemovidos] = useState(false);
   const [gridFiltroMeio, setGridFiltroMeio] = useState('TODOS'); // filtro do grid
 
   // Modal de concessão/edição
@@ -267,15 +269,18 @@ export default function BeneficiosPage() {
       // Quando um meio é selecionado, mostra só os benefícios daquele meio
       if (filtroMeio === 'TODOS') return l;
       const fixos = l.beneficiosFixos.filter(b => String(b.meioId) === filtroMeio);
-      return { ...l, beneficiosFixos: fixos, semNenhum: fixos.length === 0 };
+      const removidos = (l.removidos || []).filter(b => String(b.meioId) === filtroMeio);
+      return { ...l, beneficiosFixos: fixos, removidos, semNenhum: fixos.length === 0 };
     })
     .filter(l => l.nome.toLowerCase().includes(busca.toLowerCase()))
     .filter(l => {
       // Com filtro de meio ativo, esconde quem ficou sem benefício naquele meio
-      if (filtroMeio !== 'TODOS') return l.beneficiosFixos.length > 0;
+      if (filtroMeio !== 'TODOS') return l.beneficiosFixos.length > 0 || (mostrarRemovidos && l.removidos.length > 0);
       return filtro === 'TODOS' || (filtro === 'SEM' ? l.semNenhum : !l.semNenhum);
     }),
-    [linhasEscopo, busca, filtro, filtroMeio]);
+    [linhasEscopo, busca, filtro, filtroMeio, mostrarRemovidos]);
+
+  const qtdRemovidos = useMemo(() => linhasEscopo.reduce((s, l) => s + (l.removidos?.length || 0), 0), [linhasEscopo]);
 
   const totais = useMemo(() => ({
     total: linhasEscopo.length,
@@ -377,6 +382,21 @@ export default function BeneficiosPage() {
     }
   };
 
+  // Reativa com os mesmos valores de quando foi removido (editar depois, se mudou)
+  const reativarBeneficio = async (b: LinhaFunc['beneficiosFixos'][0], nome: string) => {
+    const valorTxt = `${BRL(b.valor)}${b.modalidade === 'POR_DIARIA' ? '/dia' : b.modalidade === 'DIAS_FIXOS' ? `/dia ×${b.qtdDias}` : '/mês'}`;
+    if (!confirm(`Reativar o benefício "${b.tipo}" de ${nome}?\n\nVolta com os valores de antes: ${valorTxt} via ${b.meio}. Se mudou, edite depois.`)) return;
+    try {
+      const res = await alternarBeneficioAction({ id: b.id, ativo: true, usuarioNome: usuarioAtual }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      toast(`"${b.tipo}" reativado para ${nome}.`, 'success');
+      carregar();
+      if (mostrarGrid) gerarGrid();
+    } catch (e: any) {
+      toast('Erro ao reativar: ' + e.message, 'error');
+    }
+  };
+
   const verHistorico = async (id: number) => {
     setHistAberto(id); setHistorico([]);
     const res = await historicoBeneficioAction({ beneficioId: id }, accessToken);
@@ -472,6 +492,10 @@ export default function BeneficiosPage() {
               <option value="TODOS">Todos os meios</option>
               {meios.map(m => <option key={m.id} value={m.id}>{m.nome}</option>)}
             </select>
+            <button onClick={() => setMostrarRemovidos(v => !v)} title="Benefícios removidos (desativados) — com histórico e opção de reativar"
+              className={`px-3 py-2.5 text-[10px] font-black uppercase tracking-wider rounded-lg border transition-all ${mostrarRemovidos ? 'bg-gray-700 text-white border-gray-700' : 'bg-[#F8FAFC] text-gray-500 border-gray-300 hover:bg-gray-100'}`}>
+              {mostrarRemovidos ? '🙈 Ocultar removidos' : '👁 Mostrar removidos'} ({qtdRemovidos})
+            </button>
             {empresasCatalogoVisivel.length > 1 && (
               <select value={filtroEmpresa} onChange={e => setFiltroEmpresa(e.target.value)} className="p-2.5 border border-gray-300 rounded-lg text-[11px] font-black uppercase text-gray-600 bg-[#F8FAFC]">
                 <option value="TODAS">🏭 Todas as empresas</option>
@@ -540,54 +564,75 @@ export default function BeneficiosPage() {
                 </thead>
                 <tbody>
                   {filtradas.map((l, idx) => {
-                    const linhas = l.beneficiosFixos.length || 1;
                     const zebra = idx % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white';
-                    return l.beneficiosFixos.length === 0 ? (
-                      <tr key={l.nome} className={`${zebra} border-b border-[#E2E8F0]`}>
-                        <td className="p-3">
-                          <span className="font-black text-[#0C1D4D] block">{l.nome}</span>
-                          <span className="text-[10px] text-gray-400 font-bold uppercase">{l.cargo || '—'}</span>
-                          {empresasCatalogoVisivel.length > 1 && (
-                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase inline-block mt-0.5 ${corSeloEmpresa(l.empresaId)}`}>
-                              🏭 {nomeEmpresa(l.empresaId)}
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-3 text-[11px] font-black text-amber-500 uppercase" colSpan={3}>⚠ Sem benefícios</td>
-                        <td className="p-3 text-center">
-                          <button onClick={() => abrirNovo(l.nome)} className="text-[10px] font-black text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg uppercase">+ Add</button>
-                        </td>
-                      </tr>
-                    ) : (
-                      l.beneficiosFixos.map((b, bi) => (
-                        <tr key={`${l.nome}-${b.id}`} className={`${zebra} ${bi === linhas - 1 ? 'border-b border-[#E2E8F0]' : ''}`}>
-                          {bi === 0 && (
-                            <td className="p-3 align-top" rowSpan={linhas}>
-                              <span className="font-black text-[#0C1D4D] block">{l.nome}</span>
-                              <span className="text-[10px] text-gray-400 font-bold uppercase">{l.cargo || '—'}</span>
-                          {empresasCatalogoVisivel.length > 1 && (
-                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase inline-block mt-0.5 ${corSeloEmpresa(l.empresaId)}`}>
-                              🏭 {nomeEmpresa(l.empresaId)}
-                            </span>
-                          )}
+                    // Linhas do funcionário: ativos (ou o aviso "sem benefícios")
+                    // seguidos dos removidos, quando "Mostrar removidos" está ligado.
+                    const removidosVisiveis = mostrarRemovidos ? l.removidos : [];
+                    const qtdLinhas = (l.beneficiosFixos.length || 1) + removidosVisiveis.length;
+                    const celulaNome = (
+                      <td className="p-3 align-top" rowSpan={qtdLinhas}>
+                        <span className="font-black text-[#0C1D4D] block">{l.nome}</span>
+                        <span className="text-[10px] text-gray-400 font-bold uppercase">{l.cargo || '—'}</span>
+                        {empresasCatalogoVisivel.length > 1 && (
+                          <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase inline-block mt-0.5 ${corSeloEmpresa(l.empresaId)}`}>
+                            🏭 {nomeEmpresa(l.empresaId)}
+                          </span>
+                        )}
+                      </td>
+                    );
+                    const sufixo = (b: LinhaFunc['beneficiosFixos'][0]) =>
+                      b.modalidade === 'POR_DIARIA' ? '/dia (úteis)' : b.modalidade === 'DIAS_FIXOS' ? `/dia ×${b.qtdDias}` : '/mês';
+                    const bordaFinal = (i: number) => i === qtdLinhas - 1 ? 'border-b border-[#E2E8F0]' : '';
+
+                    return (
+                      <Fragment key={l.nome}>
+                        {l.beneficiosFixos.length === 0 ? (
+                          <tr className={`${zebra} ${bordaFinal(0)}`}>
+                            {celulaNome}
+                            <td className="p-3 text-[11px] font-black text-amber-500 uppercase" colSpan={3}>⚠ Sem benefícios</td>
+                            <td className="p-3 text-center">
+                              <button onClick={() => abrirNovo(l.nome)} className="text-[10px] font-black text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg uppercase">+ Add</button>
                             </td>
-                          )}
-                          <td className="p-3 text-[11px] font-black text-indigo-700 uppercase whitespace-nowrap">{b.tipo}</td>
-                          <td className="p-3 text-[11px] font-bold text-gray-500 uppercase whitespace-nowrap">{b.meio}</td>
-                          <td className="p-3 text-right tabular-nums whitespace-nowrap">
-                            <span className="font-black text-[#0C1D4D]">{BRL(b.valor)}</span>
-                            <span className="text-[9px] text-gray-400 font-bold ml-1">
-                              {b.modalidade === 'POR_DIARIA' ? '/dia (úteis)' : b.modalidade === 'DIAS_FIXOS' ? `/dia ×${b.qtdDias}` : '/mês'}
-                            </span>
-                          </td>
-                          <td className="p-3 text-center whitespace-nowrap">
-                            <button onClick={() => abrirEdicao(l.nome, b)} title="Editar" className="text-gray-400 hover:text-indigo-600 px-1">✏️</button>
-                            <button onClick={() => verHistorico(b.id)} title="Histórico" className="text-gray-400 hover:text-indigo-600 px-1">🕐</button>
-                            <button onClick={() => removerBeneficio(b.id, b.tipo, l.nome)} title="Remover" className="text-gray-400 hover:text-red-600 px-1">✕</button>
-                            {bi === 0 && <button onClick={() => abrirNovo(l.nome)} title="Adicionar" className="text-gray-400 hover:text-emerald-600 px-1 font-black">+</button>}
-                          </td>
-                        </tr>
-                      ))
+                          </tr>
+                        ) : (
+                          l.beneficiosFixos.map((b, bi) => (
+                            <tr key={b.id} className={`${zebra} ${bordaFinal(bi)}`}>
+                              {bi === 0 && celulaNome}
+                              <td className="p-3 text-[11px] font-black text-indigo-700 uppercase whitespace-nowrap">{b.tipo}</td>
+                              <td className="p-3 text-[11px] font-bold text-gray-500 uppercase whitespace-nowrap">{b.meio}</td>
+                              <td className="p-3 text-right tabular-nums whitespace-nowrap">
+                                <span className="font-black text-[#0C1D4D]">{BRL(b.valor)}</span>
+                                <span className="text-[9px] text-gray-400 font-bold ml-1">{sufixo(b)}</span>
+                              </td>
+                              <td className="p-3 text-center whitespace-nowrap">
+                                <button onClick={() => abrirEdicao(l.nome, b)} title="Editar" className="text-gray-400 hover:text-indigo-600 px-1">✏️</button>
+                                <button onClick={() => verHistorico(b.id)} title="Histórico" className="text-gray-400 hover:text-indigo-600 px-1">🕐</button>
+                                <button onClick={() => removerBeneficio(b.id, b.tipo, l.nome)} title="Remover" className="text-gray-400 hover:text-red-600 px-1">✕</button>
+                                {bi === 0 && <button onClick={() => abrirNovo(l.nome)} title="Adicionar" className="text-gray-400 hover:text-emerald-600 px-1 font-black">+</button>}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                        {removidosVisiveis.map((b, ri) => (
+                          <tr key={`rem-${b.id}`} className={`${zebra} ${bordaFinal((l.beneficiosFixos.length || 1) + ri)} opacity-60`}>
+                            <td className="p-3 text-[11px] font-black text-gray-400 uppercase whitespace-nowrap">
+                              <span className="line-through">{b.tipo}</span>
+                              <span className="ml-2 text-[9px] font-black bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded no-underline">
+                                REMOVIDO{b.removidoEm ? ` ${new Date(b.removidoEm).toLocaleDateString('pt-BR')}` : ''}
+                              </span>
+                            </td>
+                            <td className="p-3 text-[11px] font-bold text-gray-400 uppercase whitespace-nowrap">{b.meio}</td>
+                            <td className="p-3 text-right tabular-nums whitespace-nowrap text-gray-400">
+                              <span className="font-black line-through">{BRL(b.valor)}</span>
+                              <span className="text-[9px] font-bold ml-1">{sufixo(b)}</span>
+                            </td>
+                            <td className="p-3 text-center whitespace-nowrap">
+                              <button onClick={() => verHistorico(b.id)} title="Histórico" className="text-gray-400 hover:text-indigo-600 px-1">🕐</button>
+                              <button onClick={() => reativarBeneficio(b, l.nome)} title="Reativar com os valores de antes" className="text-[9px] font-black text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded uppercase ml-1">↺ Reativar</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </Fragment>
                     );
                   })}
                 </tbody>

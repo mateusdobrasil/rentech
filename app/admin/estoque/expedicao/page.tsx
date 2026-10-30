@@ -89,6 +89,9 @@ interface ChecklistGridRow {
   periodo_fim: string | null;
   status: StatusChecklist;
   created_at: string;
+  // Fixado no topo da lista pra toda a equipe (NULL = não fixado). Ver
+  // .sql/checklists_fixado.sql.
+  fixado_em?: string | null;
 }
 
 interface ChecklistItem {
@@ -421,24 +424,32 @@ export default function ChecklistCargaRetorno() {
     const handle = setTimeout(async () => {
       setListaLoading(true);
 
-      let query = supabase
-        .from('checklists')
-        .select('id, numero, evento_feira, cliente, local, periodo_inicio, periodo_fim, status, created_at', { count: 'exact' })
-        .order('created_at', { ascending: false });
-
-      if (filtroStatus) query = query.eq('status', filtroStatus);
-      if (filtroEmpresaId) query = query.eq('empresa_id', filtroEmpresaId);
-      if (busca.trim()) {
-        const termo = `%${busca.trim()}%`;
-        query = query.or(`cliente.ilike.${termo},evento_feira.ilike.${termo},local.ilike.${termo}`);
-      }
+      // Fixados (fixado_em preenchido) sempre no topo, mais recentes primeiro.
+      // Se a coluna ainda não existir no banco (SQL não rodado), refaz sem
+      // ela — a lista continua funcionando, só sem a opção de fixar.
+      const montarQuery = (comFixado: boolean) => {
+        let q = supabase
+          .from('checklists')
+          .select(`id, numero, evento_feira, cliente, local, periodo_inicio, periodo_fim, status, created_at${comFixado ? ', fixado_em' : ''}`, { count: 'exact' });
+        if (comFixado) q = q.order('fixado_em', { ascending: false, nullsFirst: false });
+        q = q.order('created_at', { ascending: false });
+        if (filtroStatus) q = q.eq('status', filtroStatus);
+        if (filtroEmpresaId) q = q.eq('empresa_id', filtroEmpresaId);
+        if (busca.trim()) {
+          const termo = `%${busca.trim()}%`;
+          q = q.or(`cliente.ilike.${termo},evento_feira.ilike.${termo},local.ilike.${termo}`);
+        }
+        // Filtro de status deixa todo mundo com o mesmo status — pagina direto no banco.
+        if (filtroStatus) q = q.range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
+        return q;
+      };
+      let resultado = await montarQuery(true);
+      if (resultado.error && /fixado_em/.test(resultado.error.message)) resultado = await montarQuery(false);
 
       if (filtroStatus) {
-        // Filtro já deixa todo mundo com o mesmo status — pode paginar direto no banco.
-        query = query.range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
-        const { data, error, count } = await query;
+        const { data, error, count } = resultado;
         if (!error) {
-          setChecklists(data || []);
+          setChecklists((data || []) as unknown as ChecklistGridRow[]);
           setTotalRegistros(count || 0);
         }
       } else {
@@ -446,11 +457,16 @@ export default function ChecklistCargaRetorno() {
         // ordenação não dá pra fazer só com .order() do banco (misturaria
         // RASCUNHO e SAÍDA_CONFERIDA por status em vez de por recência).
         // Busca tudo que bate com a busca textual e pagina no cliente depois
-        // de reordenar: ativos primeiro (por data mais recente), finalizados
-        // por último (também por data mais recente).
-        const { data, error, count } = await query;
+        // de reordenar: fixados primeiro (mesmo se finalizados — foi uma
+        // escolha explícita de alguém), depois ativos e por último
+        // finalizados, cada grupo do mais recente pro mais antigo.
+        const { data, error, count } = resultado;
         if (!error) {
-          const ordenados = [...(data || [])].sort((a, b) => {
+          const ordenados = [...((data || []) as unknown as ChecklistGridRow[])].sort((a, b) => {
+            const aFixado = a.fixado_em ? 0 : 1;
+            const bFixado = b.fixado_em ? 0 : 1;
+            if (aFixado !== bFixado) return aFixado - bFixado;
+            if (a.fixado_em && b.fixado_em) return new Date(b.fixado_em).getTime() - new Date(a.fixado_em).getTime();
             const aFinalizado = a.status === 'FINALIZADO' ? 1 : 0;
             const bFinalizado = b.status === 'FINALIZADO' ? 1 : 0;
             if (aFinalizado !== bFinalizado) return aFinalizado - bFinalizado;
@@ -1594,6 +1610,31 @@ export default function ChecklistCargaRetorno() {
     }
   };
 
+  // Fixa/desafixa o evento no topo da lista — vale pra toda a equipe
+  // (coluna checklists.fixado_em).
+  const alternarFixado = async (c: ChecklistGridRow) => {
+    const fixar = !c.fixado_em;
+    const { error } = await supabase.from('checklists')
+      .update({ fixado_em: fixar ? new Date().toISOString() : null })
+      .eq('id', c.id);
+    if (error) {
+      const semColuna = /fixado_em/.test(error.message);
+      setDialog({
+        open: true, type: 'error', title: 'Não foi possível fixar',
+        msg: semColuna ? 'A opção de fixar ainda não foi ativada no banco de dados (falta rodar .sql/checklists_fixado.sql).' : error.message,
+      });
+      return;
+    }
+    registrarLogAuditoria({
+      usuario_nome: usuarioAtual,
+      acao: fixar ? 'FIXOU CHECKLIST DE CARGA NO TOPO' : 'DESAFIXOU CHECKLIST DE CARGA',
+      setor: 'OPERACIONAL',
+      equipamento_id: c.id,
+      equipamento_nome: `${gerarNumeroExibicao(c.numero)} — ${c.evento_feira || c.cliente || 'sem evento'}`,
+    });
+    setRefreshLista(v => v + 1);
+  };
+
   const excluirChecklist = async (c: ChecklistGridRow) => {
     if (!confirm(`Excluir o checklist ${gerarNumeroExibicao(c.numero)} (${c.evento_feira || c.cliente || 'sem evento'})? Essa ação não pode ser desfeita.`)) return;
 
@@ -1844,8 +1885,11 @@ export default function ChecklistCargaRetorno() {
                       </tr>
                     ) : (
                       checklists.map((c) => (
-                        <tr key={c.id} className="border-t border-[#E2E8F0] hover:bg-[#F8FAFC]">
-                          <td className="p-2 font-bold">{gerarNumeroExibicao(c.numero)}</td>
+                        <tr key={c.id} className={`border-t border-[#E2E8F0] ${c.fixado_em ? 'bg-amber-50 hover:bg-amber-100/70' : 'hover:bg-[#F8FAFC]'}`}>
+                          <td className="p-2 font-bold whitespace-nowrap">
+                            {c.fixado_em && <span title="Fixado no topo" className="mr-1">📌</span>}
+                            {gerarNumeroExibicao(c.numero)}
+                          </td>
                           <td className="p-2">{c.evento_feira || '—'}</td>
                           <td className="p-2">{c.cliente || '—'}</td>
                           <td className="p-2">{c.local || '—'}</td>
@@ -1853,7 +1897,14 @@ export default function ChecklistCargaRetorno() {
                           <td className="p-2">
                             <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-full border ${COR_STATUS[c.status]}`}>{LABEL_STATUS[c.status]}</span>
                           </td>
-                          <td className="p-2 text-center space-x-2">
+                          <td className="p-2 text-center space-x-2 whitespace-nowrap">
+                            <button
+                              onClick={() => alternarFixado(c)}
+                              title={c.fixado_em ? 'Desafixar do topo' : 'Fixar no topo da lista (pra toda a equipe)'}
+                              className={`font-bold text-[10px] uppercase px-3 py-1.5 rounded border transition-colors ${c.fixado_em ? 'bg-amber-400 text-white border-amber-500 hover:bg-amber-500' : 'bg-white text-amber-600 border-amber-200 hover:bg-amber-50'}`}
+                            >
+                              📌 {c.fixado_em ? 'Fixado' : 'Fixar'}
+                            </button>
                             <button onClick={() => abrirChecklist(c.id)} className="bg-blue-50 text-[#336699] hover:bg-blue-100 border border-blue-200 font-bold text-[10px] uppercase px-3 py-1.5 rounded transition-colors">
                               📂 Abrir
                             </button>

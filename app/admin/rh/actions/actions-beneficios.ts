@@ -545,7 +545,7 @@ export async function salvarBeneficioAction(payload: {
         observacao: observacao || null, atualizado_em: new Date().toISOString()
       }).eq('id', id);
       if (error) {
-        if (error.code === '23505') return { ok: false, erro: 'Este funcionário já tem este tipo de benefício.' };
+        if (error.code === '23505') return { ok: false, erro: 'Este funcionário já tem (ou já teve, removido) este tipo de benefício. Use o +ADD com esse tipo para reativá-lo.' };
         throw new Error(error.message);
       }
 
@@ -561,6 +561,35 @@ export async function salvarBeneficioAction(payload: {
 
       return { ok: true, info: { atualizado: true, mudancas: historico.length } };
     } else {
+      // "Remover" só desativa (ativo=false) e a lista esconde os inativos, mas
+      // a unique (funcionario_nome, tipo_id) continua valendo — então re-adicionar
+      // um tipo já removido batia no 23505. Se existir inativo, reativa o mesmo
+      // registro com os valores novos (preserva o histórico dele).
+      const { data: existente } = await db.from('folha_beneficios')
+        .select('id, ativo, valor_mensal, meio_id')
+        .eq('funcionario_nome', funcionarioNome).eq('tipo_id', tipoId).maybeSingle();
+      if (existente?.ativo) {
+        return { ok: false, erro: 'Este funcionário já tem este tipo de benefício. Edite o existente.' };
+      }
+      if (existente) {
+        const { error } = await db.from('folha_beneficios').update({
+          ativo: true, meio_id: meioId, valor_mensal: valorMensal, modalidade, qtd_dias: diasField,
+          observacao: observacao || null, atualizado_em: new Date().toISOString()
+        }).eq('id', existente.id);
+        if (error) throw new Error(error.message);
+
+        const historico: any[] = [{ beneficio_id: existente.id, acao: 'REATIVADO', alterado_por: usuarioNome }];
+        if (Number(existente.valor_mensal) !== Number(valorMensal)) {
+          historico.push({ beneficio_id: existente.id, valor_anterior: existente.valor_mensal, valor_novo: valorMensal, acao: 'VALOR_ALTERADO', alterado_por: usuarioNome });
+        }
+        if (existente.meio_id !== meioId) {
+          historico.push({ beneficio_id: existente.id, meio_anterior: nomeMeio(existente.meio_id), meio_novo: nomeMeio(meioId), acao: 'MEIO_ALTERADO', alterado_por: usuarioNome });
+        }
+        await db.from('folha_beneficios_historico').insert(historico);
+
+        return { ok: true, info: { criado: true, reativado: true } };
+      }
+
       // Criação
       const { data: novo, error } = await db.from('folha_beneficios').insert({
         funcionario_nome: funcionarioNome, tipo_id: tipoId, meio_id: meioId,

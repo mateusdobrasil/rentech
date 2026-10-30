@@ -46,6 +46,8 @@ export interface GerarResumoRecebimentosParams {
   // quando há confirmação de fato (Itaú "Efetuado" ou pedido Flash confirmado)
   beneficios: { tipo: string; meio: string; valor: number; situacao?: string; pago?: boolean }[];
   mesReferenciaBeneficio?: string;
+  // De onde vieram os valores (folha gerada no mês / cadastro reconstituído)
+  origemValoresBeneficios?: string[];
   ops: OpResumo[];
 }
 
@@ -197,8 +199,9 @@ export async function gerarResumoRecebimentosPdf(p: GerarResumoRecebimentosParam
     p.beneficios.length > 0 ? 'Pagos à parte do salário (cartão Flash ou transferência), com a situação de cada pagamento.' : undefined
   );
   if (p.beneficios.length === 0) {
-    vazio('Nenhum benefício ativo.');
+    vazio('Nenhum benefício nesta competência.');
   } else {
+    if (p.origemValoresBeneficios?.length) linhaDetalhe(`Valores: ${p.origemValoresBeneficios.join('; ')}.`, undefined, 4);
     p.beneficios.forEach(b => {
       linhaValor(`${b.tipo}${b.meio ? ` (${b.meio})` : ''}`, b.valor);
       if (b.situacao) linhaDetalhe(`${b.pago ? '[PAGO] ' : '[NÃO CONFIRMADO] '}${b.situacao}`, undefined, 10);

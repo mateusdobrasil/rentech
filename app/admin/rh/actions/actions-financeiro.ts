@@ -8,12 +8,12 @@
 // parceiros/bancos vive em app/admin/integracao/actions.ts (tela Integrações).
 import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
-import { calcularBeneficiosMes } from './actions-beneficios';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
 import { extrairTextoPdf } from '../../../lib/textract';
 import { registrarLogAuditoria } from '../../../actions';
 import { enviarPixPorChave, enviarPixPorDadosBancarios, consultarPagamentoSispag, credenciaisItauConfiguradas, contextoEnvioItau, semAcento, STATUS_ITAU_EFETUADO, type PagadorSispag } from '../../../lib/itauSispag';
 import { gravarStatusItauItemLote } from '../../../lib/loteStatusItau';
+import { gravarGeracaoBeneficios, beneficiosGeradosParaLote } from '../../../lib/beneficiosGeracoes';
 import { marcarContaPagarQuitada } from '../../../lib/p2s';
 import { ispbPorCompe } from '../../../lib/bancosCompeIspb';
 
@@ -218,15 +218,14 @@ export async function montarLoteSalariosAction(payload: {
       });
     }
 
-    // BENEFÍCIOS — só entram no lote bancário os benefícios pagos por
-    // transferência (Cartão Flash é carregado à parte, fora deste lote).
+    // BENEFÍCIOS — só o que o RH gerou no "Gerar Benefício" (/admin/rh/beneficios)
+    // pra competência, e só a parte que NÃO é Cartão Flash (o Flash sai em
+    // arquivo próprio). Não recalcula pelo cadastro: o que vai pro banco é o
+    // que foi conferido e gravado no Grid.
     const beneficiosPorNome: Record<string, number> = {};
     if (fontes.includes('BENEFICIOS')) {
-      const normMeio = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
-      const { itens: itensBenef } = await calcularBeneficiosMes(db, mesReferencia);
-      itensBenef.filter(it => normMeio(it.meio).includes('TRANSFER')).forEach(it => {
-        beneficiosPorNome[it.funcionario_nome] = (beneficiosPorNome[it.funcionario_nome] || 0) + it.valorMes;
-      });
+      const gerados = await beneficiosGeradosParaLote(db, mesReferencia);
+      Object.entries(gerados).forEach(([nome, g]) => { beneficiosPorNome[nome] = g.total; });
     }
 
     // RESCISÃO — só as homologadas com cálculo próprio e AINDA NÃO pagas
@@ -1003,6 +1002,21 @@ export async function salvarLoteAction(payload: {
       criado_por: payload.criadoPor || null
     }).select('id').single();
     if (error) throw new Error(error.message);
+
+    // Benefícios no lote: grava o detalhe por tipo (o mesmo da geração que o
+    // alimentou) no histórico da competência — Resumo de Recebimentos.
+    const nomesBenef = new Set(prontos.filter(i => i.fonte === 'BENEFICIOS').map(i => i.funcionario_nome));
+    if (nomesBenef.size > 0) {
+      try {
+        const gerados = await beneficiosGeradosParaLote(db, payload.mesReferencia);
+        await gravarGeracaoBeneficios(db, {
+          mesReferencia: payload.mesReferencia, origem: 'LOTE', referenciaId: data.id,
+          funcionarios: [...nomesBenef],
+          itens: [...nomesBenef].flatMap(n => gerados[n]?.itens || []),
+          geradoPor: payload.criadoPor || null
+        });
+      } catch { /* lote já salvo; o resumo cai na geração BENEFICIO */ }
+    }
     return { ok: true, info: { loteId: data.id, qtd: prontos.length, valorTotal } };
   } catch (e: any) {
     return { ok: false, erro: e.message };

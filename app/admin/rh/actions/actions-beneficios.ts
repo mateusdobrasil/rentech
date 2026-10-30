@@ -8,6 +8,7 @@ import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
 import { registrarLogAuditoria } from '../../../actions';
+import { gravarGeracaoBeneficios, categoriaMeio, pedidosFlashCancelados, inicioDaCompetencia, type BaseBeneficios } from '../../../lib/beneficiosGeracoes';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -74,7 +75,10 @@ export async function beneficiosDoMesAction(payload: { mesReferencia: string }, 
 // NÚCLEO: calcula os benefícios de um mês, com proporcionalidade por
 // admissão/desligamento. Reutilizado pelo relatório e pelo grid.
 // ============================================================================
-export async function calcularBeneficiosMes(db: ReturnType<typeof supabaseAdmin>, mesAno: string, empresaIds: number[] | null = null) {
+// opcoes.dataCorte (ISO): em vez do cadastro atual, usa o cadastro como estava
+// naquele instante (reconstituído desfazendo folha_beneficios_historico) — ver
+// beneficiosNaData.
+export async function calcularBeneficiosMes(db: ReturnType<typeof supabaseAdmin>, mesAno: string, empresaIds: number[] | null = null, opcoes: { dataCorte?: string } = {}) {
   const [ano, mes] = mesAno.split('-').map(Number);
   const primeiroDoMes = `${ano}-${String(mes).padStart(2, '0')}-01`;
 
@@ -113,11 +117,13 @@ export async function calcularBeneficiosMes(db: ReturnType<typeof supabaseAdmin>
     return diasUteisNoPeriodo(ano, mes, feriadosDaEmpresa(indiceFeriados, d.empresaId), inicio, null);
   };
 
-  const { data: beneficios } = await db.from('folha_beneficios')
-    .select('id, funcionario_nome, valor_mensal, modalidade, qtd_dias, tipo_id, meio_id')
-    .eq('ativo', true);
   const { data: tipos } = await db.from('folha_beneficio_tipos').select('id, nome');
   const { data: meios } = await db.from('folha_beneficio_meios').select('id, nome');
+  const beneficios = opcoes.dataCorte
+    ? await beneficiosNaData(db, opcoes.dataCorte, meios || [])
+    : (await db.from('folha_beneficios')
+      .select('id, funcionario_nome, valor_mensal, modalidade, qtd_dias, tipo_id, meio_id')
+      .eq('ativo', true)).data;
   const nomeTipo = (id: number) => tipos?.find(t => t.id === id)?.nome || '—';
   const nomeMeio = (id: number) => meios?.find(m => m.id === id)?.nome || '—';
 
@@ -157,6 +163,47 @@ export async function calcularBeneficiosMes(db: ReturnType<typeof supabaseAdmin>
   return { ano, mes, diasUteisMes, itens };
 }
 
+// Cadastro de benefícios como estava em `dataCorte`: parte do estado atual de
+// cada registro (ativos e removidos) e desfaz, do mais recente pro mais
+// antigo, o que o histórico registrou depois do corte (valor, meio, ativação
+// e — desde .sql/folha_beneficios_historico_modalidade.sql — modalidade/dias;
+// antes disso a troca de modalidade não era registrada e fica como hoje).
+async function beneficiosNaData(db: ReturnType<typeof supabaseAdmin>, dataCorte: string, meios: { id: number; nome: string }[]) {
+  const corte = new Date(dataCorte).getTime();
+  const { data: todos } = await db.from('folha_beneficios')
+    .select('id, funcionario_nome, valor_mensal, modalidade, qtd_dias, tipo_id, meio_id, ativo, criado_em');
+  // '*' porque as colunas de modalidade só existem depois do SQL acima
+  const { data: hist } = await db.from('folha_beneficios_historico')
+    .select('*')
+    .gt('alterado_em', dataCorte)
+    .order('alterado_em', { ascending: false });
+  const idMeio = (nome: string | null) => meios.find(m => m.nome === nome)?.id;
+
+  const depoisPorBeneficio: Record<number, any[]> = {};
+  (hist || []).forEach(h => { (depoisPorBeneficio[h.beneficio_id] ||= []).push(h); });
+
+  return (todos || []).flatMap(b => {
+    if (b.criado_em && new Date(b.criado_em).getTime() > corte) return [];
+    let ativo = b.ativo !== false;
+    let valor = b.valor_mensal;
+    let meioId = b.meio_id;
+    let modalidade = b.modalidade;
+    let qtdDias = b.qtd_dias;
+    for (const h of depoisPorBeneficio[b.id] || []) {
+      if (h.acao === 'CRIADO') return [];
+      if (h.acao === 'DESATIVADO') ativo = true;
+      else if (h.acao === 'REATIVADO') ativo = false;
+      else if (h.acao === 'VALOR_ALTERADO' && h.valor_anterior != null) valor = h.valor_anterior;
+      else if (h.acao === 'MEIO_ALTERADO') meioId = idMeio(h.meio_anterior) ?? meioId;
+      else if (h.acao === 'MODALIDADE_ALTERADA') {
+        if (h.modalidade_anterior) modalidade = h.modalidade_anterior;
+        qtdDias = h.qtd_dias_anterior ?? null;
+      }
+    }
+    return ativo ? [{ ...b, valor_mensal: valor, meio_id: meioId, modalidade, qtd_dias: qtdDias }] : [];
+  });
+}
+
 const BRLnum = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // ============================================================================
@@ -164,28 +211,17 @@ const BRLnum = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimum
 // Só funcionários com benefício de meio "CARTÃO FLASH". Mapeia por nome do tipo:
 //   TRANSPORTE/MOBILIDADE → Mobilidade | ALIMENTA/REFEI → Refeição e Alimentação
 //   demais → Premiação no cartão. Valores do mês (diária × dias úteis).
+// Uma linha por funcionário; montado no servidor pelo "Gerar Benefício", sem
+// confiar em valores vindos do cliente. itensPre = já calculado pelo chamador.
 // ============================================================================
-export async function gerarFlashAction(payload: { mesReferencia: string }, accessToken: string): Promise<Resultado> {
-  const acesso = await validarAcessoQualquerRota(accessToken);
-  if (!acesso.ok) return { ok: false, erro: acesso.message };
-
-  try {
-    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
-    const linhas = await montarLinhasFlash(supabaseAdmin(), payload.mesReferencia, empresasPermitidas);
-    return { ok: true, info: { linhas } };
-  } catch (e: any) {
-    return { ok: false, erro: e.message };
-  }
-}
-
-// Linhas do arquivo Flash (uma por funcionário) — usado pelo grid de
-// conferência e, de novo no servidor, pra gravar o pedido sem confiar nos
-// valores vindos do cliente.
-async function montarLinhasFlash(db: ReturnType<typeof supabaseAdmin>, mesReferencia: string, empresasPermitidas: number[] | null) {
+async function montarLinhasFlash(
+  db: ReturnType<typeof supabaseAdmin>, mesReferencia: string, empresasPermitidas: number[] | null,
+  itensPre?: Awaited<ReturnType<typeof calcularBeneficiosMes>>['itens']
+) {
   const CNPJ_RENTECH_FALLBACK = '22.618.891/0001-87';
   {
     // Reutiliza o núcleo de cálculo do mês (já aplica proporcionalidade)
-    const { itens } = await calcularBeneficiosMes(db, mesReferencia, empresasPermitidas);
+    const itens = itensPre ?? (await calcularBeneficiosMes(db, mesReferencia, empresasPermitidas)).itens;
 
     // CPF + CNPJ (real da empresa do funcionário, não fixo em Rentech — a
     // planilha Flash é por CNPJ empregador) de cada funcionário.
@@ -248,49 +284,96 @@ async function montarLinhasFlash(db: ReturnType<typeof supabaseAdmin>, mesRefere
 }
 
 // ============================================================================
-// PEDIDOS FLASH — a Flash não devolve nenhum rastreio: o arquivo é carregado
-// e pago na plataforma deles. "Baixar CSV" grava o pedido (GERADO) com quem
-// estava marcado; depois de pagar lá, o RH confirma (PAGO + data). Lido pelo
+// GERAR BENEFÍCIO (botão do Grid) — grava no banco a folha de benefícios do
+// mês de quem ficou marcado (folha_beneficios_geracoes, origem BENEFICIO):
+//   - Cartão Flash → pedido Flash (GERADO) + linhas do arquivo, devolvidas pro
+//     cliente baixar SÓ depois de gravado. A Flash não devolve rastreio: depois
+//     de pagar lá, o RH confirma em "Pedidos Flash" (PAGO + data).
+//   - O resto → fica esperando o lote do Financeiro RH, fonte Benefícios
+//     (beneficiosGeradosParaLote em app/lib/beneficiosGeracoes.ts).
+// Valores sempre recalculados aqui, nunca vindos do cliente. Lido também pelo
 // Resumo de Recebimentos do holerite (actions-assinatura.ts).
-// Tabela: .sql/folha_beneficios_flash_pedidos.sql
+// Tabelas: .sql/folha_beneficios_flash_pedidos.sql, .sql/folha_beneficios_geracoes*.sql
 // ============================================================================
-const chaveLinhaFlash = (l: { cpf?: string; nome: string }) => l.cpf || l.nome;
+// INICIO_MES = cadastro como estava na virada da competência (benefício é pago
+// adiantado — o que mudou depois já é do mês seguinte); ATUAL = cadastro de hoje.
+const opcoesDaBase = (mesReferencia: string, base?: BaseBeneficios) =>
+  base === 'INICIO_MES' ? { dataCorte: inicioDaCompetencia(mesReferencia) } : {};
+
 const totalLinhaFlash = (l: any) =>
   (l.mobilidade || 0) + (l.refeicao || 0) + (l.alimentacao || 0) + (l.premiacaoCartao || 0) + (l.refeicaoEAlimentacao || 0) + (l.premiacaoVirtual || 0);
+const arred = (v: number) => Math.round(v * 100) / 100;
 
-export async function registrarPedidoFlashAction(payload: {
+export async function gerarBeneficioAction(payload: {
   mesReferencia: string;
-  chaves: string[]; // cpf || nome de quem ficou marcado no grid de conferência
+  nomes: string[]; // funcionario_nome de quem ficou marcado no Grid
+  base?: BaseBeneficios; // a mesma do Grid exibido
+  // "Já foi pago — só registrar": competência paga por fora. Grava o histórico
+  // já pago (pedido Flash nasce PAGO, nada vai pro lote) e não baixa arquivo.
+  jaPagoEm?: string | null; // 'AAAA-MM-DD'
   usuarioNome: string;
 }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcessoQualquerRota(accessToken);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
+  const usuario = payload.usuarioNome || acesso.perfil.nome;
+  const jaPagoEm = payload.jaPagoEm || null;
+  if (jaPagoEm && !/^\d{4}-\d{2}-\d{2}$/.test(jaPagoEm)) return { ok: false, erro: 'Informe a data em que foi pago.' };
   try {
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
-    const marcadas = new Set(payload.chaves);
-    const linhas = (await montarLinhasFlash(db, payload.mesReferencia, empresasPermitidas))
-      .filter(l => marcadas.has(chaveLinhaFlash(l)))
+    const { itens } = await calcularBeneficiosMes(db, payload.mesReferencia, empresasPermitidas, opcoesDaBase(payload.mesReferencia, payload.base));
+    const marcados = new Set(payload.nomes);
+    const selecionados = itens.filter(it => marcados.has(it.funcionario_nome) && it.valorMes > 0);
+    if (selecionados.length === 0) return { ok: false, erro: 'Nenhum benefício dos funcionários selecionados.' };
+
+    const nomesFlash = new Set(selecionados.filter(it => categoriaMeio(it.meio) === 'FLASH').map(it => it.funcionario_nome));
+    const linhasFlash = (await montarLinhasFlash(db, payload.mesReferencia, empresasPermitidas, selecionados))
+      .filter(l => nomesFlash.has(l.nome))
       .map(l => ({ ...l, total: totalLinhaFlash(l) }));
-    if (linhas.length === 0) return { ok: false, erro: 'Nenhum funcionário selecionado.' };
+    const valorFlash = arred(linhasFlash.reduce((s, l) => s + l.total, 0));
+    const lote = selecionados.filter(it => categoriaMeio(it.meio) !== 'FLASH');
+    const valorLote = arred(lote.reduce((s, it) => s + it.valorMes, 0));
 
-    const valorTotal = linhas.reduce((s, l) => s + l.total, 0);
-    const { data, error } = await db.from('folha_beneficios_flash_pedidos').insert({
-      mes_referencia: payload.mesReferencia,
-      itens: linhas,
-      qtd_funcionarios: linhas.length,
-      valor_total: Math.round(valorTotal * 100) / 100,
-      gerado_por: payload.usuarioNome || acesso.perfil.nome
-    }).select('id').single();
-    if (error) throw new Error(error.message);
+    let pedidoId: number | null = null;
+    if (linhasFlash.length > 0) {
+      const { data, error } = await db.from('folha_beneficios_flash_pedidos').insert({
+        mes_referencia: payload.mesReferencia,
+        itens: linhasFlash,
+        qtd_funcionarios: linhasFlash.length,
+        valor_total: valorFlash,
+        gerado_por: usuario,
+        ...(jaPagoEm ? { status: 'PAGO', pago_em: jaPagoEm, confirmado_por: usuario, confirmado_em: new Date().toISOString() } : {})
+      }).select('id').single();
+      if (error) throw new Error(`Pedido Flash não gravado: ${error.message}`);
+      pedidoId = data.id;
+    }
 
+    const geracao = await gravarGeracaoBeneficios(db, {
+      mesReferencia: payload.mesReferencia, origem: 'BENEFICIO', referenciaId: pedidoId,
+      funcionarios: [...new Set(selecionados.map(it => it.funcionario_nome))],
+      itens: selecionados,
+      geradoPor: usuario,
+      pagoEm: jaPagoEm
+    });
+    if (!geracao.ok) {
+      // Sem a geração, o pedido Flash ficaria órfão (e o lote não veria nada): desfaz
+      if (pedidoId) await db.from('folha_beneficios_flash_pedidos').delete().eq('id', pedidoId);
+      return { ok: false, erro: `Benefício não gravado: ${geracao.erro}` };
+    }
+
+    const qtdLote = new Set(lote.map(it => it.funcionario_nome)).size;
     registrarLogAuditoria({
-      usuario_nome: payload.usuarioNome || acesso.perfil.nome,
-      acao: `GEROU PEDIDO FLASH #${data.id} (${payload.mesReferencia}): ${linhas.length} funcionário(s), ${BRLnum(valorTotal)}`,
+      usuario_nome: usuario,
+      acao: `${jaPagoEm ? `REGISTROU BENEFÍCIOS JÁ PAGOS EM ${jaPagoEm.split('-').reverse().join('/')}` : 'GEROU BENEFÍCIOS'} #${geracao.id} (${payload.mesReferencia}, ${payload.base === 'INICIO_MES' ? 'cadastro de 01/' + payload.mesReferencia.slice(5) : 'cadastro atual'}): ` +
+        `${pedidoId ? `Flash #${pedidoId} ${linhasFlash.length} func. ${BRLnum(valorFlash)}` : 'sem Flash'}; ` +
+        `lote ${qtdLote} func. ${BRLnum(valorLote)}`,
       setor: 'RECURSOS HUMANOS',
     });
-    return { ok: true, info: { id: data.id } };
+    return {
+      ok: true,
+      info: { geracaoId: geracao.id, pedidoId, linhasFlash, valorFlash, qtdFlash: linhasFlash.length, valorLote, qtdLote, jaPagoEm }
+    };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
@@ -387,18 +470,41 @@ export async function cancelarPedidoFlashAction(payload: { pedidoId: number; usu
   }
 }
 
+// Quem já teve benefício gerado no mês (botão "Gerar Benefício") — o Grid
+// mostra aviso e já vem desmarcado, pra não sair Flash/lote em dobro. Não
+// conta quem só tinha Flash e o pedido foi cancelado (pode gerar de novo).
+async function jaGeradosNoMes(db: ReturnType<typeof supabaseAdmin>, mesReferencia: string): Promise<Record<string, { em: string; geracaoId: number; pagoEm: string | null }>> {
+  const { data, error } = await db.from('folha_beneficios_geracoes')
+    .select('id, referencia_id, funcionarios, itens, gerado_em, pago_em')
+    .eq('mes_referencia', mesReferencia).eq('origem', 'BENEFICIO')
+    .order('gerado_em', { ascending: false });
+  if (error || !data?.length) return {};
+  const cancelados = await pedidosFlashCancelados(db, data);
+  const resultado: Record<string, { em: string; geracaoId: number; pagoEm: string | null }> = {};
+  data.forEach(g => {
+    const flashCancelado = g.referencia_id != null && cancelados.has(g.referencia_id);
+    (Array.isArray(g.funcionarios) ? g.funcionarios : []).forEach((nome: string) => {
+      if (resultado[nome]) return;
+      const seus = (g.itens || []).filter((it: any) => it.funcionario_nome === nome);
+      const valeAinda = !flashCancelado || seus.some((it: any) => categoriaMeio(it.meio) !== 'FLASH');
+      if (valeAinda) resultado[nome] = { em: g.gerado_em, geracaoId: g.id, pagoEm: g.pago_em || null };
+    });
+  });
+  return resultado;
+}
+
 // ============================================================================
 // GRID CONSOLIDADO DE BENEFÍCIOS (para a aba e o financeiro)
 // Retorna: por funcionário (itens + total) E por meio de pagamento + total geral.
 // ============================================================================
-export async function gridBeneficiosAction(payload: { mesReferencia: string; meioId?: number | null }, accessToken: string): Promise<Resultado> {
+export async function gridBeneficiosAction(payload: { mesReferencia: string; meioId?: number | null; base?: BaseBeneficios }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcessoQualquerRota(accessToken);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
   try {
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
-    const { diasUteisMes, itens } = await calcularBeneficiosMes(db, payload.mesReferencia, empresasPermitidas);
+    const { diasUteisMes, itens } = await calcularBeneficiosMes(db, payload.mesReferencia, empresasPermitidas, opcoesDaBase(payload.mesReferencia, payload.base));
 
     // Filtro opcional por meio de pagamento
     let filtrados = itens;
@@ -416,8 +522,11 @@ export async function gridBeneficiosAction(payload: { mesReferencia: string; mei
     // Linhas = funcionários, com o valor de cada tipo + detalhe compacto
     const porFunc: Record<string, any> = {};
     filtrados.forEach(it => {
-      (porFunc[it.funcionario_nome] ||= { funcionario_nome: it.funcionario_nome, valores: {}, detalhes: {}, total: 0 });
+      (porFunc[it.funcionario_nome] ||= { funcionario_nome: it.funcionario_nome, valores: {}, detalhes: {}, total: 0, totalFlash: 0, totalLote: 0 });
       porFunc[it.funcionario_nome].valores[it.tipo] = (porFunc[it.funcionario_nome].valores[it.tipo] || 0) + it.valorMes;
+      // Destino no "Gerar Benefício": arquivo Flash ou lote do Financeiro RH
+      if (categoriaMeio(it.meio) === 'FLASH') porFunc[it.funcionario_nome].totalFlash += it.valorMes;
+      else porFunc[it.funcionario_nome].totalLote += it.valorMes;
       if (it.modalidade === 'POR_DIARIA' || it.modalidade === 'DIAS_FIXOS') {
         const dias = it.valorBase > 0 ? Math.round(it.valorMes / it.valorBase) : 0;
         porFunc[it.funcionario_nome].detalhes[it.tipo] = `${it.valorBase.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}×${dias}`;
@@ -431,8 +540,9 @@ export async function gridBeneficiosAction(payload: { mesReferencia: string; mei
     const totaisColuna: Record<string, number> = {};
     colunas.forEach(c => { totaisColuna[c] = funcionarios.reduce((s: number, f: any) => s + (f.valores[c] || 0), 0); });
     const totalGeral = funcionarios.reduce((s: number, f: any) => s + f.total, 0);
+    const jaGerados = await jaGeradosNoMes(db, payload.mesReferencia);
 
-    return { ok: true, info: { diasUteis: diasUteisMes, colunas, funcionarios, totaisColuna, totalGeral } };
+    return { ok: true, info: { diasUteis: diasUteisMes, colunas, funcionarios, totaisColuna, totalGeral, jaGerados } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
@@ -558,15 +668,16 @@ export async function salvarBeneficioAction(payload: {
         historico.push({ beneficio_id: id, meio_anterior: nomeMeio(atual.meio_id), meio_novo: nomeMeio(meioId), acao: 'MEIO_ALTERADO', alterado_por: usuarioNome });
       }
       if (historico.length) await db.from('folha_beneficios_historico').insert(historico);
+      const trocouModalidade = await registrarTrocaModalidade(db, id, atual, modalidade, diasField, usuarioNome);
 
-      return { ok: true, info: { atualizado: true, mudancas: historico.length } };
+      return { ok: true, info: { atualizado: true, mudancas: historico.length + (trocouModalidade ? 1 : 0) } };
     } else {
       // "Remover" só desativa (ativo=false) e a lista esconde os inativos, mas
       // a unique (funcionario_nome, tipo_id) continua valendo — então re-adicionar
       // um tipo já removido batia no 23505. Se existir inativo, reativa o mesmo
       // registro com os valores novos (preserva o histórico dele).
       const { data: existente } = await db.from('folha_beneficios')
-        .select('id, ativo, valor_mensal, meio_id')
+        .select('id, ativo, valor_mensal, meio_id, modalidade, qtd_dias')
         .eq('funcionario_nome', funcionarioNome).eq('tipo_id', tipoId).maybeSingle();
       if (existente?.ativo) {
         return { ok: false, erro: 'Este funcionário já tem este tipo de benefício. Edite o existente.' };
@@ -586,6 +697,7 @@ export async function salvarBeneficioAction(payload: {
           historico.push({ beneficio_id: existente.id, meio_anterior: nomeMeio(existente.meio_id), meio_novo: nomeMeio(meioId), acao: 'MEIO_ALTERADO', alterado_por: usuarioNome });
         }
         await db.from('folha_beneficios_historico').insert(historico);
+        await registrarTrocaModalidade(db, existente.id, existente, modalidade, diasField, usuarioNome);
 
         return { ok: true, info: { criado: true, reativado: true } };
       }
@@ -610,6 +722,25 @@ export async function salvarBeneficioAction(payload: {
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
+}
+
+// Troca de modalidade/dias vai num insert à parte: as colunas só existem depois
+// de .sql/folha_beneficios_historico_modalidade.sql — sem elas este insert
+// falha sozinho, sem levar junto o histórico de valor/meio.
+async function registrarTrocaModalidade(
+  db: ReturnType<typeof supabaseAdmin>, beneficioId: number,
+  antes: { modalidade?: string | null; qtd_dias?: number | null },
+  modalidade: string, qtdDias: number | null, usuarioNome: string
+): Promise<boolean> {
+  const modalidadeAntes = antes.modalidade || 'VALOR_UNICO';
+  if (modalidadeAntes === modalidade && (antes.qtd_dias ?? null) === (qtdDias ?? null)) return false;
+  const { error } = await db.from('folha_beneficios_historico').insert({
+    beneficio_id: beneficioId, acao: 'MODALIDADE_ALTERADA',
+    modalidade_anterior: modalidadeAntes, modalidade_nova: modalidade,
+    qtd_dias_anterior: antes.qtd_dias ?? null, qtd_dias_novo: qtdDias ?? null,
+    alterado_por: usuarioNome
+  });
+  return !error;
 }
 
 // Ativa/desativa um benefício (mantém histórico)

@@ -19,6 +19,7 @@ import { mergePdfs } from '../../../lib/mergePdf';
 import { normalizarItensOP } from '../../op/utils';
 import { contextoEnvioItau, consultarPagamentoSispag, semAcento, STATUS_ITAU_EFETUADO } from '../../../lib/itauSispag';
 import { gravarStatusItauItemLote } from '../../../lib/loteStatusItau';
+import { categoriaMeio, inicioDaCompetencia } from '../../../lib/beneficiosGeracoes';
 import { calcularBeneficiosMes } from './actions-beneficios';
 import { baixarAssinado } from './assinaturaDownloadCore';
 
@@ -236,21 +237,102 @@ function montarDetalhamentoRecibo(
   return itens;
 }
 
-// Benefícios fixos ativos do funcionário na MESMA competência do holerite —
-// mesmo mês que o lote do Financeiro RH (fonte BENEFICIOS) e o pedido Flash
-// usam. Antes era o mês seguinte; alinhado a pedido do usuário (2026-10-28)
-// pra o Resumo de Recebimentos conseguir cruzar com o que foi pago de fato.
+// Benefícios do funcionário na MESMA competência do holerite — mesmo mês que o
+// lote do Financeiro RH (fonte BENEFICIOS) e o pedido Flash usam (alinhado a
+// pedido do usuário em 2026-10-28).
+//
+// Valores vêm do que foi GERADO no mês, não do cadastro atual (que pode ter
+// mudado depois — caso Emilio, 2026-10-30): folha_beneficios_geracoes, por
+// grupo de meio (Flash / transferência / demais). Em cada grupo vale a
+// geração mais recente que cobre o funcionário, preferindo a que é o próprio
+// pagamento (pedido Flash pro Flash, lote pra transferência) ao CSV do Grid;
+// pedido Flash cancelado e lote desativado não contam. Grupo sem nenhuma
+// geração (meses antes do histórico existir) → cadastro reconstituído como
+// estava na virada do mês (benefício é pago adiantado: o que muda no fim do
+// mês já é do mês seguinte).
 async function buscarBeneficiosCompetencia(
   db: ReturnType<typeof supabaseAdmin>,
   funcionarioNome: string,
   mesReferencia: string
-): Promise<{ itens: { tipo: string; meio: string; valor: number }[]; mesReferenciaBeneficio: string }> {
+): Promise<{
+  itens: { tipo: string; meio: string; valor: number }[]; mesReferenciaBeneficio: string; origemValores: string[];
+  // Grupo de meio (≠ Flash) registrado como já pago no "Já foi pago — só registrar"
+  pagosRegistrados: Record<string, { pagoEm: string; geracaoId: number }>;
+}> {
   const mesReferenciaBeneficio = mesReferencia;
-  const { itens } = await calcularBeneficiosMes(db, mesReferenciaBeneficio);
-  const doFuncionario = itens
-    .filter(it => it.funcionario_nome === funcionarioNome)
-    .map(it => ({ tipo: it.tipo, meio: it.meio, valor: it.valorMes }));
-  return { itens: doFuncionario, mesReferenciaBeneficio };
+  const dataBR = (iso: string) => new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+
+  let geracoes: any[] = [];
+  try {
+    const { data, error } = await db.from('folha_beneficios_geracoes')
+      .select('id, origem, referencia_id, escopo_meio, funcionarios, itens, gerado_em, pago_em')
+      .eq('mes_referencia', mesReferenciaBeneficio)
+      .order('gerado_em', { ascending: false });
+    if (!error) geracoes = (data || []).filter(g => Array.isArray(g.funcionarios) && g.funcionarios.includes(funcionarioNome));
+    if (geracoes.length > 0) {
+      const idsFlash = geracoes.filter(g => (g.origem === 'FLASH' || g.origem === 'BENEFICIO') && g.referencia_id).map(g => g.referencia_id);
+      const idsLote = geracoes.filter(g => g.origem === 'LOTE' && g.referencia_id).map(g => g.referencia_id);
+      const [{ data: pedidos }, { data: lotes }] = await Promise.all([
+        idsFlash.length ? db.from('folha_beneficios_flash_pedidos').select('id, status').in('id', idsFlash) : Promise.resolve({ data: [] as any[] }),
+        idsLote.length ? db.from('financeiro_lotes_pagamento').select('id, ativo').in('id', idsLote) : Promise.resolve({ data: [] as any[] }),
+      ]);
+      const pedidoCancelado = new Set((pedidos || []).filter(p => p.status === 'CANCELADO').map(p => p.id));
+      const loteInativo = new Set((lotes || []).filter(l => l.ativo === false).map(l => l.id));
+      geracoes = geracoes
+        .filter(g =>
+          !(g.origem === 'FLASH' && pedidoCancelado.has(g.referencia_id)) &&
+          !(g.origem === 'LOTE' && loteInativo.has(g.referencia_id)))
+        // BENEFICIO com pedido Flash cancelado: perde só a parte Flash
+        .map(g => ({ ...g, flashCancelado: g.origem === 'BENEFICIO' && pedidoCancelado.has(g.referencia_id) }));
+    }
+  } catch { geracoes = []; }
+
+  // BENEFICIO = botão "Gerar Benefício" (todos os meios; Flash com pedido em
+  // referencia_id). FLASH/GRID_CSV = gerações de antes do botão.
+  const cobre = (g: any, cat: string) =>
+    g.origem === 'FLASH' ? cat === 'FLASH'
+      : g.origem === 'LOTE' ? cat === 'TRANSFER'
+        : g.origem === 'BENEFICIO' ? !(cat === 'FLASH' && g.flashCancelado)
+          : !g.escopo_meio || categoriaMeio(g.escopo_meio) === cat;
+  // Quanto mais perto do pagamento, melhor: lote > Gerar Benefício > CSV antigo
+  const prioridade = (g: any, cat: string) =>
+    g.origem === 'LOTE' || (g.origem === 'FLASH' && cat === 'FLASH') ? 0 : g.origem === 'BENEFICIO' ? 1 : 2;
+  const escolher = (cat: string) => {
+    const candidatas = geracoes.filter(g => cobre(g, cat));
+    if (candidatas.length === 0) return null;
+    const melhor = Math.min(...candidatas.map(g => prioridade(g, cat)));
+    return candidatas.find(g => prioridade(g, cat) === melhor); // já em ordem do mais recente
+  };
+  const rotulo = (g: any, cat: string) =>
+    g.origem === 'LOTE' ? `lote de pagamento #${g.referencia_id} de ${dataBR(g.gerado_em)}`
+      : (g.origem === 'FLASH' || g.origem === 'BENEFICIO') && cat === 'FLASH' && g.referencia_id ? `pedido Flash #${g.referencia_id} de ${dataBR(g.gerado_em)}`
+        : `benefícios gerados em ${dataBR(g.gerado_em)}`;
+
+  const corte = inicioDaCompetencia(mesReferenciaBeneficio);
+  const { itens: reconstituidos } = await calcularBeneficiosMes(db, mesReferenciaBeneficio, null, { dataCorte: corte });
+  const doCadastro = reconstituidos.filter(it => it.funcionario_nome === funcionarioNome);
+
+  const categorias = new Set<string>(doCadastro.map(it => categoriaMeio(it.meio)));
+  geracoes.forEach(g => (g.itens || []).forEach((it: any) => { if (it.funcionario_nome === funcionarioNome) categorias.add(categoriaMeio(it.meio)); }));
+
+  const itens: { tipo: string; meio: string; valor: number }[] = [];
+  const origens: string[] = [];
+  const pagosRegistrados: Record<string, { pagoEm: string; geracaoId: number }> = {};
+  for (const cat of categorias) {
+    const g = escolher(cat);
+    if (g) {
+      if (cat !== 'FLASH' && g.origem === 'BENEFICIO' && g.pago_em) pagosRegistrados[cat] = { pagoEm: g.pago_em, geracaoId: g.id };
+      (g.itens || [])
+        .filter((it: any) => it.funcionario_nome === funcionarioNome && categoriaMeio(it.meio) === cat)
+        .forEach((it: any) => itens.push({ tipo: it.tipo, meio: it.meio, valor: Number(it.valorMes) || 0 }));
+      origens.push(rotulo(g, cat));
+    } else {
+      const doGrupo = doCadastro.filter(it => categoriaMeio(it.meio) === cat);
+      doGrupo.forEach(it => itens.push({ tipo: it.tipo, meio: it.meio, valor: it.valorMes }));
+      if (doGrupo.length) origens.push(`cadastro como estava em ${dataBR(corte)} (sem folha gerada no mês)`);
+    }
+  }
+  return { itens, mesReferenciaBeneficio, origemValores: [...new Set(origens)], pagosRegistrados };
 }
 
 // Recibo de pagamento — vai como o ÚLTIMO arquivo do pacote de assinatura de
@@ -380,7 +462,7 @@ async function gerarResumoRecebimentosBytes(
       itens: normalizarItensOP(o.itens).map(it => ({ descricao: it.descricao, qtd: it.qtd, valorUnitario: it.valor_unitario, total: it.total }))
     }));
 
-  const beneficios = await rastrearPagamentoBeneficios(db, funcionarioNome, cpfDigitos, p.beneficios.mesReferenciaBeneficio, p.beneficios.itens);
+  const beneficios = await rastrearPagamentoBeneficios(db, funcionarioNome, cpfDigitos, p.beneficios.mesReferenciaBeneficio, p.beneficios.itens, p.beneficios.pagosRegistrados);
 
   return gerarResumoRecebimentosPdf({
     nome: funcionarioNome,
@@ -390,6 +472,7 @@ async function gerarResumoRecebimentosBytes(
     salario,
     beneficios,
     mesReferenciaBeneficio: p.beneficios.mesReferenciaBeneficio,
+    origemValoresBeneficios: p.beneficios.origemValores,
     ops: opsDoFuncionario
   });
 }
@@ -403,19 +486,22 @@ async function gerarResumoRecebimentosBytes(
 //   (gravarStatusItauItemLote) — assim ninguém precisa clicar "Consultar
 //   status" item por item antes de mandar o holerite.
 // - Demais meios: sem rastreio no sistema.
+// - Qualquer meio fora do Flash registrado como "Já foi pago — só registrar"
+//   no Grid (pagosRegistrados): pago na data informada pelo RH, sem consultar lote.
 // Nunca derruba o envio: qualquer falha vira "não foi possível verificar".
 async function rastrearPagamentoBeneficios(
   db: ReturnType<typeof supabaseAdmin>,
   funcionarioNome: string,
   cpfDigitos: string,
   mesBeneficio: string,
-  itens: { tipo: string; meio: string; valor: number }[]
+  itens: { tipo: string; meio: string; valor: number }[],
+  pagosRegistrados: Record<string, { pagoEm: string; geracaoId: number }> = {}
 ): Promise<{ tipo: string; meio: string; valor: number; situacao: string; pago: boolean }[]> {
   if (itens.length === 0) return [];
   const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
   const dataBR = (iso: string) => iso.slice(0, 10).split('-').reverse().join('/');
   const temFlash = itens.some(it => norm(it.meio).includes('FLASH'));
-  const temTransfer = itens.some(it => norm(it.meio).includes('TRANSFER'));
+  const temTransfer = itens.some(it => norm(it.meio).includes('TRANSFER')) && !pagosRegistrados.TRANSFER;
 
   let situacaoFlash = { situacao: 'Sem rastreio de pagamento no sistema', pago: false };
   if (temFlash) {
@@ -484,6 +570,10 @@ async function rastrearPagamentoBeneficios(
 
   return itens.map(it => {
     const meio = norm(it.meio);
+    const registrado = pagosRegistrados[categoriaMeio(it.meio)];
+    if (registrado && !meio.includes('FLASH')) {
+      return { ...it, situacao: `Pago em ${dataBR(registrado.pagoEm)} — registrado pelo RH (benefícios #${registrado.geracaoId})`, pago: true };
+    }
     const s = meio.includes('FLASH') ? situacaoFlash
       : meio.includes('TRANSFER') ? situacaoTransfer
         : { situacao: 'Sem rastreio de pagamento no sistema', pago: false };

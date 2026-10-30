@@ -6,8 +6,7 @@ import { Analytics } from "@vercel/analytics/next";
 import {
   listarCatalogosBeneficioAction, criarTipoBeneficioAction, criarMeioBeneficioAction,
   salvarBeneficioAction, alternarBeneficioAction, historicoBeneficioAction, painelBeneficiosAction,
-  gridBeneficiosAction, gerarFlashAction,
-  registrarPedidoFlashAction, listarPedidosFlashAction, confirmarPagamentoFlashAction, cancelarPedidoFlashAction
+  gridBeneficiosAction, gerarBeneficioAction, listarPedidosFlashAction, confirmarPagamentoFlashAction, cancelarPedidoFlashAction
 } from '../actions/actions-beneficios';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
@@ -37,7 +36,6 @@ export default function BeneficiosPage() {
   const [filtro, setFiltro] = useState<'TODOS' | 'COM' | 'SEM'>('TODOS');
   const [filtroMeio, setFiltroMeio] = useState('TODOS');       // filtro da aba
   const [mostrarRemovidos, setMostrarRemovidos] = useState(false);
-  const [gridFiltroMeio, setGridFiltroMeio] = useState('TODOS'); // filtro do grid
 
   // Modal de concessão/edição
   const [modalFunc, setModalFunc] = useState<string | null>(null);
@@ -91,10 +89,38 @@ export default function BeneficiosPage() {
     const h = new Date(); const c = new Date(h.getFullYear(), h.getMonth() - 1, 1);
     return `${c.getFullYear()}-${String(c.getMonth() + 1).padStart(2, '0')}`;
   });
-  const [grid, setGrid] = useState<{ diasUteis: number; colunas: string[]; funcionarios: any[]; totaisColuna: Record<string, number>; totalGeral: number } | null>(null);
+  const [grid, setGrid] = useState<{
+    diasUteis: number; colunas: string[]; funcionarios: any[]; totaisColuna: Record<string, number>; totalGeral: number;
+    jaGerados: Record<string, { em: string; geracaoId: number; pagoEm: string | null }>;
+  } | null>(null);
   const [carregandoGrid, setCarregandoGrid] = useState(false);
-  const [gerandoFlash, setGerandoFlash] = useState(false);
-  // Quem entra no CSV do grid (chave = funcionario_nome); nasce tudo marcado a cada geração
+  const [gerandoBeneficio, setGerandoBeneficio] = useState(false);
+  // Mês do Grid que está na tela — o "Gerar Benefício" usa este, não o seletor
+  const [gridMesExibido, setGridMesExibido] = useState('');
+  // Base dos valores: benefício é pago adiantado, então competência atual ou
+  // passada usa o cadastro da virada do mês (o que mudou depois já é do mês
+  // seguinte); competência futura usa o cadastro de hoje. O RH pode trocar.
+  const baseSugerida = (mes: string): 'INICIO_MES' | 'ATUAL' => {
+    const h = new Date();
+    const mesAtual = `${h.getFullYear()}-${String(h.getMonth() + 1).padStart(2, '0')}`;
+    return mes <= mesAtual ? 'INICIO_MES' : 'ATUAL';
+  };
+  const [gridBase, setGridBase] = useState<'INICIO_MES' | 'ATUAL'>('ATUAL');
+  const [gridBaseExibida, setGridBaseExibida] = useState<'INICIO_MES' | 'ATUAL'>('ATUAL');
+  // "Já foi pago — só registrar": competência paga por fora (ex.: outubro pago
+  // no fim de setembro). Grava o histórico já pago: sem arquivo Flash, sem lote.
+  // Data sugerida: último dia do mês anterior à competência (pagamento adiantado).
+  const [jaPago, setJaPago] = useState(false);
+  const [jaPagoData, setJaPagoData] = useState('');
+  const ultimoDiaMesAnterior = (mes: string) => {
+    const [a, m] = mes.split('-').map(Number);
+    const d = new Date(a, m - 1, 0);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  useEffect(() => { setGridBase(baseSugerida(gridMes)); setJaPagoData(ultimoDiaMesAnterior(gridMes)); }, [gridMes]);
+  const gridDesatualizado = gridMes !== gridMesExibido || gridBase !== gridBaseExibida;
+  // Quem entra no "Gerar Benefício" (chave = funcionario_nome); nasce tudo
+  // marcado a cada Grid, menos quem já teve benefício gerado no mês
   const [gridSelecionados, setGridSelecionados] = useState<Set<string>>(new Set());
 
   const alternarSelecaoGrid = (nome: string) => {
@@ -113,57 +139,18 @@ export default function BeneficiosPage() {
   const gridTotaisSelecionados = useMemo(() => {
     const totaisColuna: Record<string, number> = {};
     let totalGeral = 0;
-    if (!grid) return { totaisColuna, totalGeral };
+    let totalFlash = 0, totalLote = 0;
+    if (!grid) return { totaisColuna, totalGeral, totalFlash, totalLote };
     grid.funcionarios.filter((f: any) => gridSelecionados.has(f.funcionario_nome)).forEach((f: any) => {
       grid.colunas.forEach(c => { totaisColuna[c] = (totaisColuna[c] || 0) + (f.valores[c] || 0); });
       totalGeral += f.total;
+      totalFlash += f.totalFlash || 0;
+      totalLote += f.totalLote || 0;
     });
-    return { totaisColuna, totalGeral };
+    return { totaisColuna, totalGeral, totalFlash, totalLote };
   }, [grid, gridSelecionados]);
 
-  // Grid de conferência do Flash: "Gerar Flash" busca os elegíveis do mês
-  // (já vem só de quem está ativo — ou desligado dentro do próprio mês —
-  // ver calcularBeneficiosMes em actions-beneficios.ts) e abre este grid
-  // pra dar chance de destravar/tirar alguém manualmente antes de baixar o
-  // CSV de verdade.
-  const [modalFlashAberto, setModalFlashAberto] = useState(false);
-  const [flashLinhas, setFlashLinhas] = useState<any[]>([]);
-  const [flashSelecionados, setFlashSelecionados] = useState<Set<string>>(new Set());
-  const chaveFlash = (l: any) => l.cpf || l.nome;
-
-  const gerarFlash = async () => {
-    setGerandoFlash(true);
-    try {
-      const res = await gerarFlashAction({ mesReferencia: gridMes }, accessToken);
-      if (!res.ok) throw new Error(res.erro);
-      const linhasFlash = res.info.linhas as any[];
-      if (linhasFlash.length === 0) {
-        toast('Nenhum funcionário com benefício no Cartão Flash neste mês.', 'info');
-        return;
-      }
-      setFlashLinhas(linhasFlash);
-      setFlashSelecionados(new Set(linhasFlash.map(chaveFlash))); // nasce tudo marcado
-      setModalFlashAberto(true);
-    } catch (e: any) {
-      toast('Erro ao gerar o arquivo Flash: ' + e.message, 'error');
-    } finally {
-      setGerandoFlash(false);
-    }
-  };
-
-  const alternarSelecaoFlash = (chave: string) => {
-    setFlashSelecionados(prev => {
-      const novo = new Set(prev);
-      if (novo.has(chave)) novo.delete(chave); else novo.add(chave);
-      return novo;
-    });
-  };
-
-  const alternarTodosFlash = (marcar: boolean) => {
-    setFlashSelecionados(marcar ? new Set(flashLinhas.map(chaveFlash)) : new Set());
-  };
-
-  // Pedidos Flash do mês — rastreio interno: o "Baixar CSV" grava o pedido e,
+  // Pedidos Flash do mês — rastreio interno: o "Gerar Benefício" grava o pedido e,
   // depois de pago na plataforma da Flash, o RH confirma aqui. É o que o
   // Resumo de Recebimentos do holerite usa pra dizer se o benefício foi pago.
   const [modalPedidosAberto, setModalPedidosAberto] = useState(false);
@@ -204,11 +191,9 @@ export default function BeneficiosPage() {
     carregarPedidosFlash();
   };
 
-  // Baixa o CSV (colunas idênticas à planilha modelo) só com quem ficou marcado no grid
-  const baixarFlashCsv = async () => {
-    const selecionadas = flashLinhas.filter(l => flashSelecionados.has(chaveFlash(l)));
-    if (selecionadas.length === 0) { toast('Selecione ao menos um funcionário.', 'error'); return; }
-
+  // Arquivo Flash (colunas idênticas à planilha modelo) com as linhas que o
+  // servidor gravou no pedido — só é chamado depois do "Gerar Benefício" gravar.
+  const baixarArquivoFlash = (selecionadas: any[], pedidoId: number, mes: string) => {
     const cab = ['CNPJ', 'NOME COMPLETO', 'CPF', 'MOBILIDADE (R$)', 'REFEICAO (R$)', 'ALIMENTACAO (R$)', 'PREMIACAO NO CARTAO (R$)', 'REFEICAO E ALIMENTACAO (R$)', 'PREMIACAO VIRTUAL (R$)'];
     const num = (v: number) => v.toFixed(2).replace('.', ',');
     const linhasCsv = selecionadas.map(l => [
@@ -221,15 +206,58 @@ export default function BeneficiosPage() {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `pedido-flash-${gridMes}.csv`; a.click();
+    a.href = url; a.download = `pedido-flash-${mes}-${pedidoId}.csv`; a.click();
     URL.revokeObjectURL(url);
-    setModalFlashAberto(false);
+  };
 
-    // Grava o pedido (status GERADO) — o arquivo já saiu de qualquer jeito;
-    // se falhar, só avisa que o rastreio não foi registrado.
-    const res = await registrarPedidoFlashAction({ mesReferencia: gridMes, chaves: selecionadas.map(chaveFlash), usuarioNome: usuarioAtual }, accessToken);
-    if (res.ok) toast(`Pedido Flash #${res.info.id} registrado. Depois de pagar na Flash, confirme em "🧾 Pedidos Flash".`, 'success');
-    else toast('CSV baixado, mas o pedido não foi registrado no sistema: ' + res.erro, 'error');
+  // Gerar Benefício: grava no banco (pedido Flash + parte do lote) e só
+  // depois baixa o arquivo Flash. A parte fora do Flash fica disponível em
+  // Financeiro RH → fonte Benefícios, na mesma competência.
+  const gerarBeneficio = async () => {
+    if (!grid || !gridMesExibido) return;
+    const mes = gridMesExibido;
+    const nomes = grid.funcionarios.filter((f: any) => gridSelecionados.has(f.funcionario_nome)).map((f: any) => f.funcionario_nome);
+    if (nomes.length === 0) { toast('Selecione ao menos um funcionário.', 'error'); return; }
+    const repetidos = nomes.filter(n => grid.jaGerados?.[n]);
+    const t = gridTotaisSelecionados;
+    const mesBR = mes.split('-').reverse().join('/');
+    if (jaPago && !jaPagoData) { toast('Informe a data em que foi pago.', 'error'); return; }
+    const dataPagoBR = jaPagoData.split('-').reverse().join('/');
+    const msg = (jaPago
+      ? `REGISTRAR como já pagos em ${dataPagoBR} os benefícios de ${mesBR} de ${nomes.length} funcionário(s)?\n\n` +
+        `Nenhum arquivo Flash será baixado e nada vai para o lote — só fica o histórico, marcado como pago.\n\n` +
+        `⚡ Cartão Flash: ${BRL(t.totalFlash)}\n🏦 Transferência: ${BRL(t.totalLote)}`
+      : `Gerar os benefícios de ${mesBR} para ${nomes.length} funcionário(s)?\n\n` +
+        `⚡ Cartão Flash: ${BRL(t.totalFlash)} — o arquivo será baixado e o pedido registrado\n` +
+        `🏦 Lote de pagamento: ${BRL(t.totalLote)} — fica disponível em Financeiro RH (fonte Benefícios)`) +
+      (repetidos.length ? `\n\n⚠ ${repetidos.length} já tiveram benefício gerado neste mês: ${repetidos.join(', ')}` : '');
+    if (!confirm(msg)) return;
+
+    setGerandoBeneficio(true);
+    try {
+      const res = await gerarBeneficioAction({
+        mesReferencia: mes, nomes, base: gridBaseExibida, jaPagoEm: jaPago ? jaPagoData : null, usuarioNome: usuarioAtual
+      }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      const { pedidoId, linhasFlash, qtdFlash, valorFlash, qtdLote, valorLote } = res.info;
+      if (jaPago) {
+        toast(`Benefícios de ${mesBR} registrados como pagos em ${dataPagoBR}: ${nomes.length} func., ${BRL(valorFlash + valorLote)}.`, 'success');
+      } else {
+        if (pedidoId && linhasFlash?.length) baixarArquivoFlash(linhasFlash, pedidoId, mes);
+        toast(
+          [
+            qtdFlash ? `Pedido Flash #${pedidoId}: ${qtdFlash} func., ${BRL(valorFlash)} (confirme o pagamento em "🧾 Pedidos Flash")` : null,
+            qtdLote ? `Lote: ${qtdLote} func., ${BRL(valorLote)} disponível em Financeiro RH` : null,
+          ].filter(Boolean).join(' · ') || 'Benefícios gerados.',
+          'success'
+        );
+      }
+      gerarGrid(); // atualiza os "já gerado"
+    } catch (e: any) {
+      toast('Benefícios NÃO gerados: ' + e.message, 'error');
+    } finally {
+      setGerandoBeneficio(false);
+    }
   };
 
   // Histórico
@@ -327,15 +355,19 @@ export default function BeneficiosPage() {
     }
   };
 
-  // Item 2: grid consolidado por meio de pagamento
+  // Grid do mês (todos os meios — o "Gerar Benefício" separa Flash e lote)
   const gerarGrid = async () => {
     setMostrarGrid(true); setCarregandoGrid(true);
     try {
-      const res = await gridBeneficiosAction({ mesReferencia: gridMes, meioId: gridFiltroMeio === 'TODOS' ? null : Number(gridFiltroMeio) }, accessToken);
-      if (res.ok) {
-        setGrid(res.info);
-        setGridSelecionados(new Set(res.info.funcionarios.map((f: any) => f.funcionario_nome)));
-      }
+      const mes = gridMes, base = gridBase;
+      const res = await gridBeneficiosAction({ mesReferencia: mes, base }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      setGrid(res.info);
+      setGridMesExibido(mes);
+      setGridBaseExibida(base);
+      // Já gerado no mês nasce desmarcado (dá pra marcar de novo se precisar)
+      const jaGerados = res.info.jaGerados || {};
+      setGridSelecionados(new Set(res.info.funcionarios.map((f: any) => f.funcionario_nome).filter((n: string) => !jaGerados[n])));
     } catch (e: any) {
       toast('Erro ao gerar grid: ' + e.message, 'error');
     } finally {
@@ -343,31 +375,32 @@ export default function BeneficiosPage() {
     }
   };
 
-  // Exporta o grid como CSV matriz (abre no Excel)
+  // CSV de conferência (matriz, abre no Excel) — não grava nada
   const exportarCSV = () => {
     if (!grid) return;
     const selecionados = grid.funcionarios.filter((f: any) => gridSelecionados.has(f.funcionario_nome));
     if (selecionados.length === 0) { toast('Selecione ao menos um funcionário.', 'error'); return; }
     const sep = ';';
-    const cabecalho = ['Funcionário', ...grid.colunas, 'Total'].map(c => `"${c}"`).join(sep);
+    const num = (v: number) => (v || 0).toFixed(2).replace('.', ',');
+    const cabecalho = ['Funcionário', ...grid.colunas, 'Flash', 'Lote', 'Total'].map(c => `"${c}"`).join(sep);
     const linhas: string[] = [cabecalho];
     selecionados.forEach((f: any) => {
       const cels = [`"${f.funcionario_nome}"`];
-      grid.colunas.forEach(c => cels.push((f.valores[c] || 0).toFixed(2).replace('.', ',')));
-      cels.push(f.total.toFixed(2).replace('.', ','));
+      grid.colunas.forEach(c => cels.push(num(f.valores[c])));
+      cels.push(num(f.totalFlash), num(f.totalLote), num(f.total));
       linhas.push(cels.join(sep));
     });
     // Rodapé de totais (só dos marcados)
     const rodape = ['"TOTAL"'];
-    grid.colunas.forEach(c => rodape.push((gridTotaisSelecionados.totaisColuna[c] || 0).toFixed(2).replace('.', ',')));
-    rodape.push(gridTotaisSelecionados.totalGeral.toFixed(2).replace('.', ','));
+    grid.colunas.forEach(c => rodape.push(num(gridTotaisSelecionados.totaisColuna[c])));
+    rodape.push(num(gridTotaisSelecionados.totalFlash), num(gridTotaisSelecionados.totalLote), num(gridTotaisSelecionados.totalGeral));
     linhas.push(rodape.join(sep));
 
     const csv = '﻿' + linhas.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `beneficios-${gridMes}.csv`; a.click();
+    a.href = url; a.download = `conferencia-beneficios-${gridMes}.csv`; a.click();
     URL.revokeObjectURL(url);
   };
 
@@ -506,12 +539,9 @@ export default function BeneficiosPage() {
           <button onClick={() => setMostrarCatalogos(!mostrarCatalogos)} className="text-[10px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-4 py-2.5 rounded-lg uppercase tracking-wider">
             ⚙ Tipos e Meios
           </button>
-          <input type="month" value={gridMes} onChange={e => setGridMes(e.target.value)} title="Mês de referência para Grid e Flash" className="text-[10px] font-bold p-2.5 border border-gray-300 rounded-lg bg-[#F8FAFC]" />
+          <input type="month" value={gridMes} onChange={e => setGridMes(e.target.value)} title="Competência dos benefícios" className="text-[10px] font-bold p-2.5 border border-gray-300 rounded-lg bg-[#F8FAFC]" />
           <button onClick={gerarGrid} className="text-[10px] font-black bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-4 py-2.5 rounded-lg uppercase tracking-wider">
             📊 Gerar Grid
-          </button>
-          <button onClick={gerarFlash} disabled={gerandoFlash} className="text-[10px] font-black bg-[#FF6B35] hover:bg-[#E85A28] text-white px-4 py-2.5 rounded-lg uppercase tracking-wider disabled:opacity-50">
-            {gerandoFlash ? '⏳' : '⚡ Gerar Flash'}
           </button>
           <button onClick={abrirPedidosFlash} title="Pedidos Flash do mês e confirmação de pagamento" className="text-[10px] font-black bg-orange-50 hover:bg-orange-100 text-[#E85A28] border border-orange-200 px-4 py-2.5 rounded-lg uppercase tracking-wider">
             🧾 Pedidos Flash
@@ -650,21 +680,46 @@ export default function BeneficiosPage() {
       {mostrarGrid && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setMostrarGrid(false)}>
           <div className="bg-white rounded-2xl shadow-xl max-w-6xl w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center p-5 border-b border-gray-200">
+            <div className="flex flex-wrap justify-between items-center gap-3 p-5 border-b border-gray-200">
               <div>
-                <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider">📊 Grid de Benefícios</h2>
+                <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider">📊 Grid de Benefícios — {gridMesExibido.split('-').reverse().join('/')}</h2>
                 <p className="text-sm text-gray-500">
-                  {grid ? `${grid.diasUteis} dias úteis no mês · ${gridSelecionados.size} de ${grid.funcionarios.length} selecionado(s) para o CSV` : 'Carregando...'}
+                  {grid ? `${grid.diasUteis} dias úteis no mês · ${gridSelecionados.size} de ${grid.funcionarios.length} selecionado(s). Desmarque quem não deve receber.` : 'Carregando...'}
                 </p>
+                {grid && (
+                  <p className="text-[11px] font-bold text-indigo-600">
+                    Valores: {gridBaseExibida === 'INICIO_MES'
+                      ? `cadastro como estava em 01/${gridMesExibido.slice(5)}/${gridMesExibido.slice(0, 4)} (alterações feitas depois não entram)`
+                      : 'cadastro atual (todas as alterações até agora)'}
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <input type="month" value={gridMes} onChange={e => setGridMes(e.target.value)} className="p-2 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />
-                <select value={gridFiltroMeio} onChange={e => setGridFiltroMeio(e.target.value)} className="p-2 border border-gray-300 rounded-lg text-[11px] font-black uppercase text-gray-600 bg-[#F8FAFC]">
-                  <option value="TODOS">Todos os meios</option>
-                  {meios.map(m => <option key={m.id} value={m.id}>{m.nome}</option>)}
+                <select value={gridBase} onChange={e => setGridBase(e.target.value as 'INICIO_MES' | 'ATUAL')}
+                  title="Benefício é pago adiantado: para a competência atual/passada, o padrão é o cadastro da virada do mês"
+                  className="p-2 border border-gray-300 rounded-lg text-[11px] font-black uppercase text-gray-600 bg-[#F8FAFC]">
+                  <option value="INICIO_MES">Cadastro em 01/{gridMes.slice(5)}</option>
+                  <option value="ATUAL">Cadastro atual</option>
                 </select>
-                <button onClick={gerarGrid} className="text-[10px] font-black bg-[#336699] text-white px-3 py-2 rounded-lg uppercase">Atualizar</button>
-                <button onClick={exportarCSV} disabled={!grid || gridSelecionados.size === 0} className="text-[10px] font-black bg-emerald-600 text-white px-3 py-2 rounded-lg uppercase disabled:opacity-50">⬇ CSV ({gridSelecionados.size})</button>
+                <button onClick={gerarGrid} className={`text-[10px] font-black text-white px-3 py-2 rounded-lg uppercase ${gridDesatualizado ? 'bg-amber-500 animate-pulse' : 'bg-[#336699]'}`}>Atualizar</button>
+                <button onClick={exportarCSV} disabled={!grid || gridSelecionados.size === 0} title="Planilha só para conferência — não grava nada" className="text-[10px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-2 rounded-lg uppercase disabled:opacity-50">⬇ Conferência</button>
+                <label title="Competência já paga por fora: grava só o histórico, marcado como pago — sem arquivo Flash e sem lote"
+                  className={`flex items-center gap-1.5 text-[10px] font-black uppercase px-2 py-1.5 rounded-lg border cursor-pointer ${jaPago ? 'bg-amber-50 border-amber-300 text-amber-700' : 'border-gray-300 text-gray-500'}`}>
+                  <input type="checkbox" checked={jaPago} onChange={e => setJaPago(e.target.checked)} className="w-3.5 h-3.5" />
+                  Já foi pago
+                  {jaPago && (
+                    <input type="date" value={jaPagoData} onChange={e => setJaPagoData(e.target.value)}
+                      className="ml-1 p-1 border border-amber-300 rounded text-[11px] font-bold bg-white normal-case" />
+                  )}
+                </label>
+                <button onClick={gerarBeneficio} disabled={!grid || gridSelecionados.size === 0 || gerandoBeneficio || carregandoGrid || gridDesatualizado}
+                  title={gridDesatualizado ? 'Mês ou base alterados — clique em Atualizar antes de gerar'
+                    : jaPago ? 'Grava o histórico já pago (sem arquivo Flash, sem lote)'
+                      : 'Grava no banco, baixa o arquivo Flash e deixa o restante para o lote do Financeiro RH'}
+                  className={`text-[10px] font-black text-white px-4 py-2 rounded-lg uppercase disabled:opacity-50 ${jaPago ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
+                  {gerandoBeneficio ? '⏳ Gerando...' : jaPago ? `📝 Registrar como pago (${gridSelecionados.size})` : `✓ Gerar Benefício (${gridSelecionados.size})`}
+                </button>
                 <button onClick={() => setMostrarGrid(false)} className="text-[10px] font-black bg-gray-100 px-3 py-2 rounded-lg uppercase">Fechar</button>
               </div>
             </div>
@@ -688,6 +743,8 @@ export default function BeneficiosPage() {
                       {grid.colunas.map(c => (
                         <th key={c} className="p-2.5 text-right font-black uppercase text-[10px] tracking-wider whitespace-nowrap">{c}</th>
                       ))}
+                      <th className="p-2.5 text-right font-black uppercase text-[10px] tracking-wider whitespace-nowrap bg-[#E85A28]" title="Vai no arquivo Flash">⚡ Flash</th>
+                      <th className="p-2.5 text-right font-black uppercase text-[10px] tracking-wider whitespace-nowrap bg-emerald-700" title="Fica para o lote do Financeiro RH (fonte Benefícios)">🏦 Lote</th>
                       <th className="p-2.5 text-right font-black uppercase text-[10px] tracking-wider bg-indigo-700">Total</th>
                     </tr>
                   </thead>
@@ -700,6 +757,14 @@ export default function BeneficiosPage() {
                           <div className="flex items-center gap-2">
                             <input type="checkbox" checked={marcado} onChange={() => alternarSelecaoGrid(f.funcionario_nome)} className="w-4 h-4 cursor-pointer" />
                             <span className="cursor-pointer" onClick={() => alternarSelecaoGrid(f.funcionario_nome)}>{f.funcionario_nome}</span>
+                            {grid.jaGerados?.[f.funcionario_nome] && (
+                              <span title="Já teve benefício gerado nesta competência — marque de novo só se for gerar outra vez"
+                                className="text-[9px] font-black bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded uppercase">
+                                {grid.jaGerados[f.funcionario_nome].pagoEm
+                                  ? `✓ registrado pago ${String(grid.jaGerados[f.funcionario_nome].pagoEm).split('-').reverse().join('/')}`
+                                  : `⚠ já gerado ${new Date(grid.jaGerados[f.funcionario_nome].em).toLocaleDateString('pt-BR')}`}
+                              </span>
+                            )}
                             <button onClick={() => setGridSelecionados(new Set([f.funcionario_nome]))} title="Deixar só este funcionário selecionado"
                               className="opacity-0 group-hover:opacity-100 text-[9px] font-black text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-1.5 py-0.5 rounded uppercase">
                               só este
@@ -716,6 +781,8 @@ export default function BeneficiosPage() {
                             ) : <span className="text-gray-300">—</span>}
                           </td>
                         ))}
+                        <td className="p-2.5 text-right font-bold text-[#E85A28] tabular-nums whitespace-nowrap bg-orange-50/50">{f.totalFlash ? BRL(f.totalFlash) : <span className="text-gray-300">—</span>}</td>
+                        <td className="p-2.5 text-right font-bold text-emerald-700 tabular-nums whitespace-nowrap bg-emerald-50/50">{f.totalLote ? BRL(f.totalLote) : <span className="text-gray-300">—</span>}</td>
                         <td className="p-2.5 text-right font-black text-indigo-700 tabular-nums whitespace-nowrap bg-indigo-50/50">{BRL(f.total)}</td>
                       </tr>
                       );
@@ -727,78 +794,13 @@ export default function BeneficiosPage() {
                       {grid.colunas.map(c => (
                         <td key={c} className="p-2.5 text-right font-black text-[#0C1D4D] tabular-nums whitespace-nowrap">{BRL(gridTotaisSelecionados.totaisColuna[c] || 0)}</td>
                       ))}
+                      <td className="p-2.5 text-right font-black text-[#E85A28] tabular-nums whitespace-nowrap bg-orange-100">{BRL(gridTotaisSelecionados.totalFlash)}</td>
+                      <td className="p-2.5 text-right font-black text-emerald-700 tabular-nums whitespace-nowrap bg-emerald-100">{BRL(gridTotaisSelecionados.totalLote)}</td>
                       <td className="p-2.5 text-right font-black text-indigo-700 text-base tabular-nums whitespace-nowrap bg-indigo-100">{BRL(gridTotaisSelecionados.totalGeral)}</td>
                     </tr>
                   </tfoot>
                 </table>
               )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal de conferência do Flash (grid com opção de desmarcar antes do CSV) */}
-      {modalFlashAberto && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setModalFlashAberto(false)}>
-          <div className="bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center p-5 border-b border-gray-200">
-              <div>
-                <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider">⚡ Conferência do Flash — {gridMes}</h2>
-                <p className="text-sm text-gray-500">{flashSelecionados.size} de {flashLinhas.length} selecionado(s). Desmarque quem não deve entrar no arquivo.</p>
-              </div>
-              <button onClick={() => setModalFlashAberto(false)} className="text-[10px] font-black bg-gray-100 px-3 py-2 rounded-lg uppercase">Fechar</button>
-            </div>
-
-            <div className="overflow-auto p-5 flex-1">
-              <table className="w-full text-sm border-collapse">
-                <thead>
-                  <tr className="bg-[#0C1D4D] text-white">
-                    <th className="p-2.5 text-center font-black uppercase text-[10px] tracking-wider w-10">
-                      <input type="checkbox" checked={flashSelecionados.size === flashLinhas.length && flashLinhas.length > 0}
-                        onChange={e => alternarTodosFlash(e.target.checked)} className="w-4 h-4" />
-                    </th>
-                    <th className="p-2.5 text-left font-black uppercase text-[10px] tracking-wider">Nome</th>
-                    <th className="p-2.5 text-left font-black uppercase text-[10px] tracking-wider">CPF</th>
-                    <th className="p-2.5 text-right font-black uppercase text-[10px] tracking-wider whitespace-nowrap">Mobilidade</th>
-                    <th className="p-2.5 text-right font-black uppercase text-[10px] tracking-wider whitespace-nowrap">Ref. e Alim.</th>
-                    <th className="p-2.5 text-right font-black uppercase text-[10px] tracking-wider whitespace-nowrap">Premiação</th>
-                    <th className="p-2.5 text-right font-black uppercase text-[10px] tracking-wider bg-indigo-700">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {flashLinhas.map((l, idx) => {
-                    const chave = chaveFlash(l);
-                    const marcado = flashSelecionados.has(chave);
-                    const total = (l.mobilidade || 0) + (l.refeicao || 0) + (l.alimentacao || 0) + (l.premiacaoCartao || 0) + (l.refeicaoEAlimentacao || 0) + (l.premiacaoVirtual || 0);
-                    return (
-                      <tr key={chave} className={`group ${idx % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFC]'} ${!marcado ? 'opacity-40' : ''} cursor-pointer`} onClick={() => alternarSelecaoFlash(chave)}>
-                        <td className="p-2.5 text-center" onClick={e => e.stopPropagation()}>
-                          <input type="checkbox" checked={marcado} onChange={() => alternarSelecaoFlash(chave)} className="w-4 h-4" />
-                        </td>
-                        <td className="p-2.5 font-black text-[#0C1D4D] whitespace-nowrap">
-                          {l.nome}
-                          <button onClick={e => { e.stopPropagation(); setFlashSelecionados(new Set([chave])); }} title="Deixar só este funcionário selecionado"
-                            className="ml-2 opacity-0 group-hover:opacity-100 text-[9px] font-black text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-1.5 py-0.5 rounded uppercase">
-                            só este
-                          </button>
-                        </td>
-                        <td className="p-2.5 text-gray-500 whitespace-nowrap">{l.cpf}</td>
-                        <td className="p-2.5 text-right tabular-nums text-gray-700 whitespace-nowrap">{l.mobilidade ? BRL(l.mobilidade) : <span className="text-gray-300">—</span>}</td>
-                        <td className="p-2.5 text-right tabular-nums text-gray-700 whitespace-nowrap">{l.refeicaoEAlimentacao ? BRL(l.refeicaoEAlimentacao) : <span className="text-gray-300">—</span>}</td>
-                        <td className="p-2.5 text-right tabular-nums text-gray-700 whitespace-nowrap">{l.premiacaoCartao ? BRL(l.premiacaoCartao) : <span className="text-gray-300">—</span>}</td>
-                        <td className="p-2.5 text-right font-black text-indigo-700 tabular-nums whitespace-nowrap bg-indigo-50/50">{BRL(total)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="flex justify-end gap-2 p-5 border-t border-gray-200">
-              <button onClick={() => setModalFlashAberto(false)} className="bg-gray-100 hover:bg-gray-200 text-gray-600 font-black uppercase tracking-wider text-xs py-3 px-6 rounded-xl">Cancelar</button>
-              <button onClick={baixarFlashCsv} disabled={flashSelecionados.size === 0} className="bg-[#FF6B35] hover:bg-[#E85A28] text-white font-black uppercase tracking-wider text-xs py-3 px-6 rounded-xl disabled:opacity-50">
-                ⬇ Baixar CSV ({flashSelecionados.size})
-              </button>
             </div>
           </div>
         </div>
@@ -811,7 +813,7 @@ export default function BeneficiosPage() {
             <div className="flex justify-between items-center p-5 border-b border-gray-200">
               <div>
                 <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider">🧾 Pedidos Flash — {gridMes}</h2>
-                <p className="text-sm text-gray-500">Cada &quot;Baixar CSV&quot; gera um pedido. Depois de pagar na plataforma da Flash, confirme aqui.</p>
+                <p className="text-sm text-gray-500">Cada &quot;Gerar Benefício&quot; com Cartão Flash gera um pedido. Depois de pagar na plataforma da Flash, confirme aqui. Cancelar libera a pessoa para gerar de novo.</p>
               </div>
               <div className="flex items-center gap-2">
                 <input type="month" value={gridMes} onChange={e => setGridMes(e.target.value)} className="p-2 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />
@@ -958,6 +960,10 @@ export default function BeneficiosPage() {
                     </div>
                     {h.acao === 'VALOR_ALTERADO' && <p className="text-[11px] text-gray-600 mt-1">{BRL(Number(h.valor_anterior))} → <strong>{BRL(Number(h.valor_novo))}</strong></p>}
                     {h.acao === 'MEIO_ALTERADO' && <p className="text-[11px] text-gray-600 mt-1">{h.meio_anterior} → <strong>{h.meio_novo}</strong></p>}
+                    {h.acao === 'MODALIDADE_ALTERADA' && (() => {
+                      const rotulo = (m: string | null, d: number | null) => m === 'POR_DIARIA' ? 'por diária' : m === 'DIAS_FIXOS' ? `dias fixos ×${d ?? '?'}` : 'valor único (mês)';
+                      return <p className="text-[11px] text-gray-600 mt-1">{rotulo(h.modalidade_anterior, h.qtd_dias_anterior)} → <strong>{rotulo(h.modalidade_nova, h.qtd_dias_novo)}</strong></p>;
+                    })()}
                     {h.acao === 'CRIADO' && <p className="text-[11px] text-gray-600 mt-1">Criado com {BRL(Number(h.valor_novo))} via {h.meio_novo}</p>}
                     {h.alterado_por && <p className="text-[10px] text-gray-400 mt-1">por {h.alterado_por}</p>}
                   </div>

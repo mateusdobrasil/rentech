@@ -67,6 +67,28 @@ export async function extrairTextoPdf(pdfBase64: string): Promise<string> {
     .join('\n');
 }
 
+// Valor líquido de um holerite/recibo a partir do texto lido.
+// 1º: trinca de valores consecutivos em que vencimentos − descontos = líquido
+//     (conta fechando, então não depende da posição do rótulo). Só vale se
+//     houver UMA trinca assim — mais de uma é ambíguo.
+// 2º: número logo depois do rótulo "VALOR LÍQUIDO" (funciona na ordem de
+//     leitura do Textract; na camada nativa de alguns PDFs o rótulo fica longe
+//     do número — caso dos holerites de outubro/2026, em que só a trinca achou).
+export function extrairValorLiquido(texto: string): number | null {
+  const paraNumero = (s: string) => Number(s.replace(/\./g, '').replace(',', '.'));
+  const valores = (texto.match(/\d{1,3}(?:\.\d{3})*,\d{2}/g) || []).map(paraNumero);
+  const trincas = new Set<number>();
+  for (let i = 0; i + 2 < valores.length; i++) {
+    const [venc, desc, liq] = [valores[i], valores[i + 1], valores[i + 2]];
+    if (venc > 0 && liq > 0 && Math.abs(venc - desc - liq) < 0.015) trincas.add(liq);
+  }
+  if (trincas.size === 1) return [...trincas][0];
+
+  const t = texto.toUpperCase().replace(/\s+/g, ' ');
+  const m = t.match(/VALOR\s*L[IÍ]QUIDO[^\d,]{0,30}(\d{1,3}(?:\.\d{3})*,\d{2})/);
+  return m ? paraNumero(m[1]) : null;
+}
+
 const normalizarTexto = (s: string): string => s
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .toUpperCase()

@@ -71,7 +71,11 @@ export async function salvarDocumentosContabeisAction(payload: {
       });
       if (upErr) { falhas.push(`${item.funcionarioNome}: ${upErr.message}`); continue; }
 
-      // Registra o ponteiro (upsert por funcionário+mês+tipo)
+      // Registra o ponteiro (upsert por funcionário+mês+tipo). Reimportar troca
+      // o PDF, então o valor lido do arquivo anterior deixa de valer: zera o
+      // cache do OCR pra forçar nova leitura. Sem isso o recibo seguia com o
+      // valor velho — caso Katia, out/2026 (R$ 1.666,16 do arquivo importado
+      // em 04/10 no lugar do líquido real de R$ 2.178,74 do PDF de 04/11).
       const { error: dbErr } = await db.from('folha_documentos_contabeis').upsert({
         funcionario_nome: item.funcionarioNome,
         empresa_id: empresaPorNome[item.funcionarioNome] ?? null,
@@ -82,7 +86,9 @@ export async function salvarDocumentosContabeisAction(payload: {
         nome_arquivo_origem: nomeArquivoOrigem,
         confianca_match: item.confiancaMatch || 'MANUAL',
         importado_por: importadoPor || null,
-        importado_em: new Date().toISOString()
+        importado_em: new Date().toISOString(),
+        valor_ocr: null,
+        ocr_processado_em: null
       }, { onConflict: 'funcionario_nome,mes_referencia,tipo' });
       if (dbErr) { falhas.push(`${item.funcionarioNome}: ${dbErr.message}`); continue; }
 

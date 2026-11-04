@@ -9,7 +9,7 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
-import { extrairTextoPdf } from '../../../lib/textract';
+import { extrairTextoPdf, extrairValorLiquido } from '../../../lib/textract';
 import { registrarLogAuditoria } from '../../../actions';
 import { enviarPixPorChave, enviarPixPorDadosBancarios, consultarPagamentoSispag, credenciaisItauConfiguradas, contextoEnvioItau, semAcento, STATUS_ITAU_EFETUADO, type PagadorSispag } from '../../../lib/itauSispag';
 import { gravarStatusItauItemLote } from '../../../lib/loteStatusItau';
@@ -774,13 +774,9 @@ export async function processarOcrAwsAction(
       return { ok: false, erro: 'Nenhum texto detectado pela AWS.' };
     }
 
-    const t = linhas.toUpperCase().replace(/\s+/g, ' ');
-    const rx = /VALOR\s*L[IÍ]QUIDO[^\d,]{0,30}(\d{1,3}(?:\.\d{3})*,\d{2})/;
-    const m = t.match(rx);
+    const valor = extrairValorLiquido(linhas);
 
-    if (m && m[1]) {
-      const numero = m[1].replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
-      const valor = Number(numero);
+    if (valor != null) {
 
       // Persiste o valor lido no documento de origem, para que a próxima
       // montagem do lote (ou clique em "OCR") não precise reler este PDF.

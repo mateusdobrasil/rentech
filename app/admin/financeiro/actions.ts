@@ -260,3 +260,86 @@ export async function buscarRelatorioFinanceiroAction(payload: { mesReferencia: 
     return { ok: false, erro: e.message };
   }
 }
+
+// ============================================================================
+// PAINEL DO HUB (/admin/financeiro) — os principais números, no mesmo formato
+// do hub de RH. Os cartões de total que ficavam no topo de
+// /admin/financeiro/ops vieram pra cá (2026-11-05). Cada bloco só é calculado
+// pra quem tem acesso ao módulo de destino do cartão.
+// ============================================================================
+const hojeIsoBrasilia = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+const somarDias = (iso: string, dias: number) => {
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + dias);
+  return d.toISOString().slice(0, 10);
+};
+
+// Busca paginada (a Data API devolve no máximo 1.000 linhas por chamada).
+async function buscarTodas<T>(montar: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: any }>): Promise<T[]> {
+  const lote = 1000;
+  const todas: T[] = [];
+  for (let de = 0; de < 20000; de += lote) {
+    const { data, error } = await montar(de, de + lote - 1);
+    if (error) throw new Error(error.message);
+    todas.push(...(data || []));
+    if (!data || data.length < lote) break;
+  }
+  return todas;
+}
+
+export async function painelFinanceiroAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, '/admin/financeiro');
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const [acessoOps, acessoContas] = await Promise.all([
+      validarAcesso(accessToken, '/admin/financeiro/ops'),
+      validarAcesso(accessToken, '/admin/financeiro/contas-pagar'),
+    ]);
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const hoje = hojeIsoBrasilia();
+    const em7Dias = somarDias(hoje, 7);
+    const vazio = () => ({ valor: 0, qtd: 0 });
+    const somar = (acc: ValorQtd, v: unknown) => { acc.valor += Number(v) || 0; acc.qtd += 1; };
+
+    let ops: { pendentes: ValorQtd; vencidas: ValorQtd; vencendo7d: ValorQtd; aguardandoBanco: ValorQtd } | null = null;
+    if (acessoOps.ok) {
+      // Mesmo critério da tela de OPs: pendente = nem pago nem reprovado.
+      // OP sem empresa (legado) continua visível, igual ao resto do sistema.
+      const linhas = await buscarTodas<any>((de, ate) => {
+        let q = db.from('op_ordens_pagamento')
+          .select('total_geral, data_vencimento, pago_em, empresa_id')
+          .not('status', 'ilike', '%PAGO%').neq('status', 'REPROVADA')
+          .range(de, ate);
+        if (empresasPermitidas) q = q.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+        return q;
+      });
+      ops = { pendentes: vazio(), vencidas: vazio(), vencendo7d: vazio(), aguardandoBanco: vazio() };
+      for (const o of linhas) {
+        somar(ops.pendentes, o.total_geral);
+        const venc = o.data_vencimento ? String(o.data_vencimento).slice(0, 10) : null;
+        if (venc && venc < hoje) somar(ops.vencidas, o.total_geral);
+        else if (venc && venc <= em7Dias) somar(ops.vencendo7d, o.total_geral);
+        // pago_em numa OP pendente = Pix enviado pelo lote, sem confirmação do banco ainda
+        if (o.pago_em) somar(ops.aguardandoBanco, o.total_geral);
+      }
+    }
+
+    let contasPagar: { vencidas: ValorQtd; vencendo7d: ValorQtd } | null = null;
+    if (acessoContas.ok) {
+      // Cópia sincronizada do PrimeStart — mesma leitura da tela de Contas a Pagar
+      const linhas = await buscarTodas<any>((de, ate) => db.from('financeiro_contas_pagar')
+        .select('valor, data_vencimento').eq('quitado', false).lte('data_vencimento', em7Dias).range(de, ate));
+      contasPagar = { vencidas: vazio(), vencendo7d: vazio() };
+      for (const c of linhas) {
+        const venc = String(c.data_vencimento).slice(0, 10);
+        somar(venc < hoje ? contasPagar.vencidas : contasPagar.vencendo7d, c.valor);
+      }
+    }
+
+    return { ok: true, info: { hoje, ops, contasPagar } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}

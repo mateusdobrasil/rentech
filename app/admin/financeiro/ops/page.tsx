@@ -54,6 +54,11 @@ interface OP {
   pago_lote_id?: number | null;
 }
 
+// Barra de filtros: rótulo fixo em cima de cada campo, pra saber qual é qual
+// mesmo depois de escolher um valor.
+const ROTULO_FILTRO = 'block text-[10px] font-black text-[#64748B] uppercase tracking-wider mb-1';
+const SELECT_FILTRO = 'w-full min-w-0 p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0A2A4A] truncate';
+
 export default function PainelFinanceiro() {
   const router = useRouter();
 
@@ -230,25 +235,6 @@ export default function PainelFinanceiro() {
   };
 
   const temFiltroAtivo = busca || filtroData || filtroResponsavel || filtroFavorecido || filtroStatus || filtroVencimentoDe || filtroVencimentoAte || (empresasCatalogoVisivel.length > 1 && filtroEmpresa);
-
-  const metricas = useMemo(() => {
-    let tGeral = 0, tPendente = 0, tPago = 0;
-    const naturezas: Record<string, number> = {};
-
-    opsFiltradas.forEach(op => {
-      const val = Number(op.total_geral) || 0;
-      tGeral += val;
-      // Reprovada não conta nem como pendente (não é mais dinheiro a pagar)
-      // nem como pago.
-      if (op.status.includes('PAGO')) tPago += val;
-      else if (op.status !== 'REPROVADA') tPendente += val;
-
-      const nat = op.natureza_pagamento || "NÃO INFORMADA";
-      naturezas[nat] = (naturezas[nat] || 0) + val;
-    });
-
-    return { tGeral, tPendente, tPago, qtd: opsFiltradas.length, naturezas };
-  }, [opsFiltradas]);
 
   // Baixa de Pagamento
   const confirmarBaixa = (id: string, osNum: string) => {
@@ -615,96 +601,91 @@ export default function PainelFinanceiro() {
           </div>
         </div>
 
-        {/* Métrica Dash */}
-        <div className="p-4 md:px-8 pt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 flex-shrink-0">
-          <div className="bg-white p-5 rounded-xl shadow-sm border-l-4 border-[#336699]">
-            <h3 className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Total Geral Visualizado</h3>
-            <p className="text-2xl font-black text-[#0C1D4D] mt-1">{formatarMoeda(metricas.tGeral)}</p>
-          </div>
-          <div className="bg-white p-5 rounded-xl shadow-sm border-l-4 border-amber-500">
-            <h3 className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Total Pendente</h3>
-            <p className="text-2xl font-black text-amber-500 mt-1">{formatarMoeda(metricas.tPendente)}</p>
-          </div>
-          <div className="bg-white p-5 rounded-xl shadow-sm border-l-4 border-green-500">
-            <h3 className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Total Pago</h3>
-            <p className="text-2xl font-black text-green-600 mt-1">{formatarMoeda(metricas.tPago)}</p>
-          </div>
-          <div className="bg-white p-5 rounded-xl shadow-sm border-l-4 border-[#0C1D4D]">
-            <h3 className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Quantidade de OPs</h3>
-            <p className="text-2xl font-black text-[#0C1D4D] mt-1">{metricas.qtd} <span className="text-sm font-semibold text-[#94A3B8]">registros</span></p>
-          </div>
-        </div>
-
-        {/* Filtros */}
-        <div className="px-4 md:px-8 py-2 flex-shrink-0">
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col lg:flex-row gap-3 items-center">
-            <div className="flex-1 w-full">
-              <input type="text" placeholder="🔍 Busca livre (Nº OP, OS, Cliente, Evento, Período, etc)..." className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0A2A4A] focus:border-[#336699] outline-none transition-all" value={busca} onChange={(e) => setBusca(e.target.value)} />
-            </div>
-
-            <div className="w-full lg:w-auto flex relative shadow-sm rounded-lg">
-              <select className="p-2.5 border-y border-l border-[#CBD5E1] rounded-l-lg text-xs font-bold text-[#0C1D4D] outline-none focus:border-[#336699] bg-[#F8FAFC] cursor-pointer" value={tipoFiltroData} onChange={(e) => { setTipoFiltroData(e.target.value as 'DIA' | 'MES' | 'ANO'); setFiltroData(''); }}>
-                <option value="DIA">Por Dia</option>
-                <option value="MES">Por Mês</option>
-                <option value="ANO">Por Ano</option>
-              </select>
-              {tipoFiltroData === 'DIA' && <input type="date" className="w-full lg:w-36 p-2.5 border border-[#CBD5E1] rounded-r-lg text-sm font-semibold text-[#0A2A4A] outline-none" value={filtroData} onChange={(e) => setFiltroData(e.target.value)} />}
-              {tipoFiltroData === 'MES' && <input type="month" className="w-full lg:w-36 p-2.5 border border-[#CBD5E1] rounded-r-lg text-sm font-semibold text-[#0A2A4A] outline-none" value={filtroData} onChange={(e) => setFiltroData(e.target.value)} />}
-              {tipoFiltroData === 'ANO' && (
-                <select className="w-full lg:w-36 p-2.5 border border-[#CBD5E1] rounded-r-lg text-sm font-semibold text-[#64748B] outline-none cursor-pointer" value={filtroData} onChange={(e) => setFiltroData(e.target.value)}>
-                  <option value="">Ano...</option>
-                  {anosDisponiveis.map(ano => <option key={ano} value={ano}>{ano}</option>)}
-                </select>
+        {/* Filtros — os cartões de total que ficavam aqui foram pro hub
+            /admin/financeiro (indicadores, 2026-11-05). */}
+        <div className="px-4 md:px-8 pt-6 pb-2 flex-shrink-0">
+          {/* Busca numa linha; filtros numa grade com rótulo em cima de cada um.
+              Antes era tudo numa linha só a partir de 1024px (~1.500px de
+              controles) — em notebook de 13–14" a busca sumia e os selects
+              ficavam espremidos, sem dar pra saber qual filtro era qual. */}
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-[#E2E8F0] flex flex-col gap-3">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <input type="text" placeholder="🔍 Busca livre (Nº OP, OS, Cliente, Evento, Período, etc)..." className="flex-1 min-w-0 p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0A2A4A] focus:border-[#336699] outline-none transition-all" value={busca} onChange={(e) => setBusca(e.target.value)} />
+              {temFiltroAtivo && (
+                <button onClick={limparFiltros} className="px-4 py-2.5 bg-red-50 text-red-500 border border-red-200 font-bold text-xs uppercase tracking-wider rounded-lg transition-colors flex-shrink-0 shadow-sm">
+                  ✕ Limpar filtros
+                </button>
               )}
             </div>
 
-            <div className="w-full lg:w-48">
-              <select
-                className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#64748B] disabled:opacity-70 disabled:cursor-not-allowed"
-                value={filtroEmpresa ?? ''}
-                onChange={(e) => setFiltroEmpresa(e.target.value ? Number(e.target.value) : null)}
-                disabled={empresasCatalogoVisivel.length <= 1}
-              >
-                {empresasCatalogoVisivel.length !== 1 && <option value="">🏭 Todas as empresas</option>}
-                {empresasCatalogoVisivel.map((e) => (
-                  <option key={e.id} value={e.id}>{e.nome}</option>
-                ))}
-              </select>
-            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div className="min-w-0">
+                <label className={ROTULO_FILTRO}>📅 Criação</label>
+                <div className="flex shadow-sm rounded-lg">
+                  <select className="p-2.5 border-y border-l border-[#CBD5E1] rounded-l-lg text-xs font-bold text-[#0C1D4D] outline-none focus:border-[#336699] bg-[#F8FAFC] cursor-pointer shrink-0" value={tipoFiltroData} onChange={(e) => { setTipoFiltroData(e.target.value as 'DIA' | 'MES' | 'ANO'); setFiltroData(''); }}>
+                    <option value="DIA">Dia</option>
+                    <option value="MES">Mês</option>
+                    <option value="ANO">Ano</option>
+                  </select>
+                  {tipoFiltroData === 'DIA' && <input type="date" className="w-full min-w-0 p-2.5 border border-[#CBD5E1] rounded-r-lg text-sm font-semibold text-[#0A2A4A] outline-none" value={filtroData} onChange={(e) => setFiltroData(e.target.value)} />}
+                  {tipoFiltroData === 'MES' && <input type="month" className="w-full min-w-0 p-2.5 border border-[#CBD5E1] rounded-r-lg text-sm font-semibold text-[#0A2A4A] outline-none" value={filtroData} onChange={(e) => setFiltroData(e.target.value)} />}
+                  {tipoFiltroData === 'ANO' && (
+                    <select className="w-full min-w-0 p-2.5 border border-[#CBD5E1] rounded-r-lg text-sm font-semibold text-[#64748B] outline-none cursor-pointer" value={filtroData} onChange={(e) => setFiltroData(e.target.value)}>
+                      <option value="">Todos</option>
+                      {anosDisponiveis.map(ano => <option key={ano} value={ano}>{ano}</option>)}
+                    </select>
+                  )}
+                </div>
+              </div>
 
-            <div className="w-full lg:w-48">
-              <select className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#64748B]" value={filtroResponsavel} onChange={(e) => setFiltroResponsavel(e.target.value)}>
-                <option value="">👤 Solicitantes</option>
-                {responsaveisUnicos.map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
-            </div>
+              <div className="min-w-0">
+                <label className={ROTULO_FILTRO}>🏭 Empresa</label>
+                <select
+                  className={`${SELECT_FILTRO} disabled:opacity-70 disabled:cursor-not-allowed`}
+                  value={filtroEmpresa ?? ''}
+                  onChange={(e) => setFiltroEmpresa(e.target.value ? Number(e.target.value) : null)}
+                  disabled={empresasCatalogoVisivel.length <= 1}
+                >
+                  {empresasCatalogoVisivel.length !== 1 && <option value="">Todas</option>}
+                  {empresasCatalogoVisivel.map((e) => (
+                    <option key={e.id} value={e.id}>{e.nome}</option>
+                  ))}
+                </select>
+              </div>
 
-            <div className="w-full lg:w-48">
-              <select className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#64748B]" value={filtroFavorecido} onChange={(e) => setFiltroFavorecido(e.target.value)}>
-                <option value="">🏢 Favorecidos</option>
-                {favorecidosUnicos.map(f => <option key={f} value={f}>{f}</option>)}
-              </select>
-            </div>
+              <div className="min-w-0">
+                <label className={ROTULO_FILTRO}>👤 Solicitante</label>
+                <select className={SELECT_FILTRO} value={filtroResponsavel} onChange={(e) => setFiltroResponsavel(e.target.value)}>
+                  <option value="">Todos</option>
+                  {responsaveisUnicos.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
 
-            <div className="w-full lg:w-48">
-              <select className="w-full p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#64748B]" value={filtroStatus} onChange={(e) => setFiltroStatus(e.target.value)}>
-                <option value="">🏷️ Status</option>
-                {statusUnicos.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
+              <div className="min-w-0">
+                <label className={ROTULO_FILTRO}>🏢 Favorecido</label>
+                <select className={SELECT_FILTRO} value={filtroFavorecido} onChange={(e) => setFiltroFavorecido(e.target.value)}>
+                  <option value="">Todos</option>
+                  {favorecidosUnicos.map(f => <option key={f} value={f}>{f}</option>)}
+                </select>
+              </div>
 
-            <div className="w-full lg:w-auto flex items-center gap-1.5 shadow-sm rounded-lg">
-              <label className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider shrink-0">📅 Venc.</label>
-              <input type="date" title="Vencimento de" className="w-full lg:w-36 p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0A2A4A] outline-none focus:border-[#336699]" value={filtroVencimentoDe} onChange={(e) => setFiltroVencimentoDe(e.target.value)} />
-              <span className="text-[#94A3B8] text-xs">até</span>
-              <input type="date" title="Vencimento até" className="w-full lg:w-36 p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0A2A4A] outline-none focus:border-[#336699]" value={filtroVencimentoAte} onChange={(e) => setFiltroVencimentoAte(e.target.value)} />
-            </div>
+              <div className="min-w-0">
+                <label className={ROTULO_FILTRO}>🏷️ Status</label>
+                <select className={SELECT_FILTRO} value={filtroStatus} onChange={(e) => setFiltroStatus(e.target.value)}>
+                  <option value="">Todos</option>
+                  {statusUnicos.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
 
-            {temFiltroAtivo && (
-              <button onClick={limparFiltros} className="w-full lg:w-auto px-4 py-2.5 bg-red-50 text-red-500 border border-red-200 font-bold text-xs uppercase tracking-wider rounded-lg transition-colors flex-shrink-0 shadow-sm">
-                ✕ Limpar
-              </button>
-            )}
+              <div className="min-w-0 sm:col-span-2 lg:col-span-1">
+                <label className={ROTULO_FILTRO}>📆 Vencimento</label>
+                <div className="flex items-center gap-1.5">
+                  <input type="date" title="Vencimento de" className="w-full min-w-0 p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0A2A4A] outline-none focus:border-[#336699]" value={filtroVencimentoDe} onChange={(e) => setFiltroVencimentoDe(e.target.value)} />
+                  <span className="text-[#94A3B8] text-xs shrink-0">até</span>
+                  <input type="date" title="Vencimento até" className="w-full min-w-0 p-2.5 border border-[#CBD5E1] rounded-lg text-sm font-semibold text-[#0A2A4A] outline-none focus:border-[#336699]" value={filtroVencimentoAte} onChange={(e) => setFiltroVencimentoAte(e.target.value)} />
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 

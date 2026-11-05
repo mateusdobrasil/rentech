@@ -431,7 +431,7 @@ async function gerarResumoRecebimentosBytes(
       const det: { descricao: string; valor?: number }[] = [];
       const add = (descricao: string, valor: number) => { if (valor > 0) det.push({ descricao, valor }); };
       add('Salário base contratual', dados.salarioBaseExibido || 0);
-      add(`Complemento de acordo classe${dados.reducaoSazonal ? ' (redução sazonal - total 50% do contrato)' : ''}`, dados.complementoContratoExibido || 0);
+      add(`Hora extra (classe)${dados.reducaoSazonal ? ' (redução sazonal - total 50% do contrato)' : ''}`, dados.complementoContratoExibido || 0);
       add(`Hora extra ${dados.regra?.percentual_extra_semana ?? ''}% (seg a sáb)`, dados.totalExtra60 || 0);
       add(`Hora extra ${dados.regra?.percentual_extra_dom_fer ?? ''}% (dom/feriado)`, dados.totalExtra100 || 0);
       add('Diárias de fim de semana / apoio', dados.totalDiariasFdsFechada || 0);

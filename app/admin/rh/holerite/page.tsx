@@ -537,7 +537,7 @@ const HoleriteDoc = ({ nome, dados, mesRef, fechamento }: {
             </thead>
             <tbody className="font-semibold text-gray-800">
               {v.salarioBaseExibido > 0 && <tr><td className="p-1">SALÁRIO BASE CONTRATUAL{v.avosSalario < 30 ? ' (PROPORCIONAL)' : ''}</td><td className="p-1 text-center border-x border-gray-300">{v.avosSalario}</td><td className="p-1 text-right">{formatCurrency(v.salarioBaseExibido)}</td></tr>}
-              {(v.complementoContratoExibido > 0 || v.reducaoSazonal) && <tr><td className="p-1">COMPLEMENTO DE ACORDO CLASSE{v.reducaoSazonal ? ' (REDUÇÃO SAZONAL — TOTAL 50% DO CONTRATO)' : ''}</td><td className="p-1 text-center border-x border-gray-300">{v.avosSalario}</td><td className="p-1 text-right">{formatCurrency(v.complementoContratoExibido)}</td></tr>}
+              {(v.complementoContratoExibido > 0 || v.reducaoSazonal) && <tr><td className="p-1">HORA EXTRA (CLASSE){v.reducaoSazonal ? ' (REDUÇÃO SAZONAL — TOTAL 50% DO CONTRATO)' : ''}</td><td className="p-1 text-center border-x border-gray-300">{v.avosSalario}</td><td className="p-1 text-right">{formatCurrency(v.complementoContratoExibido)}</td></tr>}
 
               {v.regra.tipo_pagamento_fds === 'HORA_PERCENTUAL' ? (
                 <>

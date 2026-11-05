@@ -30,7 +30,7 @@ export interface RotinaAutomacaoDB {
   meta_template_nome: string | null;
   meta_template_idioma: string;
   meta_template_variaveis: string[];
-  publico_dinamico: 'PADRAO' | 'ANIVERSARIANTES_FUNCIONARIOS';
+  publico_dinamico: 'PADRAO' | 'ANIVERSARIANTES_FUNCIONARIOS' | 'PONTO_INCOMPLETO_ONTEM' | 'SEM_PONTO_ONTEM';
   fonte_dados: string | null; // um dos FONTES_DADOS_DISPONIVEIS, só para tipo CRON
   evento_sistema: string | null; // um dos EVENTOS_SISTEMA_DISPONIVEIS, só para tipo WEBHOOK
 }
@@ -54,7 +54,7 @@ export interface FormAutomacao {
   // 'ANIVERSARIANTES_FUNCIONARIOS' ignora `destinatarios`: o disparo recalcula
   // os destinatários a cada execução, com quem faz aniversário no dia (ver
   // dispararAutomacaoWhatsApp em app/lib/automacoes.ts).
-  publico_dinamico: 'PADRAO' | 'ANIVERSARIANTES_FUNCIONARIOS';
+  publico_dinamico: 'PADRAO' | 'ANIVERSARIANTES_FUNCIONARIOS' | 'PONTO_INCOMPLETO_ONTEM' | 'SEM_PONTO_ONTEM';
   fonte_dados: string | null;
   evento_sistema: string | null;
 }
@@ -181,6 +181,17 @@ const validarFonteDados = (tipo: FormAutomacao['tipo'], valor: string | null): s
 const validarEventoSistema = (tipo: FormAutomacao['tipo'], valor: string | null): string | null =>
   tipo === 'WEBHOOK' && EVENTOS_SISTEMA_DISPONIVEIS.some(e => e.valor === valor) ? valor : null;
 
+// Público desconhecido cairia no "todos os funcionários" do disparo — só
+// aceita os que app/lib/automacoes.ts sabe calcular. Os lembretes de ponto só
+// fazem sentido agendados (CRON), lendo o dia anterior.
+const PUBLICOS_DINAMICOS = ['PADRAO', 'ANIVERSARIANTES_FUNCIONARIOS', 'PONTO_INCOMPLETO_ONTEM', 'SEM_PONTO_ONTEM'] as const;
+const validarPublicoDinamico = (tipo: FormAutomacao['tipo'], valor: string | null): FormAutomacao['publico_dinamico'] => {
+  // Erro em vez de cair pra 'PADRAO': com destinatários vazios, PADRAO = todos os funcionários.
+  if ((valor === 'PONTO_INCOMPLETO_ONTEM' || valor === 'SEM_PONTO_ONTEM') && tipo !== 'CRON') throw new Error('Os lembretes de ponto de ontem só funcionam em automação do tipo Agendamento (Cron).');
+  if (valor && !(PUBLICOS_DINAMICOS as readonly string[]).includes(valor)) throw new Error(`Público "${valor}" desconhecido.`);
+  return (valor || 'PADRAO') as FormAutomacao['publico_dinamico'];
+};
+
 export async function criarAutomacaoAction(payload: FormAutomacao, accessToken: string): Promise<Resultado<{ chave: string }>> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
@@ -220,7 +231,7 @@ export async function criarAutomacaoAction(payload: FormAutomacao, accessToken: 
       meta_template_nome: payload.meta_template_nome?.trim() || null,
       meta_template_idioma: payload.meta_template_idioma?.trim() || 'pt_BR',
       meta_template_variaveis: parseVariaveisTemplate(payload.meta_template_variaveis),
-      publico_dinamico: payload.publico_dinamico || 'PADRAO',
+      publico_dinamico: validarPublicoDinamico(payload.tipo, payload.publico_dinamico),
       fonte_dados: validarFonteDados(payload.tipo, payload.fonte_dados),
       evento_sistema: validarEventoSistema(payload.tipo, payload.evento_sistema),
       ativo: true,
@@ -269,7 +280,7 @@ export async function atualizarAutomacaoAction(id: number, payload: FormAutomaca
       meta_template_nome: payload.meta_template_nome?.trim() || null,
       meta_template_idioma: payload.meta_template_idioma?.trim() || 'pt_BR',
       meta_template_variaveis: parseVariaveisTemplate(payload.meta_template_variaveis),
-      publico_dinamico: payload.publico_dinamico || 'PADRAO',
+      publico_dinamico: validarPublicoDinamico(payload.tipo, payload.publico_dinamico),
       fonte_dados: validarFonteDados(payload.tipo, payload.fonte_dados),
       evento_sistema: validarEventoSistema(payload.tipo, payload.evento_sistema),
     }).eq('id', id);

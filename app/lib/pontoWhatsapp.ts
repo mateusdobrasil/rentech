@@ -53,6 +53,11 @@ interface Contexto {
   data_referencia_fim?: string; // YYYY-MM-DD — fim do período, usado em FOLGAR
   horario?: string;            // HH:MM — usado em JUSTIFICAR
   motivo?: string;             // usado em ABONAR/FOLGAR, antes de gravar a solicitação
+  // 'LEMBRETE' = conversa aberta por lembrete automático (lembretePontoIncompleto.ts):
+  // JUSTIFICAR já vem com dia e batida (só falta o horário); ABONAR já vem com o
+  // dia e espera o "ABONAR" (confirmado) antes de aceitar o motivo.
+  origem?: 'LEMBRETE';
+  confirmado?: boolean;
 }
 
 export interface AnexoWhatsApp {
@@ -288,8 +293,19 @@ async function limparPendencia(db: Db, celular: string): Promise<void> {
   await db.from('folha_ponto_whatsapp_pendencias').delete().eq('celular', celular);
 }
 
-async function buscarPendenciaValida(db: Db, celular: string, agora: Date): Promise<PendenciaPonto | null> {
-  const { data } = await db.from('folha_ponto_whatsapp_pendencias').select('*').eq('celular', celular).maybeSingle();
+async function buscarPendenciaValida(db: Db, celular: string, agora: Date, funcionarioNome?: string): Promise<PendenciaPonto | null> {
+  let { data } = await db.from('folha_ponto_whatsapp_pendencias').select('*').eq('celular', celular).maybeSingle();
+  // A conversa do lembrete automático é gravada com o celular da ficha, que
+  // pode vir num formato diferente do que o webhook entrega (55, 9º dígito).
+  // Achou pelo funcionário: passa pra chave do número que está falando agora.
+  if (!data && funcionarioNome) {
+    const { data: porNome } = await db.from('folha_ponto_whatsapp_pendencias').select('*').eq('funcionario_nome', funcionarioNome).limit(1).maybeSingle();
+    if (porNome) {
+      await db.from('folha_ponto_whatsapp_pendencias').delete().eq('celular', porNome.celular);
+      await db.from('folha_ponto_whatsapp_pendencias').upsert({ ...porNome, celular });
+      data = { ...porNome, celular };
+    }
+  }
   if (!data) return null;
   if (new Date(data.expira_em).getTime() < agora.getTime()) {
     await limparPendencia(db, celular);
@@ -592,6 +608,31 @@ async function avancarJustificar(db: Db, pendencia: PendenciaPonto, texto: strin
 
   if (pendencia.etapa === 'INFORMAR_HORARIO') {
     const horario = extrairHorario(texto);
+
+    // Conversa aberta pelo lembrete automático ("não bateu a saída ontem,
+    // deseja justificar?"): dia e batida já vêm prontos e não pede motivo —
+    // só o horário. Aceita SIM/NÃO ou o horário direto. Qualquer outra coisa
+    // (ex.: "oi" pra bater o ponto de hoje) descarta o lembrete e segue o
+    // atendimento normal, pra não prender o funcionário.
+    if (contexto.origem === 'LEMBRETE') {
+      const t = texto.trim().toUpperCase();
+      const { data_referencia: dataRef, tipo_batida: tipoBatida } = contexto;
+      if (!dataRef || !tipoBatida) { await limparPendencia(db, pendencia.celular); return { mensagem: montarMenuInicial() }; }
+      const rotulo = `${ROTULO_BATIDA[tipoBatida].toLowerCase()} de ${formatarDataBR(dataRef)}`;
+      if (horario) {
+        return await criarSolicitacaoJustificativa(db, pendencia, dataRef, tipoBatida, horario, 'Batida esquecida — informada pelo lembrete automático do WhatsApp');
+      }
+      if (['SIM', 'S', 'QUERO', 'OK'].includes(t)) {
+        return { mensagem: `A que horas foi a ${rotulo}? Responda no formato HH:MM (ex: 18:00).` };
+      }
+      if (['NAO', 'NÃO', 'N', 'CANCELAR'].includes(t)) {
+        await limparPendencia(db, pendencia.celular);
+        return { mensagem: 'Ok! Se mudar de ideia, use a opção 2) Justificar batida esquecida no menu.' };
+      }
+      await salvarPendencia(db, pendencia.celular, pendencia.funcionario_nome, 'MENU_INICIAL', 'ESCOLHER_OPCAO', {}, agora);
+      return { mensagem: montarMenuInicial() };
+    }
+
     if (!horario) {
       return { mensagem: 'Não entendi o horário. Responda no formato HH:MM (ex: 08:15).' };
     }
@@ -611,42 +652,48 @@ async function avancarJustificar(db: Db, pendencia: PendenciaPonto, texto: strin
       return { mensagem: 'Ocorreu um erro no fluxo. Envie qualquer mensagem para recomeçar.' };
     }
 
-    const jaExiste = await existeSolicitacaoPendente(db, pendencia.funcionario_nome, dataReferencia, 'JUSTIFICATIVA_BATIDA', tipoBatida);
-    await limparPendencia(db, pendencia.celular);
-    if (jaExiste) {
-      return { mensagem: 'Você já tem uma solicitação pendente para esse dia/batida. Aguarde o RH analisar antes de enviar outra.' };
-    }
-
-    await db.from('folha_ponto_whatsapp_solicitacoes').insert({
-      tipo: 'JUSTIFICATIVA_BATIDA',
-      funcionario_nome: pendencia.funcionario_nome,
-      empresa_id: await empresaIdDoFuncionario(db, pendencia.funcionario_nome),
-      celular: pendencia.celular,
-      data_referencia: dataReferencia,
-      tipo_batida: tipoBatida,
-      horario_solicitado: horario,
-      motivo,
-    });
-
-    await registrarLogAuditoria({
-      usuario_nome: 'SISTEMA (WHATSAPP)',
-      acao: `SOLICITAÇÃO DE JUSTIFICATIVA: ${pendencia.funcionario_nome} — ${ROTULO_BATIDA[tipoBatida]} em ${dataReferencia}`,
-      setor: 'RECURSOS HUMANOS / PONTO WHATSAPP',
-    });
-
-    // Avisa quem tem a aba Ponto no app — falha aqui não pode derrubar a
-    // confirmação pro funcionário, por isso o try/catch isolado.
-    try {
-      await notificarPush('/mobile/ponto', 'Nova justificativa de ponto', `${pendencia.funcionario_nome} pediu justificativa de ${ROTULO_BATIDA[tipoBatida]} em ${formatarDataBR(dataReferencia)}.`, { tipo: 'ponto' });
-    } catch (e) {
-      console.error('Falha ao notificar aprovadores sobre nova justificativa:', e);
-    }
-
-    return { mensagem: `✅ Solicitação enviada ao RH: ${ROTULO_BATIDA[tipoBatida]} às ${horario} em ${formatarDataBR(dataReferencia)}. Você será avisado quando for analisada.` };
+    return await criarSolicitacaoJustificativa(db, pendencia, dataReferencia, tipoBatida, horario, motivo);
   }
 
   await limparPendencia(db, pendencia.celular);
   return { mensagem: 'Ocorreu um erro no fluxo. Envie qualquer mensagem para recomeçar.' };
+}
+
+// Fim do JUSTIFICAR (manual ou vindo do lembrete): cria a solicitação PENDENTE
+// pro RH aprovar — o funcionário nunca aprova a própria exceção.
+async function criarSolicitacaoJustificativa(db: Db, pendencia: PendenciaPonto, dataReferencia: string, tipoBatida: TipoBatida, horario: string, motivo: string): Promise<ResultadoPonto> {
+  const jaExiste = await existeSolicitacaoPendente(db, pendencia.funcionario_nome, dataReferencia, 'JUSTIFICATIVA_BATIDA', tipoBatida);
+  await limparPendencia(db, pendencia.celular);
+  if (jaExiste) {
+    return { mensagem: 'Você já tem uma solicitação pendente para esse dia/batida. Aguarde o RH analisar antes de enviar outra.' };
+  }
+
+  await db.from('folha_ponto_whatsapp_solicitacoes').insert({
+    tipo: 'JUSTIFICATIVA_BATIDA',
+    funcionario_nome: pendencia.funcionario_nome,
+    empresa_id: await empresaIdDoFuncionario(db, pendencia.funcionario_nome),
+    celular: pendencia.celular,
+    data_referencia: dataReferencia,
+    tipo_batida: tipoBatida,
+    horario_solicitado: horario,
+    motivo,
+  });
+
+  await registrarLogAuditoria({
+    usuario_nome: 'SISTEMA (WHATSAPP)',
+    acao: `SOLICITAÇÃO DE JUSTIFICATIVA: ${pendencia.funcionario_nome} — ${ROTULO_BATIDA[tipoBatida]} em ${dataReferencia}`,
+    setor: 'RECURSOS HUMANOS / PONTO WHATSAPP',
+  });
+
+  // Avisa quem tem a aba Ponto no app — falha aqui não pode derrubar a
+  // confirmação pro funcionário, por isso o try/catch isolado.
+  try {
+    await notificarPush('/mobile/ponto', 'Nova justificativa de ponto', `${pendencia.funcionario_nome} pediu justificativa de ${ROTULO_BATIDA[tipoBatida]} em ${formatarDataBR(dataReferencia)}.`, { tipo: 'ponto' });
+  } catch (e) {
+    console.error('Falha ao notificar aprovadores sobre nova justificativa:', e);
+  }
+
+  return { mensagem: `✅ Solicitação enviada ao RH: ${ROTULO_BATIDA[tipoBatida]} às ${horario} em ${formatarDataBR(dataReferencia)}. Você será avisado quando for analisada.` };
 }
 
 // Bucket privado já usado para documentos de funcionário (RH → Documentos) —
@@ -708,6 +755,24 @@ async function avancarAbonar(db: Db, pendencia: PendenciaPonto, texto: string, a
   }
 
   if (pendencia.etapa === 'INFORMAR_MOTIVO') {
+    // Conversa aberta pelo lembrete "não registrou ponto ontem": até o
+    // funcionário responder ABONAR, nada que ele escreva vira motivo (um "oi"
+    // pra bater o ponto de hoje não pode virar pedido de abono). Outra
+    // resposta descarta o lembrete e segue o atendimento normal.
+    if (contexto.origem === 'LEMBRETE' && !contexto.confirmado) {
+      const t = texto.trim().toUpperCase();
+      if (['ABONAR', 'SIM', 'S', 'QUERO'].includes(t)) {
+        await salvarPendencia(db, pendencia.celular, pendencia.funcionario_nome, 'ABONAR', 'INFORMAR_MOTIVO', { ...contexto, confirmado: true }, agora);
+        return { mensagem: `Qual o motivo da ausência em ${formatarDataBR(contexto.data_referencia || '')}? (ex: atestado médico, falta justificada)` };
+      }
+      if (['NAO', 'NÃO', 'N', 'CANCELAR'].includes(t)) {
+        await limparPendencia(db, pendencia.celular);
+        return { mensagem: 'Ok! Se precisar, use a opção 3) Abonar o dia no menu.' };
+      }
+      await salvarPendencia(db, pendencia.celular, pendencia.funcionario_nome, 'MENU_INICIAL', 'ESCOLHER_OPCAO', {}, agora);
+      return { mensagem: montarMenuInicial() };
+    }
+
     const motivo = texto.trim();
     if (!motivo) {
       return { mensagem: 'Preciso de um motivo, mesmo que curto. Pode escrever?' };
@@ -917,7 +982,7 @@ export async function processarMensagemPontoWhatsApp(payload: {
   }
 
   const agora = new Date();
-  const pendencia = await buscarPendenciaValida(db, payload.telefone, agora);
+  const pendencia = await buscarPendenciaValida(db, payload.telefone, agora, funcionario.nome_completo);
 
   if (pendencia) {
     if (texto.toUpperCase() === 'CANCELAR' && (pendencia.fluxo === 'JUSTIFICAR' || pendencia.fluxo === 'ABONAR' || pendencia.fluxo === 'FOLGAR')) {

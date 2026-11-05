@@ -249,7 +249,8 @@ export default function GestaoAgendamentos() {
 
   const salvarAutomacao = async () => {
     if (!modalAutomacao) return;
-    const modoAniversariantes = modalAutomacao.form.publico_dinamico === 'ANIVERSARIANTES_FUNCIONARIOS';
+    // Público dinâmico (aniversariantes, ponto incompleto) calcula os destinatários sozinho
+    const modoAniversariantes = modalAutomacao.form.publico_dinamico !== 'PADRAO';
     if (!modoAniversariantes && !modalAutomacao.modoTodos && modalAutomacao.form.destinatarios.length === 0) {
       toast('Selecione ao menos um funcionário, ou marque "Todos os funcionários ativos".', 'error');
       return;
@@ -746,11 +747,63 @@ export default function GestaoAgendamentos() {
                     />
                     🎂 Aniversariantes do dia (funcionários)
                   </label>
+                  {modalAutomacao.form.tipo === 'CRON' && (
+                    <label className="flex items-center gap-2 text-xs font-bold text-[#0A2A4A] cursor-pointer">
+                      <input
+                        type="radio"
+                        name="modoDestinatarios"
+                        checked={modalAutomacao.form.publico_dinamico === 'PONTO_INCOMPLETO_ONTEM'}
+                        onChange={() => setModalAutomacao({
+                          ...modalAutomacao,
+                          modoTodos: true,
+                          form: {
+                            ...modalAutomacao.form,
+                            publico_dinamico: 'PONTO_INCOMPLETO_ONTEM',
+                            destinatarios: [],
+                            canais: modalAutomacao.form.canais.includes('WhatsApp') ? modalAutomacao.form.canais : [...modalAutomacao.form.canais, 'WhatsApp'],
+                            mensagem: modalAutomacao.form.mensagem || 'Olá, {{primeiro_nome}}! Vimos que você não bateu o ponto de {{batida}} ontem ({{data}}). Deseja justificar agora? Responda SIM e informe o horário, ou já mande o horário direto (ex: 18:00). Se não quiser, responda NÃO.',
+                          }
+                        })}
+                      />
+                      ⏰ Ponto incompleto ontem (só entrada ou só saída)
+                    </label>
+                  )}
+                  {modalAutomacao.form.tipo === 'CRON' && (
+                    <label className="flex items-center gap-2 text-xs font-bold text-[#0A2A4A] cursor-pointer">
+                      <input
+                        type="radio"
+                        name="modoDestinatarios"
+                        checked={modalAutomacao.form.publico_dinamico === 'SEM_PONTO_ONTEM'}
+                        onChange={() => setModalAutomacao({
+                          ...modalAutomacao,
+                          modoTodos: true,
+                          form: {
+                            ...modalAutomacao.form,
+                            publico_dinamico: 'SEM_PONTO_ONTEM',
+                            destinatarios: [],
+                            canais: modalAutomacao.form.canais.includes('WhatsApp') ? modalAutomacao.form.canais : [...modalAutomacao.form.canais, 'WhatsApp'],
+                            mensagem: modalAutomacao.form.mensagem || 'Olá, {{primeiro_nome}}! Vimos que você não registrou ponto ontem ({{data}}). Foi falta justificada ou atestado? Responda ABONAR para justificar e enviar o atestado, ou NÃO.',
+                          }
+                        })}
+                      />
+                      🩺 Não bateu ponto ontem (oferece abonar)
+                    </label>
+                  )}
                 </div>
 
                 {modalAutomacao.form.publico_dinamico === 'ANIVERSARIANTES_FUNCIONARIOS' && (
                   <p className="text-[10px] text-[#64748B] bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-2 mb-1">
                     Recalculado a cada execução: dispara só para quem faz aniversário no dia, com base na Data de Nascimento cadastrada em RH → Funcionários. Configure o horário/dias abaixo cobrindo todos os 7 dias da semana, já que aniversário não respeita dia útil.
+                  </p>
+                )}
+                {modalAutomacao.form.publico_dinamico === 'SEM_PONTO_ONTEM' && (
+                  <p className="text-[10px] text-[#64748B] bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-2 mb-1">
+                    Recalculado a cada execução: dispara pra quem usa o ponto via WhatsApp, tem <strong>contrato que desconta falta</strong> e não registrou nenhuma batida ontem num dia em que deveria trabalhar — dia útil (fora feriado da empresa dele) ou, pra quem aparece na Escala de Trabalho nos últimos 30 dias, só se estava escalado ontem. Ficam de fora férias, afastamento, abono e quem já tem pedido pendente. Variável: <strong>{'{{data}}'}</strong>. Respondendo ABONAR, o bot pede o motivo e o atestado e cria um abono <strong>pendente pro RH aprovar</strong>. Só WhatsApp.
+                  </p>
+                )}
+                {modalAutomacao.form.publico_dinamico === 'PONTO_INCOMPLETO_ONTEM' && (
+                  <p className="text-[10px] text-[#64748B] bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-2 mb-1">
+                    Recalculado a cada execução: dispara só para quem usa o ponto via WhatsApp e ontem bateu só a entrada ou só a saída (sem justificativa pendente nem abono). Variáveis: <strong>{'{{batida}}'}</strong> (entrada/saída) e <strong>{'{{data}}'}</strong> (dd/mm/aaaa). A resposta cai direto no bot: o funcionário manda só o horário e vira uma justificativa <strong>pendente pro RH aprovar</strong>, já com a data de ontem. Quem estiver no meio de outra conversa com o bot na hora do disparo fica de fora daquele dia. Só WhatsApp.
                   </p>
                 )}
 

@@ -8,6 +8,7 @@ import { supabaseAdmin } from './supabase';
 import { resolverProvedorAutomacao, enviarComJanela, type ProvedorAutomacao, type TemplateMeta } from './whatsapp';
 import { carregarNomesEmpresas, nomeEmpresaPara } from './empresa';
 import { registrarLogAuditoria } from '../actions';
+import { listarPontoIncompletoOntem, listarSemPontoOntem, conversaAtivaComBot, gravarConversaLembrete, type DestinatarioLembretePonto } from './lembretePontoIncompleto';
 
 interface ResultadoDisparoAutomacao {
   disparado: boolean; // false se a automação está desativada, sem canal WhatsApp ou sem mensagem configurada
@@ -59,6 +60,10 @@ interface Destinatario {
   nome_completo: string;
   celular: string;
   empresa_id: number | null;
+  // Variáveis só deste destinatário (público dinâmico que calcula algo por pessoa)
+  vars?: Record<string, string>;
+  // Público PONTO_INCOMPLETO_ONTEM: dados pra gravar a conversa depois do envio
+  lembretePonto?: DestinatarioLembretePonto;
 }
 
 interface LinhaAutomacaoWhatsApp {
@@ -92,6 +97,13 @@ async function executarDisparoWhatsApp(db: ReturnType<typeof supabaseAdmin>, aut
   if (automacao.publico_dinamico === 'ANIVERSARIANTES_FUNCIONARIOS') {
     // Destinatários calculados a cada execução — `destinatarios` não se aplica aqui.
     funcionarios = await listarAniversariantesFuncionarios(db, automacao.empresa_id);
+  } else if (automacao.publico_dinamico === 'PONTO_INCOMPLETO_ONTEM' || automacao.publico_dinamico === 'SEM_PONTO_ONTEM') {
+    // Lembretes de ponto de ontem (ver lembretePontoIncompleto.ts): só entrada
+    // ou só saída → justificar; nenhuma batida num dia de trabalho → abonar.
+    const lista = automacao.publico_dinamico === 'PONTO_INCOMPLETO_ONTEM'
+      ? await listarPontoIncompletoOntem(db, automacao.empresa_id)
+      : await listarSemPontoOntem(db, automacao.empresa_id);
+    funcionarios = lista.map(d => ({ nome_completo: d.nome_completo, celular: d.celular, empresa_id: d.empresa_id, vars: d.vars, lembretePonto: d }));
   } else {
     const destinatarios: string[] = automacao.destinatarios || [];
     let query = db
@@ -127,11 +139,19 @@ async function executarDisparoWhatsApp(db: ReturnType<typeof supabaseAdmin>, aut
   let disparos = 0;
   const erros: string[] = [];
   for (const f of funcionarios) {
+    // Lembrete de ponto: quem está no meio de outra conversa com o bot fica
+    // pra depois — gravar a conversa do lembrete atropelaria a dele.
+    if (f.lembretePonto && await conversaAtivaComBot(db, f.celular, f.nome_completo)) {
+      erros.push(`${f.nome_completo} (em outra conversa com o bot)`);
+      continue;
+    }
+
     const vars: Record<string, string | number> = {
       primeiro_nome: f.nome_completo.split(' ')[0],
       nome_completo: f.nome_completo,
       empresa: nomeEmpresaPara(empresas, f.empresa_id, automacao.empresa_id),
       ...contexto,
+      ...(f.vars || {}),
     };
     const texto = preencherTemplate(automacao.mensagem, vars);
 
@@ -145,6 +165,11 @@ async function executarDisparoWhatsApp(db: ReturnType<typeof supabaseAdmin>, aut
 
     const res = await enviarComJanela(provedor, f.celular, texto, templateMeta);
     if (res.ok) disparos++; else erros.push(f.nome_completo);
+    if (res.ok && f.lembretePonto) {
+      // A resposta dele ("sim", horário) precisa achar a conversa pronta
+      try { await gravarConversaLembrete(db, f.lembretePonto); }
+      catch (e: any) { erros.push(`${f.nome_completo} (enviado, mas a conversa não foi gravada: ${e.message})`); }
+    }
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
 
@@ -234,8 +259,10 @@ async function executarDisparoEmail(db: ReturnType<typeof supabaseAdmin>, automa
   if (!automacao.mensagem) {
     return { disparado: false, disparos: 0, erros: ['Automação sem mensagem configurada.'] };
   }
-  if (automacao.publico_dinamico === 'ANIVERSARIANTES_FUNCIONARIOS') {
-    return { disparado: false, disparos: 0, erros: ['Público "Aniversariantes" ainda não é suportado no canal E-mail.'] };
+  // Público dinâmico (aniversariantes, ponto incompleto) não existe no e-mail —
+  // sem esta trava, um público novo cairia no "todos os funcionários" abaixo.
+  if (automacao.publico_dinamico && automacao.publico_dinamico !== 'PADRAO') {
+    return { disparado: false, disparos: 0, erros: [`Público dinâmico "${automacao.publico_dinamico}" ainda não é suportado no canal E-mail.`] };
   }
 
   const destinatarios: string[] = automacao.destinatarios || [];

@@ -160,6 +160,9 @@ interface RegraContrato {
   // pago de hora extra / diária de fim de semana, não substitui.
   paga_dias_excedentes: boolean;
   dias_base_mes: number | null;
+  // Redução sazonal: contrato permite meio salário (base + complemento) nos dois
+  // meses escolhidos na ficha (reducao_sazonal_* em folha_funcionarios).
+  permite_reducao_sazonal: boolean;
 }
 
 interface FuncionarioFin {
@@ -172,6 +175,11 @@ interface FuncionarioFin {
   // paga_dias_excedentes). Campo próprio: não confundir com
   // valor_premio_diaria_viagem nem com o valor_diaria antigo da ficha.
   diaria_extra: number;
+  // Redução sazonal (só vale se o contrato permite): metade do salário base +
+  // complemento nos meses 1–12 escolhidos, todo ano.
+  reducao_sazonal_ativa: boolean | null;
+  reducao_sazonal_mes1: number | null;
+  reducao_sazonal_mes2: number | null;
   data_admissao: string | null; data_desligamento: string | null;
   data_nascimento: string | null; cpf: string | null; celular: string | null; email: string | null;
   banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null;
@@ -190,6 +198,8 @@ interface DadosHolerite {
   diasTrabalhados: number; diasExcedentes: number; valorDiariaExcedente: number; totalDiariasExcedentes: number;
   diasFaltas: number; valorDescontoFaltas: number;
   salarioBaseExibido: number; complementoContratoExibido: number; avosSalario: number;
+  // true = mês de redução sazonal: base e complemento acima já estão pela metade
+  reducaoSazonal?: boolean;
   bonusAtivos: Bonus[]; descontosAtivos: Desconto[];
   valorAdiantamento: number;
   qtdVr: number; qtdVt: number; diariaVr: number; diariaVt: number;
@@ -233,7 +243,8 @@ const REGRA_PADRAO: RegraContrato = {
   valor_diaria_fds: 0, desconta_faltas: true,
   direito_vr: false, direito_vt: false, modalidade_beneficio: 'POR_DIA', so_documental: false,
   recebe_holerite_contabilidade: true,
-  paga_dias_excedentes: false, dias_base_mes: null
+  paga_dias_excedentes: false, dias_base_mes: null,
+  permite_reducao_sazonal: false
 };
 
 // ============================================================================
@@ -392,8 +403,23 @@ const montarDadosHolerite = (
   const avosSalario = trabalhouMesInteiro ? 30 : Math.min(30, diasCorridosTrab);
   const fatorProporcional = avosSalario / 30;
 
+  // REDUÇÃO SAZONAL — meses sem serviço (acordo da Rentech): quem tem a opção
+  // ligada na ficha, num contrato que permite, recebe metade do salário de
+  // contrato nos dois meses escolhidos, todo ano. O salário base (o do holerite
+  // da contabilidade) fica INTACTO e a diferença sai do complemento — ex.
+  // Gilmasio: contrato 6.000 → base 2.236,60 + complemento 763,40 = 3.000. Se a
+  // base sozinha já passar da metade, o complemento zera (base não é reduzida).
+  // Hora extra, diárias, bônus e VR/VT seguem cheios; faltas e adiantamento não
+  // mudam (decisão do RH, 2026-11-05). Mesma regra em calcularFinanceiro
+  // (relatorios/page.tsx).
+  const reducaoSazonal = !!regra.permite_reducao_sazonal && !!func.reducao_sazonal_ativa &&
+    [func.reducao_sazonal_mes1, func.reducao_sazonal_mes2].includes(mesRefNum);
+
   const salarioBaseExibido = regra.paga_salario_base ? func.salario_folha * fatorProporcional : 0;
-  const complementoContratoExibido = regra.paga_salario_base ? Math.max(0, func.salario_contrato - func.salario_folha) * fatorProporcional : 0;
+  const complementoContratoExibido = !regra.paga_salario_base ? 0
+    : reducaoSazonal
+      ? Math.max(0, func.salario_contrato * fatorProporcional * 0.5 - salarioBaseExibido)
+      : Math.max(0, func.salario_contrato - func.salario_folha) * fatorProporcional;
 
   const descontosAtivos = descontosFunc.filter(d => {
     if (mesRef < d.mes_inicio) return false;
@@ -443,7 +469,7 @@ const montarDadosHolerite = (
     totalExtra60, totalExtra100, totalDiariasFdsFechada,
     diasTrabalhados: apuracao.diasTrabalhados, diasExcedentes, valorDiariaExcedente, totalDiariasExcedentes,
     diasFaltas, valorDescontoFaltas,
-    salarioBaseExibido, complementoContratoExibido, avosSalario,
+    salarioBaseExibido, complementoContratoExibido, avosSalario, reducaoSazonal,
     bonusAtivos, descontosAtivos,
     valorAdiantamento: func.valor_adiantamento,
     qtdVr, qtdVt, diariaVr, diariaVt, totalVr, totalVt, modalidade,
@@ -511,7 +537,7 @@ const HoleriteDoc = ({ nome, dados, mesRef, fechamento }: {
             </thead>
             <tbody className="font-semibold text-gray-800">
               {v.salarioBaseExibido > 0 && <tr><td className="p-1">SALÁRIO BASE CONTRATUAL{v.avosSalario < 30 ? ' (PROPORCIONAL)' : ''}</td><td className="p-1 text-center border-x border-gray-300">{v.avosSalario}</td><td className="p-1 text-right">{formatCurrency(v.salarioBaseExibido)}</td></tr>}
-              {v.complementoContratoExibido > 0 && <tr><td className="p-1">COMPLEMENTO DE ACORDO CLASSE</td><td className="p-1 text-center border-x border-gray-300">{v.avosSalario}</td><td className="p-1 text-right">{formatCurrency(v.complementoContratoExibido)}</td></tr>}
+              {(v.complementoContratoExibido > 0 || v.reducaoSazonal) && <tr><td className="p-1">COMPLEMENTO DE ACORDO CLASSE{v.reducaoSazonal ? ' (REDUÇÃO SAZONAL — TOTAL 50% DO CONTRATO)' : ''}</td><td className="p-1 text-center border-x border-gray-300">{v.avosSalario}</td><td className="p-1 text-right">{formatCurrency(v.complementoContratoExibido)}</td></tr>}
 
               {v.regra.tipo_pagamento_fds === 'HORA_PERCENTUAL' ? (
                 <>
@@ -650,10 +676,14 @@ const buscarBeneficiosVrVt = async (): Promise<Record<string, { vr: number; vt: 
   return mapa;
 };
 
+const MESES_DO_ANO = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+
 const extrairDadosSalariais = (f: FuncionarioFin | null) => f ? {
   salario_folha: f.salario_folha, salario_contrato: f.salario_contrato,
   valor_adiantamento: f.valor_adiantamento, valor_premio_diaria_viagem: f.valor_premio_diaria_viagem,
-  diaria_extra: f.diaria_extra
+  diaria_extra: f.diaria_extra,
+  reducao_sazonal_ativa: !!f.reducao_sazonal_ativa,
+  reducao_sazonal_mes1: f.reducao_sazonal_mes1 ?? null, reducao_sazonal_mes2: f.reducao_sazonal_mes2 ?? null
 } : null;
 
 export default function HoleritePage() {
@@ -823,7 +853,8 @@ export default function HoleritePage() {
           so_documental: r.so_documental ?? false,
           recebe_holerite_contabilidade: r.recebe_holerite_contabilidade ?? true,
           paga_dias_excedentes: r.paga_dias_excedentes ?? false,
-          dias_base_mes: r.dias_base_mes ?? null
+          dias_base_mes: r.dias_base_mes ?? null,
+          permite_reducao_sazonal: r.permite_reducao_sazonal ?? false
         };
       });
       setRegrasContrato(mapaRegras);
@@ -923,6 +954,11 @@ export default function HoleritePage() {
 
   const salvarBonusDescontos = async (): Promise<boolean> => {
     if (!funcionarioSelecionado || !formSelecionado) return false;
+    if (regrasContrato[formSelecionado.tipo_contrato]?.permite_reducao_sazonal && formSelecionado.reducao_sazonal_ativa) {
+      const { reducao_sazonal_mes1: m1, reducao_sazonal_mes2: m2 } = formSelecionado;
+      if (!m1 || !m2) { toast('Redução sazonal: escolha os dois meses.', 'error'); return false; }
+      if (m1 === m2) { toast('Redução sazonal: escolha dois meses diferentes.', 'error'); return false; }
+    }
     setLoading(true);
     try {
       const res = await salvarBonusDescontosAction({
@@ -940,6 +976,12 @@ export default function HoleritePage() {
         valor_adiantamento: formSelecionado.valor_adiantamento,
         valor_premio_diaria_viagem: formSelecionado.valor_premio_diaria_viagem,
         diaria_extra: formSelecionado.diaria_extra,
+        // Só vai pro banco se o contrato permite — senão a action mantém como está
+        ...(regrasContrato[formSelecionado.tipo_contrato]?.permite_reducao_sazonal ? {
+          reducao_sazonal_ativa: !!formSelecionado.reducao_sazonal_ativa,
+          reducao_sazonal_mes1: formSelecionado.reducao_sazonal_mes1 ?? null,
+          reducao_sazonal_mes2: formSelecionado.reducao_sazonal_mes2 ?? null,
+        } : {}),
         usuarioNome: usuarioAtual
       }, accessToken);
       if (!resSalarial.ok) throw new Error(resSalarial.erro);
@@ -1631,6 +1673,36 @@ export default function HoleritePage() {
                       </div>
                     )}
                     <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Adiantamento (Dia 20)</label><InputMoeda value={formSelecionado.valor_adiantamento} onChange={v => setFormSelecionado({...formSelecionado, valor_adiantamento: v})} className="w-full p-2 border border-gray-300 rounded text-sm font-bold text-red-600" /></div>
+                    {regraAtiva?.permite_reducao_sazonal && (
+                      <div className={`col-span-2 p-3 rounded-lg border-2 ${formSelecionado.reducao_sazonal_ativa ? 'border-amber-300 bg-amber-50' : 'border-gray-200 bg-gray-50'}`}>
+                        <label className="flex items-center gap-2 text-[11px] font-black text-[#0C1D4D] uppercase cursor-pointer">
+                          <input type="checkbox" checked={!!formSelecionado.reducao_sazonal_ativa}
+                            onChange={e => setFormSelecionado({ ...formSelecionado, reducao_sazonal_ativa: e.target.checked })}
+                            className="w-4 h-4 accent-amber-600" />
+                          Redução sazonal — recebe metade do salário nos meses sem serviço
+                        </label>
+                        {formSelecionado.reducao_sazonal_ativa && (
+                          <>
+                            <div className="grid grid-cols-2 gap-3 mt-3">
+                              {(['reducao_sazonal_mes1', 'reducao_sazonal_mes2'] as const).map((campo, i) => (
+                                <div key={campo}>
+                                  <label className="block text-[10px] font-bold text-amber-800 uppercase mb-1">{i + 1}º mês</label>
+                                  <select value={formSelecionado[campo] ?? ''}
+                                    onChange={e => setFormSelecionado({ ...formSelecionado, [campo]: e.target.value ? Number(e.target.value) : null })}
+                                    className="w-full p-2 border border-amber-300 rounded text-sm font-bold text-amber-800 bg-white">
+                                    <option value="">— Escolha —</option>
+                                    {MESES_DO_ANO.map((nome, idx) => <option key={idx + 1} value={idx + 1}>{nome}</option>)}
+                                  </select>
+                                </div>
+                              ))}
+                            </div>
+                            <p className="text-[9px] font-bold text-amber-700 mt-2 uppercase">
+                              Todo ano, nesses meses: recebe metade do salário de contrato{formSelecionado.salario_contrato > 0 ? ` (${formatCurrency(formSelecionado.salario_contrato / 2)})` : ''}. O salário base fica igual e a diferença sai do complemento. Hora extra, diárias e bônus seguem normais; faltas e adiantamento não mudam.
+                            </p>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 

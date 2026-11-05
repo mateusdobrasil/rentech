@@ -28,6 +28,9 @@ export interface DadosHoleritePdf {
   diasExcedentes?: number; valorDiariaExcedente?: number; totalDiariasExcedentes?: number;
   diasFaltas: number; valorDescontoFaltas: number;
   salarioBaseExibido: number; complementoContratoExibido: number; avosSalario?: number;
+  // Mês de redução sazonal (base e complemento já vêm pela metade). Opcional:
+  // snapshots fechados antes da regra não têm o campo.
+  reducaoSazonal?: boolean;
   bonusAtivos: { descricao: string; recorrencia: string; valor: number }[];
   descontosAtivos: { descricao: string; tipo: string; parcelas: number; mes_inicio: string; valor_parcela: number }[];
   valorAdiantamento: number;
@@ -153,8 +156,10 @@ export async function gerarHoleritePdf(p: GerarPdfParams): Promise<Uint8Array> {
   };
 
   const creditos: [string, string, number][] = [];
+  // Redução sazonal: base intacta, complemento fecha 50% do contrato (pode zerar,
+  // mas a linha aparece pra deixar claro). Coluna comporta ~30 caracteres.
   if (v.salarioBaseExibido > 0) creditos.push(['SALÁRIO BASE CONTRATUAL', String(v.avosSalario ?? 30), v.salarioBaseExibido]);
-  if (v.complementoContratoExibido > 0) creditos.push(['COMPLEMENTO DE ACORDO CLASSE', String(v.avosSalario ?? 30), v.complementoContratoExibido]);
+  if (v.complementoContratoExibido > 0 || v.reducaoSazonal) creditos.push([v.reducaoSazonal ? 'COMPLEMENTO - REDUÇÃO SAZONAL' : 'COMPLEMENTO DE ACORDO CLASSE', String(v.avosSalario ?? 30), v.complementoContratoExibido]);
   if (v.regra.tipo_pagamento_fds === 'HORA_PERCENTUAL') {
     if (v.totalExtra60 > 0) creditos.push([`HORA EXTRA ${v.regra.percentual_extra_semana}% (SEG A SÁB)`, hhmm(v.minutosExtras60), v.totalExtra60]);
     if (v.totalExtra100 > 0) creditos.push([`HORA EXTRA ${v.regra.percentual_extra_dom_fer}% (DOM/FERIADO)`, hhmm(v.minutosExtras100), v.totalExtra100]);

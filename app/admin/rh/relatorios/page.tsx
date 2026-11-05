@@ -57,6 +57,8 @@ interface RegraContrato {
   // Diária por dia excedente — mesma regra do holerite (ver montarDadosHolerite
   // em app/admin/rh/holerite/page.tsx).
   paga_dias_excedentes?: boolean; dias_base_mes?: number | null;
+  // Redução sazonal — mesma regra do holerite (meio salário nos meses da ficha).
+  permite_reducao_sazonal?: boolean;
 }
 interface FuncionarioFin {
   nome_completo: string; cargo: string; tipo_contrato: string; ativo: boolean;
@@ -65,6 +67,7 @@ interface FuncionarioFin {
   salario_folha: number; salario_contrato: number; valor_diaria: number; valor_adiantamento: number;
   // Diária por dia excedente — ver montarDadosHolerite no holerite.
   diaria_extra?: number;
+  reducao_sazonal_ativa?: boolean | null; reducao_sazonal_mes1?: number | null; reducao_sazonal_mes2?: number | null;
   // Empresa do funcionário: define quais feriados municipais valem para ele.
   empresa_id?: number | null;
 }
@@ -169,8 +172,17 @@ const calcularFinanceiro = (
     }
   }
 
+  // Redução sazonal: nos meses da ficha recebe metade do salário de contrato —
+  // base intacta, a diferença sai do complemento (ver montarDadosHolerite em
+  // app/admin/rh/holerite/page.tsx).
+  const mesNum = Number(mesRef.slice(5, 7));
+  const reducaoSazonal = !!regra.permite_reducao_sazonal && !!func.reducao_sazonal_ativa &&
+    [func.reducao_sazonal_mes1, func.reducao_sazonal_mes2].includes(mesNum);
   const salarioBaseExibido = regra.paga_salario_base ? func.salario_folha : 0;
-  const complemento = regra.paga_salario_base ? Math.max(0, func.salario_contrato - func.salario_folha) : 0;
+  const complemento = !regra.paga_salario_base ? 0
+    : reducaoSazonal
+      ? Math.max(0, func.salario_contrato * 0.5 - salarioBaseExibido)
+      : Math.max(0, func.salario_contrato - func.salario_folha);
 
   const descAtivos = descontosFunc.filter(d => d.tipo === 'FIXO'
     ? (mesRef >= d.mes_inicio && (!d.mes_fim || d.mes_fim === '2099-12' || mesRef <= d.mes_fim))
@@ -451,7 +463,8 @@ export default function RelatoriosRH() {
           tipo_pagamento_fds: r.tipo_pagamento_fds === 'HORA_100' ? 'HORA_PERCENTUAL' : (r.tipo_pagamento_fds || 'HORA_PERCENTUAL'),
           percentual_extra_dom_fer: r.percentual_extra_dom_fer ?? 100, valor_diaria_fds: r.valor_diaria_fds ?? 0, desconta_faltas: r.desconta_faltas,
           direito_vr: r.direito_vr ?? false, direito_vt: r.direito_vt ?? false, modalidade_beneficio: r.modalidade_beneficio || 'POR_DIA',
-          paga_dias_excedentes: r.paga_dias_excedentes ?? false, dias_base_mes: r.dias_base_mes ?? null
+          paga_dias_excedentes: r.paga_dias_excedentes ?? false, dias_base_mes: r.dias_base_mes ?? null,
+          permite_reducao_sazonal: r.permite_reducao_sazonal ?? false
         };
       });
 

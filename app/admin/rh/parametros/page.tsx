@@ -37,6 +37,10 @@ interface RegraRH {
   // diária, no valor da ficha do funcionário (folha_funcionarios.diaria_extra).
   paga_dias_excedentes: boolean;
   dias_base_mes: number | null;
+  // Redução sazonal: contrato permite meio salário (base + complemento) em dois
+  // meses do ano escolhidos na ficha de cada funcionário (aba Bônus e Descontos
+  // do Holerite). Desligado aqui, a opção nem aparece na ficha.
+  permite_reducao_sazonal: boolean;
 }
 
 interface ItemCatalogo { id: number; nome: string; recebe_fechamento?: boolean | null; recebe_holerite?: boolean | null; }
@@ -94,7 +98,8 @@ export default function ParametrosRH() {
     recebe_fechamento: true,
     recebe_holerite: true,
     paga_dias_excedentes: false,
-    dias_base_mes: null
+    dias_base_mes: null,
+    permite_reducao_sazonal: false
   };
   
   const [form, setForm] = useState<RegraRH>(formPadrao);
@@ -308,7 +313,8 @@ export default function ParametrosRH() {
         recebe_fechamento: r.recebe_fechamento ?? true,
         recebe_holerite: r.recebe_holerite ?? true,
         paga_dias_excedentes: r.paga_dias_excedentes ?? false,
-        dias_base_mes: r.dias_base_mes ?? null
+        dias_base_mes: r.dias_base_mes ?? null,
+        permite_reducao_sazonal: r.permite_reducao_sazonal ?? false
       })));
     }
     setLoading(false);
@@ -814,6 +820,21 @@ export default function ParametrosRH() {
                   Ex.: base de 26 dias — quem trabalhar 29 recebe 3 diárias
                 </p>
               )}
+            </div>
+
+            {/* REDUÇÃO SAZONAL — meio salário em dois meses do ano, por funcionário */}
+            <div className={`border-2 p-5 rounded-xl ${form.permite_reducao_sazonal ? 'border-amber-300 bg-amber-50/50' : 'border-gray-200'}`}>
+              <label className="flex items-center gap-3 font-black text-sm text-[#0C1D4D] cursor-pointer uppercase tracking-wider">
+                <input type="checkbox" checked={form.permite_reducao_sazonal}
+                  onChange={e => setForm({ ...form, permite_reducao_sazonal: e.target.checked })}
+                  className="w-4 h-4 flex-shrink-0 accent-amber-600" />
+                Permite redução sazonal (meio salário)?
+              </label>
+              <p className={`text-[9px] font-bold mt-1 uppercase pl-7 ${form.permite_reducao_sazonal ? 'text-amber-700' : 'text-gray-400'}`}>
+                {form.permite_reducao_sazonal
+                  ? '💡 Libera, na ficha do funcionário (Holerite → Bônus e Descontos), a opção de receber metade do salário base + complemento em dois meses do ano. Extras, diárias e bônus seguem normais.'
+                  : 'Para meses sem serviço (ex.: janeiro e fevereiro) — o RH escolhe quem e quais meses na ficha'}
+              </p>
             </div>
 
             {/* BENEFÍCIOS VR / VT */}

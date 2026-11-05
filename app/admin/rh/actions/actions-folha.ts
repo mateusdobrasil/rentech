@@ -227,6 +227,12 @@ export async function salvarDadosSalariaisAction(payload: {
   // Diária paga por dia trabalhado acima da base do contrato (regra
   // paga_dias_excedentes em folha_parametros).
   diaria_extra: number;
+  // Redução sazonal (meio salário em dois meses do ano). Só vem quando o
+  // contrato do funcionário permite (folha_parametros.permite_reducao_sazonal);
+  // ausente = não mexe nas colunas.
+  reducao_sazonal_ativa?: boolean;
+  reducao_sazonal_mes1?: number | null;
+  reducao_sazonal_mes2?: number | null;
   usuarioNome: string;
 }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcessoQualquerRota(accessToken);
@@ -236,6 +242,15 @@ export async function salvarDadosSalariaisAction(payload: {
   const { funcionarioNome, salario_folha, salario_contrato, valor_adiantamento, valor_premio_diaria_viagem, diaria_extra, usuarioNome } = payload;
 
   if (!funcionarioNome) return { ok: false, erro: 'Funcionário não informado.' };
+
+  const mesValido = (m: unknown) => (Number.isInteger(m) && (m as number) >= 1 && (m as number) <= 12) ? (m as number) : null;
+  const reducao: Record<string, any> = {};
+  if (payload.reducao_sazonal_ativa !== undefined) {
+    const ativa = !!payload.reducao_sazonal_ativa;
+    const m1 = mesValido(payload.reducao_sazonal_mes1), m2 = mesValido(payload.reducao_sazonal_mes2);
+    if (ativa && (!m1 || !m2 || m1 === m2)) return { ok: false, erro: 'Redução sazonal: escolha dois meses diferentes.' };
+    Object.assign(reducao, { reducao_sazonal_ativa: ativa, reducao_sazonal_mes1: m1, reducao_sazonal_mes2: m2 });
+  }
 
   const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
   const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
@@ -251,7 +266,8 @@ export async function salvarDadosSalariaisAction(payload: {
         salario_contrato: Number(salario_contrato) || 0,
         valor_adiantamento: Number(valor_adiantamento) || 0,
         valor_premio_diaria_viagem: Number(valor_premio_diaria_viagem) || 0,
-        diaria_extra: Number(diaria_extra) || 0
+        diaria_extra: Number(diaria_extra) || 0,
+        ...reducao
       })
       .eq('nome_completo', funcionarioNome);
     if (error) throw new Error(`Falha ao gravar os dados salariais: ${error.message}`);

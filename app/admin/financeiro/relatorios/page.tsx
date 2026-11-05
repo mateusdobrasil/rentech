@@ -8,6 +8,7 @@ import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { supabase } from '../../../lib/supabase';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import RelatorioLote from './RelatorioLote';
 
 // ============================================================================
 // FORMATADORES
@@ -44,7 +45,7 @@ interface RelatorioInfo {
     qtd: number; valor: number;
     statusBreakdown: { status: string; valor: number; qtd: number }[];
     trend: { mes: string; valor: number }[];
-    recentes: { nome: string; mes: string; valor: number; qtd: number; status: string; criadoEm: string }[];
+    recentes: { id: number; nome: string; mes: string; valor: number; qtd: number; status: string; criadoEm: string }[];
   };
   consignado: {
     qtdAtivos: number; valorMensalTotal: number;
@@ -171,6 +172,10 @@ export default function RelatoriosFinanceiroPage() {
   const [dados, setDados] = useState<RelatorioInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
+  // Aba: visão geral do mês ou relatório de um lote específico
+  const [aba, setAba] = useState<'GERAL' | 'LOTE'>('GERAL');
+  const [loteRelatorio, setLoteRelatorio] = useState<number | null>(null);
+  const abrirLote = (id: number) => { setLoteRelatorio(id); setAba('LOTE'); window.scrollTo({ top: 0, behavior: 'smooth' }); };
 
   // Empresa (Rentech × AlfaLight) escolhida pra filtrar o relatório — só quem
   // é literalmente "Administrador" (ehAdministradorGlobal) vê todas; os
@@ -270,7 +275,17 @@ export default function RelatoriosFinanceiroPage() {
       </div>
 
       <div className="p-4 md:px-8 pt-6 pb-12 max-w-[1400px] mx-auto w-full">
-        {/* Seletor de mês */}
+        {/* Abas */}
+        <div className="bg-white p-1.5 rounded-xl shadow-sm border border-[#E2E8F0] mb-4 inline-flex gap-1">
+          {([['GERAL', '📊 Visão geral do mês'], ['LOTE', '🧾 Relatório de Lote']] as const).map(([valor, rotulo]) => (
+            <button key={valor} onClick={() => setAba(valor)}
+              className={`px-4 py-2 text-[11px] font-black uppercase tracking-wider rounded-lg transition-colors ${aba === valor ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:text-[#0C1D4D]'}`}>
+              {rotulo}
+            </button>
+          ))}
+        </div>
+
+        {/* Seletor de empresa (as duas abas) e de mês (só a visão geral) */}
         <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] mb-6 flex flex-wrap items-center gap-3">
           <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider">Empresa</label>
           <select
@@ -284,6 +299,7 @@ export default function RelatoriosFinanceiroPage() {
               <option key={e.id} value={e.id}>{e.nome}</option>
             ))}
           </select>
+          {aba === 'GERAL' && (<>
           <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider">Competência</label>
           <button onClick={() => mudarMes(-1)} className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-300 text-gray-500 hover:bg-gray-50 font-black">‹</button>
           <input type="month" value={mesReferencia} onChange={e => setMesReferencia(e.target.value)} className="p-2 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />
@@ -292,11 +308,14 @@ export default function RelatoriosFinanceiroPage() {
             <button onClick={() => setMesReferencia(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`)} className="text-[10px] font-black text-[#336699] hover:underline uppercase">Voltar para o mês atual</button>
           )}
           <span className="text-[11px] font-bold text-gray-400 ml-auto">
-            OPs: qualquer data de criação · Lotes: mês de competência · Consignado: situação atual (não é filtrado por mês)
+            OPs: mês de criação, sem as reprovadas · Lotes: mês de competência, sem os desativados · Consignado: situação atual (não é filtrado por mês)
           </span>
+          </>)}
         </div>
 
-        {loading ? (
+        {aba === 'LOTE' ? (
+          <RelatorioLote accessToken={accessToken} empresaId={empresaSelecionada} loteInicial={loteRelatorio} />
+        ) : loading ? (
           <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-16 text-center text-gray-400 font-bold uppercase tracking-wider">Carregando relatório...</div>
         ) : erro ? (
           <div className="bg-red-50 border border-red-200 rounded-2xl p-8 text-center text-red-600 font-bold">{erro}</div>
@@ -436,7 +455,8 @@ export default function RelatoriosFinanceiroPage() {
                     </thead>
                     <tbody>
                       {dados.lotes.recentes.map((l, idx) => (
-                        <tr key={idx} className={`${idx % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white'} border-b border-[#E2E8F0]`}>
+                        <tr key={idx} onClick={() => abrirLote(l.id)} title="Abrir o relatório deste lote"
+                          className={`${idx % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white'} border-b border-[#E2E8F0] cursor-pointer hover:bg-blue-50`}>
                           <td className="p-3 font-black text-[#0C1D4D]">{l.nome}</td>
                           <td className="p-3 font-bold">{fmtMesBR(l.mes)}</td>
                           <td className="p-3 text-center font-black">{l.qtd}</td>

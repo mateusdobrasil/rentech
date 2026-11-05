@@ -75,12 +75,17 @@ export async function buscarRelatorioFinanceiroAction(payload: { mesReferencia: 
     // ============================================================
     // ORDENS DE PAGAMENTO
     // ============================================================
-    const { data: opsRaw, error: opsErr } = await db
+    // OP REPROVADA (cancelada) fica fora de tudo — antes entrava como
+    // "pendente" nos cartões, natureza, ranking, tendência e na grade de
+    // vencidas (bug reportado em 2026-11-05). Busca paginada: a Data API
+    // devolve no máximo 1.000 linhas por chamada.
+    const opsRaw = await buscarTodas<any>((de, ate) => db
       .from('op_ordens_pagamento')
-      .select('id, empresa_id, os_numero, empresa_recebedora, natureza_pagamento, total_geral, status, data_criacao, data_vencimento, responsavel_nome')
-      .order('data_criacao', { ascending: false });
-    if (opsErr) throw new Error(opsErr.message);
-    const ops = (opsRaw || []).filter(o => dentroDoEscopo(o.empresa_id));
+      .select('id, numero_op, empresa_id, os_numero, empresa_recebedora, natureza_pagamento, total_geral, status, data_criacao, data_vencimento, responsavel_nome')
+      .neq('status', 'REPROVADA')
+      .order('data_criacao', { ascending: false })
+      .range(de, ate));
+    const ops = opsRaw.filter(o => dentroDoEscopo(o.empresa_id));
 
     const ehPago = (status: string) => (status || '').toUpperCase().includes('PAGO');
     const hojeIso = new Date().toISOString().slice(0, 10);
@@ -141,9 +146,11 @@ export async function buscarRelatorioFinanceiroAction(payload: { mesReferencia: 
     // ============================================================
     // LOTES DE PAGAMENTO
     // ============================================================
+    // Lote desativado (ativo=false — gerado errado e descartado) não entra
     const { data: lotesRaw, error: lotesErr } = await db
       .from('financeiro_lotes_pagamento')
-      .select('mes_referencia, status, valor_total, qtd_pagamentos, criado_em, tipo_lote, nome_lote, empresa_id, itens')
+      .select('id, mes_referencia, status, valor_total, qtd_pagamentos, criado_em, tipo_lote, nome_lote, empresa_id, itens')
+      .or('ativo.is.null,ativo.eq.true')
       .order('criado_em', { ascending: false });
     if (lotesErr) throw new Error(lotesErr.message);
 
@@ -190,6 +197,7 @@ export async function buscarRelatorioFinanceiroAction(payload: { mesReferencia: 
     const lotesTrend = meses6.map(m => ({ mes: m, valor: lotesTrendMapa[m] }));
 
     const lotesRecentes = lotes.slice(0, 5).map(l => ({
+      id: l.id,
       nome: l.nome_lote || l.tipo_lote, mes: l.mes_referencia, valor: Number(l.valor_total) || 0,
       qtd: l.qtd_pagamentos, status: l.status, criadoEm: l.criado_em
     }));
@@ -339,6 +347,132 @@ export async function painelFinanceiroAction(accessToken: string): Promise<Resul
     }
 
     return { ok: true, info: { hoje, ops, contasPagar } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// RELATÓRIO POR LOTE (/admin/financeiro/relatorios, aba "Relatório de Lote") —
+// escolhe um lote gerado e vê todos os pagamentos dele, com a situação do
+// envio ao banco. Mesma regra de empresa do relatório geral: lote com
+// empresa_id própria passa inteiro ou fica fora; lote antigo/misto mostra só
+// os itens da(s) empresa(s) do usuário.
+// ============================================================================
+function escopoEmpresa(empresasPermitidas: number[] | null, empresaFiltro: number | null | undefined) {
+  return (empresaIdLinha: number | null | undefined) =>
+    empresaPermitida(empresasPermitidas, empresaIdLinha) &&
+    (!empresaFiltro || empresaIdLinha == null || empresaIdLinha === empresaFiltro);
+}
+
+export async function listarLotesRelatorioAction(payload: { empresaId?: number | null }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (payload.empresaId && !empresaPermitida(empresasPermitidas, payload.empresaId)) {
+      return { ok: false, erro: 'Você não tem permissão para ver os lotes desta empresa.' };
+    }
+    const dentro = escopoEmpresa(empresasPermitidas, payload.empresaId);
+
+    const { data, error } = await db.from('financeiro_lotes_pagamento')
+      .select('id, nome_lote, tipo_lote, mes_referencia, data_pagamento, valor_total, qtd_pagamentos, status, ativo, criado_em, empresa_id, itens')
+      .order('criado_em', { ascending: false });
+    if (error) throw new Error(error.message);
+
+    const lotes = (data || []).flatMap(l => {
+      let valor = Number(l.valor_total) || 0, qtd = l.qtd_pagamentos || 0;
+      if (l.empresa_id != null) {
+        if (!dentro(l.empresa_id)) return [];
+      } else {
+        const itens = (Array.isArray(l.itens) ? l.itens : []).filter((i: any) => dentro(i?.empresa_id));
+        if (Array.isArray(l.itens) && l.itens.length > 0 && itens.length === 0) return [];
+        if (Array.isArray(l.itens) && l.itens.length > 0) { valor = itens.reduce((s: number, i: any) => s + (Number(i.valor) || 0), 0); qtd = itens.length; }
+      }
+      return [{
+        id: l.id, nome: l.nome_lote || l.tipo_lote, mes: l.mes_referencia, dataPagamento: l.data_pagamento,
+        valor, qtd, status: l.status, ativo: l.ativo !== false, criadoEm: l.criado_em
+      }];
+    });
+    return { ok: true, info: { lotes } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// Destino mascarado (só os 4 últimos) — o relatório é pra conferência, não
+// precisa expor chave PIX/conta inteira.
+const mascarar = (v: string | null | undefined) => {
+  const s = String(v || '').trim();
+  return s.length > 4 ? `•••${s.slice(-4)}` : s;
+};
+
+export async function detalheLoteRelatorioAction(payload: { loteId: number; empresaId?: number | null }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (payload.empresaId && !empresaPermitida(empresasPermitidas, payload.empresaId)) {
+      return { ok: false, erro: 'Você não tem permissão para ver os lotes desta empresa.' };
+    }
+    const dentro = escopoEmpresa(empresasPermitidas, payload.empresaId);
+
+    const { data: l, error } = await db.from('financeiro_lotes_pagamento').select('*').eq('id', payload.loteId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!l || (l.empresa_id != null && !dentro(l.empresa_id))) return { ok: false, erro: 'Lote não encontrado.' };
+
+    const itensBrutos: any[] = (Array.isArray(l.itens) ? l.itens : [])
+      .filter((i: any) => l.empresa_id != null || dentro(i?.empresa_id));
+
+    // Número da OP pros itens que vieram de Ordem de Pagamento
+    const opIds = [...new Set(itensBrutos.map(i => i.opId).filter(Boolean))];
+    const numeroOp: Record<string, string> = {};
+    if (opIds.length) {
+      const { data: ops } = await db.from('op_ordens_pagamento').select('id, numero_op').in('id', opIds);
+      (ops || []).forEach(o => { numeroOp[o.id] = o.numero_op; });
+    }
+    const { data: empresa } = l.empresa_id != null
+      ? await db.from('empresas').select('nome').eq('id', l.empresa_id).maybeSingle()
+      : { data: null };
+
+    const itens = itensBrutos.map((i, idx) => {
+      const ehPix = (i.metodo || '').toUpperCase() === 'PIX';
+      const destino = ehPix
+        ? `PIX ${String(i.pix_tipo || '').toLowerCase()} ${mascarar(i.pix_chave)}`.trim()
+        : [i.banco_codigo && `banco ${i.banco_codigo}`, i.banco_agencia && `ag ${i.banco_agencia}`, i.banco_conta && `cc ${mascarar(i.banco_conta)}`].filter(Boolean).join(' · ') || '—';
+      return {
+        seq: idx + 1,
+        favorecido: i.funcionario_nome || i.api_resposta_bruta?.recebedor?.nome || '—',
+        fonte: i.fonte_rotulo || i.fonte || '—',
+        referencia: i.opId && numeroOp[i.opId] ? `OP ${numeroOp[i.opId]}` : null,
+        metodo: i.metodo || '—',
+        destino,
+        valor: Number(i.valor) || 0,
+        envio: i.api_status || null,             // 'Sucesso' = aceito pela API do Itaú; 'Erro' = recusado
+        envioErro: i.api_erro || (Array.isArray(i.api_motivo_recusa) && i.api_motivo_recusa.length ? i.api_motivo_recusa.map((m: any) => m?.descricao || m).join('; ') : null),
+        enviadoEm: i.api_enviado_em || null,
+        banco: i.itau_status_atual || null,      // status real no Itaú (ex.: Efetuado), se já consultado
+        efetuadoEm: i.itau_efetuado_em || null,
+        observacao: i.alerta || i.nota || null,
+      };
+    });
+
+    return {
+      ok: true,
+      info: {
+        lote: {
+          id: l.id, nome: l.nome_lote || l.tipo_lote, tipo: l.tipo_lote, parceiro: l.parceiro, mes: l.mes_referencia,
+          dataPagamento: l.data_pagamento, status: l.status, ativo: l.ativo !== false,
+          criadoPor: l.criado_por, criadoEm: l.criado_em, empresa: empresa?.nome || (l.empresa_id == null ? 'Várias / sem empresa' : null),
+          valor: itens.reduce((s, i) => s + i.valor, 0), qtd: itens.length,
+        },
+        itens
+      }
+    };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

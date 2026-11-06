@@ -8,6 +8,7 @@
 // Todo o cálculo acontece aqui (server-side) para a página só desenhar.
 import { supabaseAdmin } from '../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../lib/serverAuth';
+import { contextoEnvioItau, consultarPagamentoSispag, semAcento, STATUS_ITAU_EFETUADO } from '../../lib/itauSispag';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -456,7 +457,9 @@ export async function detalheLoteRelatorioAction(payload: { loteId: number; empr
         envioErro: i.api_erro || (Array.isArray(i.api_motivo_recusa) && i.api_motivo_recusa.length ? i.api_motivo_recusa.map((m: any) => m?.descricao || m).join('; ') : null),
         enviadoEm: i.api_enviado_em || null,
         banco: i.itau_status_atual || null,      // status real no Itaú (ex.: Efetuado), se já consultado
-        efetuadoEm: i.itau_efetuado_em || null,
+        efetuadoEm: i.itau_efetuado_em || null,  // quando o sistema viu "Efetuado" (data da consulta, não do banco)
+        consultadoEm: i.itau_consultado_em || null,
+        codPagamento: i.api_cod_pagamento || null, // pra "Atualizar situação no Itaú"
         observacao: i.alerta || i.nota || null,
       };
     });
@@ -473,6 +476,61 @@ export async function detalheLoteRelatorioAction(payload: { loteId: number; empr
         itens
       }
     };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// Atualiza a situação real no Itaú dos pagamentos de um lote (aba Relatório de
+// Lote). O api_status do envio só diz que a API aceitou; "Efetuado" só aparece
+// consultando o SISPAG de novo — sem isso o relatório mostrava "Enviado" pra
+// lote já pago (caso lote #82, 2026-11-06: 1 de 45 consultado). Recebe no
+// máximo 10 códigos por chamada (a tela chama em sequência, com progresso) e
+// grava tudo no item do lote de uma vez. Só consulta e grava o status — não dá
+// baixa em OP/Conta a Pagar (isso continua na tela de Lotes de Pagamento).
+export async function atualizarStatusItauLoteAction(payload: { loteId: number; codigos: string[]; empresaId?: number | null }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  const codigos = [...new Set((payload.codigos || []).filter(Boolean))].slice(0, 10);
+  if (codigos.length === 0) return { ok: true, info: { consultados: 0 } };
+
+  const db = supabaseAdmin();
+  try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    const dentro = escopoEmpresa(empresasPermitidas, payload.empresaId);
+    const { data: lote } = await db.from('financeiro_lotes_pagamento').select('id, empresa_id, itens').eq('id', payload.loteId).maybeSingle();
+    if (!lote || (lote.empresa_id != null && !dentro(lote.empresa_id))) return { ok: false, erro: 'Lote não encontrado.' };
+
+    const ctx = await contextoEnvioItau();
+    if (!ctx.ok) return { ok: false, erro: ctx.erro };
+
+    const itensLote: any[] = Array.isArray(lote.itens) ? lote.itens : [];
+    const resultados: Record<string, string> = {};
+    const falhas: string[] = [];
+    for (const cod of codigos) {
+      const item = itensLote.find(i => i.api_cod_pagamento === cod);
+      if (!item || (lote.empresa_id == null && !dentro(item.empresa_id))) continue;
+      const { ok, data } = await consultarPagamentoSispag(ctx.ambiente, cod);
+      if (!ok) { falhas.push(item.funcionario_nome || cod); continue; }
+      resultados[cod] = String((data?.data ?? data)?.dados_pagamento?.status || '');
+    }
+
+    // Grava de uma vez, relendo o lote (pode ter mudado durante as consultas)
+    if (Object.keys(resultados).length > 0) {
+      const { data: atual } = await db.from('financeiro_lotes_pagamento').select('itens').eq('id', payload.loteId).single();
+      const itens: any[] = Array.isArray(atual?.itens) ? atual.itens : [];
+      const agora = new Date().toISOString();
+      itens.forEach(i => {
+        const status = resultados[i.api_cod_pagamento];
+        if (status === undefined) return;
+        i.itau_status_atual = status || null;
+        i.itau_consultado_em = agora;
+        if (semAcento(status) === STATUS_ITAU_EFETUADO && !i.itau_efetuado_em) i.itau_efetuado_em = agora;
+      });
+      const { error } = await db.from('financeiro_lotes_pagamento').update({ itens }).eq('id', payload.loteId);
+      if (error) throw new Error(error.message);
+    }
+    return { ok: true, info: { consultados: Object.keys(resultados).length, falhas } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

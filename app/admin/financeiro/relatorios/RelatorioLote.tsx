@@ -5,7 +5,7 @@
 // dele, com a situação do envio ao banco. Dados vêm de
 // listarLotesRelatorioAction / detalheLoteRelatorioAction (../actions.ts).
 import { useEffect, useMemo, useState } from 'react';
-import { listarLotesRelatorioAction, detalheLoteRelatorioAction } from '../actions';
+import { listarLotesRelatorioAction, detalheLoteRelatorioAction, atualizarStatusItauLoteAction } from '../actions';
 
 const BRL = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 const fmtMesBR = (m: string) => { const [a, mm] = (m || '').split('-'); return mm ? `${mm}/${a}` : '—'; };
@@ -17,7 +17,12 @@ interface LoteLista { id: number; nome: string; mes: string; dataPagamento: stri
 interface ItemLote {
   seq: number; favorecido: string; fonte: string; referencia: string | null; metodo: string; destino: string; valor: number;
   envio: string | null; envioErro: string | null; enviadoEm: string | null; banco: string | null; efetuadoEm: string | null; observacao: string | null;
+  consultadoEm: string | null; codPagamento: string | null;
 }
+
+const ehEfetuado = (i: ItemLote) => !!i.banco && semAcento(i.banco) === 'EFETUADO';
+// Pagamento aceito pela API e ainda sem "Efetuado" — dá pra consultar no Itaú
+const aguardaConsulta = (i: ItemLote) => !!i.codPagamento && i.envio !== 'Erro' && !ehEfetuado(i);
 interface DetalheLote {
   lote: { id: number; nome: string; tipo: string; parceiro: string; mes: string; dataPagamento: string | null; status: string; ativo: boolean; criadoPor: string | null; criadoEm: string; empresa: string | null; valor: number; qtd: number };
   itens: ItemLote[];
@@ -30,11 +35,11 @@ function ChipEnvio({ item }: { item: ItemLote }) {
   return <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-gray-100 text-gray-500">Não enviado</span>;
 }
 function ChipBanco({ item }: { item: ItemLote }) {
-  if (!item.banco) return <span title="Status ainda não consultado no banco" className="text-[10px] font-bold text-gray-300">—</span>;
-  const efetuado = semAcento(item.banco) === 'EFETUADO';
+  if (!item.banco) return <span title="Situação ainda não consultada no Itaú — use Atualizar situação no Itaú" className="text-[10px] font-bold text-gray-300 cursor-help">não consultado</span>;
   return (
-    <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${efetuado ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-      {item.banco}{efetuado && item.efetuadoEm ? ` ${fmtDataBR(item.efetuadoEm)}` : ''}
+    <span title={item.consultadoEm ? `Consultado no Itaú em ${fmtDataHora(item.consultadoEm)}` : ''}
+      className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase cursor-help ${ehEfetuado(item) ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+      {item.banco}
     </span>
   );
 }
@@ -62,14 +67,41 @@ export default function RelatorioLote({ accessToken, empresaId, loteInicial }: {
     });
   }, [empresaId, accessToken]);
 
+  const carregarDetalhe = async (id: number, silencioso = false) => {
+    if (!silencioso) { setCarregando(true); setBusca(''); setFiltroFonte('TODAS'); }
+    setErro(null);
+    const res = await detalheLoteRelatorioAction({ loteId: id, empresaId }, accessToken);
+    if (res.ok) setDetalhe(res.info); else { setDetalhe(null); setErro(res.erro || 'Não foi possível carregar o lote.'); }
+    if (!silencioso) setCarregando(false);
+  };
+
   useEffect(() => {
     if (!loteId) { setDetalhe(null); return; }
-    setCarregando(true); setErro(null); setBusca(''); setFiltroFonte('TODAS');
-    detalheLoteRelatorioAction({ loteId, empresaId }, accessToken).then(res => {
-      if (res.ok) setDetalhe(res.info); else { setDetalhe(null); setErro(res.erro || 'Não foi possível carregar o lote.'); }
-      setCarregando(false);
-    });
+    carregarDetalhe(loteId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loteId, empresaId, accessToken]);
+
+  // "Atualizar situação no Itaú": consulta, de 10 em 10, os pagamentos aceitos
+  // pela API que ainda não estão como Efetuado, e grava no lote.
+  const [atualizando, setAtualizando] = useState<{ feitos: number; total: number } | null>(null);
+  const [avisoAtualizacao, setAvisoAtualizacao] = useState<string | null>(null);
+  const atualizarSituacaoItau = async () => {
+    if (!detalhe) return;
+    const codigos = detalhe.itens.filter(aguardaConsulta).map(i => i.codPagamento!) ;
+    if (codigos.length === 0) return;
+    setAvisoAtualizacao(null);
+    setAtualizando({ feitos: 0, total: codigos.length });
+    const falhas: string[] = [];
+    for (let i = 0; i < codigos.length; i += 10) {
+      const res = await atualizarStatusItauLoteAction({ loteId: detalhe.lote.id, codigos: codigos.slice(i, i + 10), empresaId }, accessToken);
+      if (!res.ok) { setAvisoAtualizacao(`Parou no meio: ${res.erro}`); break; }
+      falhas.push(...(res.info.falhas || []));
+      setAtualizando({ feitos: Math.min(i + 10, codigos.length), total: codigos.length });
+    }
+    await carregarDetalhe(detalhe.lote.id, true);
+    setAtualizando(null);
+    if (falhas.length) setAvisoAtualizacao(`O Itaú não respondeu para: ${falhas.join(', ')}. Tente de novo.`);
+  };
 
   const fontes = useMemo(() => [...new Set((detalhe?.itens || []).map(i => i.fonte))].sort(), [detalhe]);
   const itensFiltrados = useMemo(() => (detalhe?.itens || []).filter(i =>
@@ -195,7 +227,21 @@ export default function RelatorioLote({ accessToken, empresaId, loteInicial }: {
                   </div>
                 ))}
               </div>
-              <p className="text-[9px] font-bold text-gray-400 mt-2">"Efetuado" só aparece depois que o status foi consultado no Itaú (Lotes de Pagamento → Consultar status).</p>
+              {(() => {
+                const pendentes = detalhe.itens.filter(aguardaConsulta).length;
+                return (
+                  <div className="mt-3 flex flex-col gap-1.5">
+                    <button onClick={atualizarSituacaoItau} disabled={!!atualizando || pendentes === 0}
+                      className="w-full text-[10px] font-black uppercase tracking-wider py-2.5 rounded-lg bg-[#0C1D4D] hover:bg-[#284B8C] text-white disabled:opacity-50">
+                      {atualizando
+                        ? `⏳ Consultando no Itaú... ${atualizando.feitos}/${atualizando.total}`
+                        : pendentes === 0 ? '✓ Situação no Itaú em dia' : `🔄 Atualizar situação no Itaú (${pendentes})`}
+                    </button>
+                    {avisoAtualizacao && <p className="text-[10px] font-bold text-red-600">{avisoAtualizacao}</p>}
+                    <p className="text-[9px] font-bold text-gray-400">"Efetuado" só aparece depois de consultar o Itaú. A consulta grava a situação no lote — não dá baixa em OP/Conta a Pagar (isso continua em Lotes de Pagamento).</p>
+                  </div>
+                );
+              })()}
             </div>
           </div>
 

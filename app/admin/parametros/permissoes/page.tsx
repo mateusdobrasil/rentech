@@ -11,6 +11,7 @@ import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import { resetarMfaUsuarioAction } from '../../actions-mfa';
 
 // Setores de permissão: antes era uma lista fixa aqui no código, agora vem
 // do banco (tabela parametros_setores_permissao) e pode ser gerida na aba "Setores".
@@ -56,7 +57,19 @@ interface AcessoPortal {
 
 export default function GestaoPermissoes() {
   const router = useRouter();
-  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Usuário' });
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Usuário' });
+  const [resetandoMfa, setResetandoMfa] = useState(false);
+
+  // Reset da autenticação em duas etapas (perdeu/trocou de celular) — só o
+  // Administrador vê o botão; o servidor confere de novo (actions-mfa.ts).
+  const resetarMfa = async (user: { id: string; nome: string }) => {
+    if (!confirm(`Resetar a autenticação em duas etapas de ${user.nome}?\n\nO aplicativo autenticador atual deixa de valer. No próximo acesso a uma página protegida, a pessoa cadastra o celular novo em Minha Conta.`)) return;
+    setResetandoMfa(true);
+    const res = await resetarMfaUsuarioAction({ perfilId: user.id, usuarioNome: usuarioAtual }, accessToken);
+    setResetandoMfa(false);
+    if (res.ok) toast(`Autenticação em duas etapas de ${user.nome} resetada. Ela recebeu um aviso por e-mail.`, 'success');
+    else toast(res.erro || 'Não foi possível resetar.', 'error');
+  };
   const usuarioNome = usuarioAtual;
   const toast = useToast();
 
@@ -1312,6 +1325,19 @@ export default function GestaoPermissoes() {
                   <div className="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500 shadow-inner"></div>
                 </label>
               </div>
+
+              {ehAdministradorGlobal(permissaoBruta) && (
+                <div className="flex items-center justify-between gap-3 bg-gray-50 p-4 border border-gray-200 rounded-xl">
+                  <div>
+                    <strong className="block text-sm text-[#0A2A4A] font-black uppercase tracking-tight">Autenticação em duas etapas</strong>
+                    <span className="text-[10px] text-[#64748B] font-bold uppercase">Perdeu ou trocou de celular? Reseta e cadastra de novo</span>
+                  </div>
+                  <button onClick={() => resetarMfa(modalEdicao.user!)} disabled={resetandoMfa}
+                    className="shrink-0 py-2 px-3 bg-white border border-red-200 text-red-600 hover:bg-red-50 font-black text-[10px] uppercase tracking-wider rounded-lg transition-colors disabled:opacity-50">
+                    {resetandoMfa ? '...' : '🔄 Resetar 2FA'}
+                  </button>
+                </div>
+              )}
 
               <div className="pt-4 border-t border-[#E2E8F0] flex gap-3">
                 <button onClick={() => setModalEdicao({ open: false, user: null })} className="flex-1 py-3.5 bg-gray-100 text-gray-500 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-gray-200 transition-colors">Cancelar</button>

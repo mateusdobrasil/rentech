@@ -18,6 +18,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabase';
 import { registrarLogAuditoria } from '../actions';
+import { enviarCodigoMfaEmailAction, verificarCodigoMfaEmailAction, liberacaoMfaEmailAtivaAction } from './actions-mfa';
+
+const tokenAtual = async () => (await supabase.auth.getSession()).data.session?.access_token || '';
 
 type EstadoMfa = 'verificando' | 'liberado' | 'exige_codigo' | 'nao_cadastrado';
 
@@ -36,6 +39,11 @@ export default function ExigirMFA({ children, ativo = true }: { children: React.
   const [codigo, setCodigo] = useState('');
   const [erro, setErro] = useState('');
   const [verificando, setVerificando] = useState(false);
+  // Plano B "Não estou com meu celular": código no e-mail (actions-mfa.ts)
+  const [modoEmail, setModoEmail] = useState(false);
+  const [emailEnviadoPara, setEmailEnviadoPara] = useState<string | null>(null);
+  const [enviandoEmail, setEnviandoEmail] = useState(false);
+  const [aviso, setAviso] = useState('');
 
   // Rastreador de atividade — roda sempre (independente de `ativo`), já que
   // ExigirMFA está montado em toda página do admin via app/admin/layout.tsx.
@@ -97,7 +105,13 @@ export default function ExigirMFA({ children, ativo = true }: { children: React.
     // válido já basta.
     if (aal.currentLevel === 'aal2') { setEstado('liberado'); return; }
 
-    if (aal.nextLevel === 'aal2') { await irParaDesafio(); return; }
+    if (aal.nextLevel === 'aal2') {
+      // Sessão já liberada por código de e-mail (sem o celular) — vale só
+      // pra este login, conferido no servidor.
+      if (await liberacaoMfaEmailAtivaAction(await tokenAtual())) { setEstado('liberado'); return; }
+      await irParaDesafio();
+      return;
+    }
 
     // nextLevel === 'aal1' — nenhum fator verificado cadastrado ainda.
     setEstado('nao_cadastrado');
@@ -133,6 +147,27 @@ export default function ExigirMFA({ children, ativo = true }: { children: React.
     }
   };
 
+  const pedirCodigoEmail = async () => {
+    setEnviandoEmail(true); setErro(''); setAviso('');
+    const res = await enviarCodigoMfaEmailAction(await tokenAtual());
+    setEnviandoEmail(false);
+    if (!res.ok) { setErro(res.erro || 'Não foi possível enviar o código.'); return; }
+    setEmailEnviadoPara(res.info.email);
+    setCodigo('');
+    setAviso(`Código enviado para ${res.info.email}. Confira também a caixa de spam.`);
+  };
+
+  const confirmarCodigoEmail = async () => {
+    if (codigo.length !== 6) return;
+    setVerificando(true); setErro('');
+    const res = await verificarCodigoMfaEmailAction({ codigo }, await tokenAtual());
+    setVerificando(false);
+    if (!res.ok) { setErro(res.erro || 'Código inválido.'); setCodigo(''); return; }
+    setEstado('liberado');
+  };
+
+  const trocarModo = (email: boolean) => { setModoEmail(email); setCodigo(''); setErro(''); setAviso(''); };
+
   if (!ativo) return <>{children}</>;
 
   if (estado === 'verificando') {
@@ -159,23 +194,64 @@ export default function ExigirMFA({ children, ativo = true }: { children: React.
   }
 
   if (estado === 'exige_codigo') {
+    const campoCodigo = (aoConfirmar: () => void) => (
+      <input
+        type="text" inputMode="numeric" maxLength={6} value={codigo} autoFocus
+        onChange={e => setCodigo(e.target.value.replace(/\D/g, ''))}
+        onKeyDown={e => e.key === 'Enter' && aoConfirmar()}
+        placeholder="000000"
+        className="w-full text-center text-2xl font-black tracking-[0.5em] p-3 border-2 border-[#CBD5E1] rounded-xl mb-3 outline-none focus:border-[#336699]"
+      />
+    );
     return (
       <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
         <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-[#E2E8F0]">
-          <div className="text-5xl mb-4">🔐</div>
+          <div className="text-5xl mb-4">{modoEmail ? '📧' : '🔐'}</div>
           <h2 className="text-xl font-black text-[#0C1D4D] uppercase tracking-wider mb-2">Confirme sua identidade</h2>
-          <p className="text-sm text-gray-500 mb-6">Digite o código do seu aplicativo autenticador para continuar.</p>
-          <input
-            type="text" inputMode="numeric" maxLength={6} value={codigo} autoFocus
-            onChange={e => setCodigo(e.target.value.replace(/\D/g, ''))}
-            onKeyDown={e => e.key === 'Enter' && confirmar()}
-            placeholder="000000"
-            className="w-full text-center text-2xl font-black tracking-[0.5em] p-3 border-2 border-[#CBD5E1] rounded-xl mb-3 outline-none focus:border-[#336699]"
-          />
-          {erro && <p className="text-xs text-red-600 font-bold mb-3">{erro}</p>}
-          <button onClick={confirmar} disabled={verificando || codigo.length !== 6} className="w-full bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs tracking-wider hover:bg-[#284B8C] transition-colors disabled:opacity-50">
-            {verificando ? 'Verificando...' : 'Confirmar'}
-          </button>
+
+          {!modoEmail ? (
+            <>
+              <p className="text-sm text-gray-500 mb-6">Digite o código do seu aplicativo autenticador para continuar.</p>
+              {campoCodigo(confirmar)}
+              {erro && <p className="text-xs text-red-600 font-bold mb-3">{erro}</p>}
+              <button onClick={confirmar} disabled={verificando || codigo.length !== 6} className="w-full bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs tracking-wider hover:bg-[#284B8C] transition-colors disabled:opacity-50">
+                {verificando ? 'Verificando...' : 'Confirmar'}
+              </button>
+              <button onClick={() => trocarModo(true)} className="mt-4 text-xs font-bold text-[#336699] hover:underline">
+                📵 Não estou com meu celular
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-gray-500 mb-5">
+                Enviamos um código de 6 dígitos para o e-mail do seu login. Ele vale por 10 minutos e libera <strong>só este acesso</strong>, neste navegador.
+              </p>
+              {!emailEnviadoPara ? (
+                <button onClick={pedirCodigoEmail} disabled={enviandoEmail} className="w-full bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs tracking-wider hover:bg-[#284B8C] transition-colors disabled:opacity-50 mb-3">
+                  {enviandoEmail ? 'Enviando...' : '📧 Enviar código por e-mail'}
+                </button>
+              ) : (
+                <>
+                  {campoCodigo(confirmarCodigoEmail)}
+                  <button onClick={confirmarCodigoEmail} disabled={verificando || codigo.length !== 6} className="w-full bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs tracking-wider hover:bg-[#284B8C] transition-colors disabled:opacity-50 mb-2">
+                    {verificando ? 'Verificando...' : 'Confirmar código do e-mail'}
+                  </button>
+                  <button onClick={pedirCodigoEmail} disabled={enviandoEmail} className="text-[11px] font-bold text-gray-500 hover:text-[#336699] disabled:opacity-50">
+                    {enviandoEmail ? 'Enviando...' : 'Não chegou? Reenviar'}
+                  </button>
+                </>
+              )}
+              {aviso && <p className="text-xs text-emerald-700 font-bold mt-3">{aviso}</p>}
+              {erro && <p className="text-xs text-red-600 font-bold mt-3">{erro}</p>}
+              <button onClick={() => trocarModo(false)} className="mt-4 block mx-auto text-xs font-bold text-[#336699] hover:underline">
+                ← Usar o aplicativo autenticador
+              </button>
+            </>
+          )}
+
+          <p className="text-[10px] text-gray-400 font-bold mt-6 pt-4 border-t border-[#E2E8F0]">
+            Perdeu ou trocou de celular? Peça ao Administrador para resetar sua autenticação em duas etapas e cadastre o celular novo.
+          </p>
         </div>
       </div>
     );

@@ -8,7 +8,7 @@
 // - chama o cliente da Autentique (lib/autentique)
 import { supabaseAdmin } from '../../../lib/supabase';
 import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
-import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
+import { mensagemAcessoNegado, validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
 import { autentiqueCriarDocumento, autentiqueConsultarDocumento, autentiqueCancelarDocumento } from '../../../lib/autentique';
 import { gerarHoleritePdf } from '../../../lib/gerarHoleritePdf';
@@ -37,7 +37,7 @@ async function validarAcessoQualquerRota(accessToken: string) {
     const acesso = await validarAcesso(accessToken, rota);
     if (acesso.ok) return acesso;
   }
-  return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
+  return { ok: false as const, message: await mensagemAcessoNegado(accessToken) };
 }
 
 const slug = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')

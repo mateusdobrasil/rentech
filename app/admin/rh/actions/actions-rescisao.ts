@@ -7,7 +7,7 @@
 // (app/lib/calculoRescisao.ts); os demais só recebem o anexo do TRCT
 // fornecido pela contabilidade — nenhum valor é calculado nesse caso.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
+import { mensagemAcessoNegado, validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
 import { consultarAssinaturaAction, baixarAssinadoAction } from './actions-assinatura';
@@ -36,7 +36,7 @@ async function validarAcessoRescisao(accessToken: string) {
     const acesso = await validarAcesso(accessToken, rota);
     if (acesso.ok) return acesso;
   }
-  return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
+  return { ok: false as const, message: await mensagemAcessoNegado(accessToken) };
 }
 
 const MOTIVO_LABEL: Record<string, string> = {

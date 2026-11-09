@@ -109,17 +109,9 @@ export default function BeneficiosPage() {
   };
   const [gridBase, setGridBase] = useState<'INICIO_MES' | 'ATUAL'>('ATUAL');
   const [gridBaseExibida, setGridBaseExibida] = useState<'INICIO_MES' | 'ATUAL'>('ATUAL');
-  // "Já foi pago — só registrar": competência paga por fora (ex.: outubro pago
-  // no fim de setembro). Grava o histórico já pago: sem arquivo Flash, sem lote.
-  // Data sugerida: último dia do mês anterior à competência (pagamento adiantado).
-  const [jaPago, setJaPago] = useState(false);
-  const [jaPagoData, setJaPagoData] = useState('');
-  const ultimoDiaMesAnterior = (mes: string) => {
-    const [a, m] = mes.split('-').map(Number);
-    const d = new Date(a, m - 1, 0);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  };
-  useEffect(() => { setGridBase(baseSugerida(gridMes)); setJaPagoData(ultimoDiaMesAnterior(gridMes)); }, [gridMes]);
+  // ("Já foi pago — só registrar" saiu daqui em 2026-11-09: agora é
+  // "Registrar mês pago por fora", na aba Benefícios por Mês.)
+  useEffect(() => { setGridBase(baseSugerida(gridMes)); }, [gridMes]);
   const gridDesatualizado = gridMes !== gridMesExibido || gridBase !== gridBaseExibida;
   // Quem entra no "Gerar Benefício" (chave = funcionario_nome); nasce tudo
   // marcado a cada Grid, menos quem já teve benefício gerado no mês
@@ -223,37 +215,25 @@ export default function BeneficiosPage() {
     const repetidos = nomes.filter(n => grid.jaGerados?.[n]);
     const t = gridTotaisSelecionados;
     const mesBR = mes.split('-').reverse().join('/');
-    if (jaPago && !jaPagoData) { toast('Informe a data em que foi pago.', 'error'); return; }
-    const dataPagoBR = jaPagoData.split('-').reverse().join('/');
-    const msg = (jaPago
-      ? `REGISTRAR como já pagos em ${dataPagoBR} os benefícios de ${mesBR} de ${nomes.length} funcionário(s)?\n\n` +
-        `Nenhum arquivo Flash será baixado e nada vai para o lote — só fica o histórico, marcado como pago.\n\n` +
-        `⚡ Cartão Flash: ${BRL(t.totalFlash)}\n🏦 Transferência: ${BRL(t.totalLote)}`
-      : `Gerar os benefícios de ${mesBR} para ${nomes.length} funcionário(s)?\n\n` +
-        `⚡ Cartão Flash: ${BRL(t.totalFlash)} — o arquivo será baixado e o pedido registrado\n` +
-        `🏦 Lote de pagamento: ${BRL(t.totalLote)} — fica disponível em Financeiro RH (fonte Benefícios)`) +
+    const msg = `Gerar os benefícios de ${mesBR} para ${nomes.length} funcionário(s)?\n\n` +
+      `⚡ Cartão Flash: ${BRL(t.totalFlash)} — o arquivo será baixado e o pedido registrado\n` +
+      `🏦 Lote de pagamento: ${BRL(t.totalLote)} — fica disponível em Financeiro RH (fonte Benefícios)` +
       (repetidos.length ? `\n\n⚠ ${repetidos.length} já tiveram benefício gerado neste mês: ${repetidos.join(', ')}` : '');
     if (!confirm(msg)) return;
 
     setGerandoBeneficio(true);
     try {
-      const res = await gerarBeneficioAction({
-        mesReferencia: mes, nomes, base: gridBaseExibida, jaPagoEm: jaPago ? jaPagoData : null, usuarioNome: usuarioAtual
-      }, accessToken);
+      const res = await gerarBeneficioAction({ mesReferencia: mes, nomes, base: gridBaseExibida, usuarioNome: usuarioAtual }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       const { pedidoId, linhasFlash, qtdFlash, valorFlash, qtdLote, valorLote } = res.info;
-      if (jaPago) {
-        toast(`Benefícios de ${mesBR} registrados como pagos em ${dataPagoBR}: ${nomes.length} func., ${BRL(valorFlash + valorLote)}.`, 'success');
-      } else {
-        if (pedidoId && linhasFlash?.length) baixarArquivoFlash(linhasFlash, pedidoId, mes);
-        toast(
-          [
-            qtdFlash ? `Pedido Flash #${pedidoId}: ${qtdFlash} func., ${BRL(valorFlash)} (confirme o pagamento em "🧾 Pedidos Flash")` : null,
-            qtdLote ? `Lote: ${qtdLote} func., ${BRL(valorLote)} disponível em Financeiro RH` : null,
-          ].filter(Boolean).join(' · ') || 'Benefícios gerados.',
-          'success'
-        );
-      }
+      if (pedidoId && linhasFlash?.length) baixarArquivoFlash(linhasFlash, pedidoId, mes);
+      toast(
+        [
+          qtdFlash ? `Pedido Flash #${pedidoId}: ${qtdFlash} func., ${BRL(valorFlash)} (confirme o pagamento em "🧾 Pedidos Flash")` : null,
+          qtdLote ? `Lote: ${qtdLote} func., ${BRL(valorLote)} disponível em Financeiro RH` : null,
+        ].filter(Boolean).join(' · ') || 'Benefícios gerados.',
+        'success'
+      );
       gerarGrid(); // atualiza os "já gerado"
     } catch (e: any) {
       toast('Benefícios NÃO gerados: ' + e.message, 'error');
@@ -507,7 +487,7 @@ export default function BeneficiosPage() {
         </div>
 
         {abaPrincipal === 'MES' ? (
-          <BeneficiosPorMes accessToken={accessToken} empresas={empresasCatalogoVisivel} nomeEmpresa={nomeEmpresa} />
+          <BeneficiosPorMes accessToken={accessToken} usuarioAtual={usuarioAtual} empresas={empresasCatalogoVisivel} nomeEmpresa={nomeEmpresa} />
         ) : (<>
 
         {/* KPIs */}
@@ -721,21 +701,10 @@ export default function BeneficiosPage() {
                 </select>
                 <button onClick={gerarGrid} className={`text-[10px] font-black text-white px-3 py-2 rounded-lg uppercase ${gridDesatualizado ? 'bg-amber-500 animate-pulse' : 'bg-[#336699]'}`}>Atualizar</button>
                 <button onClick={exportarCSV} disabled={!grid || gridSelecionados.size === 0} title="Planilha só para conferência — não grava nada" className="text-[10px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-2 rounded-lg uppercase disabled:opacity-50">⬇ Conferência</button>
-                <label title="Competência já paga por fora: grava só o histórico, marcado como pago — sem arquivo Flash e sem lote"
-                  className={`flex items-center gap-1.5 text-[10px] font-black uppercase px-2 py-1.5 rounded-lg border cursor-pointer ${jaPago ? 'bg-amber-50 border-amber-300 text-amber-700' : 'border-gray-300 text-gray-500'}`}>
-                  <input type="checkbox" checked={jaPago} onChange={e => setJaPago(e.target.checked)} className="w-3.5 h-3.5" />
-                  Já foi pago
-                  {jaPago && (
-                    <input type="date" value={jaPagoData} onChange={e => setJaPagoData(e.target.value)}
-                      className="ml-1 p-1 border border-amber-300 rounded text-[11px] font-bold bg-white normal-case" />
-                  )}
-                </label>
                 <button onClick={gerarBeneficio} disabled={!grid || gridSelecionados.size === 0 || gerandoBeneficio || carregandoGrid || gridDesatualizado}
-                  title={gridDesatualizado ? 'Mês ou base alterados — clique em Atualizar antes de gerar'
-                    : jaPago ? 'Grava o histórico já pago (sem arquivo Flash, sem lote)'
-                      : 'Grava no banco, baixa o arquivo Flash e deixa o restante para o lote do Financeiro RH'}
-                  className={`text-[10px] font-black text-white px-4 py-2 rounded-lg uppercase disabled:opacity-50 ${jaPago ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
-                  {gerandoBeneficio ? '⏳ Gerando...' : jaPago ? `📝 Registrar como pago (${gridSelecionados.size})` : `✓ Gerar Benefício (${gridSelecionados.size})`}
+                  title={gridDesatualizado ? 'Mês ou base alterados — clique em Atualizar antes de gerar' : 'Grava no banco, baixa o arquivo Flash e deixa o restante para o lote do Financeiro RH'}
+                  className="text-[10px] font-black text-white px-4 py-2 rounded-lg uppercase disabled:opacity-50 bg-emerald-600 hover:bg-emerald-700">
+                  {gerandoBeneficio ? '⏳ Gerando...' : `✓ Gerar Benefício (${gridSelecionados.size})`}
                 </button>
                 <button onClick={() => setMostrarGrid(false)} className="text-[10px] font-black bg-gray-100 px-3 py-2 rounded-lg uppercase">Fechar</button>
               </div>

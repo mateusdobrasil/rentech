@@ -91,6 +91,20 @@ export function usePageAccess(options: UsePageAccessOptions = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router, rotaEfetiva, tentativa]);
 
+  // O access token do Supabase vence em ~1h e o client renova sozinho, mas o
+  // valor guardado acima era só o do carregamento da página — com a página
+  // aberta por mais de 1h, toda Server Action passava a receber um token
+  // vencido e recusava ("Você não tem permissão..." em quem testa várias
+  // rotas). Acompanha a renovação e mantém o token sempre atual.
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((evento, session) => {
+      if ((evento === 'TOKEN_REFRESHED' || evento === 'SIGNED_IN') && session?.access_token) {
+        setAccessToken(atual => (atual ? session.access_token : atual)); // só depois de liberado o acesso
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
   const tentarNovamente = () => setTentativa(t => t + 1);
 
   return { usuarioAtual, emailUsuario, permissaoNormalizada, permissaoBruta, accessToken, authLoading, acessoNegado, erro, tentarNovamente };

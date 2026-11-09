@@ -5,7 +5,7 @@
 // O VR/VT NÃO é gravado aqui — é lido do holerite (contrato + ficha) e apenas
 // exibido junto no painel, para não duplicar a fonte da verdade.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
+import { mensagemAcessoNegado, validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
 import { registrarLogAuditoria } from '../../../actions';
 import { gravarGeracaoBeneficios, categoriaMeio, pedidosFlashCancelados, inicioDaCompetencia, type BaseBeneficios } from '../../../lib/beneficiosGeracoes';
@@ -19,7 +19,7 @@ async function validarAcessoQualquerRota(accessToken: string) {
     const acesso = await validarAcesso(accessToken, rota);
     if (acesso.ok) return acesso;
   }
-  return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
+  return { ok: false as const, message: await mensagemAcessoNegado(accessToken) };
 }
 
 // ============================================================================
@@ -584,6 +584,8 @@ export async function beneficiosPorMesAction(payload: { mesReferencia: string },
         return {
           funcionario_nome: nome, empresaId: empresaDe.get(nome) ?? null,
           valores, totalFlash, totalLote, total: totalFlash + totalLote,
+          // Detalhe pra lupa (🔍): cada benefício pago naquela geração
+          itens: seus.map((it: any) => ({ tipo: it.tipo, meio: it.meio, valor: Number(it.valorMes) || 0, detalhe: it.detalhe || '' })),
           flash: totalFlash > 0 ? situacaoFlash(g) : null,
           lote: totalLote > 0 ? situacaoLote(g, nome) : null,
           geradoEm: g.gerado_em, geradoPor: g.gerado_por, geracaoId: g.id,

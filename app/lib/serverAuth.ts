@@ -77,6 +77,15 @@ export type ResultadoAcesso =
   | { ok: true; perfil: PerfilValidado }
   | { ok: false; message: string };
 
+// Mensagem final de quem testa várias rotas (validarAcessoQualquerRota e
+// afins): antes era sempre "sem permissão", mesmo quando o motivo real era a
+// sessão vencida — escondia o problema (caso Benefícios por Mês, 2026-11-09).
+export async function mensagemAcessoNegado(accessToken: string): Promise<string> {
+  return (await obterPerfilValidado(accessToken))
+    ? 'Você não tem permissão para executar esta ação.'
+    : 'Sua sessão expirou. Recarregue a página (F5) e tente de novo.';
+}
+
 export async function validarAcesso(accessToken: string, rota: string): Promise<ResultadoAcesso> {
   const perfil = await obterPerfilValidado(accessToken);
   if (!perfil) return { ok: false, message: 'Sessão inválida ou expirada. Faça login novamente.' };

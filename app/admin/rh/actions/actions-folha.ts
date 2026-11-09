@@ -4,7 +4,7 @@
 // Server actions para as GRAVAÇÕES sensíveis do módulo de folha.
 // Rodam no servidor com service role — a lógica de escrita sai do browser.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
+import { mensagemAcessoNegado, validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
@@ -16,7 +16,7 @@ async function validarAcessoQualquerRota(accessToken: string) {
     const acesso = await validarAcesso(accessToken, rota);
     if (acesso.ok) return acesso;
   }
-  return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
+  return { ok: false as const, message: await mensagemAcessoNegado(accessToken) };
 }
 
 // ============================================================================

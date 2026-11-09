@@ -9,7 +9,7 @@
 // de verdade quando aprovadas aqui pelo RH — o funcionário nunca aprova a
 // própria exceção.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
+import { mensagemAcessoNegado, validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { consolidarDia, timestampBR, formatarPeriodoBR } from '../../../lib/pontoWhatsapp';
 import { notificarPontoWhatsApp } from '../../../lib/whatsapp';
 import { registrarLogAuditoria } from '../../../actions';
@@ -25,7 +25,7 @@ async function validarAcessoPontoWhatsapp(accessToken: string) {
     const acesso = await validarAcesso(accessToken, rota);
     if (acesso.ok) return acesso;
   }
-  return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
+  return { ok: false as const, message: await mensagemAcessoNegado(accessToken) };
 }
 
 export interface EstatisticasPontoWhatsapp {

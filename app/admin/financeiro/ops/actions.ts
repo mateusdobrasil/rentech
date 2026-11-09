@@ -10,7 +10,7 @@
 import { revalidatePath } from 'next/cache';
 import { registrarLogAuditoria } from '../../../actions';
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso } from '../../../lib/serverAuth';
+import { mensagemAcessoNegado, validarAcesso } from '../../../lib/serverAuth';
 import { criarContaPagarParaOP, type ResultadoEnvioP2s } from './enviarOpP2sCore';
 import { contextoEnvioItau, consultarPagamentoSispag, semAcento, STATUS_ITAU_EFETUADO } from '../../../lib/itauSispag';
 import { marcarContaPagarQuitada } from '../../../lib/p2s';
@@ -27,7 +27,7 @@ async function validarAcessoConciliacao(accessToken: string) {
     const acesso = await validarAcesso(accessToken, rota);
     if (acesso.ok) return acesso;
   }
-  return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
+  return { ok: false as const, message: await mensagemAcessoNegado(accessToken) };
 }
 
 // Aceita dois padrões: "OP: 252" / "OP:252" / "OP : 252" (case-insensitive)

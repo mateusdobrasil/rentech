@@ -14,6 +14,7 @@ import { useToast } from '../../../components/ui/NotificationProvider';
 import { supabase } from '../../../lib/supabase';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
+import BeneficiosPorMes from './BeneficiosPorMes';
 
 const BRL = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
 
@@ -56,6 +57,7 @@ export default function BeneficiosPage() {
   const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
   const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
   const [filtroEmpresa, setFiltroEmpresa] = useState<string>('TODAS');
+  const [abaPrincipal, setAbaPrincipal] = useState<'CADASTRO' | 'MES'>('CADASTRO');
 
   useEffect(() => {
     if (authLoading || acessoNegado) return;
@@ -494,6 +496,20 @@ export default function BeneficiosPage() {
 
       <div className="p-4 md:px-8 pt-6 max-w-[1400px] mx-auto w-full">
 
+        {/* Abas: cadastro dos benefícios × o que cada um recebeu no mês */}
+        <div className="bg-white p-1.5 rounded-xl shadow-sm border border-[#E2E8F0] mb-6 inline-flex gap-1">
+          {([['CADASTRO', '🎁 Cadastro de Benefícios'], ['MES', '📅 Benefícios por Mês']] as const).map(([valor, rotulo]) => (
+            <button key={valor} onClick={() => setAbaPrincipal(valor)}
+              className={`px-4 py-2 text-[11px] font-black uppercase tracking-wider rounded-lg transition-colors ${abaPrincipal === valor ? 'bg-[#0C1D4D] text-white' : 'text-gray-500 hover:text-[#0C1D4D]'}`}>
+              {rotulo}
+            </button>
+          ))}
+        </div>
+
+        {abaPrincipal === 'MES' ? (
+          <BeneficiosPorMes accessToken={accessToken} empresas={empresasCatalogoVisivel} nomeEmpresa={nomeEmpresa} />
+        ) : (<>
+
         {/* KPIs */}
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
           <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 text-center">
@@ -674,6 +690,7 @@ export default function BeneficiosPage() {
         <p className="text-[10px] text-gray-400 font-medium mt-4 text-center">
           VR e VT vêm da configuração de contrato e da ficha (calculados por dia no holerite). Os demais benefícios são fixos mensais, gerenciados aqui.
         </p>
+        </>)}
       </div>
 
       {/* Modal do GRID consolidado */}

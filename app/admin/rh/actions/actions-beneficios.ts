@@ -494,6 +494,112 @@ async function jaGeradosNoMes(db: ReturnType<typeof supabaseAdmin>, mesReferenci
 }
 
 // ============================================================================
+// BENEFÍCIOS POR MÊS (aba "Benefícios por Mês") — o que foi GERADO pra
+// competência (botão Gerar Benefício, folha_beneficios_geracoes origem
+// BENEFICIO) e se foi pago. Por funcionário vale a geração mais recente que o
+// inclui. Situação de cada parte:
+//   - Flash: geração registrada como já paga, ou o pedido Flash (PAGO /
+//     aguardando confirmação / cancelado);
+//   - Transferência: geração registrada como já paga, ou o item BENEFICIOS do
+//     lote do Financeiro RH do mês (Efetuado no Itaú / enviado / erro / no lote
+//     sem envio / aguardando lote).
+// Meses antes de 30/10/2026 não têm geração gravada — voltam vazios.
+// ============================================================================
+type SituacaoPagamento = { status: 'PAGO' | 'PENDENTE' | 'CANCELADO' | 'ERRO'; texto: string };
+
+export async function beneficiosPorMesAction(payload: { mesReferencia: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoQualquerRota(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  const mes = payload.mesReferencia;
+  const dataBR = (iso: string | null | undefined) => iso ? String(iso).slice(0, 10).split('-').reverse().join('/') : '';
+  try {
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+
+    const [{ data: geracoes, error }, { data: lotes }] = await Promise.all([
+      db.from('folha_beneficios_geracoes')
+        .select('id, referencia_id, funcionarios, itens, gerado_em, gerado_por, pago_em')
+        .eq('mes_referencia', mes).eq('origem', 'BENEFICIO').order('gerado_em', { ascending: false }),
+      db.from('financeiro_lotes_pagamento').select('id, data_pagamento, itens')
+        .eq('mes_referencia', mes).or('ativo.is.null,ativo.eq.true'),
+    ]);
+    if (error) throw new Error(error.message);
+    if (!geracoes?.length) return { ok: true, info: { colunas: [], funcionarios: [], geracoes: 0 } };
+
+    const pedidoIds = [...new Set(geracoes.map(g => g.referencia_id).filter((v): v is number => v != null))];
+    const { data: pedidos } = pedidoIds.length
+      ? await db.from('folha_beneficios_flash_pedidos').select('id, status, pago_em').in('id', pedidoIds)
+      : { data: [] as any[] };
+    const pedidoPorId = new Map((pedidos || []).map(p => [p.id, p]));
+
+    // Geração mais recente de cada funcionário
+    const geracaoDe = new Map<string, any>();
+    geracoes.forEach(g => (Array.isArray(g.funcionarios) ? g.funcionarios : []).forEach((n: string) => { if (!geracaoDe.has(n)) geracaoDe.set(n, g); }));
+
+    const nomes = [...geracaoDe.keys()];
+    const { data: funcs } = await db.from('folha_funcionarios').select('nome_completo, empresa_id').in('nome_completo', nomes);
+    const empresaDe = new Map((funcs || []).map(f => [f.nome_completo, f.empresa_id ?? null]));
+
+    // Itens BENEFICIOS dos lotes do mês, por funcionário
+    const itensLote = new Map<string, { lote: any; item: any }[]>();
+    (lotes || []).forEach(l => (Array.isArray(l.itens) ? l.itens : [])
+      .filter((i: any) => i?.fonte === 'BENEFICIOS')
+      .forEach((i: any) => { (itensLote.get(i.funcionario_nome) || itensLote.set(i.funcionario_nome, []).get(i.funcionario_nome)!).push({ lote: l, item: i }); }));
+
+    const situacaoFlash = (g: any): SituacaoPagamento => {
+      if (g.pago_em) return { status: 'PAGO', texto: `Pago ${dataBR(g.pago_em)} (registrado)` };
+      const p = g.referencia_id != null ? pedidoPorId.get(g.referencia_id) : null;
+      if (!p) return { status: 'PENDENTE', texto: 'Sem pedido Flash' };
+      if (p.status === 'PAGO') return { status: 'PAGO', texto: `Pago ${dataBR(p.pago_em)} · pedido #${p.id}` };
+      if (p.status === 'CANCELADO') return { status: 'CANCELADO', texto: `Pedido #${p.id} cancelado` };
+      return { status: 'PENDENTE', texto: `Pedido #${p.id} aguardando confirmação` };
+    };
+    const situacaoLote = (g: any, nome: string): SituacaoPagamento => {
+      if (g.pago_em) return { status: 'PAGO', texto: `Pago ${dataBR(g.pago_em)} (registrado)` };
+      const candidatos = itensLote.get(nome) || [];
+      const efetuado = candidatos.find(c => semAcentoMaiusc(c.item.itau_status_atual) === 'EFETUADO');
+      if (efetuado) return { status: 'PAGO', texto: `Pago ${dataBR(efetuado.lote.data_pagamento || efetuado.item.itau_efetuado_em)} · lote #${efetuado.lote.id}` };
+      const ultimo = candidatos[candidatos.length - 1];
+      if (!ultimo) return { status: 'PENDENTE', texto: 'Aguardando lote de pagamento' };
+      if (ultimo.item.api_status === 'Erro') return { status: 'ERRO', texto: `Erro no envio · lote #${ultimo.lote.id}` };
+      if (ultimo.item.api_status) return { status: 'PENDENTE', texto: `Enviado ao banco · lote #${ultimo.lote.id}${ultimo.item.itau_status_atual ? ` (${ultimo.item.itau_status_atual})` : ''}` };
+      return { status: 'PENDENTE', texto: `No lote #${ultimo.lote.id}, não enviado` };
+    };
+
+    const tipos = new Set<string>();
+    const funcionarios = nomes
+      .filter(n => empresaPermitida(empresasPermitidas, empresaDe.get(n) ?? null))
+      .map(nome => {
+        const g = geracaoDe.get(nome);
+        const seus = (g.itens || []).filter((it: any) => it.funcionario_nome === nome);
+        const valores: Record<string, number> = {};
+        let totalFlash = 0, totalLote = 0;
+        seus.forEach((it: any) => {
+          const v = Number(it.valorMes) || 0;
+          tipos.add(it.tipo);
+          valores[it.tipo] = (valores[it.tipo] || 0) + v;
+          if (categoriaMeio(it.meio) === 'FLASH') totalFlash += v; else totalLote += v;
+        });
+        return {
+          funcionario_nome: nome, empresaId: empresaDe.get(nome) ?? null,
+          valores, totalFlash, totalLote, total: totalFlash + totalLote,
+          flash: totalFlash > 0 ? situacaoFlash(g) : null,
+          lote: totalLote > 0 ? situacaoLote(g, nome) : null,
+          geradoEm: g.gerado_em, geradoPor: g.gerado_por, geracaoId: g.id,
+        };
+      })
+      .sort((a, b) => a.funcionario_nome.localeCompare(b.funcionario_nome));
+
+    return { ok: true, info: { colunas: [...tipos].sort((a, b) => a.localeCompare(b)), funcionarios, geracoes: geracoes.length } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+const semAcentoMaiusc = (s: string | null | undefined) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().trim();
+
+// ============================================================================
 // GRID CONSOLIDADO DE BENEFÍCIOS (para a aba e o financeiro)
 // Retorna: por funcionário (itens + total) E por meio de pagamento + total geral.
 // ============================================================================

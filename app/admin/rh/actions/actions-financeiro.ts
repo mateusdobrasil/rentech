@@ -1004,7 +1004,7 @@ export async function salvarLoteAction(payload: {
     const nomesBenef = new Set(prontos.filter(i => i.fonte === 'BENEFICIOS').map(i => i.funcionario_nome));
     if (nomesBenef.size > 0) {
       try {
-        const gerados = await beneficiosGeradosParaLote(db, payload.mesReferencia);
+        const gerados = await beneficiosGeradosParaLote(db, payload.mesReferencia, { incluirJaEnviados: true });
         await gravarGeracaoBeneficios(db, {
           mesReferencia: payload.mesReferencia, origem: 'LOTE', referenciaId: data.id,
           funcionarios: [...nomesBenef],

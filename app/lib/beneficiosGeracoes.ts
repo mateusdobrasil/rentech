@@ -51,18 +51,43 @@ export async function pedidosFlashCancelados(db: ReturnType<typeof supabaseAdmin
   return new Set((data || []).filter(p => p.status === 'CANCELADO').map(p => p.id));
 }
 
+// Quem já teve o benefício da competência ENVIADO ao banco com sucesso num lote
+// ativo (item fonte BENEFICIOS com api_status de sucesso, ou já "Efetuado" no
+// Itaú). Mesma trava que OP/rescisão/conta a pagar têm com pago_em — sem isso
+// o benefício pago voltava a aparecer como disponível no próximo lote do mês
+// (caso Marcio, 11/2026, lote #84). Se o pagamento falhar de vez, "Reabrir
+// para reenvio" limpa o api_status do item e ele volta a aparecer.
+export async function beneficiosJaEnviadosNoMes(db: ReturnType<typeof supabaseAdmin>, mesReferencia: string): Promise<Set<string>> {
+  const { data } = await db.from('financeiro_lotes_pagamento')
+    .select('itens').eq('mes_referencia', mesReferencia).or('ativo.is.null,ativo.eq.true');
+  const enviados = new Set<string>();
+  (data || []).forEach(l => (Array.isArray(l.itens) ? l.itens : []).forEach((it: any) => {
+    if (it?.fonte !== 'BENEFICIOS' || !it.funcionario_nome) return;
+    const sucessoEnvio = ['Sucesso', 'Sucesso (pre-autorizado)'].includes(it.api_status);
+    const efetuado = semAcentoMaiusc(it.itau_status_atual) === 'EFETUADO';
+    if (sucessoEnvio || efetuado) enviados.add(it.funcionario_nome);
+  }));
+  return enviados;
+}
+
 // O que vai pro lote do Financeiro RH (fonte Benefícios) na competência: por
 // funcionário, a geração BENEFICIO mais recente que o inclui, só os itens que
-// NÃO são Cartão Flash. Quem saiu sem nenhum item fora do Flash não entra.
+// NÃO são Cartão Flash. Quem saiu sem nenhum item fora do Flash não entra, nem
+// quem já foi pago (registrado como pago ou já enviado num lote — ver
+// beneficiosJaEnviadosNoMes; `incluirJaEnviados` desliga essa parte pra quem
+// só precisa do detalhe dos itens, ex.: gravar o histórico do lote salvo).
 export async function beneficiosGeradosParaLote(
   db: ReturnType<typeof supabaseAdmin>,
-  mesReferencia: string
+  mesReferencia: string,
+  opcoes: { incluirJaEnviados?: boolean } = {}
 ): Promise<Record<string, { total: number; itens: ItemGeracaoBeneficios[]; geracaoId: number }>> {
   const { data, error } = await db.from('folha_beneficios_geracoes')
     .select('id, funcionarios, itens, gerado_em, pago_em')
     .eq('mes_referencia', mesReferencia).eq('origem', 'BENEFICIO')
     .order('gerado_em', { ascending: false });
   if (error) throw new Error(`Histórico de benefícios gerados: ${error.message}`);
+
+  const jaEnviados = opcoes.incluirJaEnviados ? new Set<string>() : await beneficiosJaEnviadosNoMes(db, mesReferencia);
 
   const porNome: Record<string, { total: number; itens: ItemGeracaoBeneficios[]; geracaoId: number }> = {};
   const vistos = new Set<string>();
@@ -71,6 +96,7 @@ export async function beneficiosGeradosParaLote(
       if (vistos.has(nome)) return; // já pegou a geração mais recente dele
       vistos.add(nome);
       if (g.pago_em) return; // registrada como já paga ("só registrar") — nada a pagar
+      if (jaEnviados.has(nome)) return; // já enviado/pago num lote do mês
       const itens = (g.itens || []).filter((it: any) => it.funcionario_nome === nome && categoriaMeio(it.meio) !== 'FLASH');
       const total = Math.round(itens.reduce((s: number, it: any) => s + (Number(it.valorMes) || 0), 0) * 100) / 100;
       if (total > 0) porNome[nome] = { total, itens, geracaoId: g.id };

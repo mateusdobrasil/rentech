@@ -14,6 +14,9 @@ interface PainelOperacional {
   documentosVencendo: number;
   checklistsVeiculosAbertos: number;
   folgasPendentes: number;
+  multasDebitosAbertos: number;
+  multasDebitosValor: number;
+  multasDebitosVencidos: number;
 }
 
 // Lista de módulos do hub. As permissões de cada um NÃO ficam mais aqui —
@@ -26,6 +29,12 @@ const modulosOperacional = [
     descricao: 'Ficha dos veículos, documentos, seguros, vencimentos e manutenções.',
     icone: '🚚', link: '/admin/operacional/frota',
     cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
+  },
+  {
+    titulo: 'Multas e Débitos',
+    descricao: 'Multas, IPVA e licenciamento da frota consultados no Detran-SP, condutor, desconto em folha e OP.',
+    icone: '🚨', link: '/admin/operacional/multas',
+    cor: 'bg-rose-50 border-rose-200 text-rose-700', hover: 'hover:border-rose-500'
   },
   {
     titulo: 'Relatórios Operacionais',
@@ -97,6 +106,15 @@ export default function OperacionalHub() {
               valor: painelLoading ? '—' : `${painel?.checklistsVeiculosAbertos ?? 0}`,
               sub: 'em rota (saída sem retorno)',
               destaque: false, link: '/admin/operacional/frota'
+            });
+          }
+          if (linksAutorizados.has('/admin/operacional/multas')) {
+            const vencidas = painel?.multasDebitosVencidos ?? 0;
+            cartoes.push({
+              chave: 'multas', titulo: 'Multas e Débitos', icone: '🚨',
+              valor: painelLoading ? '—' : `${painel?.multasDebitosAbertos ?? 0}`,
+              sub: painelLoading ? 'carregando...' : `${(painel?.multasDebitosValor ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} em aberto · ${vencidas} vencido(s)`,
+              destaque: vencidas > 0, link: '/admin/operacional/multas'
             });
           }
           if (linksAutorizados.has('/admin/operacional/registro-ponto')) {

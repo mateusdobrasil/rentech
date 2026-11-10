@@ -1,0 +1,593 @@
+'use server';
+
+// app/admin/operacional/actions/actions-multas.ts
+// Gerenciamento de Multas e Débitos (/admin/operacional/multas).
+//
+// - Consulta automática por veículo (placa + Renavam) via
+//   app/lib/consultaDebitosVeiculares.ts (hoje: Infosimples DETRAN/SP).
+// - Cada débito vira uma linha em frota_multas_debitos, deduplicada por
+//   (veiculo_id, chave_externa). O que estava ABERTO e sumiu de uma consulta
+//   completa leva baixa automática (o Detran só lista débito em aberto).
+// - Multa: condutor sugerido pelo Checklist de Veículos (frota_checklists)
+//   da data/hora da infração; confirmado, permite lançar desconto parcelado
+//   em folha_descontos (aparece no Holerite) e/ou gerar a OP de pagamento.
+//
+// Tudo com supabaseAdmin (service role, ignora RLS) — o isolamento por
+// empresa é o obterEmpresasPermitidas/empresaPermitida explícito em cada
+// action, como no resto do sistema.
+import { supabaseAdmin } from '../../../lib/supabase';
+import { validarAcesso, obterEmpresasPermitidas, empresaPermitida, mensagemAcessoNegado } from '../../../lib/serverAuth';
+import { registrarLogAuditoria } from '../../../actions';
+import { provedorConfigurado, validadeCertificadoA1 } from '../../../lib/consultaDebitosVeiculares';
+import { executarConsultaVeiculo, vincularNics, enviarAvisoCondutor } from '../../../lib/multasCore';
+
+const ROTA = '/admin/operacional/multas';
+// "Criar OP" abre /admin/op/nova?multaIds=... — quem está na tela da OP
+// precisa conseguir carregar os dados do débito (regra: acesso à página
+// libera os botões dela).
+const ROTAS_DADOS_PAGAMENTO = [ROTA, '/admin/op/nova'];
+
+type Resultado = { ok: boolean; erro?: string; info?: any };
+
+export type StatusDebito = 'ABERTO' | 'PAGO' | 'CANCELADO';
+export type TipoDebitoMulta = 'MULTA' | 'IPVA' | 'LICENCIAMENTO' | 'OUTRO';
+
+export interface VeiculoMultas {
+  id: string; apelido: string; placa: string; renavam: string | null; tipo: string | null;
+  empresa_id: number | null; propriedade: string | null; status: string | null; exibir_na_frota: boolean | null;
+  ultima_consulta: { consultado_em: string; status: 'OK' | 'ERRO'; mensagem: string | null; consultado_por: string | null } | null;
+  // Da última consulta OK (dados que o Detran já devolve junto dos débitos).
+  situacao: {
+    consultado_em: string; restricao_administrativa: string | null; restricao_financeira: string | null;
+    restricao_judiciaria: string | null; restricao_tributaria: string | null; bloqueio_furto: string | null;
+    ultimo_licenciamento: string | null; status_licenciamento: string | null;
+  } | null;
+}
+
+export interface DebitoMulta {
+  id: string; empresa_id: number | null; veiculo_id: string;
+  tipo: TipoDebitoMulta; origem: 'CONSULTA_API' | 'MANUAL'; fonte: string | null;
+  descricao: string | null; auto_infracao: string | null; orgao_autuador: string | null;
+  data_infracao: string | null; hora_infracao: string | null; local_infracao: string | null; municipio: string | null;
+  exercicio: string | null; cota: string | null;
+  valor: number; data_vencimento: string | null;
+  status: StatusDebito; baixa_automatica: boolean; pago_em: string | null; status_alterado_por: string | null;
+  condutor_nome: string | null; condutor_checklist_id: string | null; condutor_confirmado_em: string | null; condutor_confirmado_por: string | null;
+  desconto_descricao: string | null; desconto_parcelas: number | null; desconto_mes_inicio: string | null;
+  desconto_valor_parcela: number | null; desconto_lancado_em: string | null; desconto_lancado_por: string | null;
+  observacao: string | null; primeira_consulta_em: string | null; ultima_consulta_em: string | null;
+  criado_por: string | null; created_at: string; updated_at: string;
+  eh_nic: boolean; multa_origem_id: string | null; condutor_avisado_em: string | null; condutor_avisado_por: string | null;
+  op: { id: string; numero_op: number | null; status: string | null; pago_em: string | null } | null;
+}
+
+export interface ConsultaMulta {
+  id: string; veiculo_id: string; status: 'OK' | 'ERRO'; codigo: number | null; mensagem: string | null;
+  encontrados: number; novos: number; baixados: number; valor_total: number | null; preco: number | null;
+  site_receipt: string | null; consultado_por: string | null; consultado_em: string;
+}
+
+const COLUNAS_DEBITO = 'id, empresa_id, veiculo_id, tipo, origem, fonte, descricao, auto_infracao, orgao_autuador, data_infracao, hora_infracao, local_infracao, municipio, exercicio, cota, valor, data_vencimento, status, baixa_automatica, pago_em, status_alterado_por, condutor_nome, condutor_checklist_id, condutor_confirmado_em, condutor_confirmado_por, desconto_descricao, desconto_parcelas, desconto_mes_inicio, desconto_valor_parcela, desconto_lancado_em, desconto_lancado_por, observacao, primeira_consulta_em, ultima_consulta_em, criado_por, created_at, updated_at, eh_nic, multa_origem_id, condutor_avisado_em, condutor_avisado_por';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+async function autorizar(accessToken: string, rotas: string[] = [ROTA]) {
+  let ultimaMensagem = '';
+  for (const rota of rotas) {
+    const acesso = await validarAcesso(accessToken, rota);
+    if (acesso.ok) {
+      const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+      return { ok: true as const, perfil: acesso.perfil, empresasPermitidas };
+    }
+    ultimaMensagem = acesso.message;
+  }
+  return { ok: false as const, erro: rotas.length > 1 ? await mensagemAcessoNegado(accessToken) : ultimaMensagem };
+}
+
+// Carrega o débito e confere a empresa — barra IDOR (id de outra empresa).
+async function carregarDebitoAutorizado(db: ReturnType<typeof supabaseAdmin>, id: string, empresasPermitidas: number[] | null) {
+  const { data, error } = await db.from('frota_multas_debitos').select(COLUNAS_DEBITO).eq('id', id).maybeSingle();
+  if (error) return { ok: false as const, erro: error.message };
+  if (!data) return { ok: false as const, erro: 'Débito não encontrado.' };
+  if (!empresaPermitida(empresasPermitidas, data.empresa_id)) return { ok: false as const, erro: 'Você não tem acesso a este débito.' };
+  return { ok: true as const, debito: data as unknown as Omit<DebitoMulta, 'op'> };
+}
+
+const filtrarEmpresa = <T,>(q: T, empresasPermitidas: number[] | null): T => {
+  if (!empresasPermitidas) return q;
+  return (q as any).or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+};
+
+const mesAtual = () => {
+  const agora = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  return `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}`;
+};
+
+// Mesmas contas de folha_descontos usadas em rh/holerite/page.tsx.
+const calcularMesFim = (mesInicio: string, parcelas: number): string => {
+  if (!mesInicio || parcelas < 1) return mesInicio;
+  const [ano, mes] = mesInicio.split('-').map(Number);
+  const dataFim = new Date(ano, (mes - 1) + (parcelas - 1), 1);
+  return `${dataFim.getFullYear()}-${String(dataFim.getMonth() + 1).padStart(2, '0')}`;
+};
+
+const fmtBRL = (v: number) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+// ---------------------------------------------------------------------------
+// Painel (veículos + débitos + últimas consultas)
+// ---------------------------------------------------------------------------
+export async function carregarPainelMultasAction(accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+
+  try {
+    // Liga NICs antigas/manuais à infração de origem antes de listar (barato:
+    // só lê as multas e grava o que faltar).
+    await vincularNics(db, null);
+
+    const [veiculosRes, debitosRes, consultasRes, empresasRes, situacaoRes, certificado] = await Promise.all([
+      filtrarEmpresa(db.from('frota_veiculos')
+        .select('id, apelido, placa, renavam, tipo, empresa_id, propriedade, status, exibir_na_frota')
+        .order('apelido'), auth.empresasPermitidas),
+      filtrarEmpresa(db.from('frota_multas_debitos').select(COLUNAS_DEBITO)
+        .order('data_vencimento', { ascending: true, nullsFirst: false }), auth.empresasPermitidas),
+      filtrarEmpresa(db.from('frota_multas_consultas')
+        .select('id, veiculo_id, status, codigo, mensagem, encontrados, novos, baixados, valor_total, preco, site_receipt, consultado_por, consultado_em')
+        .order('consultado_em', { ascending: false }).limit(200), auth.empresasPermitidas),
+      db.from('empresas').select('id, nome').eq('ativo', true).order('nome'),
+      filtrarEmpresa(db.from('frota_multas_consultas')
+        .select('veiculo_id, consultado_em, restricao_administrativa:resposta->data->0->>restricao_administrativa, restricao_financeira:resposta->data->0->>restricao_financeira, restricao_judiciaria:resposta->data->0->>restricao_judiciaria, restricao_tributaria:resposta->data->0->>restricao_tributaria, bloqueio_furto:resposta->data->0->>bloqueio_furto, ultimo_licenciamento:resposta->data->0->>ultimo_licenciamento, status_licenciamento:resposta->data->0->>status_licenciamento')
+        .eq('status', 'OK').order('consultado_em', { ascending: false }).limit(100), auth.empresasPermitidas),
+      validadeCertificadoA1(),
+    ]);
+    if (veiculosRes.error) throw new Error(veiculosRes.error.message);
+    if (debitosRes.error) throw new Error(debitosRes.error.message);
+    if (consultasRes.error) throw new Error(consultasRes.error.message);
+
+    const consultas = (consultasRes.data || []) as ConsultaMulta[];
+    const ultimaPorVeiculo = new Map<string, ConsultaMulta>();
+    consultas.forEach(c => { if (!ultimaPorVeiculo.has(c.veiculo_id)) ultimaPorVeiculo.set(c.veiculo_id, c); });
+
+    const situacaoPorVeiculo = new Map<string, NonNullable<VeiculoMultas['situacao']>>();
+    ((situacaoRes.data || []) as unknown as (NonNullable<VeiculoMultas['situacao']> & { veiculo_id: string })[])
+      .forEach(s => { if (!situacaoPorVeiculo.has(s.veiculo_id)) situacaoPorVeiculo.set(s.veiculo_id, s); });
+
+    const veiculos: VeiculoMultas[] = (veiculosRes.data || [])
+      .filter((v: any) => v.status !== 'INATIVO')
+      .map((v: any) => {
+        const u = ultimaPorVeiculo.get(v.id);
+        return {
+          ...v,
+          ultima_consulta: u ? { consultado_em: u.consultado_em, status: u.status, mensagem: u.mensagem, consultado_por: u.consultado_por } : null,
+          situacao: situacaoPorVeiculo.get(v.id) || null,
+        };
+      });
+
+    // OP vinculada (a mais recente não reprovada; se só houver reprovada, mostra ela)
+    const debitosBase = (debitosRes.data || []) as unknown as Omit<DebitoMulta, 'op'>[];
+    const ids = debitosBase.map(d => d.id);
+    const opPorDebito = new Map<string, DebitoMulta['op']>();
+    if (ids.length) {
+      const { data: ops } = await db.from('op_ordens_pagamento')
+        .select('id, numero_op, status, pago_em, multa_debito_ids, data_criacao')
+        .overlaps('multa_debito_ids', ids)
+        .order('data_criacao', { ascending: false });
+      ((ops || []) as { id: string; numero_op: number | null; status: string | null; pago_em: string | null; multa_debito_ids: string[] | null }[]).forEach(o => {
+        (o.multa_debito_ids || []).forEach(debitoId => {
+          const atual = opPorDebito.get(debitoId);
+          if (!atual || (atual.status === 'REPROVADA' && o.status !== 'REPROVADA')) {
+            opPorDebito.set(debitoId, { id: o.id, numero_op: o.numero_op, status: o.status, pago_em: o.pago_em });
+          }
+        });
+      });
+    }
+    const debitos: DebitoMulta[] = debitosBase.map(d => ({ ...d, valor: Number(d.valor) || 0, op: opPorDebito.get(d.id) || null }));
+
+    const empresas = ((empresasRes.data || []) as { id: number; nome: string }[])
+      .filter(e => !auth.empresasPermitidas || auth.empresasPermitidas.includes(e.id));
+
+    return { ok: true, info: { veiculos, debitos, consultas, empresas, provedorConfigurado: provedorConfigurado(), certificado } };
+  } catch (e) {
+    return { ok: false, erro: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Consulta automática de um veículo
+// ---------------------------------------------------------------------------
+export async function consultarDebitosVeiculoAction(params: { veiculoId: string }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const usuario = auth.perfil.nome.toUpperCase();
+
+  const { data: veiculo } = await db.from('frota_veiculos')
+    .select('id, apelido, placa, renavam, empresa_id, propriedade').eq('id', params.veiculoId).maybeSingle();
+  if (!veiculo) return { ok: false, erro: 'Veículo não encontrado.' };
+  if (!empresaPermitida(auth.empresasPermitidas, veiculo.empresa_id)) return { ok: false, erro: 'Você não tem acesso a este veículo.' };
+
+  const r = await executarConsultaVeiculo(db, veiculo, usuario);
+  if (!r.ok) return { ok: false, erro: r.erro };
+  return { ok: true, info: { encontrados: r.encontrados, novos: r.novos, baixados: r.baixados, valorTotal: r.valorTotal, avisos: r.avisos, preco: r.preco } };
+}
+
+// ---------------------------------------------------------------------------
+// Condutor: sugestão pelo Checklist de Veículos
+// ---------------------------------------------------------------------------
+export async function sugerirCondutorAction(params: { debitoId: string }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  if (!r.ok) return { ok: false, erro: r.erro };
+  const d = r.debito;
+
+  try {
+    // Motoristas possíveis (lista para escolha manual): ativos da empresa do
+    // veículo, quem tem "pode dirigir" primeiro.
+    let qFunc = db.from('folha_funcionarios').select('nome_completo, pode_dirigir, empresa_id').eq('ativo', true).order('nome_completo');
+    if (d.empresa_id) qFunc = qFunc.eq('empresa_id', d.empresa_id);
+    else if (auth.empresasPermitidas) qFunc = qFunc.in('empresa_id', auth.empresasPermitidas);
+    const { data: funcs } = await qFunc;
+    const motoristas = ((funcs || []) as { nome_completo: string; pode_dirigir: boolean | null }[])
+      .sort((a, b) => Number(!!b.pode_dirigir) - Number(!!a.pode_dirigir) || a.nome_completo.localeCompare(b.nome_completo))
+      .map(f => ({ nome: f.nome_completo, pode_dirigir: !!f.pode_dirigir }));
+
+    const candidatos: { checklist_id: string | null; numero: number | null; motorista_nome: string; saida_em: string | null; retorno_em: string | null; destino: string | null; precisao: 'ORIGEM' | 'HORARIO' | 'DIA' }[] = [];
+
+    // NIC: quem dirigia é o da infração ORIGINAL — a data da NIC é só o fim
+    // do prazo de indicação. Usa o condutor já confirmado na original e, se
+    // não houver, procura no checklist pela data/hora da original.
+    let referencia: { data_infracao: string | null; hora_infracao: string | null } = d;
+    let origem: { id: string; auto_infracao: string | null; data_infracao: string | null; hora_infracao: string | null; condutor_nome: string | null; checklist_id: string | null } | null = null;
+    if (d.eh_nic && d.multa_origem_id) {
+      const { data: o } = await db.from('frota_multas_debitos')
+        .select('id, auto_infracao, data_infracao, hora_infracao, condutor_nome, condutor_checklist_id').eq('id', d.multa_origem_id).maybeSingle();
+      if (o) {
+        origem = { id: o.id, auto_infracao: o.auto_infracao, data_infracao: o.data_infracao, hora_infracao: o.hora_infracao, condutor_nome: o.condutor_nome, checklist_id: o.condutor_checklist_id };
+        referencia = o;
+        if (o.condutor_nome) candidatos.push({ checklist_id: o.condutor_checklist_id, numero: null, motorista_nome: o.condutor_nome, saida_em: null, retorno_em: null, destino: null, precisao: 'ORIGEM' });
+      }
+    }
+
+    if (referencia.data_infracao && !(origem?.condutor_nome)) {
+      const dataRef = referencia.data_infracao;
+      // "00:00:00" é como o Detran devolve multa sem hora (ex.: NIC — não
+      // identificação do condutor, visto em 2026-11-10) → busca pelo dia todo.
+      const hora = /^00:00(:00)?$/.test(referencia.hora_infracao || '') ? null : (referencia.hora_infracao || '').match(/^(\d{2}):(\d{2})/);
+      const instante = hora ? new Date(`${dataRef}T${hora[1]}:${hora[2]}:00-03:00`) : null;
+      const inicioDia = new Date(`${dataRef}T00:00:00-03:00`);
+      const fimDia = new Date(`${dataRef}T23:59:59-03:00`);
+
+      // Saídas de até 7 dias antes (viagens longas) até o fim do dia da infração.
+      const janelaIni = new Date(inicioDia.getTime() - 7 * 86400000).toISOString();
+      const { data: cks } = await db.from('frota_checklists')
+        .select('id, numero, motorista_nome, saida_em, retorno_em, destino, status')
+        .eq('veiculo_id', d.veiculo_id)
+        .gte('saida_em', janelaIni).lte('saida_em', fimDia.toISOString())
+        .order('saida_em', { ascending: false });
+
+      (cks || []).forEach((c: any) => {
+        const saida = new Date(c.saida_em);
+        // Sem retorno: considera aberto por no máximo 3 dias (checklist esquecido não "cobre" a semana toda).
+        const retorno = c.retorno_em ? new Date(c.retorno_em) : new Date(saida.getTime() + 3 * 86400000);
+        if (instante && saida <= instante && instante <= retorno) {
+          candidatos.push({ checklist_id: c.id, numero: c.numero, motorista_nome: c.motorista_nome, saida_em: c.saida_em, retorno_em: c.retorno_em, destino: c.destino, precisao: 'HORARIO' });
+        } else if (saida <= fimDia && retorno >= inicioDia) {
+          candidatos.push({ checklist_id: c.id, numero: c.numero, motorista_nome: c.motorista_nome, saida_em: c.saida_em, retorno_em: c.retorno_em, destino: c.destino, precisao: 'DIA' });
+        }
+      });
+      candidatos.sort((a, b) => (a.precisao === b.precisao ? 0 : a.precisao === 'HORARIO' ? -1 : 1));
+    }
+
+    return { ok: true, info: { candidatos, motoristas, origem } };
+  } catch (e) {
+    return { ok: false, erro: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export async function definirCondutorAction(params: { debitoId: string; condutorNome: string | null; checklistId: string | null }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const usuario = auth.perfil.nome.toUpperCase();
+
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  if (!r.ok) return { ok: false, erro: r.erro };
+  if (r.debito.tipo !== 'MULTA') return { ok: false, erro: 'Condutor só se aplica a multa.' };
+  if (r.debito.desconto_lancado_em) return { ok: false, erro: 'O desconto em folha já foi lançado para este condutor — ajuste/exclua o desconto no Holerite antes de trocar o condutor.' };
+
+  const nome = params.condutorNome?.trim() || null;
+  if (nome) {
+    const { data: func } = await db.from('folha_funcionarios').select('nome_completo, empresa_id').eq('nome_completo', nome).maybeSingle();
+    if (!func) return { ok: false, erro: 'Colaborador não encontrado no cadastro de funcionários.' };
+    if (!empresaPermitida(auth.empresasPermitidas, func.empresa_id)) return { ok: false, erro: 'Você não tem acesso a este colaborador.' };
+  }
+
+  const { error } = await db.from('frota_multas_debitos').update({
+    condutor_nome: nome,
+    condutor_checklist_id: nome ? params.checklistId : null,
+    condutor_confirmado_em: nome ? new Date().toISOString() : null,
+    condutor_confirmado_por: nome ? usuario : null,
+    updated_at: new Date().toISOString(),
+  }).eq('id', params.debitoId);
+  if (error) return { ok: false, erro: error.message };
+
+  registrarLogAuditoria({
+    usuario_nome: usuario, acao: nome ? 'DEFINIU CONDUTOR DA MULTA' : 'REMOVEU CONDUTOR DA MULTA', setor: 'OPERACIONAL',
+    equipamento_id: params.debitoId, equipamento_nome: `AIT ${r.debito.auto_infracao || 'S/N'}${nome ? ` — ${nome}` : ''}`,
+  });
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Desconto em folha (folha_descontos → aparece no Holerite)
+// ---------------------------------------------------------------------------
+export async function lancarDescontoFolhaAction(params: { debitoId: string; parcelas: number; mesInicio: string; valorTotal: number }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const usuario = auth.perfil.nome.toUpperCase();
+
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  if (!r.ok) return { ok: false, erro: r.erro };
+  const d = r.debito;
+
+  if (d.tipo !== 'MULTA') return { ok: false, erro: 'Desconto em folha só se aplica a multa.' };
+  if (!d.condutor_nome) return { ok: false, erro: 'Confirme o condutor antes de lançar o desconto.' };
+  if (d.desconto_lancado_em) return { ok: false, erro: `Desconto já lançado em ${new Date(d.desconto_lancado_em).toLocaleDateString('pt-BR')} por ${d.desconto_lancado_por}.` };
+  if (d.status === 'CANCELADO') return { ok: false, erro: 'Débito cancelado — reabra antes de lançar desconto.' };
+
+  const parcelas = Math.floor(Number(params.parcelas));
+  const valorTotal = Math.round(Number(params.valorTotal) * 100) / 100;
+  if (!(parcelas >= 1 && parcelas <= 24)) return { ok: false, erro: 'Número de parcelas deve ser entre 1 e 24.' };
+  if (!/^\d{4}-\d{2}$/.test(params.mesInicio)) return { ok: false, erro: 'Informe o mês de início (AAAA-MM).' };
+  if (params.mesInicio < mesAtual()) return { ok: false, erro: 'O mês de início não pode ser anterior ao mês atual.' };
+  if (!(valorTotal > 0)) return { ok: false, erro: 'Informe o valor a descontar.' };
+
+  const { data: func } = await db.from('folha_funcionarios').select('nome_completo, empresa_id, ativo').eq('nome_completo', d.condutor_nome).maybeSingle();
+  if (!func) return { ok: false, erro: 'Condutor não encontrado no cadastro de funcionários.' };
+  if (!empresaPermitida(auth.empresasPermitidas, func.empresa_id)) return { ok: false, erro: 'Você não tem acesso a este colaborador.' };
+  if (!func.ativo) return { ok: false, erro: 'O condutor está inativo — o desconto teria que entrar na rescisão.' };
+
+  const { data: veic } = await db.from('frota_veiculos').select('placa').eq('id', d.veiculo_id).maybeSingle();
+  const valorParcela = Math.round((valorTotal / parcelas) * 100) / 100;
+  const descricao = `MULTA AIT ${d.auto_infracao || 'S/N'}${veic?.placa ? ` - ${veic.placa}` : ''}`.toUpperCase().slice(0, 120);
+
+  const { error: insErr } = await db.from('folha_descontos').insert([{
+    funcionario_nome: d.condutor_nome, descricao, tipo: 'PARCELADO', parcelas,
+    mes_inicio: params.mesInicio, mes_fim: calcularMesFim(params.mesInicio, parcelas), valor_parcela: valorParcela,
+  }]);
+  if (insErr) return { ok: false, erro: `Falha ao gravar o desconto: ${insErr.message}` };
+
+  const { error } = await db.from('frota_multas_debitos').update({
+    desconto_descricao: descricao, desconto_parcelas: parcelas, desconto_mes_inicio: params.mesInicio,
+    desconto_valor_parcela: valorParcela, desconto_lancado_em: new Date().toISOString(), desconto_lancado_por: usuario,
+    updated_at: new Date().toISOString(),
+  }).eq('id', d.id);
+  if (error) return { ok: false, erro: `Desconto gravado no Holerite, mas falhou ao marcar na multa: ${error.message}` };
+
+  registrarLogAuditoria({
+    usuario_nome: usuario, acao: 'LANÇOU DESCONTO DE MULTA EM FOLHA', setor: 'OPERACIONAL',
+    equipamento_id: d.id, equipamento_nome: `${d.condutor_nome} — ${descricao} — ${parcelas}x ${fmtBRL(valorParcela)} a partir de ${params.mesInicio}`,
+  });
+
+  // Aviso automático ao condutor (WhatsApp). Falha aqui não desfaz o
+  // desconto — só volta como aviso pra tela.
+  const aviso = await enviarAvisoCondutor(db, d.id, usuario);
+  return { ok: true, info: { valorParcela, descricao, avisoEnviado: aviso.ok, avisoErro: aviso.erro || null } };
+}
+
+export async function avisarCondutorAction(params: { debitoId: string }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  if (!r.ok) return { ok: false, erro: r.erro };
+  const res = await enviarAvisoCondutor(db, params.debitoId, auth.perfil.nome.toUpperCase());
+  return res.ok ? { ok: true } : { ok: false, erro: res.erro };
+}
+
+// ---------------------------------------------------------------------------
+// Status (pago / cancelado / reabrir) e observação
+// ---------------------------------------------------------------------------
+export async function atualizarStatusDebitoAction(params: { debitoId: string; status: StatusDebito; observacao?: string | null }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const usuario = auth.perfil.nome.toUpperCase();
+
+  if (!['ABERTO', 'PAGO', 'CANCELADO'].includes(params.status)) return { ok: false, erro: 'Status inválido.' };
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  if (!r.ok) return { ok: false, erro: r.erro };
+
+  const agora = new Date().toISOString();
+  const { error } = await db.from('frota_multas_debitos').update({
+    status: params.status,
+    baixa_automatica: false,
+    pago_em: params.status === 'PAGO' ? agora : null,
+    status_alterado_por: usuario,
+    ...(params.observacao !== undefined ? { observacao: params.observacao?.trim() || null } : {}),
+    updated_at: agora,
+  }).eq('id', params.debitoId);
+  if (error) return { ok: false, erro: error.message };
+
+  registrarLogAuditoria({
+    usuario_nome: usuario, acao: `MARCOU DÉBITO COMO ${params.status}`, setor: 'OPERACIONAL',
+    equipamento_id: params.debitoId, equipamento_nome: `${r.debito.tipo} ${r.debito.auto_infracao || r.debito.descricao || ''} — ${fmtBRL(Number(r.debito.valor))}`.trim(),
+  });
+  return { ok: true };
+}
+
+export async function salvarObservacaoDebitoAction(params: { debitoId: string; observacao: string }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  if (!r.ok) return { ok: false, erro: r.erro };
+  const { error } = await db.from('frota_multas_debitos')
+    .update({ observacao: params.observacao.trim() || null, updated_at: new Date().toISOString() }).eq('id', params.debitoId);
+  return error ? { ok: false, erro: error.message } : { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Lançamento manual (multa de outro estado, notificação ainda não no Detran…)
+// ---------------------------------------------------------------------------
+export async function salvarDebitoManualAction(params: {
+  id?: string | null; veiculoId: string; tipo: TipoDebitoMulta; descricao: string; autoInfracao?: string | null;
+  orgaoAutuador?: string | null; dataInfracao?: string | null; horaInfracao?: string | null; localInfracao?: string | null;
+  valor: number; dataVencimento?: string | null; observacao?: string | null;
+}, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const usuario = auth.perfil.nome.toUpperCase();
+
+  if (!['MULTA', 'IPVA', 'LICENCIAMENTO', 'OUTRO'].includes(params.tipo)) return { ok: false, erro: 'Tipo inválido.' };
+  const valor = Math.round(Number(params.valor) * 100) / 100;
+  if (!(valor > 0)) return { ok: false, erro: 'Informe o valor.' };
+  if (!params.descricao?.trim() && !params.autoInfracao?.trim()) return { ok: false, erro: 'Informe a descrição ou o nº do auto de infração.' };
+
+  const { data: veiculo } = await db.from('frota_veiculos').select('id, empresa_id, apelido, placa').eq('id', params.veiculoId).maybeSingle();
+  if (!veiculo) return { ok: false, erro: 'Veículo não encontrado.' };
+  if (!empresaPermitida(auth.empresasPermitidas, veiculo.empresa_id)) return { ok: false, erro: 'Você não tem acesso a este veículo.' };
+
+  const auto = params.autoInfracao?.trim().toUpperCase() || null;
+  const campos = {
+    empresa_id: veiculo.empresa_id, veiculo_id: veiculo.id, tipo: params.tipo,
+    descricao: params.descricao?.trim() || null, auto_infracao: auto,
+    orgao_autuador: params.orgaoAutuador?.trim() || null,
+    data_infracao: params.dataInfracao || null, hora_infracao: params.horaInfracao || null,
+    local_infracao: params.localInfracao?.trim() || null,
+    valor, data_vencimento: params.dataVencimento || null,
+    observacao: params.observacao?.trim() || null,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (params.id) {
+    const r = await carregarDebitoAutorizado(db, params.id, auth.empresasPermitidas);
+    if (!r.ok) return { ok: false, erro: r.erro };
+    if (r.debito.origem !== 'MANUAL') return { ok: false, erro: 'Só lançamentos manuais podem ser editados (os da consulta são atualizados pelo Detran).' };
+    const { error } = await db.from('frota_multas_debitos').update(campos).eq('id', params.id);
+    if (error) return { ok: false, erro: error.message };
+  } else {
+    // Mesmo AIT já veio pela consulta? Evita duplicar a multa.
+    if (auto) {
+      const { data: dup } = await db.from('frota_multas_debitos').select('id').eq('veiculo_id', veiculo.id).eq('auto_infracao', auto).limit(1).maybeSingle();
+      if (dup) return { ok: false, erro: `O auto de infração ${auto} já está cadastrado para este veículo.` };
+    }
+    const { error } = await db.from('frota_multas_debitos').insert([{
+      ...campos, origem: 'MANUAL', fonte: 'MANUAL', chave_externa: `MANUAL:${crypto.randomUUID()}`,
+      status: 'ABERTO', criado_por: usuario,
+    }]);
+    if (error) return { ok: false, erro: error.message };
+  }
+
+  registrarLogAuditoria({
+    usuario_nome: usuario, acao: params.id ? 'EDITOU DÉBITO MANUAL' : 'LANÇOU DÉBITO MANUAL', setor: 'OPERACIONAL',
+    equipamento_id: veiculo.id, equipamento_nome: `${veiculo.apelido} (${veiculo.placa}) — ${params.tipo} ${auto || ''} ${fmtBRL(valor)}`,
+  });
+  return { ok: true };
+}
+
+export async function excluirDebitoManualAction(params: { debitoId: string }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  if (!r.ok) return { ok: false, erro: r.erro };
+  if (r.debito.origem !== 'MANUAL') return { ok: false, erro: 'Débito da consulta não pode ser excluído — use "Cancelar".' };
+  if (r.debito.desconto_lancado_em) return { ok: false, erro: 'Já tem desconto lançado em folha — use "Cancelar" e ajuste o desconto no Holerite.' };
+
+  const { count } = await db.from('op_ordens_pagamento').select('id', { count: 'exact', head: true }).contains('multa_debito_ids', [params.debitoId]);
+  if (count) return { ok: false, erro: 'Já existe OP ligada a este débito — use "Cancelar".' };
+
+  const { error } = await db.from('frota_multas_debitos').delete().eq('id', params.debitoId);
+  if (error) return { ok: false, erro: error.message };
+  registrarLogAuditoria({
+    usuario_nome: auth.perfil.nome.toUpperCase(), acao: 'EXCLUIU DÉBITO MANUAL', setor: 'OPERACIONAL',
+    equipamento_id: params.debitoId, equipamento_nome: `${r.debito.tipo} ${r.debito.auto_infracao || r.debito.descricao || ''}`.trim(),
+  });
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Pré-preenchimento da OP (/admin/op/nova?multaIds=id1,id2,...)
+// Uma OP pode pagar várias multas/débitos da MESMA empresa — um item por
+// débito; a linha digitável de cada boleto o usuário cola em "dados de
+// pagamento". Vínculo gravado em op_ordens_pagamento.multa_debito_ids.
+// ---------------------------------------------------------------------------
+export async function obterDadosPagamentoMultaAction(params: { ids: string[] }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken, ROTAS_DADOS_PAGAMENTO);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+
+  const ids = Array.from(new Set((params.ids || []).filter(Boolean)));
+  if (ids.length === 0) return { ok: false, erro: 'Nenhuma multa/débito selecionado.' };
+  if (ids.length > 50) return { ok: false, erro: 'Selecione no máximo 50 débitos por OP.' };
+
+  const debitos: Omit<DebitoMulta, 'op'>[] = [];
+  for (const id of ids) {
+    const r = await carregarDebitoAutorizado(db, id, auth.empresasPermitidas);
+    if (!r.ok) return { ok: false, erro: r.erro };
+    if (r.debito.status !== 'ABERTO') {
+      return { ok: false, erro: `Este débito está ${r.debito.status === 'PAGO' ? 'pago' : 'cancelado'} (${r.debito.auto_infracao || r.debito.descricao || r.debito.tipo}) — não dá pra gerar OP.` };
+    }
+    debitos.push(r.debito);
+  }
+
+  const empresasDistintas = new Set(debitos.map(d => d.empresa_id ?? 'null'));
+  if (empresasDistintas.size > 1) return { ok: false, erro: 'Os débitos selecionados são de empresas diferentes — gere uma OP por empresa.' };
+
+  const { data: opExistente } = await db.from('op_ordens_pagamento')
+    .select('numero_op, status').overlaps('multa_debito_ids', ids).neq('status', 'REPROVADA').limit(1).maybeSingle();
+  if (opExistente) return { ok: false, erro: `Já existe a OP #${opExistente.numero_op} (${opExistente.status}) para ${ids.length > 1 ? 'algum dos débitos selecionados' : 'este débito'}. Reprove-a antes de criar uma nova.` };
+
+  const veiculoIds = Array.from(new Set(debitos.map(d => d.veiculo_id)));
+  const { data: veics } = await db.from('frota_veiculos').select('id, apelido, placa, renavam').in('id', veiculoIds);
+  const veicPorId = new Map(((veics || []) as { id: string; apelido: string; placa: string; renavam: string | null }[]).map(v => [v.id, v]));
+
+  const orgaoDe = (d: Omit<DebitoMulta, 'op'>) => (d.orgao_autuador || (d.tipo === 'IPVA' ? 'SEFAZ-SP' : 'DETRAN-SP')).toUpperCase();
+  const orgaos = Array.from(new Set(debitos.map(orgaoDe)));
+  const favorecido = orgaos.length === 1 ? orgaos[0] : 'DIVERSOS ÓRGÃOS DE TRÂNSITO';
+
+  const itens = debitos.map(d => {
+    const v = veicPorId.get(d.veiculo_id);
+    const rotulo = d.tipo === 'MULTA' ? `MULTA AIT ${d.auto_infracao || 'S/N'}${d.eh_nic ? ' (NÃO IDENT. CONDUTOR)' : ''}` : (d.descricao || d.tipo);
+    return { descricao: `${rotulo}${v?.placa ? ` - ${v.placa}` : ''}${orgaos.length > 1 ? ` - ${orgaoDe(d)}` : ''}`.toUpperCase(), valor: Number(d.valor) || 0 };
+  });
+
+  const vencimentos = debitos.map(d => d.data_vencimento).filter((x): x is string => !!x).sort();
+
+  let observacao: string;
+  if (debitos.length === 1) {
+    const d = debitos[0];
+    const v = veicPorId.get(d.veiculo_id);
+    observacao = [
+      `REFERENTE A ${d.tipo === 'MULTA' ? 'MULTA DE TRÂNSITO' : d.tipo}`,
+      v ? `VEÍCULO ${v.apelido} — PLACA ${v.placa}${v.renavam ? ` — RENAVAM ${v.renavam}` : ''}` : null,
+      d.auto_infracao ? `AIT ${d.auto_infracao}` : null,
+      d.data_infracao ? `INFRAÇÃO EM ${d.data_infracao.split('-').reverse().join('/')}${d.hora_infracao && !/^00:00/.test(d.hora_infracao) ? ` ${d.hora_infracao.slice(0, 5)}` : ''}` : null,
+      d.condutor_nome ? `CONDUTOR: ${d.condutor_nome}` : null,
+      d.desconto_lancado_em ? `DESCONTO EM FOLHA: ${d.desconto_parcelas}x a partir de ${d.desconto_mes_inicio}` : null,
+    ].filter(Boolean).join(' · ');
+  } else {
+    const placas = Array.from(new Set(debitos.map(d => veicPorId.get(d.veiculo_id)?.placa).filter(Boolean)));
+    observacao = `PAGAMENTO DE ${debitos.length} MULTAS/DÉBITOS VEICULARES — PLACA(S) ${placas.join(', ')} — VENCIMENTOS DE ${(vencimentos[0] || '').split('-').reverse().join('/')} A ${(vencimentos[vencimentos.length - 1] || '').split('-').reverse().join('/')}. COLE A LINHA DIGITÁVEL DE CADA BOLETO NOS DADOS DE PAGAMENTO.`;
+  }
+
+  return {
+    ok: true,
+    info: {
+      ids,
+      empresaId: debitos[0].empresa_id,
+      favorecido,
+      itens,
+      dataVencimento: vencimentos[0] || null,
+      observacao: observacao.toUpperCase(),
+    },
+  };
+}

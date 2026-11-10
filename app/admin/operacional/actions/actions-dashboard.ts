@@ -36,12 +36,22 @@ export async function painelOperacionalAction(accessToken: string): Promise<Resu
       return (q as any).or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
     };
 
-    const [veiculosRes, folgasRes] = await Promise.all([
+    const [veiculosRes, folgasRes, multasRes] = await Promise.all([
       filtroEmpresa(db.from('frota_veiculos')
         .select('id, crlv_vencimento, ipva_vencimento, seguro_vigencia_fim, locacao_vigencia_fim, propriedade')
         .eq('exibir_na_frota', true)),
       filtroEmpresa(db.from('folha_ponto_whatsapp_solicitacoes').select('id').eq('tipo', 'FOLGA_DIA').eq('status', 'PENDENTE')),
+      // Multas e Débitos (/admin/operacional/multas). Se a tabela ainda não
+      // existir (SQL não rodado), o Supabase devolve erro em vez de lançar —
+      // o cartão só fica zerado, sem derrubar o painel.
+      filtroEmpresa(db.from('frota_multas_debitos').select('valor, data_vencimento').eq('status', 'ABERTO')),
     ]);
+
+    const hojeIso = hoje.toLocaleDateString('en-CA');
+    const multasAbertas = (multasRes.data || []) as { valor: number; data_vencimento: string | null }[];
+    const multasDebitosAbertos = multasAbertas.length;
+    const multasDebitosValor = multasAbertas.reduce((s, m) => s + (Number(m.valor) || 0), 0);
+    const multasDebitosVencidos = multasAbertas.filter(m => m.data_vencimento && m.data_vencimento < hojeIso).length;
 
     // Checklist de Veículos (saída/retorno, preenchido pelo motorista no
     // Portal) — "aberto" é uma saída sem retorno ainda (status EM_ANDAMENTO),
@@ -77,6 +87,9 @@ export async function painelOperacionalAction(accessToken: string): Promise<Resu
         documentosVencendo,
         checklistsVeiculosAbertos,
         folgasPendentes: (folgasRes.data || []).length,
+        multasDebitosAbertos,
+        multasDebitosValor,
+        multasDebitosVencidos,
       }
     };
   } catch (e: any) {

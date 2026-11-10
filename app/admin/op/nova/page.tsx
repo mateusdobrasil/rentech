@@ -9,6 +9,7 @@ import { useAcessoRota } from '../useAcessoRota';
 import { useToast } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { obterDadosPagamentoRescisaoAction } from '../../rh/actions/actions-rescisao';
+import { obterDadosPagamentoMultaAction } from '../../operacional/actions/actions-multas';
 import { listarNaturezasPagamentoParaSelectAction } from '../actions-naturezas';
 import { buscarColaboradoresParaOpAction, type ColaboradorParaOp } from '../../comercial/parceiros/actions';
 
@@ -65,6 +66,13 @@ function NovaOrdemPagamentoForm() {
   // Preenchido quando a rescisão de origem já tem uma OP não reprovada —
   // trava a tela inteira em vez de deixar um formulário vazio/confuso.
   const [opRescisaoBloqueada, setOpRescisaoBloqueada] = useState<string | null>(null);
+  // Mesmo esquema, vindo do botão "Criar OP de pagamento" de
+  // /admin/operacional/multas (?multaIds=<uuid>,<uuid>... — uma OP pode
+  // pagar várias multas; ?multaId= continua aceito).
+  const parametrosUrl = useSearchParams();
+  const multaIdsParam = parametrosUrl.get('multaIds') || parametrosUrl.get('multaId') || '';
+  const multaIds = useMemo(() => multaIdsParam.split(',').map(s => s.trim()).filter(Boolean), [multaIdsParam]);
+  const [opMultaBloqueada, setOpMultaBloqueada] = useState<string | null>(null);
 
   // Sessão + permissão da rota, resolvidas pelo hook compartilhado do módulo.
   const { authLoading, acessoNegado, perfil } = useAcessoRota('/admin/op/nova');
@@ -485,6 +493,36 @@ function NovaOrdemPagamentoForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rescisaoId, perfil?.accessToken]);
 
+  // Veio de /admin/operacional/multas (?multaIds=...) — favorecido = órgão
+  // autuador / Detran / Sefaz, pagamento por boleto (a linha digitável o
+  // usuário cola do boleto de cada multa), um item por débito.
+  useEffect(() => {
+    if (multaIds.length === 0 || !perfil?.accessToken) return;
+    (async () => {
+      const res = await obterDadosPagamentoMultaAction({ ids: multaIds }, perfil.accessToken);
+      if (!res.ok) {
+        if (res.erro?.startsWith('Já existe a OP') || res.erro?.startsWith('Este débito está')) { setOpMultaBloqueada(res.erro); return; }
+        toast('Não foi possível carregar os dados da multa/débito: ' + res.erro, 'error');
+        return;
+      }
+      const d = res.info;
+      setNatureza('MULTAS E DÉBITOS VEICULARES');
+      if (d.empresaId) setEmpresaId(d.empresaId);
+      setEmpresaRecebedora(d.favorecido);
+      setTipoPagamento('BOLETO');
+      setDadosPagamento('');
+      setObs(d.observacao);
+      const base = Date.now();
+      setItens((d.itens as { descricao: string; valor: number }[]).map((it, i) => ({ id: base + i, descricao: it.descricao, qtd: 1, valorUnitario: it.valor })));
+      if (d.dataVencimento) setDataVencimento(d.dataVencimento);
+      else setDataVencimento(prev => prev || new Date().toISOString().slice(0, 10));
+      toast(d.itens.length > 1
+        ? `${d.itens.length} multas/débitos carregados — cole a linha digitável de cada boleto e confira o signatário antes de enviar.`
+        : 'Dados da multa/débito carregados — cole a linha digitável do boleto e confira o signatário antes de enviar.', 'info');
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [multaIdsParam, perfil?.accessToken]);
+
   const funcionariosFiltrados = useMemo(() => {
     if (!termoBuscaFunc) return listaFuncionarios;
     const termo = termoBuscaFunc.toLowerCase();
@@ -655,6 +693,7 @@ function NovaOrdemPagamentoForm() {
       file_url: urlsAnexos[0] || '',
       file_urls: urlsAnexos,
       rescisao_id: rescisaoId ? Number(rescisaoId) : null,
+      ...(multaIds.length ? { multa_debito_ids: multaIds } : {}),
     };
 
     const resposta = await criarOP(payload, perfil?.accessToken || '');
@@ -700,6 +739,21 @@ function NovaOrdemPagamentoForm() {
           <p className="text-sm text-gray-500 mb-6">{opRescisaoBloqueada}</p>
           <button onClick={() => router.push(`/admin/rh/rescisao/${rescisaoId}`)} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
             ⬅ Voltar para a Rescisão
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (opMultaBloqueada) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-amber-200">
+          <div className="text-5xl mb-4">🔒</div>
+          <h2 className="text-xl font-black text-amber-600 uppercase tracking-wider mb-2">Não dá pra gerar OP</h2>
+          <p className="text-sm text-gray-500 mb-6">{opMultaBloqueada}</p>
+          <button onClick={() => router.push('/admin/operacional/multas')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
+            ⬅ Voltar para Multas e Débitos
           </button>
         </div>
       </div>

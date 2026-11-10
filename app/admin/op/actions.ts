@@ -71,6 +71,11 @@ export interface NovaOPData {
   // segunda OP pra mesma rescisão e pra sinalizar isso no lote do Financeiro
   // RH (fonte RESCISAO em montarLoteSalariosAction).
   rescisao_id?: number | null;
+  // Mesmo papel de rescisao_id, para a OP que nasce do botão "Criar OP de
+  // pagamento" em /admin/operacional/multas (?multaIds=a,b,c). Uma OP pode
+  // pagar várias multas. Só vai no payload quando preenchido — a coluna vem
+  // de .sql/Pendentes/operacional_multas_melhorias.sql.
+  multa_debito_ids?: string[] | null;
 }
 
 // ============================================================================
@@ -185,6 +190,29 @@ export async function criarOP(data: NovaOPData, accessToken: string) {
     if (opExistente) {
       return { success: false, message: `Já existe a OP #${opExistente.numero_op} (${opExistente.status}) para esta rescisão. Reprove-a antes de criar uma nova.` };
     }
+  }
+
+  // Mesma regra para multas/débitos veiculares: cada débito só pode estar em
+  // UMA OP em aberto, e todos têm que ser de empresas que o usuário enxerga.
+  if (data.multa_debito_ids && data.multa_debito_ids.length > 0) {
+    const ids = Array.from(new Set(data.multa_debito_ids));
+    const { data: debitos } = await supabaseAdmin
+      .from('frota_multas_debitos').select('id, empresa_id').in('id', ids);
+    if (!debitos || debitos.length !== ids.length) return { success: false, message: 'Multa/débito de origem não encontrado.' };
+    if (debitos.some(d => !empresaPermitida(empresasPermitidas, d.empresa_id))) return { success: false, message: 'Você não tem acesso a algum dos débitos.' };
+    const { data: opExistente } = await supabaseAdmin
+      .from('op_ordens_pagamento')
+      .select('numero_op, status')
+      .overlaps('multa_debito_ids', ids)
+      .neq('status', 'REPROVADA')
+      .limit(1)
+      .maybeSingle();
+    if (opExistente) {
+      return { success: false, message: `Já existe a OP #${opExistente.numero_op} (${opExistente.status}) para ${ids.length > 1 ? 'algum dos débitos' : 'este débito'}. Reprove-a antes de criar uma nova.` };
+    }
+    data.multa_debito_ids = ids;
+  } else {
+    delete data.multa_debito_ids;
   }
 
   try {

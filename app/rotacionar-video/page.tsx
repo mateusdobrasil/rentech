@@ -75,7 +75,10 @@ export default function RotacionarVideo() {
     if (ffmpegRef.current) return ffmpegRef.current;
 
     setCarregandoFerramenta(true);
-    const { FFmpeg } = await import('@ffmpeg/ffmpeg');
+    // Servido de public/ffmpeg/ (scripts/copy-ffmpeg-core.js) e fora do bundle:
+    // o Turbopack do Next 16.4 não empacota o worker interno da biblioteca.
+    const urlBiblioteca = '/ffmpeg/index.js';
+    const { FFmpeg } = (await import(/* turbopackIgnore: true */ /* webpackIgnore: true */ urlBiblioteca)) as typeof import('@ffmpeg/ffmpeg');
     const { toBlobURL } = await import('@ffmpeg/util');
 
     const ffmpeg = new FFmpeg();

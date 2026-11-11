@@ -10,7 +10,7 @@
 import { revalidatePath } from 'next/cache';
 import { registrarLogAuditoria } from '../../../actions';
 import { supabaseAdmin } from '../../../lib/supabase';
-import { criarObjeto, atualizarObjeto, consultarObjetos, criterio, dataParaP2s, type AmbienteP2s } from '../../../lib/p2s';
+import { criarObjeto, atualizarObjeto, consultarObjetos, buscarObjeto, criterio, dataParaP2s, type AmbienteP2s } from '../../../lib/p2s';
 
 export interface ItemOPParaEnvioP2s {
   descricao?: string; description?: string;
@@ -88,19 +88,40 @@ function montarObservacoes(op: OPParaEnvioP2s, nomeResponsavel: string): string 
 // inteira ("123.456.789-00") batia igualdade EXATA e falhava mesmo com o
 // parceiro certo já cadastrado — causava duplicação (bug reportado
 // 2026-09-14: parceiro já existia e o sistema criava outro).
-async function buscarEntidadeLocal(documentoFormatado: string): Promise<{ oid: string; origem: 'parceiro' | 'colaborador' } | null> {
+//
+// Cada candidato local é CONFERIDO ao vivo no PrimeStart antes de ser usado
+// (existeNoP2s): a base local não apaga parceiro excluído lá, então podia
+// sobrar um cadastro morto pro mesmo CPF — e a busca pegava um qualquer.
+// Caso real 2026-11-11, OP #605: o favorecido tinha 2 parceiros locais, um
+// deles (o duplicado criado na OP #411, depois excluído no P2S) não existia
+// mais; a Conta a Pagar foi recusada com esse fornecedor e a OP não subiu.
+async function existeNoP2s(ambiente: AmbienteP2s, oid: string): Promise<boolean> {
+  try {
+    return !!(await buscarObjeto(ambiente, oid));
+  } catch {
+    // Ex.: "found in objectindex, but not in its corresponding table" (excluído)
+    return false;
+  }
+}
+
+async function buscarEntidadeLocal(ambiente: AmbienteP2s, documentoFormatado: string): Promise<{ oid: string; origem: 'parceiro' | 'colaborador' } | null> {
   const digitos = documentoFormatado.replace(/\D/g, '');
   if (!digitos) return null;
   const campo = digitos.length > 11 ? 'cnpj_digitos' : 'cpf_digitos';
 
   const db = supabaseAdmin();
 
-  const { data: parceiro } = await db.from('parceiros').select('p2s_oid').eq(campo, digitos).limit(1).maybeSingle();
-  if (parceiro?.p2s_oid) return { oid: parceiro.p2s_oid as string, origem: 'parceiro' };
+  const { data: parceiros } = await db.from('parceiros').select('p2s_oid')
+    .eq(campo, digitos).order('updated_at', { ascending: false }).limit(10);
+  for (const p of parceiros || []) {
+    if (p.p2s_oid && await existeNoP2s(ambiente, p.p2s_oid as string)) return { oid: p.p2s_oid as string, origem: 'parceiro' };
+  }
 
   if (campo === 'cpf_digitos') {
-    const { data: colaborador } = await db.from('colaboradores').select('p2s_oid').eq('cpf_digitos', digitos).limit(1).maybeSingle();
-    if (colaborador?.p2s_oid) return { oid: colaborador.p2s_oid as string, origem: 'colaborador' };
+    const { data: colaboradores } = await db.from('colaboradores').select('p2s_oid').eq('cpf_digitos', digitos).limit(10);
+    for (const c of colaboradores || []) {
+      if (c.p2s_oid && await existeNoP2s(ambiente, c.p2s_oid as string)) return { oid: c.p2s_oid as string, origem: 'colaborador' };
+    }
   }
 
   return null;
@@ -191,7 +212,7 @@ async function resolverEntidade(op: OPParaEnvioP2s, ambiente: AmbienteP2s): Prom
   const documento = (op.cnpj_cpf_recebedora || '').trim();
   if (!documento) return null;
 
-  const local = await buscarEntidadeLocal(documento);
+  const local = await buscarEntidadeLocal(ambiente, documento);
   if (local) return local;
 
   const digitos = documento.replace(/\D/g, '');

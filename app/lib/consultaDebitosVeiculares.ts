@@ -404,3 +404,249 @@ export async function consultarDebitosVeiculo(params: { placa: string; renavam: 
   }
   return consultarInfosimplesDetranSp(placa, renavam);
 }
+
+// ===========================================================================
+// Boletos das multas (botão "Buscar boleto" em /admin/operacional/multas)
+// ===========================================================================
+// Duas consultas por órgão autuador, além da do Detran:
+//   - Prefeitura SP – Multas (pref/sp/sao-paulo/multas-guias): código de
+//     barras + URL do boleto. O portal da Prefeitura entra pelo GOV.BR e a
+//     Infosimples só aceita CPF/CNPJ + senha aqui (sem certificado): usa
+//     INFOSIMPLES_PREF_SP_LOGIN/_SENHA se definidos; senão reaproveita o CPF/senha
+//     GOV.BR de INFOSIMPLES_DETRAN_SP_CPF/_SENHA.
+//   - DER-SP – Penalidades (der/sp/penalidades): PDF da Notificação de
+//     Penalidade (np_pdf_url). Mesmo login GOV.BR / certificado A1 do Detran.
+// Cada chamada é cobrada pela Infosimples.
+
+export interface ResultadoChamadaInfosimples {
+  ok: boolean;
+  servico: string;
+  codigo: number | null;
+  mensagem: string;
+  preco: number | null;
+  dados: Registro[];
+  resposta: unknown;
+}
+
+async function chamarInfosimples(servico: string, campos: Record<string, string>): Promise<ResultadoChamadaInfosimples> {
+  const vazio = { servico, dados: [] as Registro[], preco: null, resposta: null };
+  const token = process.env.INFOSIMPLES_TOKEN;
+  if (!token) return { ...vazio, ok: false, codigo: null, mensagem: 'Falta a variável INFOSIMPLES_TOKEN no servidor.' };
+
+  const params = new URLSearchParams({ token, timeout: '300', ...campos });
+  const controle = new AbortController();
+  const timer = setTimeout(() => controle.abort(), 320_000);
+  let json: Registro;
+  try {
+    const resp = await fetch(`https://api.infosimples.com/api/v2/consultas/${servico}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+      signal: controle.signal,
+      cache: 'no-store',
+    });
+    json = await resp.json() as Registro;
+  } catch (e) {
+    const abortou = e instanceof Error && e.name === 'AbortError';
+    return { ...vazio, ok: false, codigo: null, mensagem: abortou ? 'A consulta demorou demais e foi interrompida.' : `Falha de conexão com a Infosimples: ${e instanceof Error ? e.message : String(e)}` };
+  } finally {
+    clearTimeout(timer);
+  }
+
+  // Nunca guardar credencial: o header ecoa os parâmetros enviados.
+  const header = (json.header || {}) as Registro;
+  const parametros = (header.parameters || {}) as Registro;
+  for (const k of ['token', 'login_senha', 'pkcs12_pass', 'pkcs12_cert']) delete parametros[k];
+
+  const codigo = typeof json.code === 'number' ? json.code : Number(json.code) || null;
+  const preco = header.price !== undefined ? valorNumerico(header.price) : null;
+  if (codigo !== 200) {
+    const erros = Array.isArray(json.errors) ? (json.errors as unknown[]).map(e => String(e)).join(' · ') : '';
+    return { ...vazio, ok: false, codigo, preco, resposta: json, mensagem: [texto(json.code_message), erros].filter(Boolean).join(' — ') || `Erro ${codigo ?? 'desconhecido'} na consulta.` };
+  }
+  return { ok: true, servico, codigo, preco, resposta: json, mensagem: texto(json.code_message) || 'OK', dados: Array.isArray(json.data) ? (json.data as Registro[]) : [] };
+}
+
+const normAit = (s: unknown) => String(s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+export interface BoletoPrefeitura {
+  ait: string; codigo_barras: string | null; boleto_url: string | null;
+  vencimento: string | null; valor: number; situacao_divida_ativa: string | null; mensagem: string | null;
+}
+
+function loginPrefeituraSP(): { login: string; senha: string } | null {
+  const e = process.env;
+  const login = soDigitosLocal(e.INFOSIMPLES_PREF_SP_LOGIN || e.INFOSIMPLES_DETRAN_SP_CPF || '');
+  const senha = e.INFOSIMPLES_PREF_SP_LOGIN ? (e.INFOSIMPLES_PREF_SP_SENHA || '') : (e.INFOSIMPLES_DETRAN_SP_SENHA || '');
+  return login && senha ? { login, senha } : null;
+}
+
+export function prefeituraSpConfigurada(): boolean {
+  return !!process.env.INFOSIMPLES_TOKEN && !!loginPrefeituraSP();
+}
+
+export async function consultarBoletosPrefeituraSP(params: { placa: string; renavam: string; aits?: string[] }): Promise<ResultadoChamadaInfosimples & { boletos: BoletoPrefeitura[] }> {
+  const servico = 'pref/sp/sao-paulo/multas-guias';
+  const credencial = loginPrefeituraSP();
+  if (!credencial) {
+    return { ok: false, servico, codigo: null, mensagem: 'Busca de boleto da Prefeitura de SP não configurada: falta o CPF/senha GOV.BR (INFOSIMPLES_DETRAN_SP_CPF/_SENHA) no servidor.', preco: null, dados: [], resposta: null, boletos: [] };
+  }
+  const { login, senha } = credencial;
+  const campos: Record<string, string> = {
+    placa: params.placa.replace(/[^A-Za-z0-9]/g, '').toUpperCase(),
+    renavam: soDigitosLocal(params.renavam),
+    login_senha: senha,
+    [login.length === 14 ? 'login_cnpj' : 'login_cpf']: login,
+  };
+  if (params.aits?.length) campos.ait_lista = params.aits.join(',');
+
+  const r = await chamarInfosimples(servico, campos);
+  const boletos: BoletoPrefeitura[] = [];
+  r.dados.forEach(d => {
+    (Array.isArray(d.multas) ? (d.multas as Registro[]) : []).forEach(m => {
+      const ait = normAit(m.ait);
+      if (!ait) return;
+      boletos.push({
+        ait,
+        codigo_barras: soDigitosLocal(String(m.codigo_barras ?? '')) || null,
+        boleto_url: texto(m.boleto_url),
+        vencimento: dataBrParaIso(m.vencimento),
+        valor: m.normalizado_valor !== undefined ? valorNumerico(m.normalizado_valor) : valorNumerico(m.valor),
+        situacao_divida_ativa: texto(m.situacao_divida_ativa),
+        mensagem: texto(m.mensagem),
+      });
+    });
+  });
+  return { ...r, boletos };
+}
+
+export interface PenalidadeDer { ait: string; np_pdf_url: string | null; situacao: string | null; valor: number; data_vencimento: string | null; multa_nic: string | null }
+
+export async function consultarPenalidadesDerSP(params: { renavam: string }): Promise<ResultadoChamadaInfosimples & { penalidades: PenalidadeDer[] }> {
+  const servico = 'der/sp/penalidades';
+  const login = loginGovBr();
+  if (!login) {
+    return { ok: false, servico, codigo: null, mensagem: 'Falta o login GOV.BR (certificado A1 + INFOSIMPLES_ENCRYPTION_KEY) no servidor.', preco: null, dados: [], resposta: null, penalidades: [] };
+  }
+  const campos: Record<string, string> = { renavam: soDigitosLocal(params.renavam) };
+  if (login.par === 'CPF') { campos.login_cpf = login.cpf; campos.login_senha = login.senha; }
+  else { campos.pkcs12_cert = login.cert; campos.pkcs12_pass = login.pass; }
+
+  const r = await chamarInfosimples(servico, campos);
+  const penalidades: PenalidadeDer[] = [];
+  const vistos = new Set<string>();
+  const adicionar = (m: Registro) => {
+    const ait = normAit(m.ait);
+    if (!ait || vistos.has(ait)) return;
+    vistos.add(ait);
+    penalidades.push({
+      ait, np_pdf_url: texto(m.np_pdf_url), situacao: texto(m.situacao),
+      valor: m.normalizado_valor !== undefined ? valorNumerico(m.normalizado_valor) : valorNumerico(m.valor),
+      data_vencimento: dataBrParaIso(m.data_vencimento), multa_nic: texto(m.multa_nic),
+    });
+  };
+  r.dados.forEach(d => {
+    // Cada item pode trazer a própria multa e um array "multas" com outras.
+    (Array.isArray(d.multas) ? (d.multas as Registro[]) : []).forEach(adicionar);
+    adicionar(d);
+  });
+  return { ...r, penalidades };
+}
+
+function soDigitosLocal(s: string): string { return (s || '').replace(/\D/g, ''); }
+
+// ===========================================================================
+// SENATRAN (portal de serviços / SNE) — prazos de indicação do condutor
+// ===========================================================================
+//   - senatran/infracoes: lista as infrações do veículo (placa + CNPJ da
+//     empresa), com chave_infracao, situação, vencimento e valor.
+//   - senatran/download-infracao: detalhe de UMA infração (chave) — traz
+//     data_limite_indicacao_infrator, data_limite_defesa e o condutor.
+// Login GOV.BR: mesmo certificado A1 / CPF do Detran. Cada chamada é cobrada.
+
+export interface InfracaoSenatran {
+  ait: string; chave: string; codigo_infracao: string | null; codigo_orgao: string | null;
+  descricao: string | null; valor: number; data_vencimento: string | null; situacao: string | null;
+}
+
+export interface DetalheInfracaoSenatran {
+  ait: string | null; orgao_autuador: string | null;
+  data_notificacao: string | null; prazo_defesa: string | null; prazo_indicacao: string | null;
+  condutor_nome: string | null; condutor_cnh: string | null;
+  codigo_infracao: string | null; descricao: string | null; valor: number;
+  data_infracao: string | null; hora_infracao: string | null; local_infracao: string | null; municipio: string | null;
+  site_receipt: string | null;
+}
+
+function camposLoginGovBr(): Record<string, string> | null {
+  const login = loginGovBr();
+  if (!login) return null;
+  return login.par === 'CPF'
+    ? { login_cpf: login.cpf, login_senha: login.senha }
+    : { pkcs12_cert: login.cert, pkcs12_pass: login.pass };
+}
+
+const semValor = (s: string | null) => (s && !/^(n[aã]o dispon[ií]vel|n[aã]o se aplica|-+)$/i.test(s.trim()) ? s.trim() : null);
+
+export async function consultarInfracoesSenatran(params: { placa: string; cnpj?: string | null }): Promise<ResultadoChamadaInfosimples & { infracoes: InfracaoSenatran[] }> {
+  const servico = 'senatran/infracoes';
+  const login = camposLoginGovBr();
+  if (!login) return { ok: false, servico, codigo: null, mensagem: 'Falta o login GOV.BR (certificado A1) no servidor.', preco: null, dados: [], resposta: null, infracoes: [] };
+  const campos: Record<string, string> = { placa: params.placa.replace(/[^A-Za-z0-9]/g, '').toUpperCase(), ...login };
+  const cnpj = soDigitosLocal(params.cnpj || '');
+  if (cnpj.length === 14) campos.cnpj = cnpj;
+
+  const r = await chamarInfosimples(servico, campos);
+  const infracoes: InfracaoSenatran[] = [];
+  r.dados.forEach(d => {
+    (Array.isArray(d.infracoes) ? (d.infracoes as Registro[]) : []).forEach(i => {
+      const ait = normAit(i.auto_infracao);
+      const chave = texto(i.chave_infracao);
+      if (!ait || !chave) return;
+      infracoes.push({
+        ait, chave, codigo_infracao: texto(i.codigo_infracao), codigo_orgao: texto(i.codigo_orgao_autuador),
+        descricao: texto(i.descricao), valor: valorNumerico(i.valor_total),
+        data_vencimento: dataBrParaIso(i.data_vencimento), situacao: texto(i.situacao),
+      });
+    });
+  });
+  return { ...r, infracoes };
+}
+
+export async function baixarInfracaoSenatran(params: { chave: string; placa: string; cnpj?: string | null }): Promise<ResultadoChamadaInfosimples & { detalhe: DetalheInfracaoSenatran | null }> {
+  const servico = 'senatran/download-infracao';
+  const login = camposLoginGovBr();
+  if (!login) return { ok: false, servico, codigo: null, mensagem: 'Falta o login GOV.BR (certificado A1) no servidor.', preco: null, dados: [], resposta: null, detalhe: null };
+  const campos: Record<string, string> = { chave_infracao: params.chave, placa: params.placa.replace(/[^A-Za-z0-9]/g, '').toUpperCase(), ...login };
+  const cnpj = soDigitosLocal(params.cnpj || '');
+  if (cnpj.length === 14) campos.cnpj = cnpj;
+
+  const r = await chamarInfosimples(servico, campos);
+  const d = r.dados[0];
+  if (!r.ok || !d) return { ...r, detalhe: null };
+  const aut = (d.autuacao || {}) as Registro;
+  const cond = (d.condutor || {}) as Registro;
+  const inf = (d.infracao || {}) as Registro;
+  const ldh = (d.local_data_hora || {}) as Registro;
+  const uf = texto(ldh.uf);
+  return {
+    ...r,
+    detalhe: {
+      ait: normAit(aut.numero_ait) || null,
+      orgao_autuador: texto(aut.orgao_autuador),
+      data_notificacao: dataBrParaIso(aut.data_notificacao),
+      prazo_defesa: dataBrParaIso(aut.data_limite_defesa),
+      prazo_indicacao: dataBrParaIso(aut.data_limite_indicacao_infrator),
+      condutor_nome: semValor(texto(cond.nome)),
+      condutor_cnh: semValor(texto(cond.cnh)),
+      codigo_infracao: [texto(inf.codigo_infracao), texto(inf.desdobramento)].filter(Boolean).join('-') || null,
+      descricao: texto(inf.descricao),
+      valor: valorNumerico(inf.valor_multa),
+      data_infracao: dataBrParaIso(ldh.data_infracao),
+      hora_infracao: texto(ldh.hora_infracao),
+      local_infracao: texto(ldh.local_infracao),
+      municipio: [texto(ldh.municipio), uf].filter(Boolean).join(' / ') || null,
+      site_receipt: texto(d.site_receipt),
+    },
+  };
+}

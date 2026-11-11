@@ -17,11 +17,13 @@ import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 import { supabase } from '../../../lib/supabase';
+import { formatarLinhaDigitavel, normalizarBoleto } from '../../../lib/boletoMulta';
 import {
   carregarPainelMultasAction, consultarDebitosVeiculoAction, sugerirCondutorAction, definirCondutorAction,
   lancarDescontoFolhaAction, atualizarStatusDebitoAction, salvarObservacaoDebitoAction,
   salvarDebitoManualAction, excluirDebitoManualAction, avisarCondutorAction,
   lerNotificacaoMultaAction, anexarNotificacaoAction, marcarIndicacaoCondutorAction,
+  salvarBoletoAction, buscarBoletoAction, buscarPrazosSenatranAction,
   type DebitoMulta, type VeiculoMultas, type ConsultaMulta, type TipoDebitoMulta, type StatusDebito,
 } from '../actions/actions-multas';
 
@@ -102,12 +104,13 @@ interface LeituraNotificacao {
   observacoes: string | null; tipo_documento: string; veiculoDescricao: string | null; placa: string | null;
   duplicado: { id: string; tipo: string; valor: number; prazo_indicacao_condutor: string | null } | null;
   arquivoUrl: string; prazo: string | null; codigo: string | null;
+  boleto: { linha: string; codigo: string; valido: boolean } | null;
 }
 
 const FORM_MANUAL_VAZIO = {
   id: null as string | null, veiculoId: '', tipo: 'MULTA' as TipoDebitoMulta, descricao: '', autoInfracao: '', orgaoAutuador: '',
   dataInfracao: '', horaInfracao: '', localInfracao: '', valor: '', dataVencimento: '', observacao: '',
-  prazoIndicacao: '', codigoInfracao: '', notificacaoUrl: '',
+  prazoIndicacao: '', codigoInfracao: '', notificacaoUrl: '', linhaDigitavel: '',
 };
 
 // ============================================================================
@@ -125,6 +128,7 @@ export default function MultasDebitosPage() {
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [provedorOk, setProvedorOk] = useState(true);
   const [leituraOk, setLeituraOk] = useState(false);
+  const [prefeituraOk, setPrefeituraOk] = useState(false);
   const [lendoNotificacao, setLendoNotificacao] = useState(false);
   const [leitura, setLeitura] = useState<LeituraNotificacao | null>(null);
   const [certificado, setCertificado] = useState<Certificado | null>(null);
@@ -138,6 +142,7 @@ export default function MultasDebitosPage() {
 
   const [consultandoIds, setConsultandoIds] = useState<Set<string>>(new Set());
   const [lote, setLote] = useState<{ atual: number; total: number } | null>(null);
+  const [prazoIds, setPrazoIds] = useState<Set<string>>(new Set());
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
 
   const [detalheId, setDetalheId] = useState<string | null>(null);
@@ -156,6 +161,7 @@ export default function MultasDebitosPage() {
     setProvedorOk(res.info.provedorConfigurado);
     setCertificado(res.info.certificado || null);
     setLeituraOk(!!res.info.leituraConfigurada);
+    setPrefeituraOk(!!res.info.prefeituraSpConfigurada);
     setCarregando(false);
   }, [accessToken]);
 
@@ -267,6 +273,24 @@ export default function MultasDebitosPage() {
     return true;
   };
 
+  // Senatran: infrações em aberto + prazo de indicação do condutor (cobrado por chamada).
+  const buscarPrazos = async (v: VeiculoMultas) => {
+    const ok = await confirm({
+      title: 'Prazos de indicação (Senatran)',
+      message: `Buscar na Senatran as infrações em aberto do ${v.apelido} (${v.placa}) e o prazo para indicar o condutor? Custa ~R$ 0,32 pela lista + ~R$ 0,26 por infração nova ou ainda sem prazo. Infrações que ainda não chegaram ao Detran já entram aqui.`,
+      confirmLabel: 'Buscar',
+    });
+    if (!ok) return;
+    setPrazoIds(s => new Set(s).add(v.id));
+    const res = await buscarPrazosSenatranAction({ veiculoId: v.id }, accessToken);
+    setPrazoIds(s => { const n = new Set(s); n.delete(v.id); return n; });
+    if (!res.ok) { toast(`${v.apelido}: ${res.erro}`, 'error'); return; }
+    const i = res.info;
+    toast(`${v.apelido}: ${i.infracoes} infração(ões) em aberto na Senatran · ${i.novas} nova(s) · ${i.prazos} prazo(s) atualizado(s)${i.indicadas ? ` · ${i.indicadas} já com condutor indicado` : ''} · custo ~R$ ${Number(i.preco || 0).toFixed(2).replace('.', ',')}`, 'success');
+    (i.avisos || []).slice(0, 2).forEach((a: string) => toast(a, 'info'));
+    await carregar();
+  };
+
   const consultarUm = async (v: VeiculoMultas) => {
     await consultarVeiculo(v);
     await carregar();
@@ -301,6 +325,7 @@ export default function MultasDebitosPage() {
         orgaoAutuador: d.orgao_autuador || '', dataInfracao: d.data_infracao || '', horaInfracao: fmtHora(d.hora_infracao),
         localInfracao: d.local_infracao || '', valor: String(d.valor || ''), dataVencimento: d.data_vencimento || '', observacao: d.observacao || '',
         prazoIndicacao: d.prazo_indicacao_condutor || '', codigoInfracao: d.codigo_infracao || '', notificacaoUrl: d.notificacao_url || '',
+        linhaDigitavel: d.linha_digitavel || '',
       });
     } else {
       setManual({ ...FORM_MANUAL_VAZIO, veiculoId: veiculoId || (filtroVeiculo !== 'TODOS' ? filtroVeiculo : '') });
@@ -317,6 +342,7 @@ export default function MultasDebitosPage() {
       horaInfracao: manual.horaInfracao || null, localInfracao: manual.localInfracao,
       valor: Number(String(manual.valor).replace(/\./g, '').replace(',', '.')), dataVencimento: manual.dataVencimento || null, observacao: manual.observacao,
       prazoIndicacaoCondutor: manual.prazoIndicacao || null, codigoInfracao: manual.codigoInfracao || null, notificacaoUrl: manual.notificacaoUrl || null,
+      linhaDigitavel: manual.linhaDigitavel || null, boletoFonte: leitura?.boleto && manual.linhaDigitavel ? 'ESCANEADO' : 'MANUAL',
     }, accessToken);
     setSalvandoManual(false);
     if (!res.ok) { toast(res.erro || 'Falha ao salvar.', 'error'); return; }
@@ -344,7 +370,7 @@ export default function MultasDebitosPage() {
 
       const res = await lerNotificacaoMultaAction({ caminho }, accessToken);
       if (!res.ok) throw new Error(res.erro || 'Falha na leitura.');
-      const { dados: x, veiculoId, veiculoDescricao, duplicado, arquivoUrl } = res.info;
+      const { dados: x, veiculoId, veiculoDescricao, duplicado, arquivoUrl, boleto } = res.info;
 
       setManual(m => m && ({
         ...m,
@@ -361,10 +387,11 @@ export default function MultasDebitosPage() {
         dataVencimento: x.data_vencimento || m.dataVencimento,
         prazoIndicacao: x.prazo_indicacao_condutor || m.prazoIndicacao,
         notificacaoUrl: arquivoUrl,
+        linhaDigitavel: boleto?.linha || m.linhaDigitavel,
       }));
       setLeitura({
         observacoes: x.observacoes, tipo_documento: x.tipo_documento, veiculoDescricao, placa: x.placa,
-        duplicado, arquivoUrl, prazo: x.prazo_indicacao_condutor, codigo: x.codigo_infracao,
+        duplicado, arquivoUrl, prazo: x.prazo_indicacao_condutor, codigo: x.codigo_infracao, boleto: boleto || null,
       });
       toast(duplicado ? 'Notificação lida — este AIT já está cadastrado (veja o aviso).' : 'Notificação lida — confira os campos antes de salvar.', duplicado ? 'info' : 'success');
     } catch (e) {
@@ -379,6 +406,7 @@ export default function MultasDebitosPage() {
     const res = await anexarNotificacaoAction({
       debitoId: leitura.duplicado.id, notificacaoUrl: leitura.arquivoUrl,
       prazoIndicacaoCondutor: manual?.prazoIndicacao || leitura.prazo, codigoInfracao: leitura.codigo,
+      linhaDigitavel: manual?.linhaDigitavel || leitura.boleto?.linha || null,
     }, accessToken);
     if (!res.ok) { toast(res.erro || 'Falha ao anexar.', 'error'); return; }
     toast('Notificação anexada à multa existente.', 'success');
@@ -572,6 +600,7 @@ export default function MultasDebitosPage() {
                               {d.condutor_indicado_em && <span className="text-emerald-600 font-bold">✔ CONDUTOR INDICADO</span>}
                               {d.origem === 'MANUAL' && <span className="text-violet-600 font-bold">MANUAL</span>}
                               {d.fonte === 'RENAINF' && <span className="text-orange-600 font-bold">RENAINF</span>}
+                              {d.fonte === 'SENATRAN' && <span className="text-sky-700 font-bold" title="Veio da Senatran — ainda não aparece no Detran (autuação em prazo de indicação)">SENATRAN</span>}
                             </div>
                           </td>
                           <td className="p-3 whitespace-nowrap">{d.tipo === 'MULTA' ? <>{fmtData(d.data_infracao)} <span className="text-gray-400">{fmtHora(d.hora_infracao)}</span></> : '—'}</td>
@@ -586,6 +615,7 @@ export default function MultasDebitosPage() {
                           <td className="p-3 whitespace-nowrap">{fmtData(d.data_vencimento)}</td>
                           <td className="p-3 whitespace-nowrap">
                             <span className={`inline-block px-2 py-0.5 rounded-full border text-[10px] font-black uppercase ${s.cls}`}>{s.label}</span>
+                            {d.linha_digitavel && !(d.op && d.op.status !== 'REPROVADA') && d.status === 'ABERTO' && <div className="text-[10px] text-emerald-700 font-bold mt-0.5">🧾 boleto pronto</div>}
                             {d.op && d.op.status !== 'REPROVADA' && <div className="text-[10px] text-indigo-600 font-bold mt-0.5">💳 OP #{d.op.numero_op} · {d.op.status}</div>}
                           </td>
                         </tr>
@@ -662,6 +692,13 @@ export default function MultasDebitosPage() {
                       </button>
                     )}
                   </div>
+                  {!alugado && (
+                    <button onClick={() => buscarPrazos(v)} disabled={!provedorOk || !v.placa || consultando || prazoIds.has(v.id) || !!lote}
+                      title="Busca na Senatran (SNE) as infrações em aberto e o prazo para indicar o condutor de cada uma"
+                      className="w-full px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider border border-sky-300 text-sky-700 bg-sky-50 hover:bg-sky-100 disabled:opacity-50 disabled:cursor-not-allowed">
+                      {prazoIds.has(v.id) ? 'Buscando na Senatran...' : '⏳ Prazos de indicação (Senatran)'}
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -733,6 +770,7 @@ export default function MultasDebitosPage() {
           onAbrir={id => setDetalheId(id)}
           onAlterado={carregar}
           onEditarManual={() => { abrirManual(detalhe); setDetalheId(null); }}
+          prefeituraOk={prefeituraOk}
           onCriarOp={() => router.push(`/admin/op/nova?multaIds=${detalhe.id}`)}
         />
       )}
@@ -767,6 +805,11 @@ export default function MultasDebitosPage() {
                     {' · '}<a href={leitura.arquivoUrl} target="_blank" rel="noreferrer" className="underline font-bold">ver arquivo</a>
                   </p>
                   {leitura.observacoes && <p className="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">⚠ {leitura.observacoes}</p>}
+                  {leitura.boleto && (
+                    <p className={leitura.boleto.valido ? 'text-emerald-700' : 'text-amber-700'}>
+                      🧾 Boleto lido{leitura.boleto.valido ? ' — dígitos verificadores conferem.' : ' — os dígitos verificadores NÃO conferem: confira a linha digitável com o papel.'}
+                    </p>
+                  )}
                   {leitura.duplicado && (
                     <div className="bg-amber-50 border border-amber-300 rounded-lg p-2 text-amber-800 flex flex-wrap items-center gap-2">
                       <span>Este AIT já está cadastrado ({LABEL_TIPO[leitura.duplicado.tipo as TipoDebitoMulta] || leitura.duplicado.tipo}, {fmtBRL(leitura.duplicado.valor)}). Em vez de lançar de novo, anexe a notificação{leitura.prazo ? ' e o prazo de indicação' : ''} a ele.</span>
@@ -820,6 +863,16 @@ export default function MultasDebitosPage() {
             )}
             <Campo label="Descrição" className="sm:col-span-2">
               <input value={manual.descricao} onChange={e => setManual({ ...manual, descricao: e.target.value })} className="w-full p-2 border border-[#E2E8F0] rounded-lg text-sm" placeholder={manual.tipo === 'MULTA' ? 'Ex.: Transitar em velocidade superior à máxima permitida em até 20%' : ''} />
+            </Campo>
+            <Campo label="Linha digitável / código de barras" className="sm:col-span-2">
+              <input inputMode="numeric" value={manual.linhaDigitavel} onChange={e => setManual({ ...manual, linhaDigitavel: e.target.value })}
+                className="w-full p-2 border border-[#E2E8F0] rounded-lg text-sm font-mono" placeholder="Cole a linha digitável do boleto (opcional)" />
+              {manual.linhaDigitavel.trim() && (() => {
+                const b = normalizarBoleto(manual.linhaDigitavel);
+                return !b ? <p className="text-[10px] text-red-600 font-bold mt-1">Precisa ter 47 ou 48 dígitos (linha digitável) ou 44 (código de barras).</p>
+                  : b.valido ? <p className="text-[10px] text-emerald-700 font-bold mt-1">✔ Dígitos verificadores conferem.</p>
+                  : <p className="text-[10px] text-amber-700 font-bold mt-1">⚠ Dígitos verificadores não conferem — confira com o boleto antes de pagar.</p>;
+              })()}
             </Campo>
             <Campo label="Vencimento">
               <input type="date" value={manual.dataVencimento} onChange={e => setManual({ ...manual, dataVencimento: e.target.value })} className="w-full p-2 border border-[#E2E8F0] rounded-lg text-sm" />
@@ -958,8 +1011,8 @@ function TabelaRanking({ titulo, colNome, colQtd, linhas }: { titulo: string; co
 // ============================================================================
 // Detalhe do débito: dados, NIC, condutor, desconto em folha, aviso, OP, status
 // ============================================================================
-function DetalheDebito({ debito: d, veiculo, empresaNome, origem, nicsDaOrigem, accessToken, onFechar, onAbrir, onAlterado, onEditarManual, onCriarOp }: {
-  debito: DebitoMulta; veiculo: VeiculoMultas | null; empresaNome: string; origem: DebitoMulta | null; nicsDaOrigem: DebitoMulta[]; accessToken: string;
+function DetalheDebito({ debito: d, veiculo, empresaNome, origem, nicsDaOrigem, accessToken, prefeituraOk, onFechar, onAbrir, onAlterado, onEditarManual, onCriarOp }: {
+  debito: DebitoMulta; veiculo: VeiculoMultas | null; empresaNome: string; origem: DebitoMulta | null; nicsDaOrigem: DebitoMulta[]; accessToken: string; prefeituraOk: boolean;
   onFechar: () => void; onAbrir: (id: string) => void; onAlterado: () => Promise<void>; onEditarManual: () => void; onCriarOp: () => void;
 }) {
   const toast = useToast();
@@ -1043,6 +1096,32 @@ function DetalheDebito({ debito: d, veiculo, empresaNome, origem, nicsDaOrigem, 
   const excluir = async () => {
     if (!(await confirm({ message: 'Excluir este lançamento manual? Não tem como desfazer.', danger: true, confirmLabel: 'Excluir' }))) return;
     if (await executar('excluir', () => excluirDebitoManualAction({ debitoId: d.id }, accessToken), 'Lançamento excluído.')) onFechar();
+  };
+
+  const [linhaEditada, setLinhaEditada] = useState(d.linha_digitavel || '');
+  const [buscandoBoleto, setBuscandoBoleto] = useState(false);
+  const ehPrefeituraSP = /MUNICIPAL|PREFEITURA|\bCET\b|\bDSV\b/i.test(d.orgao_autuador || '') && /S[AÃ]O PAULO/i.test(d.municipio || '');
+  const ehDerSP = /\bD\.?\s?E\.?\s?R\b\.?/i.test(d.orgao_autuador || '');
+  const boletoAtual = d.linha_digitavel ? normalizarBoleto(d.linha_digitavel) : null;
+
+  const copiarLinha = async () => {
+    try { await navigator.clipboard.writeText(d.linha_digitavel || ''); toast('Linha digitável copiada.', 'success'); }
+    catch { toast('Não foi possível copiar — selecione e copie manualmente.', 'error'); }
+  };
+
+  const buscarBoleto = async () => {
+    const fonte = ehPrefeituraSP ? 'na Prefeitura de São Paulo' : 'no DER-SP (o PDF da notificação é lido pela IA)';
+    if (!(await confirm({ message: `Buscar o boleto ${fonte}? A consulta é cobrada pela Infosimples e pode levar até 1 minuto.`, confirmLabel: 'Buscar' }))) return;
+    setBuscandoBoleto(true);
+    const res = await buscarBoletoAction({ debitoId: d.id }, accessToken);
+    setBuscandoBoleto(false);
+    if (!res.ok) { toast(res.erro || 'Falha ao buscar o boleto.', 'error'); return; }
+    const i = res.info;
+    if (i.atualizados) toast(`${i.atualizados} boleto(s) encontrado(s) e guardado(s).`, 'success');
+    else if (!i.viaSne?.length) toast('Nenhum boleto disponível no órgão para esta multa.', 'info');
+    // Aviso do SNE vem primeiro na lista (empresa aderida: paga pelo app, com 40% de desconto).
+    (i.avisos || []).slice(0, 2).forEach((a: string) => toast(a, 'info'));
+    await onAlterado();
   };
 
   const opAtiva = d.op && d.op.status !== 'REPROVADA' ? d.op : null;
@@ -1222,6 +1301,48 @@ function DetalheDebito({ debito: d, veiculo, empresaNome, origem, nicsDaOrigem, 
 
       {/* Pagamento (OP) */}
       <Secao titulo="💳 Pagamento">
+        {ehMulta && (
+          <div className="mb-3 pb-3 border-b border-[#F1F5F9]">
+            {d.linha_digitavel ? (
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-gray-400">Linha digitável</span>
+                  {d.boleto_fonte && <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{d.boleto_fonte === 'PREFEITURA_SP' ? 'Prefeitura SP' : d.boleto_fonte === 'DER_SP' ? 'DER-SP (lido do PDF)' : d.boleto_fonte === 'ESCANEADO' ? 'Escaneado' : 'Digitado'}</span>}
+                  {boletoAtual && !boletoAtual.valido && <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">⚠ DV não confere</span>}
+                </div>
+                <p className="font-mono text-sm font-bold text-[#0C1D4D] break-all">{formatarLinhaDigitavel(d.linha_digitavel)}</p>
+                <div className="flex flex-wrap gap-3 text-[10px] font-black uppercase">
+                  <button onClick={copiarLinha} className="text-[#336699] underline">📋 Copiar</button>
+                  {d.boleto_url && <a href={d.boleto_url} target="_blank" rel="noreferrer" className="text-[#336699] underline">🧾 Abrir boleto (PDF)</a>}
+                  {d.boleto_atualizado_em && <span className="text-gray-400 normal-case font-medium">atualizado em {fmtDataHora(d.boleto_atualizado_em)}</span>}
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500 mb-2">Sem boleto guardado para esta multa.</p>
+            )}
+            {d.status === 'ABERTO' && (
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                {(ehPrefeituraSP || ehDerSP) && (
+                  <button onClick={buscarBoleto} disabled={buscandoBoleto || (ehPrefeituraSP && !prefeituraOk)}
+                    title={ehPrefeituraSP && !prefeituraOk ? 'Falta configurar o login da Prefeitura de SP no servidor' : ''}
+                    className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase bg-[#0C1D4D] text-white hover:bg-[#284B8C] disabled:opacity-50">
+                    {buscandoBoleto ? 'Buscando...' : d.linha_digitavel ? '🔄 Atualizar boleto' : `🔎 Buscar boleto (${ehPrefeituraSP ? 'Prefeitura SP' : 'DER-SP'})`}
+                  </button>
+                )}
+                <input value={linhaEditada} onChange={e => setLinhaEditada(e.target.value)} inputMode="numeric"
+                  className="flex-1 min-w-[220px] p-1.5 border border-[#E2E8F0] rounded-lg text-xs font-mono" placeholder="ou cole a linha digitável aqui" />
+                {linhaEditada.replace(/\D/g, '') !== (d.linha_digitavel || '') && (
+                  <button onClick={() => executar('boleto', () => salvarBoletoAction({ debitoId: d.id, linhaOuCodigo: linhaEditada }, accessToken), linhaEditada.trim() ? 'Linha digitável salva.' : 'Boleto removido.')}
+                    disabled={!!salvando || (!!linhaEditada.trim() && !normalizarBoleto(linhaEditada))}
+                    className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">Salvar</button>
+                )}
+              </div>
+            )}
+            {ehPrefeituraSP && !prefeituraOk && d.status === 'ABERTO' && (
+              <p className="text-[10px] text-gray-400 mt-1">Busca na Prefeitura de SP ainda não configurada (login do portal no servidor).</p>
+            )}
+          </div>
+        )}
         {opAtiva ? (
           <p className="text-xs"><span className="font-black text-indigo-700">OP #{opAtiva.numero_op}</span> · {opAtiva.status}{opAtiva.pago_em ? ` · paga em ${fmtDataHora(opAtiva.pago_em)}` : ''}. Acompanhe em Financeiro › OPs.</p>
         ) : d.status === 'ABERTO' ? (

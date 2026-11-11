@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/multas",
       "schedule": "*/20 9-10 * * 1"
+    },
+    {
+      "path": "/api/cron/multas-prazos",
+      "schedule": "*/20 11-12 * * 1"
     }
   ]
 }

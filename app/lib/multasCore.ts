@@ -4,7 +4,7 @@
 // (/admin/operacional/multas via actions-multas.ts). Sem "use server" de
 // propósito: quem chama é responsável por validar acesso/empresa antes.
 import { supabaseAdmin } from './supabase';
-import { consultarDebitosVeiculo, type DebitoConsultado } from './consultaDebitosVeiculares';
+import { consultarDebitosVeiculo, consultarInfracoesSenatran, baixarInfracaoSenatran, type DebitoConsultado } from './consultaDebitosVeiculares';
 import { resolverProvedor, enviarComJanela, type TemplateMeta } from './whatsapp';
 import { registrarLogAuditoria } from '../actions';
 
@@ -71,9 +71,9 @@ export async function executarConsultaVeiculo(db: Db, veiculo: VeiculoConsulta, 
   try {
     const agora = new Date().toISOString();
     const { data: existentesData, error: exErr } = await db.from('frota_multas_debitos')
-      .select('id, chave_externa, tipo, status, baixa_automatica, origem, auto_infracao').eq('veiculo_id', veiculo.id);
+      .select('id, chave_externa, tipo, status, baixa_automatica, origem, auto_infracao, fonte').eq('veiculo_id', veiculo.id);
     if (exErr) throw new Error(exErr.message);
-    type Existente = { id: string; chave_externa: string; tipo: string; status: string; baixa_automatica: boolean; origem: string; auto_infracao: string | null };
+    type Existente = { id: string; chave_externa: string; tipo: string; status: string; baixa_automatica: boolean; origem: string; auto_infracao: string | null; fonte: string | null };
     const existentesLista = (existentesData || []) as Existente[];
     const existentes = new Map(existentesLista.map(e => [e.chave_externa, e]));
     // Multa lançada à mão antes de chegar no Detran: quando o mesmo AIT
@@ -127,6 +127,9 @@ export async function executarConsultaVeiculo(db: Db, veiculo: VeiculoConsulta, 
     // teve a seção devolvida completa nesta consulta.
     const paraBaixar = existentesLista.filter(e =>
       e.origem === 'CONSULTA_API' && e.status === 'ABERTO' && !chavesVistas.has(e.chave_externa)
+      // Multa que veio da SENATRAN ainda pode não estar no Detran (autuação em
+      // prazo de indicação) — sumir do Detran não quer dizer que foi paga.
+      && e.fonte !== 'SENATRAN'
       && (e.tipo === 'MULTA' || e.tipo === 'IPVA' || e.tipo === 'LICENCIAMENTO')
       && resultado.secaoConfiavel[e.tipo as 'MULTA' | 'IPVA' | 'LICENCIAMENTO']
     );
@@ -250,4 +253,130 @@ export async function enviarAvisoCondutor(db: Db, debitoId: string, usuario: str
     equipamento_id: d.id, equipamento_nome: `${d.condutor_nome} — AIT ${d.auto_infracao || 'S/N'}`,
   });
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Prazos de indicação do condutor pela SENATRAN (SNE)
+// 1) senatran/infracoes lista as infrações não pagas do veículo (1 chamada);
+// 2) senatran/download-infracao só para multa nova ou ainda sem prazo — traz
+//    data-limite de indicação/defesa e o condutor (se já indicado).
+// Infração que está na Senatran mas ainda não no Detran (autuação dentro do
+// prazo de indicação) entra já aqui, com fonte SENATRAN — é o momento em que
+// ainda dá pra indicar e evitar a multa por não identificação (NIC).
+// ---------------------------------------------------------------------------
+export interface ResultadoPrazosSenatran {
+  ok: boolean; erro?: string;
+  infracoes: number; novas: number; prazos: number; indicadas: number; detalhes: number;
+  preco: number; avisos: string[];
+}
+
+const MAX_DETALHES_POR_VEICULO = 8;
+
+export async function atualizarPrazosSenatran(db: Db, veiculo: VeiculoConsulta, usuario: string): Promise<ResultadoPrazosSenatran> {
+  const vazio = { infracoes: 0, novas: 0, prazos: 0, indicadas: 0, detalhes: 0, preco: 0, avisos: [] as string[] };
+  if (veiculo.propriedade === 'ALUGADO') return { ...vazio, ok: false, erro: `${veiculo.apelido} é alugado — fora da consulta automática.` };
+  if (!veiculo.placa) return { ...vazio, ok: false, erro: `Veículo ${veiculo.apelido} sem placa.` };
+
+  let cnpj: string | null = null;
+  if (veiculo.empresa_id) {
+    const { data: emp } = await db.from('empresas').select('cnpj').eq('id', veiculo.empresa_id).maybeSingle();
+    cnpj = (emp?.cnpj as string | null) || null;
+  }
+
+  const registrar = async (servico: string, ok: boolean, codigo: number | null, mensagem: string, preco: number | null, encontrados: number, novos: number, resposta: unknown) => {
+    await db.from('frota_multas_consultas').insert([{
+      empresa_id: veiculo.empresa_id, veiculo_id: veiculo.id, provedor: 'INFOSIMPLES', servico,
+      status: ok ? 'OK' : 'ERRO', codigo, mensagem: mensagem.slice(0, 2000), encontrados, novos, baixados: 0,
+      preco, resposta, consultado_por: usuario,
+    }]);
+  };
+
+  const lista = await consultarInfracoesSenatran({ placa: veiculo.placa, cnpj });
+  let preco = lista.preco || 0;
+  if (!lista.ok) {
+    await registrar(lista.servico, false, lista.codigo, lista.mensagem, lista.preco, 0, 0, lista.resposta);
+    return { ...vazio, ok: false, erro: lista.mensagem, preco };
+  }
+  // Só o que está em aberto (a Senatran usa NAO_PAGAS_A_VENCER / NAO_PAGAS_VENCIDAS).
+  const abertas = lista.infracoes.filter(i => !i.situacao || /N[AÃ]O_?PAGA/i.test(i.situacao));
+
+  const { data: existentesData } = await db.from('frota_multas_debitos')
+    .select('id, auto_infracao, status, prazo_indicacao_condutor, condutor_indicado_em, orgao_autuador, data_infracao, eh_nic')
+    .eq('veiculo_id', veiculo.id).eq('tipo', 'MULTA');
+  type Ex = { id: string; auto_infracao: string | null; status: string; prazo_indicacao_condutor: string | null; condutor_indicado_em: string | null; orgao_autuador: string | null; data_infracao: string | null; eh_nic: boolean };
+  const porAit = new Map(((existentesData || []) as Ex[]).map(e => [(e.auto_infracao || '').toUpperCase().replace(/[^A-Z0-9]/g, ''), e]));
+
+  const agora = new Date().toISOString();
+  let novas = 0, prazos = 0, indicadas = 0, detalhes = 0;
+  const avisos: string[] = [];
+
+  for (const inf of abertas) {
+    const atual = porAit.get(inf.ait);
+    if (atual && atual.status !== 'ABERTO') continue;
+
+    // NIC (multa por não identificação) não tem indicação de condutor: não
+    // paga detalhe. Se for nova, entra só com os dados da lista.
+    if (atual?.eh_nic || ehNic(inf.descricao)) {
+      if (!atual) {
+        const { error } = await db.from('frota_multas_debitos').insert([{
+          empresa_id: veiculo.empresa_id, veiculo_id: veiculo.id, tipo: 'MULTA', origem: 'CONSULTA_API', fonte: 'SENATRAN',
+          chave_externa: `MULTA:${inf.ait}`, auto_infracao: inf.ait, descricao: inf.descricao, orgao_autuador: inf.codigo_orgao,
+          codigo_infracao: inf.codigo_infracao, valor: inf.valor, data_vencimento: inf.data_vencimento, eh_nic: true,
+          status: 'ABERTO', primeira_consulta_em: agora, ultima_consulta_em: agora, criado_por: usuario, updated_at: agora,
+        }]);
+        if (!error) novas++;
+      }
+      continue;
+    }
+    // Prazo já conhecido/indicação feita: nada a buscar. Infração com mais de
+    // 90 dias: o prazo de indicação (≈30 dias da notificação) já passou.
+    if (atual && (atual.prazo_indicacao_condutor || atual.condutor_indicado_em)) continue;
+    if (atual?.data_infracao && (Date.now() - new Date(`${atual.data_infracao}T00:00:00`).getTime()) / 86400000 > 90) continue;
+    if (detalhes >= MAX_DETALHES_POR_VEICULO) { avisos.push(`Limite de ${MAX_DETALHES_POR_VEICULO} detalhes por consulta atingido — o restante entra na próxima.`); break; }
+
+    const det = await baixarInfracaoSenatran({ chave: inf.chave, placa: veiculo.placa, cnpj });
+    detalhes++;
+    preco += det.preco || 0;
+    await registrar(det.servico, det.ok, det.codigo, det.ok ? `AIT ${inf.ait}: prazo indicação ${det.detalhe?.prazo_indicacao || '—'}` : det.mensagem, det.preco, det.ok ? 1 : 0, 0, det.resposta);
+    if (!det.ok || !det.detalhe) { avisos.push(`AIT ${inf.ait}: ${det.mensagem}`); continue; }
+    const d = det.detalhe;
+
+    const indicado = !!d.condutor_nome;
+    const camposPrazo = {
+      ...(d.prazo_indicacao ? { prazo_indicacao_condutor: d.prazo_indicacao } : {}),
+      ...(indicado ? { condutor_indicado_em: agora, condutor_indicado_por: `SENATRAN (${d.condutor_nome})`.slice(0, 120) } : {}),
+      updated_at: agora,
+    };
+
+    if (atual) {
+      const { error } = await db.from('frota_multas_debitos').update({
+        ...camposPrazo,
+        ...(d.codigo_infracao ? { codigo_infracao: d.codigo_infracao } : {}),
+      }).eq('id', atual.id);
+      if (!error) { if (d.prazo_indicacao) prazos++; if (indicado) indicadas++; }
+    } else {
+      const descricao = d.descricao || inf.descricao;
+      const { error } = await db.from('frota_multas_debitos').insert([{
+        empresa_id: veiculo.empresa_id, veiculo_id: veiculo.id, tipo: 'MULTA', origem: 'CONSULTA_API', fonte: 'SENATRAN',
+        chave_externa: `MULTA:${inf.ait}`, auto_infracao: inf.ait,
+        descricao, orgao_autuador: d.orgao_autuador || inf.codigo_orgao, codigo_infracao: d.codigo_infracao || inf.codigo_infracao,
+        data_infracao: d.data_infracao, hora_infracao: d.hora_infracao, local_infracao: d.local_infracao, municipio: d.municipio,
+        valor: d.valor || inf.valor, data_vencimento: inf.data_vencimento,
+        eh_nic: ehNic(descricao), status: 'ABERTO', primeira_consulta_em: agora, ultima_consulta_em: agora, criado_por: usuario,
+        ...camposPrazo,
+      }]);
+      if (!error) { novas++; if (d.prazo_indicacao) prazos++; if (indicado) indicadas++; }
+      else avisos.push(`AIT ${inf.ait}: não foi possível gravar (${error.message}).`);
+    }
+  }
+
+  await registrar(lista.servico, true, lista.codigo, `${abertas.length} infração(ões) em aberto na Senatran; ${novas} nova(s); ${prazos} prazo(s); ${indicadas} já indicada(s)`, lista.preco, abertas.length, novas, lista.resposta);
+  if (novas) await vincularNics(db, [veiculo.id]);
+
+  registrarLogAuditoria({
+    usuario_nome: usuario, acao: 'CONSULTOU PRAZOS DE INDICAÇÃO (SENATRAN)', setor: 'OPERACIONAL',
+    equipamento_id: veiculo.id, equipamento_nome: `${veiculo.apelido} (${veiculo.placa}) — ${abertas.length} infração(ões), ${novas} nova(s), ${prazos} prazo(s)`,
+  });
+
+  return { ok: true, infracoes: abertas.length, novas, prazos, indicadas, detalhes, preco: Math.round(preco * 100) / 100, avisos };
 }

@@ -28,6 +28,8 @@ export const NotificacaoMultaSchema = z.object({
   data_vencimento: z.string().nullable().describe('Vencimento para pagamento, AAAA-MM-DD.'),
   prazo_indicacao_condutor: z.string().nullable().describe('Data-limite para identificação/indicação do condutor infrator (FICI) ou para defesa prévia, AAAA-MM-DD.'),
   pontos: z.number().nullable().describe('Pontos na CNH, se impresso.'),
+  linha_digitavel: z.string().nullable().describe('Linha digitável do boleto/guia de pagamento, só os dígitos (47 ou 48), exatamente como impressa. Null se não houver boleto no documento.'),
+  codigo_barras: z.string().nullable().describe('Número do código de barras (44 dígitos) se estiver impresso em número; só dígitos. Null se não houver.'),
   observacoes: z.string().nullable().describe('Em português, curto: campos ilegíveis, dúvidas de leitura ou avisos importantes. Null se tudo legível.'),
 });
 export type NotificacaoMulta = z.infer<typeof NotificacaoMultaSchema>;
@@ -40,7 +42,8 @@ Regras:
 - Valores em reais como número (195.23), sem "R$".
 - Placa e número do auto de infração sem espaços, pontos ou traços extras além dos impressos.
 - Se o documento não for uma notificação de multa de trânsito, use tipo_documento "OUTRO" e explique em observacoes.
-- Se houver mais de uma infração no mesmo documento, extraia a primeira e avise em observacoes.`;
+- Se houver mais de uma infração no mesmo documento, extraia a primeira e avise em observacoes.
+- A linha digitável do boleto é longa: copie dígito por dígito, sem pular nem repetir blocos. Se algum dígito estiver ilegível, devolva null nesse campo e avise em observacoes — um número errado faria o pagamento ir para o lugar errado.`;
 
 export type ResultadoLeitura =
   | { ok: true; dados: NotificacaoMulta; modelo: string; tokensEntrada: number; tokensSaida: number }

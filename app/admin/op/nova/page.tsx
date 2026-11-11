@@ -510,15 +510,17 @@ function NovaOrdemPagamentoForm() {
       if (d.empresaId) setEmpresaId(d.empresaId);
       setEmpresaRecebedora(d.favorecido);
       setTipoPagamento('BOLETO');
-      setDadosPagamento('');
+      // Linha digitável já guardada na multa (Prefeitura SP, DER ou escaneada).
+      setDadosPagamento(d.dadosPagamento || '');
       setObs(d.observacao);
       const base = Date.now();
       setItens((d.itens as { descricao: string; valor: number }[]).map((it, i) => ({ id: base + i, descricao: it.descricao, qtd: 1, valorUnitario: it.valor })));
       if (d.dataVencimento) setDataVencimento(d.dataVencimento);
       else setDataVencimento(prev => prev || new Date().toISOString().slice(0, 10));
-      toast(d.itens.length > 1
-        ? `${d.itens.length} multas/débitos carregados — cole a linha digitável de cada boleto e confira o signatário antes de enviar.`
-        : 'Dados da multa/débito carregados — cole a linha digitável do boleto e confira o signatário antes de enviar.', 'info');
+      const semBoleto = Number(d.semBoleto) || 0;
+      toast(semBoleto === 0
+        ? `${d.itens.length > 1 ? `${d.itens.length} multas/débitos carregados` : 'Multa carregada'} com a linha digitável — confira os dados e o signatário antes de enviar.`
+        : `${d.itens.length > 1 ? `${d.itens.length} multas/débitos carregados` : 'Multa carregada'} — ${semBoleto === d.itens.length ? 'cole a linha digitável do boleto' : `${semBoleto} ainda sem boleto, complete a linha digitável`} e confira o signatário antes de enviar.`, 'info');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [multaIdsParam, perfil?.accessToken]);

@@ -18,9 +18,11 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida, mensagemAcessoNegado } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
-import { provedorConfigurado, validadeCertificadoA1 } from '../../../lib/consultaDebitosVeiculares';
-import { executarConsultaVeiculo, vincularNics, enviarAvisoCondutor } from '../../../lib/multasCore';
+import { provedorConfigurado, validadeCertificadoA1, prefeituraSpConfigurada, consultarBoletosPrefeituraSP, consultarPenalidadesDerSP } from '../../../lib/consultaDebitosVeiculares';
+import { normalizarBoleto, formatarLinhaDigitavel } from '../../../lib/boletoMulta';
+import { executarConsultaVeiculo, vincularNics, enviarAvisoCondutor, atualizarPrazosSenatran } from '../../../lib/multasCore';
 import { lerNotificacaoMulta, leituraConfigurada } from '../../../lib/leituraNotificacaoMulta';
+import { extrairTextoNativoPdf } from '../../../lib/textract';
 
 const ROTA = '/admin/operacional/multas';
 // "Criar OP" abre /admin/op/nova?multaIds=... — quem está na tela da OP
@@ -61,6 +63,8 @@ export interface DebitoMulta {
   eh_nic: boolean; multa_origem_id: string | null; condutor_avisado_em: string | null; condutor_avisado_por: string | null;
   prazo_indicacao_condutor: string | null; condutor_indicado_em: string | null; condutor_indicado_por: string | null;
   notificacao_url: string | null; codigo_infracao: string | null;
+  codigo_barras: string | null; linha_digitavel: string | null; boleto_url: string | null;
+  boleto_fonte: string | null; boleto_atualizado_em: string | null;
   op: { id: string; numero_op: number | null; status: string | null; pago_em: string | null } | null;
 }
 
@@ -70,7 +74,7 @@ export interface ConsultaMulta {
   site_receipt: string | null; consultado_por: string | null; consultado_em: string;
 }
 
-const COLUNAS_DEBITO = 'id, empresa_id, veiculo_id, tipo, origem, fonte, descricao, auto_infracao, orgao_autuador, data_infracao, hora_infracao, local_infracao, municipio, exercicio, cota, valor, data_vencimento, status, baixa_automatica, pago_em, status_alterado_por, condutor_nome, condutor_checklist_id, condutor_confirmado_em, condutor_confirmado_por, desconto_descricao, desconto_parcelas, desconto_mes_inicio, desconto_valor_parcela, desconto_lancado_em, desconto_lancado_por, observacao, primeira_consulta_em, ultima_consulta_em, criado_por, created_at, updated_at, eh_nic, multa_origem_id, condutor_avisado_em, condutor_avisado_por, prazo_indicacao_condutor, condutor_indicado_em, condutor_indicado_por, notificacao_url, codigo_infracao';
+const COLUNAS_DEBITO = 'id, empresa_id, veiculo_id, tipo, origem, fonte, descricao, auto_infracao, orgao_autuador, data_infracao, hora_infracao, local_infracao, municipio, exercicio, cota, valor, data_vencimento, status, baixa_automatica, pago_em, status_alterado_por, condutor_nome, condutor_checklist_id, condutor_confirmado_em, condutor_confirmado_por, desconto_descricao, desconto_parcelas, desconto_mes_inicio, desconto_valor_parcela, desconto_lancado_em, desconto_lancado_por, observacao, primeira_consulta_em, ultima_consulta_em, criado_por, created_at, updated_at, eh_nic, multa_origem_id, condutor_avisado_em, condutor_avisado_por, prazo_indicacao_condutor, condutor_indicado_em, condutor_indicado_por, notificacao_url, codigo_infracao, codigo_barras, linha_digitavel, boleto_url, boleto_fonte, boleto_atualizado_em';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -191,7 +195,7 @@ export async function carregarPainelMultasAction(accessToken: string): Promise<R
     const empresas = ((empresasRes.data || []) as { id: number; nome: string }[])
       .filter(e => !auth.empresasPermitidas || auth.empresasPermitidas.includes(e.id));
 
-    return { ok: true, info: { veiculos, debitos, consultas, empresas, provedorConfigurado: provedorConfigurado(), certificado, leituraConfigurada: leituraConfigurada() } };
+    return { ok: true, info: { veiculos, debitos, consultas, empresas, provedorConfigurado: provedorConfigurado(), certificado, leituraConfigurada: leituraConfigurada(), prefeituraSpConfigurada: prefeituraSpConfigurada() } };
   } catch (e) {
     return { ok: false, erro: e instanceof Error ? e.message : String(e) };
   }
@@ -444,6 +448,7 @@ export async function salvarDebitoManualAction(params: {
   orgaoAutuador?: string | null; dataInfracao?: string | null; horaInfracao?: string | null; localInfracao?: string | null;
   valor: number; dataVencimento?: string | null; observacao?: string | null;
   prazoIndicacaoCondutor?: string | null; notificacaoUrl?: string | null; codigoInfracao?: string | null;
+  linhaDigitavel?: string | null; boletoFonte?: 'ESCANEADO' | 'MANUAL' | null;
 }, accessToken: string): Promise<Resultado> {
   const auth = await autorizar(accessToken);
   if (!auth.ok) return { ok: false, erro: auth.erro };
@@ -471,6 +476,7 @@ export async function salvarDebitoManualAction(params: {
     prazo_indicacao_condutor: params.prazoIndicacaoCondutor || null,
     codigo_infracao: params.codigoInfracao?.trim() || null,
     ...(params.notificacaoUrl ? { notificacao_url: params.notificacaoUrl } : {}),
+    ...camposBoleto(params.linhaDigitavel, params.boletoFonte || 'MANUAL'),
     updated_at: new Date().toISOString(),
   };
 
@@ -569,6 +575,14 @@ export async function obterDadosPagamentoMultaAction(params: { ids: string[] }, 
 
   const vencimentos = debitos.map(d => d.data_vencimento).filter((x): x is string => !!x).sort();
 
+  // Dados de pagamento (tipo BOLETO): linha digitável de cada débito que já tem boleto.
+  const comBoleto = debitos.filter(d => d.linha_digitavel);
+  const dadosPagamento = debitos.length === 1
+    ? formatarLinhaDigitavel(debitos[0].linha_digitavel)
+    : comBoleto.map(d => `AIT ${d.auto_infracao || d.descricao || d.tipo}: ${formatarLinhaDigitavel(d.linha_digitavel)}`).join(' | ');
+  const boletosUrls = debitos.map(d => d.boleto_url).filter((u): u is string => !!u);
+  const semBoleto = debitos.length - comBoleto.length;
+
   let observacao: string;
   if (debitos.length === 1) {
     const d = debitos[0];
@@ -594,7 +608,9 @@ export async function obterDadosPagamentoMultaAction(params: { ids: string[] }, 
       favorecido,
       itens,
       dataVencimento: vencimentos[0] || null,
-      observacao: observacao.toUpperCase(),
+      observacao: observacao.toUpperCase() + (boletosUrls.length ? ` · BOLETO(S): ${boletosUrls.join(' ')}` : ''),
+      dadosPagamento,
+      semBoleto,
     },
   };
 }
@@ -660,14 +676,18 @@ export async function lerNotificacaoMultaAction(params: { caminho: string }, acc
 
   return {
     ok: true,
-    info: { dados: { ...d, auto_infracao: auto || null, placa: placaLida || null }, veiculoId, veiculoDescricao, duplicado, arquivoUrl: publico.publicUrl },
+    info: {
+      dados: { ...d, auto_infracao: auto || null, placa: placaLida || null },
+      veiculoId, veiculoDescricao, duplicado, arquivoUrl: publico.publicUrl,
+      boleto: normalizarBoleto(d.linha_digitavel) || normalizarBoleto(d.codigo_barras),
+    },
   };
 }
 
 // Anexa a notificação escaneada (e o prazo de indicação lido) a um débito
 // que já existe — típico: a multa veio pela consulta do Detran e depois
 // chegou o papel da notificação.
-export async function anexarNotificacaoAction(params: { debitoId: string; notificacaoUrl: string | null; prazoIndicacaoCondutor: string | null; codigoInfracao?: string | null }, accessToken: string): Promise<Resultado> {
+export async function anexarNotificacaoAction(params: { debitoId: string; notificacaoUrl: string | null; prazoIndicacaoCondutor: string | null; codigoInfracao?: string | null; linhaDigitavel?: string | null }, accessToken: string): Promise<Resultado> {
   const auth = await autorizar(accessToken);
   if (!auth.ok) return { ok: false, erro: auth.erro };
   const db = supabaseAdmin();
@@ -677,6 +697,7 @@ export async function anexarNotificacaoAction(params: { debitoId: string; notifi
     ...(params.notificacaoUrl ? { notificacao_url: params.notificacaoUrl } : {}),
     ...(params.prazoIndicacaoCondutor ? { prazo_indicacao_condutor: params.prazoIndicacaoCondutor } : {}),
     ...(params.codigoInfracao && !r.debito.codigo_infracao ? { codigo_infracao: params.codigoInfracao } : {}),
+    ...(params.linhaDigitavel && !r.debito.linha_digitavel ? camposBoleto(params.linhaDigitavel, 'ESCANEADO') : {}),
     updated_at: new Date().toISOString(),
   }).eq('id', params.debitoId);
   if (error) return { ok: false, erro: error.message };
@@ -708,4 +729,199 @@ export async function marcarIndicacaoCondutorAction(params: { debitoId: string; 
     equipamento_id: params.debitoId, equipamento_nome: `AIT ${r.debito.auto_infracao || 'S/N'} — ${r.debito.condutor_nome || ''}`,
   });
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Boleto da multa (linha digitável / código de barras / PDF)
+// ---------------------------------------------------------------------------
+function camposBoleto(valor: string | null | undefined, fonte: string): Record<string, string | null> {
+  const b = normalizarBoleto(valor);
+  if (!b) return {};
+  return { linha_digitavel: b.linha, codigo_barras: b.codigo, boleto_fonte: fonte, boleto_atualizado_em: new Date().toISOString() };
+}
+
+// Copia um PDF remoto (boleto da Prefeitura, notificação do DER) pro bucket
+// "frota" — o link de origem pode expirar. Devolve a URL pública e os bytes.
+async function guardarPdfRemoto(db: ReturnType<typeof supabaseAdmin>, url: string, caminho: string): Promise<{ url: string; buffer: Buffer } | null> {
+  try {
+    const resp = await fetch(url, { cache: 'no-store' });
+    if (!resp.ok) return null;
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    if (buffer.length === 0 || buffer.length > 25 * 1024 * 1024) return null;
+    const { error } = await db.storage.from('frota').upload(caminho, buffer, { contentType: 'application/pdf', upsert: true });
+    if (error) return null;
+    return { url: db.storage.from('frota').getPublicUrl(caminho).data.publicUrl, buffer };
+  } catch {
+    return null;
+  }
+}
+
+const ehMultaPrefeituraSP = (d: { orgao_autuador: string | null; municipio: string | null }) =>
+  /MUNICIPAL|PREFEITURA|\bCET\b|\bDSV\b/i.test(d.orgao_autuador || '') && /S[AÃ]O PAULO/i.test(d.municipio || '');
+const ehMultaDerSP = (d: { orgao_autuador: string | null }) => /\bD\.?\s?E\.?\s?R\b\.?/i.test(d.orgao_autuador || '');
+const normAitLocal = (s: string | null | undefined) => (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+// Linha digitável digitada/colada à mão no detalhe da multa.
+export async function salvarBoletoAction(params: { debitoId: string; linhaOuCodigo: string | null }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  if (!r.ok) return { ok: false, erro: r.erro };
+
+  if (!params.linhaOuCodigo?.trim()) {
+    const { error } = await db.from('frota_multas_debitos').update({
+      linha_digitavel: null, codigo_barras: null, boleto_fonte: null, boleto_atualizado_em: null, updated_at: new Date().toISOString(),
+    }).eq('id', params.debitoId);
+    return error ? { ok: false, erro: error.message } : { ok: true };
+  }
+  const b = normalizarBoleto(params.linhaOuCodigo);
+  if (!b) return { ok: false, erro: 'Informe a linha digitável (47 ou 48 dígitos) ou o código de barras (44 dígitos).' };
+  const { error } = await db.from('frota_multas_debitos').update({ ...camposBoleto(params.linhaOuCodigo, 'MANUAL'), updated_at: new Date().toISOString() }).eq('id', params.debitoId);
+  if (error) return { ok: false, erro: error.message };
+  registrarLogAuditoria({
+    usuario_nome: auth.perfil.nome.toUpperCase(), acao: 'INFORMOU BOLETO DA MULTA', setor: 'OPERACIONAL',
+    equipamento_id: params.debitoId, equipamento_nome: `AIT ${r.debito.auto_infracao || 'S/N'}${b.valido ? '' : ' (DV não confere)'}`,
+  });
+  return { ok: true, info: { valido: b.valido } };
+}
+
+// "🔎 Buscar boleto": escolhe a consulta pelo órgão autuador.
+//   - Prefeitura de SP: uma consulta traz o boleto de todas as multas
+//     municipais em aberto do veículo (código de barras + PDF).
+//   - DER-SP: baixa o PDF da Notificação de Penalidade e a IA lê a linha
+//     digitável (só das multas DER em aberto e ainda sem boleto do veículo).
+export async function buscarBoletoAction(params: { debitoId: string }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const usuario = auth.perfil.nome.toUpperCase();
+
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  if (!r.ok) return { ok: false, erro: r.erro };
+  const alvo = r.debito;
+  if (alvo.tipo !== 'MULTA') return { ok: false, erro: 'Busca de boleto só para multa.' };
+
+  const { data: veiculo } = await db.from('frota_veiculos').select('id, apelido, placa, renavam, empresa_id').eq('id', alvo.veiculo_id).maybeSingle();
+  if (!veiculo?.placa || !veiculo?.renavam) return { ok: false, erro: 'Veículo sem placa/Renavam cadastrados.' };
+
+  const { data: abertasData } = await db.from('frota_multas_debitos')
+    .select('id, auto_infracao, orgao_autuador, municipio, linha_digitavel, notificacao_url')
+    .eq('veiculo_id', veiculo.id).eq('tipo', 'MULTA').eq('status', 'ABERTO');
+  type Aberta = { id: string; auto_infracao: string | null; orgao_autuador: string | null; municipio: string | null; linha_digitavel: string | null; notificacao_url: string | null };
+  const abertas = (abertasData || []) as Aberta[];
+  const agora = new Date().toISOString();
+
+  const registrar = async (servico: string, ok: boolean, codigo: number | null, mensagem: string, preco: number | null, encontrados: number, atualizados: number, resposta: unknown) => {
+    await db.from('frota_multas_consultas').insert([{
+      empresa_id: veiculo.empresa_id, veiculo_id: veiculo.id, provedor: 'INFOSIMPLES', servico,
+      status: ok ? 'OK' : 'ERRO', codigo, mensagem: mensagem.slice(0, 2000), encontrados, novos: atualizados, baixados: 0,
+      preco, resposta, consultado_por: usuario,
+    }]);
+  };
+
+  // ---------------- Prefeitura de SP ----------------
+  if (ehMultaPrefeituraSP(alvo)) {
+    const municipais = abertas.filter(ehMultaPrefeituraSP);
+    const res = await consultarBoletosPrefeituraSP({ placa: veiculo.placa, renavam: veiculo.renavam, aits: municipais.map(m => normAitLocal(m.auto_infracao)).filter(Boolean) });
+    if (!res.ok) {
+      await registrar(res.servico, false, res.codigo, res.mensagem, res.preco, 0, 0, res.resposta);
+      return { ok: false, erro: res.mensagem };
+    }
+    let atualizados = 0;
+    const semBoleto: string[] = [];
+    for (const m of municipais) {
+      const b = res.boletos.find(x => x.ait === normAitLocal(m.auto_infracao));
+      if (!b?.codigo_barras) { semBoleto.push(m.auto_infracao || m.id); continue; }
+      const pdf = b.boleto_url ? await guardarPdfRemoto(db, b.boleto_url, `multas/boletos/${normAitLocal(m.auto_infracao) || m.id}.pdf`) : null;
+      const { error } = await db.from('frota_multas_debitos').update({
+        ...camposBoleto(b.codigo_barras, 'PREFEITURA_SP'),
+        boleto_url: pdf?.url || b.boleto_url,
+        updated_at: agora,
+      }).eq('id', m.id);
+      if (!error) atualizados++;
+    }
+    await registrar(res.servico, true, res.codigo, `${res.boletos.length} boleto(s) na Prefeitura; ${atualizados} multa(s) atualizada(s)`, res.preco, res.boletos.length, atualizados, res.resposta);
+    registrarLogAuditoria({
+      usuario_nome: usuario, acao: 'BUSCOU BOLETO DE MULTA (PREFEITURA SP)', setor: 'OPERACIONAL',
+      equipamento_id: veiculo.id, equipamento_nome: `${veiculo.apelido} (${veiculo.placa}) — ${atualizados} boleto(s)`,
+    });
+    return { ok: true, info: { fonte: 'PREFEITURA_SP', atualizados, semBoleto, preco: res.preco } };
+  }
+
+  // ---------------- DER-SP ----------------
+  if (ehMultaDerSP(alvo)) {
+    const res = await consultarPenalidadesDerSP({ renavam: veiculo.renavam });
+    if (!res.ok) {
+      await registrar(res.servico, false, res.codigo, res.mensagem, res.preco, 0, 0, res.resposta);
+      return { ok: false, erro: res.mensagem };
+    }
+    // Só as DER em aberto e ainda sem boleto (cada PDF lido pela IA tem custo); a clicada sempre entra.
+    const candidatas = abertas.filter(m => ehMultaDerSP(m) && (m.id === alvo.id || !m.linha_digitavel)).slice(0, 5);
+    let atualizados = 0;
+    const semBoleto: string[] = [];
+    const avisos: string[] = [];
+    const viaSne: string[] = [];
+    for (const m of candidatas) {
+      const p = res.penalidades.find(x => x.ait === normAitLocal(m.auto_infracao));
+      if (!p?.np_pdf_url) { semBoleto.push(m.auto_infracao || m.id); continue; }
+      const pdf = await guardarPdfRemoto(db, p.np_pdf_url, `multas/notificacoes/der-${normAitLocal(m.auto_infracao) || m.id}.pdf`);
+      if (!pdf) { semBoleto.push(m.auto_infracao || m.id); avisos.push(`AIT ${m.auto_infracao}: não foi possível baixar o PDF do DER.`); continue; }
+
+      // Texto nativo primeiro (grátis). Empresa aderida ao SNE: o DER devolve
+      // só "NP não emitida — adesão ao SNE", sem boleto; o pagamento é pelo
+      // app SNE / Carteira Digital de Trânsito, com 40% de desconto
+      // (constatado 2026-11-11 no CAMINHÃO BRANCO).
+      let textoNativo = '';
+      try { textoNativo = await extrairTextoNativoPdf(pdf.buffer.toString('base64')); } catch { /* PDF sem texto: vai pra IA */ }
+      if (/NP\s+n[aã]o\s+emitida|ades[aã]o\s+ao\s+SNE/i.test(textoNativo)) {
+        viaSne.push(m.auto_infracao || m.id);
+        continue;
+      }
+      let linha: string | null = null;
+      const sequencia = textoNativo.replace(/[ .\-]/g, '').match(/\d{44,48}/g)?.find(sq => normalizarBoleto(sq));
+      if (sequencia) {
+        linha = sequencia;
+      } else {
+        const leitura = await lerNotificacaoMulta(pdf.buffer, 'application/pdf');
+        linha = leitura.ok ? (leitura.dados.linha_digitavel || leitura.dados.codigo_barras) : null;
+        if (!leitura.ok) avisos.push(`AIT ${m.auto_infracao}: ${leitura.erro}`);
+        else if (leitura.dados.observacoes) avisos.push(`AIT ${m.auto_infracao}: ${leitura.dados.observacoes}`);
+      }
+      const { error } = await db.from('frota_multas_debitos').update({
+        notificacao_url: m.notificacao_url || pdf.url,
+        ...(linha ? { ...camposBoleto(linha, 'DER_SP'), boleto_url: pdf.url } : {}),
+        updated_at: agora,
+      }).eq('id', m.id);
+      if (!error && linha && normalizarBoleto(linha)) atualizados++;
+      else semBoleto.push(m.auto_infracao || m.id);
+    }
+    if (viaSne.length) {
+      avisos.unshift(`A empresa aderiu ao SNE: o DER não emite boleto (${viaSne.join(', ')}). Pague pelo app SNE / Carteira Digital de Trânsito, com 40% de desconto até o vencimento, e cole a linha digitável aqui.`);
+    }
+    await registrar(res.servico, true, res.codigo, `${res.penalidades.length} penalidade(s) no DER; ${atualizados} boleto(s) lido(s)${viaSne.length ? `; ${viaSne.length} via SNE (sem boleto do DER)` : ''}`, res.preco, res.penalidades.length, atualizados, res.resposta);
+    registrarLogAuditoria({
+      usuario_nome: usuario, acao: 'BUSCOU BOLETO DE MULTA (DER-SP)', setor: 'OPERACIONAL',
+      equipamento_id: veiculo.id, equipamento_nome: `${veiculo.apelido} (${veiculo.placa}) — ${atualizados} boleto(s)`,
+    });
+    return { ok: true, info: { fonte: 'DER_SP', atualizados, semBoleto, avisos, viaSne, preco: res.preco } };
+  }
+
+  return { ok: false, erro: 'Busca automática de boleto disponível só para multas da Prefeitura de São Paulo e do DER-SP. Para as demais, escaneie a notificação ou cole a linha digitável.' };
+}
+
+// ---------------------------------------------------------------------------
+// Prazos de indicação do condutor pela SENATRAN (botão na aba Veículos)
+// ---------------------------------------------------------------------------
+export async function buscarPrazosSenatranAction(params: { veiculoId: string }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const { data: veiculo } = await db.from('frota_veiculos')
+    .select('id, apelido, placa, renavam, empresa_id, propriedade').eq('id', params.veiculoId).maybeSingle();
+  if (!veiculo) return { ok: false, erro: 'Veículo não encontrado.' };
+  if (!empresaPermitida(auth.empresasPermitidas, veiculo.empresa_id)) return { ok: false, erro: 'Você não tem acesso a este veículo.' };
+  const r = await atualizarPrazosSenatran(db, veiculo, auth.perfil.nome.toUpperCase());
+  if (!r.ok) return { ok: false, erro: r.erro };
+  return { ok: true, info: r };
 }

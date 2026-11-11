@@ -32,7 +32,7 @@ const textractClient = new TextractClient({
 // esta lib. Com import() aqui dentro, o carregamento só acontece quando esta
 // função É CHAMADA DE VERDADE, dentro do try/catch de extrairTextoPdf — se
 // travar de novo pelo mesmo motivo, cai pro Textract em vez de derrubar tudo.
-async function extrairTextoNativoPdf(pdfBase64: string): Promise<string> {
+export async function extrairTextoNativoPdf(pdfBase64: string): Promise<string> {
   const { PDFParse } = await import('pdf-parse');
   const bytes = Buffer.from(pdfBase64, 'base64');
   const parser = new PDFParse({ data: bytes });

@@ -85,9 +85,29 @@ export async function GET(request: Request) {
         quantidade: novosParaAviso.length,
         valor: fmtBRL(valorNovos),
         lista: novosParaAviso.slice(0, 15).join('\n') + (novosParaAviso.length > 15 ? `\n… e mais ${novosParaAviso.length - 15}` : ''),
+        // Template da Meta não aceita quebra de linha dentro de variável —
+        // versão em linha única pro Message Template.
+        lista_resumo: novosParaAviso.slice(0, 8).map(l => l.replace(/^•\s*/, '')).join('; ')
+          + (novosParaAviso.length > 8 ? `; … e mais ${novosParaAviso.length - 8}` : ''),
         link: `${baseUrl}${ROTA_TELA}`,
       });
     } catch (e) { console.error('WhatsApp de multas novas falhou:', e); }
+  }
+
+  // Prazo de indicação do condutor vencendo (≤ 7 dias) — o que evita multa
+  // por não identificação. Só na execução que consultou algo (1x/semana).
+  if (resumo.length > 0) {
+    const limitePrazo = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    const { data: prazos } = await db.from('frota_multas_debitos')
+      .select('id').eq('tipo', 'MULTA').eq('status', 'ABERTO')
+      .is('condutor_indicado_em', null).not('prazo_indicacao_condutor', 'is', null)
+      .lte('prazo_indicacao_condutor', limitePrazo);
+    const qtdPrazos = (prazos || []).length;
+    if (qtdPrazos > 0) {
+      try {
+        await notificarPush(ROTA_TELA, 'Prazo de indicação de condutor', `${qtdPrazos} multa(s) com prazo para indicar o condutor vencendo em até 7 dias. Sem a indicação vem a multa por não identificação.`);
+      } catch (e) { console.error('Push de prazo de indicação falhou:', e); }
+    }
   }
 
   // Aviso de certificado perto de vencer — no máximo uma vez por semana

@@ -587,7 +587,7 @@ export default function IntegracaoPage() {
                     <input type="text" value={testeTemplateNome} onChange={e => setTesteTemplateNome(e.target.value)} placeholder="Nome do template" className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold" />
                     <input type="text" value={testeTemplateIdioma} onChange={e => setTesteTemplateIdioma(e.target.value)} placeholder="Idioma (ex: en_US)" className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold" />
                   </div>
-                  <input type="text" value={testeTemplateParametros} onChange={e => setTesteTemplateParametros(e.target.value)} placeholder="Parâmetros do corpo, separados por vírgula (ex: 123456)" className="w-full p-2 border border-gray-300 rounded-lg text-sm font-mono" />
+                  <input type="text" value={testeTemplateParametros} onChange={e => setTesteTemplateParametros(e.target.value)} placeholder="Parâmetros do corpo, separados por vírgula — ou por | se algum valor tiver vírgula" className="w-full p-2 border border-gray-300 rounded-lg text-sm font-mono" />
                   <input type="text" value={testeTemplateBotao} onChange={e => setTesteTemplateBotao(e.target.value)} placeholder={'Código do botão "Copiar código" (só p/ templates de Autenticação com botão)'} className="w-full p-2 border border-gray-300 rounded-lg text-sm font-mono" />
                   <button onClick={enviarTesteTemplate} disabled={testeTemplateEnviando} className="w-full bg-[#0C1D4D] hover:bg-[#284B8C] disabled:opacity-50 text-white font-black uppercase tracking-wider text-[11px] py-2.5 rounded-lg transition-colors">
                     {testeTemplateEnviando ? 'Enviando...' : '📨 Testar template'}

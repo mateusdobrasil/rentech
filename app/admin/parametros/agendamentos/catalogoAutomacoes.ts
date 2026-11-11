@@ -31,6 +31,6 @@ export const EVENTOS_SISTEMA_DISPONIVEIS = [
   { valor: 'NOVA_OP', label: 'Nova Ordem de Pagamento criada', variaveis: ['numero_op', 'os_numero', 'solicitante', 'favorecido', 'valor', 'link'] },
   { valor: 'NOVO_EMPRESTIMO_CONSIGNADO', label: 'Novo empréstimo consignado identificado', variaveis: ['quantidade', 'funcionarios', 'competencia'] },
   { valor: 'SOLICITACAO_FOLGA', label: 'Solicitação de folga (Ponto via WhatsApp)', variaveis: ['solicitante', 'periodo', 'motivo'] },
-  { valor: 'NOVAS_MULTAS_FROTA', label: 'Multas/débitos novos na frota (consulta semanal)', variaveis: ['quantidade', 'valor', 'lista', 'link'] },
+  { valor: 'NOVAS_MULTAS_FROTA', label: 'Multas/débitos novos na frota (consulta semanal)', variaveis: ['quantidade', 'valor', 'lista', 'lista_resumo', 'link'] },
 ] as const;
 export type EventoSistema = typeof EVENTOS_SISTEMA_DISPONIVEIS[number]['valor'];

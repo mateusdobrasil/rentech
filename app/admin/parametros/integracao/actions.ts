@@ -291,7 +291,10 @@ export async function enviarTesteTemplateWhatsAppAction(templateNome: string, id
   if (!celularLimpo) return { ok: false, erro: 'Informe um celular válido (com DDD).' };
   if (!templateNome.trim()) return { ok: false, erro: 'Informe o nome do template.' };
 
-  const listaParametros = (parametros || '').split(',').map(s => s.trim()).filter(Boolean);
+  // Com "|" no texto, separa por "|" — permite testar valores que têm vírgula
+  // (ex.: "R$ 117,13"); sem "|", mantém a separação por vírgula de antes.
+  const separador = (parametros || '').includes('|') ? '|' : ',';
+  const listaParametros = (parametros || '').split(separador).map(s => s.trim()).filter(Boolean);
   const res = await enviarWhatsAppMetaTemplate(celularLimpo, templateNome.trim(), idioma.trim() || 'en_US', listaParametros, botaoCodigo?.trim() || undefined);
   if (res.ok) {
     registrarLogAuditoria({

@@ -170,7 +170,7 @@ export default function GestaoAgendamentos() {
     nome: '', descricao: '', tipo: 'CRON', gatilho: '', canais: [], publico_alvo: '', empresaId: null, destinatarios: [], mensagem: '', horario: '08:00', dias_semana: [1, 2, 3, 4, 5],
     provedor_whatsapp: 'PADRAO', meta_template_nome: '', meta_template_idioma: 'pt_BR', meta_template_variaveis: 'primeiro_nome',
     publico_dinamico: 'PADRAO',
-    fonte_dados: null, evento_sistema: null,
+    fonte_dados: null, evento_sistema: null, apenas_agendamento: false,
   };
   const [modalAutomacao, setModalAutomacao] = useState<{ open: boolean; isNew: boolean; id: number | null; chave?: string; modoTodos: boolean; form: FormAutomacao } | null>(null);
   const [salvandoAutomacao, setSalvandoAutomacao] = useState(false);
@@ -214,6 +214,7 @@ export default function GestaoAgendamentos() {
       publico_dinamico: rotina.publico_dinamico || 'PADRAO',
       fonte_dados: rotina.fonte_dados || null,
       evento_sistema: rotina.evento_sistema || null,
+      apenas_agendamento: (rotina.canais || []).length === 0,
     }
   });
 
@@ -251,7 +252,7 @@ export default function GestaoAgendamentos() {
     if (!modalAutomacao) return;
     // Público dinâmico (aniversariantes, ponto incompleto) calcula os destinatários sozinho
     const modoAniversariantes = modalAutomacao.form.publico_dinamico !== 'PADRAO';
-    if (!modoAniversariantes && !modalAutomacao.modoTodos && modalAutomacao.form.destinatarios.length === 0) {
+    if (!modalAutomacao.form.apenas_agendamento && !modoAniversariantes && !modalAutomacao.modoTodos && modalAutomacao.form.destinatarios.length === 0) {
       toast('Selecione ao menos um funcionário, ou marque "Todos os funcionários ativos".', 'error');
       return;
     }
@@ -454,6 +455,11 @@ export default function GestaoAgendamentos() {
 
               <div className="bg-[#F8FAFC] border-t border-[#E2E8F0] p-4 flex justify-between items-center">
                 <div className="flex gap-2 flex-wrap">
+                  {rotina.canais.length === 0 && (
+                    <span className="bg-sky-100 text-sky-700 text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-md border border-sky-200" title="Card só de controle — não envia mensagem">
+                      ⏱️ Apenas agendamento
+                    </span>
+                  )}
                   {rotina.canais.includes('WhatsApp') && (
                     <>
                       <span className="bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-md border border-emerald-200">
@@ -590,7 +596,8 @@ export default function GestaoAgendamentos() {
                 <div>
                   <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Evento do Sistema</label>
                   <select
-                    className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer"
+                    disabled={modalAutomacao.form.apenas_agendamento}
+                    className="w-full p-2.5 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer disabled:bg-gray-100 disabled:cursor-not-allowed"
                     value={modalAutomacao.form.evento_sistema ?? ''}
                     onChange={e => {
                       const evento = EVENTOS_SISTEMA_DISPONIVEIS.find(ev => ev.valor === e.target.value);
@@ -603,7 +610,9 @@ export default function GestaoAgendamentos() {
                     <option value="">Nenhum (não dispara sozinho)</option>
                     {EVENTOS_SISTEMA_DISPONIVEIS.map(ev => <option key={ev.valor} value={ev.valor}>{ev.label}</option>)}
                   </select>
-                  {modalAutomacao.form.evento_sistema ? (
+                  {modalAutomacao.form.apenas_agendamento ? (
+                    <p className="text-[10px] text-[#94A3B8] mt-1">Card de controle — não reage a evento (a rotina é chamada pelo agendamento do sistema).</p>
+                  ) : modalAutomacao.form.evento_sistema ? (
                     <p className="text-[10px] text-[#94A3B8] mt-1">
                       Variáveis disponíveis: {EVENTOS_SISTEMA_DISPONIVEIS.find(ev => ev.valor === modalAutomacao.form.evento_sistema)?.variaveis.map(v => <code key={v} className="mr-1">{`{{${v}}}`}</code>)}
                       {' '}(além de <code>{'{{primeiro_nome}}'}</code>/<code>{'{{nome_completo}}'}</code>/<code>{'{{empresa}}'}</code> do destinatário). Pode haver mais de uma automação para o mesmo evento.
@@ -643,16 +652,35 @@ export default function GestaoAgendamentos() {
 
               <div>
                 <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-2">Canais de Disparo</label>
-                <div className="flex gap-4">
-                  <label className="flex items-center gap-2 text-xs font-bold text-[#0A2A4A] cursor-pointer">
-                    <input type="checkbox" checked={modalAutomacao.form.canais.includes('WhatsApp')} onChange={() => alternarCanalModal('WhatsApp')} />
+                <div className="flex flex-wrap gap-4">
+                  <label className={`flex items-center gap-2 text-xs font-bold text-[#0A2A4A] ${modalAutomacao.form.apenas_agendamento ? 'opacity-40' : 'cursor-pointer'}`}>
+                    <input type="checkbox" disabled={modalAutomacao.form.apenas_agendamento} checked={modalAutomacao.form.canais.includes('WhatsApp')} onChange={() => alternarCanalModal('WhatsApp')} />
                     WhatsApp
                   </label>
-                  <label className="flex items-center gap-2 text-xs font-bold text-[#0A2A4A] cursor-pointer">
-                    <input type="checkbox" checked={modalAutomacao.form.canais.includes('E-mail')} onChange={() => alternarCanalModal('E-mail')} />
+                  <label className={`flex items-center gap-2 text-xs font-bold text-[#0A2A4A] ${modalAutomacao.form.apenas_agendamento ? 'opacity-40' : 'cursor-pointer'}`}>
+                    <input type="checkbox" disabled={modalAutomacao.form.apenas_agendamento} checked={modalAutomacao.form.canais.includes('E-mail')} onChange={() => alternarCanalModal('E-mail')} />
                     E-mail
                   </label>
+                  <label className="flex items-center gap-2 text-xs font-bold text-[#0A2A4A] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!modalAutomacao.form.apenas_agendamento}
+                      onChange={e => setModalAutomacao({
+                        ...modalAutomacao,
+                        modoTodos: e.target.checked ? true : modalAutomacao.modoTodos,
+                        form: e.target.checked
+                          ? { ...modalAutomacao.form, apenas_agendamento: true, canais: [], evento_sistema: null, fonte_dados: null, destinatarios: [], publico_dinamico: 'PADRAO' }
+                          : { ...modalAutomacao.form, apenas_agendamento: false },
+                      })}
+                    />
+                    ⏱️ Apenas agendamento (sem mensagem)
+                  </label>
                 </div>
+                {modalAutomacao.form.apenas_agendamento && (
+                  <p className="text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-200 rounded-lg px-2 py-1.5 mt-2">
+                    Card só de controle: liga/desliga uma rotina automática do sistema (ex.: consulta semanal de multas). Não envia mensagem a ninguém — sem evento, destinatários ou template.
+                  </p>
+                )}
               </div>
 
               {modalAutomacao.form.canais.includes('WhatsApp') && (
@@ -708,7 +736,7 @@ export default function GestaoAgendamentos() {
                 </div>
               )}
 
-              <div>
+              <div className={modalAutomacao.form.apenas_agendamento ? 'hidden' : ''}>
                 <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-2">Destinatários do Disparo</label>
                 <div className="flex flex-wrap gap-4 mb-3">
                   <label className="flex items-center gap-2 text-xs font-bold text-[#0A2A4A] cursor-pointer">

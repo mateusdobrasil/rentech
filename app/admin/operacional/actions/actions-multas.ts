@@ -20,6 +20,7 @@ import { validarAcesso, obterEmpresasPermitidas, empresaPermitida, mensagemAcess
 import { registrarLogAuditoria } from '../../../actions';
 import { provedorConfigurado, validadeCertificadoA1 } from '../../../lib/consultaDebitosVeiculares';
 import { executarConsultaVeiculo, vincularNics, enviarAvisoCondutor } from '../../../lib/multasCore';
+import { lerNotificacaoMulta, leituraConfigurada } from '../../../lib/leituraNotificacaoMulta';
 
 const ROTA = '/admin/operacional/multas';
 // "Criar OP" abre /admin/op/nova?multaIds=... — quem está na tela da OP
@@ -58,6 +59,8 @@ export interface DebitoMulta {
   observacao: string | null; primeira_consulta_em: string | null; ultima_consulta_em: string | null;
   criado_por: string | null; created_at: string; updated_at: string;
   eh_nic: boolean; multa_origem_id: string | null; condutor_avisado_em: string | null; condutor_avisado_por: string | null;
+  prazo_indicacao_condutor: string | null; condutor_indicado_em: string | null; condutor_indicado_por: string | null;
+  notificacao_url: string | null; codigo_infracao: string | null;
   op: { id: string; numero_op: number | null; status: string | null; pago_em: string | null } | null;
 }
 
@@ -67,7 +70,7 @@ export interface ConsultaMulta {
   site_receipt: string | null; consultado_por: string | null; consultado_em: string;
 }
 
-const COLUNAS_DEBITO = 'id, empresa_id, veiculo_id, tipo, origem, fonte, descricao, auto_infracao, orgao_autuador, data_infracao, hora_infracao, local_infracao, municipio, exercicio, cota, valor, data_vencimento, status, baixa_automatica, pago_em, status_alterado_por, condutor_nome, condutor_checklist_id, condutor_confirmado_em, condutor_confirmado_por, desconto_descricao, desconto_parcelas, desconto_mes_inicio, desconto_valor_parcela, desconto_lancado_em, desconto_lancado_por, observacao, primeira_consulta_em, ultima_consulta_em, criado_por, created_at, updated_at, eh_nic, multa_origem_id, condutor_avisado_em, condutor_avisado_por';
+const COLUNAS_DEBITO = 'id, empresa_id, veiculo_id, tipo, origem, fonte, descricao, auto_infracao, orgao_autuador, data_infracao, hora_infracao, local_infracao, municipio, exercicio, cota, valor, data_vencimento, status, baixa_automatica, pago_em, status_alterado_por, condutor_nome, condutor_checklist_id, condutor_confirmado_em, condutor_confirmado_por, desconto_descricao, desconto_parcelas, desconto_mes_inicio, desconto_valor_parcela, desconto_lancado_em, desconto_lancado_por, observacao, primeira_consulta_em, ultima_consulta_em, criado_por, created_at, updated_at, eh_nic, multa_origem_id, condutor_avisado_em, condutor_avisado_por, prazo_indicacao_condutor, condutor_indicado_em, condutor_indicado_por, notificacao_url, codigo_infracao';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -188,7 +191,7 @@ export async function carregarPainelMultasAction(accessToken: string): Promise<R
     const empresas = ((empresasRes.data || []) as { id: number; nome: string }[])
       .filter(e => !auth.empresasPermitidas || auth.empresasPermitidas.includes(e.id));
 
-    return { ok: true, info: { veiculos, debitos, consultas, empresas, provedorConfigurado: provedorConfigurado(), certificado } };
+    return { ok: true, info: { veiculos, debitos, consultas, empresas, provedorConfigurado: provedorConfigurado(), certificado, leituraConfigurada: leituraConfigurada() } };
   } catch (e) {
     return { ok: false, erro: e instanceof Error ? e.message : String(e) };
   }
@@ -440,6 +443,7 @@ export async function salvarDebitoManualAction(params: {
   id?: string | null; veiculoId: string; tipo: TipoDebitoMulta; descricao: string; autoInfracao?: string | null;
   orgaoAutuador?: string | null; dataInfracao?: string | null; horaInfracao?: string | null; localInfracao?: string | null;
   valor: number; dataVencimento?: string | null; observacao?: string | null;
+  prazoIndicacaoCondutor?: string | null; notificacaoUrl?: string | null; codigoInfracao?: string | null;
 }, accessToken: string): Promise<Resultado> {
   const auth = await autorizar(accessToken);
   if (!auth.ok) return { ok: false, erro: auth.erro };
@@ -464,6 +468,9 @@ export async function salvarDebitoManualAction(params: {
     local_infracao: params.localInfracao?.trim() || null,
     valor, data_vencimento: params.dataVencimento || null,
     observacao: params.observacao?.trim() || null,
+    prazo_indicacao_condutor: params.prazoIndicacaoCondutor || null,
+    codigo_infracao: params.codigoInfracao?.trim() || null,
+    ...(params.notificacaoUrl ? { notificacao_url: params.notificacaoUrl } : {}),
     updated_at: new Date().toISOString(),
   };
 
@@ -590,4 +597,115 @@ export async function obterDadosPagamentoMultaAction(params: { ids: string[] }, 
       observacao: observacao.toUpperCase(),
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Escanear notificação (foto/PDF → IA → campos do lançamento manual)
+// O arquivo sobe direto do navegador pro Storage (bucket "frota", pasta
+// multas/notificacoes/) — nunca em base64 numa Server Action, por causa do
+// limite de ~4,5MB da Vercel. Aqui só chega o caminho.
+// ---------------------------------------------------------------------------
+const PASTA_NOTIFICACOES = 'multas/notificacoes/';
+const MIME_POR_EXTENSAO: Record<string, string> = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+const normPlaca = (p: string | null | undefined) => (p || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+export async function lerNotificacaoMultaAction(params: { caminho: string }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+
+  const caminho = params.caminho || '';
+  if (!caminho.startsWith(PASTA_NOTIFICACOES) || caminho.includes('..')) return { ok: false, erro: 'Arquivo inválido.' };
+  const extensao = (caminho.split('.').pop() || '').toLowerCase();
+  const mime = MIME_POR_EXTENSAO[extensao];
+  if (!mime) return { ok: false, erro: 'Envie uma foto (JPG/PNG) ou um PDF da notificação.' };
+
+  const { data: blob, error: erroDownload } = await db.storage.from('frota').download(caminho);
+  if (erroDownload || !blob) return { ok: false, erro: `Não foi possível abrir o arquivo enviado: ${erroDownload?.message || 'vazio'}` };
+  const buffer = Buffer.from(await blob.arrayBuffer());
+  if (buffer.length > 25 * 1024 * 1024) return { ok: false, erro: 'Arquivo grande demais (máx. 25MB).' };
+
+  const leitura = await lerNotificacaoMulta(buffer, mime);
+  if (!leitura.ok) return { ok: false, erro: leitura.erro };
+  const d = leitura.dados;
+
+  // Veículo pela placa lida (só entre os que o usuário enxerga).
+  let veiculoId: string | null = null;
+  let veiculoDescricao: string | null = null;
+  const placaLida = normPlaca(d.placa);
+  if (placaLida) {
+    const { data: veics } = await db.from('frota_veiculos').select('id, apelido, placa, empresa_id');
+    const v = ((veics || []) as { id: string; apelido: string; placa: string; empresa_id: number | null }[])
+      .find(x => normPlaca(x.placa) === placaLida && empresaPermitida(auth.empresasPermitidas, x.empresa_id));
+    if (v) { veiculoId = v.id; veiculoDescricao = `${v.apelido} (${v.placa})`; }
+  }
+
+  // AIT já cadastrado (veio pela consulta ou já foi escaneado)?
+  let duplicado: { id: string; tipo: string; valor: number; prazo_indicacao_condutor: string | null } | null = null;
+  const auto = (d.auto_infracao || '').toUpperCase().replace(/\s/g, '');
+  if (auto) {
+    const { data: dup } = await db.from('frota_multas_debitos')
+      .select('id, tipo, valor, prazo_indicacao_condutor, empresa_id').eq('auto_infracao', auto).limit(1).maybeSingle();
+    if (dup && empresaPermitida(auth.empresasPermitidas, dup.empresa_id)) {
+      duplicado = { id: dup.id, tipo: dup.tipo, valor: Number(dup.valor), prazo_indicacao_condutor: dup.prazo_indicacao_condutor };
+    }
+  }
+
+  const { data: publico } = db.storage.from('frota').getPublicUrl(caminho);
+
+  registrarLogAuditoria({
+    usuario_nome: auth.perfil.nome.toUpperCase(), acao: 'LEU NOTIFICAÇÃO DE MULTA (IA)', setor: 'OPERACIONAL',
+    equipamento_nome: `AIT ${auto || '?'} — placa ${placaLida || '?'} — ${leitura.modelo}, ${leitura.tokensEntrada}+${leitura.tokensSaida} tokens`,
+  });
+
+  return {
+    ok: true,
+    info: { dados: { ...d, auto_infracao: auto || null, placa: placaLida || null }, veiculoId, veiculoDescricao, duplicado, arquivoUrl: publico.publicUrl },
+  };
+}
+
+// Anexa a notificação escaneada (e o prazo de indicação lido) a um débito
+// que já existe — típico: a multa veio pela consulta do Detran e depois
+// chegou o papel da notificação.
+export async function anexarNotificacaoAction(params: { debitoId: string; notificacaoUrl: string | null; prazoIndicacaoCondutor: string | null; codigoInfracao?: string | null }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  if (!r.ok) return { ok: false, erro: r.erro };
+  const { error } = await db.from('frota_multas_debitos').update({
+    ...(params.notificacaoUrl ? { notificacao_url: params.notificacaoUrl } : {}),
+    ...(params.prazoIndicacaoCondutor ? { prazo_indicacao_condutor: params.prazoIndicacaoCondutor } : {}),
+    ...(params.codigoInfracao && !r.debito.codigo_infracao ? { codigo_infracao: params.codigoInfracao } : {}),
+    updated_at: new Date().toISOString(),
+  }).eq('id', params.debitoId);
+  if (error) return { ok: false, erro: error.message };
+  registrarLogAuditoria({
+    usuario_nome: auth.perfil.nome.toUpperCase(), acao: 'ANEXOU NOTIFICAÇÃO À MULTA', setor: 'OPERACIONAL',
+    equipamento_id: params.debitoId,
+    equipamento_nome: `AIT ${r.debito.auto_infracao || 'S/N'}${params.prazoIndicacaoCondutor ? ` — prazo indicação ${params.prazoIndicacaoCondutor}` : ''}`,
+  });
+  return { ok: true };
+}
+
+// Indicação do condutor feita no órgão (FICI / site do órgão) — encerra o alerta de prazo.
+export async function marcarIndicacaoCondutorAction(params: { debitoId: string; desfazer?: boolean }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  if (!r.ok) return { ok: false, erro: r.erro };
+  if (!params.desfazer && !r.debito.condutor_nome) return { ok: false, erro: 'Defina o condutor antes de marcar a indicação como feita.' };
+  const usuario = auth.perfil.nome.toUpperCase();
+  const { error } = await db.from('frota_multas_debitos').update({
+    condutor_indicado_em: params.desfazer ? null : new Date().toISOString(),
+    condutor_indicado_por: params.desfazer ? null : usuario,
+    updated_at: new Date().toISOString(),
+  }).eq('id', params.debitoId);
+  if (error) return { ok: false, erro: error.message };
+  registrarLogAuditoria({
+    usuario_nome: usuario, acao: params.desfazer ? 'DESFEZ INDICAÇÃO DE CONDUTOR' : 'INDICOU CONDUTOR AO ÓRGÃO', setor: 'OPERACIONAL',
+    equipamento_id: params.debitoId, equipamento_nome: `AIT ${r.debito.auto_infracao || 'S/N'} — ${r.debito.condutor_nome || ''}`,
+  });
+  return { ok: true };
 }

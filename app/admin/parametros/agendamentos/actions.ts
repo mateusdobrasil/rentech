@@ -57,6 +57,23 @@ export interface FormAutomacao {
   publico_dinamico: 'PADRAO' | 'ANIVERSARIANTES_FUNCIONARIOS' | 'PONTO_INCOMPLETO_ONTEM' | 'SEM_PONTO_ONTEM';
   fonte_dados: string | null;
   evento_sistema: string | null;
+  // Card só de controle (liga/desliga de uma rotina do Vercel Cron, ex.:
+  // consulta semanal de multas, consulta do consignado) — não envia mensagem.
+  // Gravado como canais vazios (sem coluna nova); força evento/fonte/destinatários vazios.
+  apenas_agendamento?: boolean;
+}
+
+// Aplica a regra do "apenas agendamento" e valida canais. Devolve o erro, se houver.
+function normalizarCanais(payload: FormAutomacao): string | null {
+  if (payload.apenas_agendamento) {
+    payload.canais = [];
+    payload.evento_sistema = null;
+    payload.fonte_dados = null;
+    payload.destinatarios = [];
+    return null;
+  }
+  if (!payload.canais || payload.canais.length === 0) return 'Selecione ao menos um canal de disparo (ou marque "Apenas agendamento").';
+  return null;
 }
 
 export interface FuncionarioParaAutomacao {
@@ -199,7 +216,8 @@ export async function criarAutomacaoAction(payload: FormAutomacao, accessToken: 
   const db = supabaseAdmin();
   const nome = payload.nome.trim();
   if (!nome) return { ok: false, erro: 'Informe o nome da automação.' };
-  if (!payload.canais || payload.canais.length === 0) return { ok: false, erro: 'Selecione ao menos um canal de disparo.' };
+  const erroCanais = normalizarCanais(payload);
+  if (erroCanais) return { ok: false, erro: erroCanais };
 
   if (payload.tipo === 'CRON' && !payload.horario) return { ok: false, erro: 'Informe o horário do disparo.' };
   if (payload.tipo === 'CRON' && (!payload.dias_semana || payload.dias_semana.length === 0)) return { ok: false, erro: 'Selecione ao menos um dia da semana.' };
@@ -252,7 +270,8 @@ export async function atualizarAutomacaoAction(id: number, payload: FormAutomaca
   const db = supabaseAdmin();
   const nome = payload.nome.trim();
   if (!nome) return { ok: false, erro: 'Informe o nome da automação.' };
-  if (!payload.canais || payload.canais.length === 0) return { ok: false, erro: 'Selecione ao menos um canal de disparo.' };
+  const erroCanais = normalizarCanais(payload);
+  if (erroCanais) return { ok: false, erro: erroCanais };
 
   if (payload.tipo === 'CRON' && !payload.horario) return { ok: false, erro: 'Informe o horário do disparo.' };
   if (payload.tipo === 'CRON' && (!payload.dias_semana || payload.dias_semana.length === 0)) return { ok: false, erro: 'Selecione ao menos um dia da semana.' };

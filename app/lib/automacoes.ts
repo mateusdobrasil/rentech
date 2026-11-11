@@ -160,7 +160,11 @@ async function executarDisparoWhatsApp(db: ReturnType<typeof supabaseAdmin>, aut
     const templateMeta: TemplateMeta | null = automacao.meta_template_nome ? {
       nome: automacao.meta_template_nome,
       idioma: automacao.meta_template_idioma || 'pt_BR',
-      parametros: ((automacao.meta_template_variaveis as string[]) || ['primeiro_nome']).map(v => String(vars[v] ?? '')),
+      // A Meta recusa parâmetro de template com quebra de linha, tab ou 4+
+      // espaços seguidos (erro 132018) — listas como {{lista}} viriam
+      // multilinha. Achata tudo numa linha só, separada por " · ".
+      parametros: ((automacao.meta_template_variaveis as string[]) || ['primeiro_nome'])
+        .map(v => String(vars[v] ?? '').replace(/\s*\n+\s*/g, ' · ').replace(/\t/g, ' ').replace(/ {4,}/g, '   ').trim()),
     } : null;
 
     const res = await enviarComJanela(provedor, f.celular, texto, templateMeta);

@@ -16,10 +16,12 @@ import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
+import { supabase } from '../../../lib/supabase';
 import {
   carregarPainelMultasAction, consultarDebitosVeiculoAction, sugerirCondutorAction, definirCondutorAction,
   lancarDescontoFolhaAction, atualizarStatusDebitoAction, salvarObservacaoDebitoAction,
   salvarDebitoManualAction, excluirDebitoManualAction, avisarCondutorAction,
+  lerNotificacaoMultaAction, anexarNotificacaoAction, marcarIndicacaoCondutorAction,
   type DebitoMulta, type VeiculoMultas, type ConsultaMulta, type TipoDebitoMulta, type StatusDebito,
 } from '../actions/actions-multas';
 
@@ -65,9 +67,47 @@ interface Motorista { nome: string; pode_dirigir: boolean }
 interface OrigemNic { id: string; auto_infracao: string | null; data_infracao: string | null; hora_infracao: string | null; condutor_nome: string | null }
 interface Certificado { titular: string; validoAte: string; diasRestantes: number }
 
+// Prazo de indicação do condutor: em aberto = multa ABERTA com prazo e sem
+// indicação marcada. Alerta a partir de 7 dias antes.
+const diasAte = (data: string) => Math.ceil((new Date(`${data}T00:00:00`).getTime() - new Date(`${hojeIso()}T00:00:00`).getTime()) / 86400000);
+const prazoIndicacaoPendente = (d: DebitoMulta) => d.tipo === 'MULTA' && d.status === 'ABERTO' && !!d.prazo_indicacao_condutor && !d.condutor_indicado_em;
+const prazoIndicacaoUrgente = (d: DebitoMulta) => prazoIndicacaoPendente(d) && diasAte(d.prazo_indicacao_condutor!) <= 7;
+
+// Foto de celular costuma ter 3–8MB: reduz pra no máx. 2400px / JPEG 85%
+// antes de subir (fica legível pra IA e bem mais leve). PDF vai como está.
+async function prepararArquivoNotificacao(arquivo: File): Promise<{ blob: Blob; extensao: string }> {
+  if (arquivo.type === 'application/pdf' || /\.pdf$/i.test(arquivo.name)) return { blob: arquivo, extensao: 'pdf' };
+  const url = URL.createObjectURL(arquivo);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new window.Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('Não foi possível abrir esta imagem (formato HEIC? tire a foto pelo botão da câmera ou envie em JPG).'));
+      i.src = url;
+    });
+    const escala = Math.min(1, 2400 / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(img.naturalWidth * escala);
+    canvas.height = Math.round(img.naturalHeight * escala);
+    canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+    if (!blob) throw new Error('Falha ao preparar a imagem.');
+    return { blob, extensao: 'jpg' };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+interface LeituraNotificacao {
+  observacoes: string | null; tipo_documento: string; veiculoDescricao: string | null; placa: string | null;
+  duplicado: { id: string; tipo: string; valor: number; prazo_indicacao_condutor: string | null } | null;
+  arquivoUrl: string; prazo: string | null; codigo: string | null;
+}
+
 const FORM_MANUAL_VAZIO = {
   id: null as string | null, veiculoId: '', tipo: 'MULTA' as TipoDebitoMulta, descricao: '', autoInfracao: '', orgaoAutuador: '',
   dataInfracao: '', horaInfracao: '', localInfracao: '', valor: '', dataVencimento: '', observacao: '',
+  prazoIndicacao: '', codigoInfracao: '', notificacaoUrl: '',
 };
 
 // ============================================================================
@@ -84,12 +124,15 @@ export default function MultasDebitosPage() {
   const [consultas, setConsultas] = useState<ConsultaMulta[]>([]);
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [provedorOk, setProvedorOk] = useState(true);
+  const [leituraOk, setLeituraOk] = useState(false);
+  const [lendoNotificacao, setLendoNotificacao] = useState(false);
+  const [leitura, setLeitura] = useState<LeituraNotificacao | null>(null);
   const [certificado, setCertificado] = useState<Certificado | null>(null);
 
   const [aba, setAba] = useState<'debitos' | 'veiculos' | 'relatorios' | 'consultas'>('debitos');
   const [filtroEmpresa, setFiltroEmpresa] = useState('TODAS');
   const [filtroStatus, setFiltroStatus] = useState<'ABERTOS' | 'PAGO' | 'CANCELADO' | 'TODOS'>('ABERTOS');
-  const [filtroTipo, setFiltroTipo] = useState<'TODOS' | TipoDebitoMulta | 'NIC'>('TODOS');
+  const [filtroTipo, setFiltroTipo] = useState<'TODOS' | TipoDebitoMulta | 'NIC' | 'PRAZO'>('TODOS');
   const [filtroVeiculo, setFiltroVeiculo] = useState('TODOS');
   const [busca, setBusca] = useState('');
 
@@ -112,6 +155,7 @@ export default function MultasDebitosPage() {
     setEmpresas(res.info.empresas);
     setProvedorOk(res.info.provedorConfigurado);
     setCertificado(res.info.certificado || null);
+    setLeituraOk(!!res.info.leituraConfigurada);
     setCarregando(false);
   }, [accessToken]);
 
@@ -156,7 +200,8 @@ export default function MultasDebitosPage() {
       if (filtroStatus === 'ABERTOS' && d.status !== 'ABERTO') return false;
       if (filtroStatus !== 'ABERTOS' && filtroStatus !== 'TODOS' && d.status !== filtroStatus) return false;
       if (filtroTipo === 'NIC' && !d.eh_nic) return false;
-      if (filtroTipo !== 'TODOS' && filtroTipo !== 'NIC' && d.tipo !== filtroTipo) return false;
+      if (filtroTipo === 'PRAZO' && !prazoIndicacaoPendente(d)) return false;
+      if (filtroTipo !== 'TODOS' && filtroTipo !== 'NIC' && filtroTipo !== 'PRAZO' && d.tipo !== filtroTipo) return false;
       if (filtroVeiculo !== 'TODOS' && d.veiculo_id !== filtroVeiculo) return false;
       if (termo) {
         const v = veiculoPorId.get(d.veiculo_id);
@@ -255,6 +300,7 @@ export default function MultasDebitosPage() {
         id: d.id, veiculoId: d.veiculo_id, tipo: d.tipo, descricao: d.descricao || '', autoInfracao: d.auto_infracao || '',
         orgaoAutuador: d.orgao_autuador || '', dataInfracao: d.data_infracao || '', horaInfracao: fmtHora(d.hora_infracao),
         localInfracao: d.local_infracao || '', valor: String(d.valor || ''), dataVencimento: d.data_vencimento || '', observacao: d.observacao || '',
+        prazoIndicacao: d.prazo_indicacao_condutor || '', codigoInfracao: d.codigo_infracao || '', notificacaoUrl: d.notificacao_url || '',
       });
     } else {
       setManual({ ...FORM_MANUAL_VAZIO, veiculoId: veiculoId || (filtroVeiculo !== 'TODOS' ? filtroVeiculo : '') });
@@ -270,6 +316,7 @@ export default function MultasDebitosPage() {
       autoInfracao: manual.autoInfracao, orgaoAutuador: manual.orgaoAutuador, dataInfracao: manual.dataInfracao || null,
       horaInfracao: manual.horaInfracao || null, localInfracao: manual.localInfracao,
       valor: Number(String(manual.valor).replace(/\./g, '').replace(',', '.')), dataVencimento: manual.dataVencimento || null, observacao: manual.observacao,
+      prazoIndicacaoCondutor: manual.prazoIndicacao || null, codigoInfracao: manual.codigoInfracao || null, notificacaoUrl: manual.notificacaoUrl || null,
     }, accessToken);
     setSalvandoManual(false);
     if (!res.ok) { toast(res.erro || 'Falha ao salvar.', 'error'); return; }
@@ -277,6 +324,71 @@ export default function MultasDebitosPage() {
     setManual(null);
     await carregar();
   };
+
+  // --------------------------------------------------------------------------
+  // Escanear notificação: sobe pro Storage → IA lê → preenche o formulário
+  // --------------------------------------------------------------------------
+  const escanearNotificacao = async (arquivo: File | undefined) => {
+    if (!arquivo || !manual) return;
+    setLendoNotificacao(true);
+    setLeitura(null);
+    try {
+      const { blob, extensao } = await prepararArquivoNotificacao(arquivo);
+      // randomUUID só existe em contexto seguro (HTTPS/localhost) — no teste
+      // pelo IP da rede local cai no nome por data + aleatório.
+      const nomeArquivo = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const caminho = `multas/notificacoes/${nomeArquivo}.${extensao}`;
+      const { error: erroUpload } = await supabase.storage.from('frota').upload(caminho, blob, { contentType: extensao === 'pdf' ? 'application/pdf' : 'image/jpeg' });
+      if (erroUpload) throw new Error(`Falha ao enviar o arquivo: ${erroUpload.message}`);
+
+      const res = await lerNotificacaoMultaAction({ caminho }, accessToken);
+      if (!res.ok) throw new Error(res.erro || 'Falha na leitura.');
+      const { dados: x, veiculoId, veiculoDescricao, duplicado, arquivoUrl } = res.info;
+
+      setManual(m => m && ({
+        ...m,
+        tipo: 'MULTA',
+        veiculoId: veiculoId || m.veiculoId,
+        autoInfracao: x.auto_infracao || m.autoInfracao,
+        orgaoAutuador: x.orgao_autuador || m.orgaoAutuador,
+        codigoInfracao: x.codigo_infracao || m.codigoInfracao,
+        descricao: x.descricao_infracao || m.descricao,
+        dataInfracao: x.data_infracao || m.dataInfracao,
+        horaInfracao: x.hora_infracao || m.horaInfracao,
+        localInfracao: [x.local_infracao, x.municipio].filter(Boolean).join(' — ') || m.localInfracao,
+        valor: x.valor != null ? String(x.valor).replace('.', ',') : m.valor,
+        dataVencimento: x.data_vencimento || m.dataVencimento,
+        prazoIndicacao: x.prazo_indicacao_condutor || m.prazoIndicacao,
+        notificacaoUrl: arquivoUrl,
+      }));
+      setLeitura({
+        observacoes: x.observacoes, tipo_documento: x.tipo_documento, veiculoDescricao, placa: x.placa,
+        duplicado, arquivoUrl, prazo: x.prazo_indicacao_condutor, codigo: x.codigo_infracao,
+      });
+      toast(duplicado ? 'Notificação lida — este AIT já está cadastrado (veja o aviso).' : 'Notificação lida — confira os campos antes de salvar.', duplicado ? 'info' : 'success');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setLendoNotificacao(false);
+    }
+  };
+
+  const anexarAoExistente = async () => {
+    if (!leitura?.duplicado) return;
+    const res = await anexarNotificacaoAction({
+      debitoId: leitura.duplicado.id, notificacaoUrl: leitura.arquivoUrl,
+      prazoIndicacaoCondutor: manual?.prazoIndicacao || leitura.prazo, codigoInfracao: leitura.codigo,
+    }, accessToken);
+    if (!res.ok) { toast(res.erro || 'Falha ao anexar.', 'error'); return; }
+    toast('Notificação anexada à multa existente.', 'success');
+    const id = leitura.duplicado.id;
+    setManual(null); setLeitura(null);
+    await carregar();
+    setDetalheId(id);
+  };
+
+  const prazosUrgentes = debitosEscopo.filter(prazoIndicacaoUrgente);
 
   // ==========================================================================
   // Render
@@ -331,6 +443,12 @@ export default function MultasDebitosPage() {
               ? <>O certificado digital A1 de <strong>{certificado.titular}</strong> <strong>venceu em {fmtData(certificado.validoAte)}</strong>. A consulta automática de multas está parada até ele ser renovado no servidor.</>
               : <>O certificado digital A1 de <strong>{certificado.titular}</strong> vence em <strong>{fmtData(certificado.validoAte)}</strong> ({certificado.diasRestantes === 0 ? 'hoje' : `${certificado.diasRestantes} dia(s)`}). Sem ele a consulta automática de multas para — renove e atualize no servidor.</>}
           </div>
+        )}
+        {prazosUrgentes.length > 0 && (
+          <button onClick={() => { setAba('debitos'); setFiltroTipo('PRAZO'); setFiltroStatus('ABERTOS'); }}
+            className="w-full text-left mb-4 rounded-xl p-3 text-xs font-medium border bg-red-50 border-red-300 text-red-700 hover:bg-red-100">
+            ⏳ <strong>{prazosUrgentes.length} multa(s) com prazo para indicar o condutor vencendo</strong> (até 7 dias ou já vencido). Sem a indicação, o órgão aplica a multa por não identificação do condutor. Clique para ver.
+          </button>
         )}
         {!provedorOk && (
           <div className="mb-4 bg-amber-50 border border-amber-300 text-amber-800 rounded-xl p-3 text-xs font-medium">
@@ -394,6 +512,7 @@ export default function MultasDebitosPage() {
                 <option value="TODOS">Todos os tipos</option>
                 {(Object.keys(LABEL_TIPO) as TipoDebitoMulta[]).map(t => <option key={t} value={t}>{ICONE_TIPO[t]} {LABEL_TIPO[t]}</option>)}
                 <option value="NIC">⚠ Só não identificação do condutor</option>
+                <option value="PRAZO">⏳ Prazo de indicação pendente</option>
               </select>
               <select value={filtroVeiculo} onChange={e => setFiltroVeiculo(e.target.value)} className="p-2 border border-[#E2E8F0] rounded-lg text-xs">
                 <option value="TODOS">Todos os veículos</option>
@@ -446,6 +565,11 @@ export default function MultasDebitosPage() {
                             <div className="text-[10px] text-gray-400 flex gap-2 flex-wrap">
                               {d.auto_infracao && <span className="font-mono">AIT {d.auto_infracao}</span>}
                               {d.eh_nic && <span className="text-red-600 font-black">NÃO IDENT. CONDUTOR</span>}
+                              {prazoIndicacaoPendente(d) && (() => {
+                                const dias = diasAte(d.prazo_indicacao_condutor!);
+                                return <span className={`font-black ${dias <= 3 ? 'text-red-600' : dias <= 7 ? 'text-amber-600' : 'text-sky-700'}`}>⏳ INDICAR ATÉ {fmtData(d.prazo_indicacao_condutor)}{dias < 0 ? ' (VENCIDO)' : ''}</span>;
+                              })()}
+                              {d.condutor_indicado_em && <span className="text-emerald-600 font-bold">✔ CONDUTOR INDICADO</span>}
                               {d.origem === 'MANUAL' && <span className="text-violet-600 font-bold">MANUAL</span>}
                               {d.fonte === 'RENAINF' && <span className="text-orange-600 font-bold">RENAINF</span>}
                             </div>
@@ -614,7 +738,46 @@ export default function MultasDebitosPage() {
       )}
 
       {manual && (
-        <Modal titulo={manual.id ? 'Editar lançamento manual' : 'Lançamento manual'} onFechar={() => setManual(null)}>
+        <Modal titulo={manual.id ? 'Editar lançamento manual' : 'Lançamento manual'} onFechar={() => { setManual(null); setLeitura(null); }}>
+          {!manual.id && (
+            <div className="mb-4 rounded-xl border border-dashed border-indigo-300 bg-indigo-50/60 p-3">
+              <p className="text-[10px] font-black uppercase tracking-wider text-indigo-700 mb-2">📷 Escanear notificação — a IA preenche os campos</p>
+              {leituraOk ? (
+                <div className="flex flex-wrap gap-2">
+                  <label className={`px-3 py-2 rounded-lg text-[10px] font-black uppercase bg-indigo-600 text-white cursor-pointer hover:bg-indigo-700 ${lendoNotificacao ? 'opacity-50 pointer-events-none' : ''}`}>
+                    📸 Tirar foto
+                    <input type="file" accept="image/*" capture="environment" className="hidden" disabled={lendoNotificacao}
+                      onChange={e => { escanearNotificacao(e.target.files?.[0]); e.target.value = ''; }} />
+                  </label>
+                  <label className={`px-3 py-2 rounded-lg text-[10px] font-black uppercase bg-white border border-indigo-300 text-indigo-700 cursor-pointer hover:bg-indigo-50 ${lendoNotificacao ? 'opacity-50 pointer-events-none' : ''}`}>
+                    📄 Enviar foto ou PDF
+                    <input type="file" accept="image/*,application/pdf" className="hidden" disabled={lendoNotificacao}
+                      onChange={e => { escanearNotificacao(e.target.files?.[0]); e.target.value = ''; }} />
+                  </label>
+                  {lendoNotificacao && <span className="text-xs text-indigo-700 font-bold self-center animate-pulse">Lendo a notificação... (até ~30s)</span>}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-500">Leitura automática não configurada no servidor (falta <code className="font-mono">ANTHROPIC_API_KEY</code>).</p>
+              )}
+              {leitura && (
+                <div className="mt-3 space-y-2 text-xs">
+                  <p className="text-indigo-800">
+                    {leitura.tipo_documento === 'NOTIFICACAO_AUTUACAO' ? 'Notificação de Autuação' : leitura.tipo_documento === 'NOTIFICACAO_PENALIDADE' ? 'Notificação de Penalidade' : 'Documento não reconhecido como notificação'}
+                    {' · '}{leitura.veiculoDescricao ? <>veículo <strong>{leitura.veiculoDescricao}</strong></> : <span className="text-red-600 font-bold">placa {leitura.placa || 'não lida'} não encontrada na frota — escolha o veículo</span>}
+                    {' · '}<a href={leitura.arquivoUrl} target="_blank" rel="noreferrer" className="underline font-bold">ver arquivo</a>
+                  </p>
+                  {leitura.observacoes && <p className="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">⚠ {leitura.observacoes}</p>}
+                  {leitura.duplicado && (
+                    <div className="bg-amber-50 border border-amber-300 rounded-lg p-2 text-amber-800 flex flex-wrap items-center gap-2">
+                      <span>Este AIT já está cadastrado ({LABEL_TIPO[leitura.duplicado.tipo as TipoDebitoMulta] || leitura.duplicado.tipo}, {fmtBRL(leitura.duplicado.valor)}). Em vez de lançar de novo, anexe a notificação{leitura.prazo ? ' e o prazo de indicação' : ''} a ele.</span>
+                      <button onClick={anexarAoExistente} className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase bg-amber-600 text-white hover:bg-amber-700">📎 Anexar à multa existente</button>
+                    </div>
+                  )}
+                  <p className="text-[10px] text-gray-500">Confira todos os campos abaixo antes de salvar — a leitura pode errar.</p>
+                </div>
+              )}
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Campo label="Veículo *" className="sm:col-span-2">
               <select value={manual.veiculoId} onChange={e => setManual({ ...manual, veiculoId: e.target.value })} className="w-full p-2 border border-[#E2E8F0] rounded-lg text-sm">
@@ -640,6 +803,12 @@ export default function MultasDebitosPage() {
                 </Campo>
                 <Campo label="Data da infração">
                   <input type="date" value={manual.dataInfracao} onChange={e => setManual({ ...manual, dataInfracao: e.target.value })} className="w-full p-2 border border-[#E2E8F0] rounded-lg text-sm" />
+                </Campo>
+                <Campo label="Código da infração">
+                  <input value={manual.codigoInfracao} onChange={e => setManual({ ...manual, codigoInfracao: e.target.value })} className="w-full p-2 border border-[#E2E8F0] rounded-lg text-sm font-mono" placeholder="Ex.: 7455-0" />
+                </Campo>
+                <Campo label="Prazo p/ indicar condutor">
+                  <input type="date" value={manual.prazoIndicacao} onChange={e => setManual({ ...manual, prazoIndicacao: e.target.value })} className="w-full p-2 border border-[#E2E8F0] rounded-lg text-sm" />
                 </Campo>
                 <Campo label="Hora da infração">
                   <input type="time" value={manual.horaInfracao} onChange={e => setManual({ ...manual, horaInfracao: e.target.value })} className="w-full p-2 border border-[#E2E8F0] rounded-lg text-sm" />
@@ -856,6 +1025,11 @@ function DetalheDebito({ debito: d, veiculo, empresaNome, origem, nicsDaOrigem, 
     await executar('aviso', () => avisarCondutorAction({ debitoId: d.id }, accessToken), 'Condutor avisado por WhatsApp.');
   };
 
+  const marcarIndicacao = async (desfazer: boolean) => {
+    if (!desfazer && !(await confirm({ message: `Confirmar que ${d.condutor_nome} já foi indicado como condutor no órgão autuador (${d.orgao_autuador || 'órgão'})? O alerta de prazo deixa de aparecer.`, confirmLabel: 'Indicação feita' }))) return;
+    await executar('indicacao', () => marcarIndicacaoCondutorAction({ debitoId: d.id, desfazer }, accessToken), desfazer ? 'Indicação desmarcada.' : 'Indicação do condutor registrada.');
+  };
+
   const mudarStatus = async (status: StatusDebito) => {
     const textos: Record<StatusDebito, string> = {
       PAGO: 'Marcar este débito como pago?',
@@ -907,6 +1081,39 @@ function DetalheDebito({ debito: d, veiculo, empresaNome, origem, nicsDaOrigem, 
         </div>
       )}
 
+      {/* Prazo de indicação do condutor + notificação escaneada */}
+      {ehMulta && (d.prazo_indicacao_condutor || d.notificacao_url) && (() => {
+        const pendente = prazoIndicacaoPendente(d);
+        const dias = d.prazo_indicacao_condutor ? diasAte(d.prazo_indicacao_condutor) : null;
+        const cor = d.condutor_indicado_em ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+          : pendente && dias !== null && dias <= 3 ? 'border-red-300 bg-red-50 text-red-800'
+          : pendente && dias !== null && dias <= 7 ? 'border-amber-300 bg-amber-50 text-amber-800'
+          : 'border-sky-200 bg-sky-50 text-sky-800';
+        return (
+          <div className={`mb-4 rounded-xl border p-3 text-xs flex flex-wrap items-center gap-2 ${cor}`}>
+            {d.prazo_indicacao_condutor && (
+              <span>
+                ⏳ Prazo para indicar o condutor: <strong>{fmtData(d.prazo_indicacao_condutor)}</strong>
+                {d.condutor_indicado_em ? ' — indicação feita ✔'
+                  : d.status !== 'ABERTO' ? ''
+                  : dias !== null && dias < 0 ? <strong> — VENCIDO há {-dias} dia(s)</strong>
+                  : dias === 0 ? <strong> — vence HOJE</strong>
+                  : <> — faltam {dias} dia(s)</>}
+              </span>
+            )}
+            <span className="flex-1" />
+            {d.notificacao_url && <a href={d.notificacao_url} target="_blank" rel="noreferrer" className="underline font-bold">📎 Ver notificação</a>}
+            {d.prazo_indicacao_condutor && d.status === 'ABERTO' && (
+              d.condutor_indicado_em
+                ? <button onClick={() => marcarIndicacao(true)} disabled={!!salvando} className="text-[10px] font-black uppercase underline">Desfazer</button>
+                : <button onClick={() => marcarIndicacao(false)} disabled={!!salvando || !d.condutor_nome}
+                    title={!d.condutor_nome ? 'Defina o condutor primeiro' : ''}
+                    className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">✔ Indicação feita no órgão</button>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Dados */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 bg-[#F8FAFC] rounded-xl p-4 text-xs mb-4">
         <Info label="Veículo" valor={veiculo ? `${veiculo.apelido} · ${veiculo.placa}` : '—'} />
@@ -931,6 +1138,7 @@ function DetalheDebito({ debito: d, veiculo, empresaNome, origem, nicsDaOrigem, 
                 <p className="font-black text-[#0C1D4D]">{d.condutor_nome}</p>
                 <p className="text-[10px] text-gray-500">Confirmado por {d.condutor_confirmado_por} em {fmtDataHora(d.condutor_confirmado_em)}{d.condutor_checklist_id ? ' · pelo checklist' : ' · escolha manual'}</p>
                 {d.condutor_avisado_em && <p className="text-[10px] text-sky-700 font-bold">📲 Avisado por WhatsApp em {fmtDataHora(d.condutor_avisado_em)} ({d.condutor_avisado_por})</p>}
+                {d.condutor_indicado_em && <p className="text-[10px] text-emerald-700 font-bold">✔ Indicado ao órgão em {fmtDataHora(d.condutor_indicado_em)} ({d.condutor_indicado_por})</p>}
               </div>
               <div className="flex gap-3 items-center">
                 <button onClick={avisarCondutor} disabled={!!salvando} className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-50">

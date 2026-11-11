@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { salvarDocumentosContabeisAction, identificarFuncionarioOcrAction } from '../actions/actions-documentos';
-import { useToast } from '../../../components/ui/NotificationProvider';
+import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 
 // pdf-lib e pdfjs são carregados dinamicamente (client-side) para separar e
 // renderizar as páginas. Nada disso depende do servidor/Vercel.
@@ -32,6 +32,7 @@ interface Props {
 
 export default function SepararHolerites({ mesReferencia, usuarioAtual, accessToken, elegiveis, onFechar }: Props) {
   const toast = useToast();
+  const confirmar = useConfirm();
   const [competencia, setCompetencia] = useState(mesReferencia);
   const [tipo, setTipo] = useState<'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO_CONTABILIDADE'>('ADIANTAMENTO');
   const [processando, setProcessando] = useState(false);
@@ -192,7 +193,7 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, accessTo
     }));
     if (itens.length === 0) { toast('Associe pelo menos uma página a um funcionário.', 'error'); return; }
     if (duplicados.size > 0) {
-      if (!confirm(`Há ${duplicados.size} funcionário(s) associados a mais de uma página. O último sobrescreve. Continuar?`)) return;
+      if (!(await confirmar(`Há ${duplicados.size} funcionário(s) associados a mais de uma página. O último sobrescreve. Continuar?`))) return;
     }
 
     setSalvando(true);

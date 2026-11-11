@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { useAcessoRota } from '../useAcessoRota';
-import { useToast } from '../../../components/ui/NotificationProvider';
+import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import {
   listarAssinaturasOPAction, enviarAssinaturaOPAction, consultarAssinaturaOPAction,
   atualizarTodasAssinaturasOPAction, baixarAssinadoOPAction,
@@ -57,6 +57,7 @@ export default function AssinaturasOPPage() {
   const router = useRouter();
   const { authLoading, acessoNegado, perfil } = useAcessoRota('/admin/op/assinaturas');
   const toast = useToast();
+  const confirmar = useConfirm();
 
   const [loading, setLoading] = useState(true);
   const [ops, setOps] = useState<OPComAssinatura[]>([]);
@@ -129,10 +130,8 @@ export default function AssinaturasOPPage() {
       toast(`A OP #${op.numero_op} não tem CPF e/ou celular válidos do signatário. Edite a OP em "Minhas OPs" antes de enviar para assinatura.`, 'error');
       return;
     }
-    if (!confirm(
-      `Enviar recibo da OP #${op.numero_op} para ${op.empresa_recebedora} assinar?\n\n` +
-      (sandbox ? '🧪 MODO TESTE (sandbox): não gasta créditos.' : '⚠ MODO REAL: consome um documento do plano Autentique.')
-    )) return;
+    if (!(await confirmar(`Enviar recibo da OP #${op.numero_op} para ${op.empresa_recebedora} assinar?\n\n` +
+      (sandbox ? '🧪 MODO TESTE (sandbox): não gasta créditos.' : '⚠ MODO REAL: consome um documento do plano Autentique.')))) return;
 
     setEnviando(op.id);
     try {

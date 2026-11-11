@@ -14,7 +14,7 @@ import { listarAssinaturasRescisaoAction } from '../actions/actions-rescisao';
 import logoColorido from '../../../../app/imgs/logo.png';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
-import { useToast } from '../../../components/ui/NotificationProvider';
+import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import { supabase } from '../../../lib/supabase';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
@@ -54,6 +54,7 @@ const STATUS_INFO: Record<string, { label: string; cor: string; bg: string; icon
 export default function AssinaturasPage() {
   const router = useRouter();
   const toast = useToast();
+  const confirmar = useConfirm();
   const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
   const [aba, setAba] = useState<'HOLERITES' | 'RESCISAO'>('HOLERITES');
 
@@ -148,10 +149,8 @@ export default function AssinaturasPage() {
   };
 
   const cancelarEnvioRescisao = async (a: Assinatura) => {
-    if (!confirm(
-      `Cancelar o envio do TRCT de ${a.funcionario_nome}?\n\n` +
-      `O link de assinatura deixa de funcionar e o registro fica marcado como CANCELADO (não é apagado).`
-    )) return;
+    if (!(await confirmar(`Cancelar o envio do TRCT de ${a.funcionario_nome}?\n\n` +
+      `O link de assinatura deixa de funcionar e o registro fica marcado como CANCELADO (não é apagado).`))) return;
     setCancelandoRescisao(a.funcionario_nome);
     try {
       const res = await cancelarAssinaturaAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia, canceladoPor: usuarioAtual }, accessToken);
@@ -243,11 +242,9 @@ export default function AssinaturasPage() {
   };
 
   const cancelarEnvio = async (a: Assinatura) => {
-    if (!confirm(
-      `Cancelar o envio de "${a.titulo_avulso || 'Holerite'}" para ${a.funcionario_nome}?\n\n` +
+    if (!(await confirmar(`Cancelar o envio de "${a.titulo_avulso || 'Holerite'}" para ${a.funcionario_nome}?\n\n` +
       `O link de assinatura deixa de funcionar e o registro fica marcado como CANCELADO (não é apagado).\n` +
-      `Você pode enviar um novo documento para este funcionário depois.`
-    )) return;
+      `Você pode enviar um novo documento para este funcionário depois.`))) return;
     setCancelando(a.funcionario_nome);
     try {
       const res = await cancelarAssinaturaAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia, canceladoPor: usuarioAtual }, accessToken);
@@ -315,10 +312,8 @@ export default function AssinaturasPage() {
     if (!avulsoArquivo) { toast('Selecione o arquivo PDF.', 'error'); return; }
     if (avulsoArquivo.type !== 'application/pdf') { toast('O arquivo deve ser PDF.', 'error'); return; }
 
-    if (!confirm(
-      `Enviar "${avulsoTitulo}" para ${avulsoFunc} assinar?\n\n` +
-      (avulsoSandbox ? '🧪 MODO TESTE (sandbox): não gasta créditos.' : '⚠ MODO REAL: consome um documento do plano Autentique.')
-    )) return;
+    if (!(await confirmar(`Enviar "${avulsoTitulo}" para ${avulsoFunc} assinar?\n\n` +
+      (avulsoSandbox ? '🧪 MODO TESTE (sandbox): não gasta créditos.' : '⚠ MODO REAL: consome um documento do plano Autentique.')))) return;
 
     setEnviandoAvulso(true);
     try {

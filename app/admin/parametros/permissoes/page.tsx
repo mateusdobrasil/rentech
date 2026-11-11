@@ -9,7 +9,7 @@ import { formatarCpf } from '../../../portal/lib/cpf';
 import { Analytics } from "@vercel/analytics/next"; // <-- CORRIGIDO: Barra adicionada
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
-import { useToast } from '../../../components/ui/NotificationProvider';
+import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { resetarMfaUsuarioAction } from '../../actions-mfa';
 import {
@@ -67,7 +67,7 @@ export default function GestaoPermissoes() {
   // Reset da autenticação em duas etapas (perdeu/trocou de celular) — só o
   // Administrador vê o botão; o servidor confere de novo (actions-mfa.ts).
   const resetarMfa = async (user: { id: string; nome: string }) => {
-    if (!confirm(`Resetar a autenticação em duas etapas de ${user.nome}?\n\nO aplicativo autenticador atual deixa de valer. No próximo acesso a uma página protegida, a pessoa cadastra o celular novo em Minha Conta.`)) return;
+    if (!(await confirmar(`Resetar a autenticação em duas etapas de ${user.nome}?\n\nO aplicativo autenticador atual deixa de valer. No próximo acesso a uma página protegida, a pessoa cadastra o celular novo em Minha Conta.`))) return;
     setResetandoMfa(true);
     const res = await resetarMfaUsuarioAction({ perfilId: user.id, usuarioNome: usuarioAtual }, accessToken);
     setResetandoMfa(false);
@@ -76,6 +76,7 @@ export default function GestaoPermissoes() {
   };
   const usuarioNome = usuarioAtual;
   const toast = useToast();
+  const confirmar = useConfirm();
 
   const [abaAtiva, setAbaAtiva] = useState<'usuarios' | 'paginas' | 'setores' | 'portal' | 'seguranca'>('usuarios');
   const [loading, setLoading] = useState(true);
@@ -298,7 +299,7 @@ export default function GestaoPermissoes() {
   };
 
   const deletarMapeamentoPagina = async (id: number, nome: string) => {
-    if (!confirm(`Remover as regras de acesso da página "${nome}"? Colaboradores comuns poderão acessar a rota diretamente se ela não estiver no banco.`)) return;
+    if (!(await confirmar({ message: `Remover as regras de acesso da página "${nome}"? Colaboradores comuns poderão acessar a rota diretamente se ela não estiver no banco.`, danger: true, confirmLabel: 'Remover' }))) return;
     
     setLoading(true);
     try {
@@ -374,7 +375,7 @@ export default function GestaoPermissoes() {
       ? ` Atenção: este setor está em uso em ${paginasComUso} página(s) e ${usuariosComUso} colaborador(es) — eles não serão alterados, mas o setor deixará de aparecer nas opções.`
       : '';
 
-    if (!confirm(`Remover o setor "${setor.nome}"?${aviso}`)) return;
+    if (!(await confirmar({ message: `Remover o setor "${setor.nome}"?${aviso}`, danger: true, confirmLabel: 'Remover' }))) return;
 
     try {
       const res = await removerSetorPermissaoAction({ id: setor.id, usuarioNome: usuarioAtual }, accessToken);

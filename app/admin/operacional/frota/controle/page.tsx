@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
+import { useConfirm } from '../../../../components/ui/NotificationProvider';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../../actions';
@@ -110,6 +111,7 @@ const veiculoVazio: Partial<Veiculo> = {
 
 export default function PainelControleFrota() {
   const router = useRouter();
+  const confirmar = useConfirm();
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, permissaoBruta } = usePageAccess({ nomeFallback: 'Usuário' });
 
   // Estados de Dados
@@ -294,7 +296,7 @@ export default function PainelControleFrota() {
   };
 
   const excluirVeiculo = async (v: Veiculo) => {
-    if (!confirm(`Tem certeza que deseja remover "${v.apelido}" (${v.placa})? Essa ação não pode ser desfeita.`)) return;
+    if (!(await confirmar({ message: `Tem certeza que deseja remover "${v.apelido}" (${v.placa})? Essa ação não pode ser desfeita.`, danger: true, confirmLabel: 'Remover' }))) return;
 
     const { error } = await supabase.from('frota_veiculos').delete().eq('id', v.id);
     if (error) {
@@ -378,7 +380,7 @@ export default function PainelControleFrota() {
   };
 
   const excluirDocumento = async (doc: Documento) => {
-    if (!confirm('Tem certeza que deseja remover este documento?')) return;
+    if (!(await confirmar({ message: 'Tem certeza que deseja remover este documento?', danger: true, confirmLabel: 'Remover' }))) return;
 
     await supabase.storage.from('frota').remove([doc.arquivo_path]);
     const { error } = await supabase.from('frota_documentos').delete().eq('id', doc.id);

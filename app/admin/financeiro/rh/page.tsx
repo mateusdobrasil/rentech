@@ -16,7 +16,7 @@ import { normalizarItensOP, ItemOPNormalizado } from '../../op/utils';
 import SepararHolerites from '../../rh/holerite/SepararHolerites';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
-import { useToast } from '../../../components/ui/NotificationProvider';
+import { useToast, useConfirm, usePrompt } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 // Contas bancárias no sistema são salvas como "12345-6" (número-DAC). O CNAB
@@ -174,6 +174,8 @@ export default function FinanceiroPage() {
   const router = useRouter();
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
   const toast = useToast();
+  const confirmar = useConfirm();
+  const perguntar = usePrompt();
 
   const [integracoes, setIntegracoes] = useState<Integracao[]>([]);
 
@@ -631,7 +633,7 @@ export default function FinanceiroPage() {
   const gerarLote = async () => {
     if (prontos.length === 0) { toast('Nenhum pagamento pronto para gerar o lote.', 'info'); return; }
     const sugestao = `${fontesSel.map(f => ROTULO_FONTE[f]).join(' + ')} ${fmtMesBR(mesReferencia)}`;
-    const nome = prompt(`Nome do lote (para identificar no histórico):`, sugestao);
+    const nome = (await perguntar({ message: `Nome do lote (para identificar no histórico):`, defaultValue: sugestao }));
     if (nome === null) return;
     setSalvandoLote(true);
     try {
@@ -667,7 +669,7 @@ export default function FinanceiroPage() {
     URL.revokeObjectURL(url);
   };
 
-  const exportarCnabItauPix = () => {
+  const exportarCnabItauPix = async () => {
     const candidatosPix = prontos.filter(i => i.metodo === 'PIX');
     const pagamentosPix = candidatosPix.filter(i => !STATUS_JA_PAGO_VIA_API.includes(i.api_status || ''));
     const jaPagosViaApi = candidatosPix.length - pagamentosPix.length;
@@ -678,7 +680,7 @@ export default function FinanceiroPage() {
         : 'Nenhum pagamento via PIX pronto para exportar.', 'info');
       return;
     }
-    if (jaPagosViaApi > 0 && !confirm(`${jaPagosViaApi} pagamento(s) via PIX deste lote já foram enviados com sucesso pela API e serão EXCLUÍDOS deste arquivo (evita pagar em dobro). Continuar exportando os ${pagamentosPix.length} restantes?`)) {
+    if (jaPagosViaApi > 0 && !(await confirmar(`${jaPagosViaApi} pagamento(s) via PIX deste lote já foram enviados com sucesso pela API e serão EXCLUÍDOS deste arquivo (evita pagar em dobro). Continuar exportando os ${pagamentosPix.length} restantes?`))) {
       return;
     }
 
@@ -815,7 +817,7 @@ export default function FinanceiroPage() {
   // corrente no próprio Itaú (forma 01), lote 2 = TED para outro titular em
   // outro banco (forma 41) — a Nota 5 do manual exige negociação prévia com o
   // Itaú para liberar TED de salário; sem isso o lote 2 será rejeitado.
-  const exportarCnabContaCorrenteTed = () => {
+  const exportarCnabContaCorrenteTed = async () => {
     const candidatosConta = prontos.filter(i => i.metodo === 'TED');
     const pagamentosConta = candidatosConta.filter(i => !STATUS_JA_PAGO_VIA_API.includes(i.api_status || ''));
     const jaPagosViaApi = candidatosConta.length - pagamentosConta.length;
@@ -826,7 +828,7 @@ export default function FinanceiroPage() {
         : 'Nenhum pagamento via conta bancária pronto para exportar.', 'info');
       return;
     }
-    if (jaPagosViaApi > 0 && !confirm(`${jaPagosViaApi} pagamento(s) via conta bancária deste lote já foram enviados com sucesso pela API (Pix por dados bancários) e serão EXCLUÍDOS deste arquivo (evita pagar em dobro). Continuar exportando os ${pagamentosConta.length} restantes?`)) {
+    if (jaPagosViaApi > 0 && !(await confirmar(`${jaPagosViaApi} pagamento(s) via conta bancária deste lote já foram enviados com sucesso pela API (Pix por dados bancários) e serão EXCLUÍDOS deste arquivo (evita pagar em dobro). Continuar exportando os ${pagamentosConta.length} restantes?`))) {
       return;
     }
 
@@ -956,7 +958,7 @@ export default function FinanceiroPage() {
   };
 
   const enviarLote = async (loteId: number) => {
-    if (!confirm(`Enviar os pagamentos deste lote via API do Itaú (Pix por chave, ou por dados bancários pra quem não tem chave cadastrada), com data de pagamento ${dataPagamento.split('-').reverse().join('/')}?\n\nIsso move dinheiro de verdade (ou do sandbox, conforme o Ambiente configurado em Integrações). Se algum favorecido não tiver chave PIX nem conta bancária cadastrada, ou o banco não for reconhecido, esse item fica pendente pra exportação manual (CNAB).`)) return;
+    if (!(await confirmar(`Enviar os pagamentos deste lote via API do Itaú (Pix por chave, ou por dados bancários pra quem não tem chave cadastrada), com data de pagamento ${dataPagamento.split('-').reverse().join('/')}?\n\nIsso move dinheiro de verdade (ou do sandbox, conforme o Ambiente configurado em Integrações). Se algum favorecido não tiver chave PIX nem conta bancária cadastrada, ou o banco não for reconhecido, esse item fica pendente pra exportação manual (CNAB).`))) return;
     setEnviandoLoteId(loteId);
     try {
       const res = await enviarLoteAoBancoAction({ loteId, dataPagamento, usuarioNome: usuarioAtual }, accessToken);
@@ -978,7 +980,7 @@ export default function FinanceiroPage() {
     const confirmMsg = novoAtivo
       ? `Reativar o lote "${lote.nome_lote || lote.tipo_lote}"?`
       : `Inativar o lote "${lote.nome_lote || lote.tipo_lote}"?\n\nO histórico continua salvo, só fica sinalizado como inativo (ex.: lote duplicado ou gerado por engano).`;
-    if (!confirm(confirmMsg)) return;
+    if (!(await confirmar(confirmMsg))) return;
 
     const res = await alternarAtivoLoteAction({ loteId: lote.id, ativo: novoAtivo, usuarioNome: usuarioAtual }, accessToken);
     if (!res.ok) { toast(res.erro || 'Não foi possível atualizar o lote.', 'error'); return; }
@@ -1055,7 +1057,7 @@ export default function FinanceiroPage() {
   // enviar" — a action confirma na API do Itaú que falhou mesmo antes.
   const reabrirItem = async (item: ItemLote) => {
     if (!item.api_cod_pagamento || !loteRetornoId) return;
-    if (!confirm(`Reabrir o pagamento de ${item.funcionario_nome} para reenvio?\n\nSó funciona se o Itaú confirmar que o pagamento falhou de vez (Não Efetuado, Rejeitado, Cancelado ou Estornado). O item volta a entrar no próximo "Enviar ao banco", e OP/rescisão volta a constar como não paga.`)) return;
+    if (!(await confirmar(`Reabrir o pagamento de ${item.funcionario_nome} para reenvio?\n\nSó funciona se o Itaú confirmar que o pagamento falhou de vez (Não Efetuado, Rejeitado, Cancelado ou Estornado). O item volta a entrar no próximo "Enviar ao banco", e OP/rescisão volta a constar como não paga.`))) return;
     setReabrindoId(item.api_cod_pagamento);
     try {
       const res = await reabrirItemParaReenvioAction(

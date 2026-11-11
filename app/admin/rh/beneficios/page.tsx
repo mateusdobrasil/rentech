@@ -10,7 +10,7 @@ import {
 } from '../actions/actions-beneficios';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
-import { useToast } from '../../../components/ui/NotificationProvider';
+import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import { supabase } from '../../../lib/supabase';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
@@ -84,6 +84,7 @@ export default function BeneficiosPage() {
   const nomeEmpresa = (id: number | null | undefined) =>
     id == null ? '—' : (empresasCatalogo.find(e => e.id === id)?.nome || 'Empresa removida');
   const toast = useToast();
+  const confirmar = useConfirm();
 
   // Grid consolidado (mês)
   const [mostrarGrid, setMostrarGrid] = useState(false);
@@ -171,7 +172,7 @@ export default function BeneficiosPage() {
 
   const confirmarPedidoFlash = async (pedido: any) => {
     const data = dataPagtoPedido[pedido.id] || hojeIso();
-    if (!confirm(`Confirmar que o pedido Flash #${pedido.id} (${pedido.qtd_funcionarios} funcionário(s), ${BRL(Number(pedido.valor_total))}) foi PAGO em ${data.split('-').reverse().join('/')}?`)) return;
+    if (!(await confirmar(`Confirmar que o pedido Flash #${pedido.id} (${pedido.qtd_funcionarios} funcionário(s), ${BRL(Number(pedido.valor_total))}) foi PAGO em ${data.split('-').reverse().join('/')}?`))) return;
     const res = await confirmarPagamentoFlashAction({ pedidoId: pedido.id, dataPagamento: data, usuarioNome: usuarioAtual }, accessToken);
     if (!res.ok) { toast(res.erro || 'Erro ao confirmar pagamento.', 'error'); return; }
     toast('Pagamento do pedido Flash confirmado.', 'success');
@@ -179,7 +180,7 @@ export default function BeneficiosPage() {
   };
 
   const cancelarPedidoFlash = async (pedido: any) => {
-    if (!confirm(`Cancelar o pedido Flash #${pedido.id}? Use quando o arquivo foi gerado mas NÃO vai ser pago.`)) return;
+    if (!(await confirmar({ message: `Cancelar o pedido Flash #${pedido.id}? Use quando o arquivo foi gerado mas NÃO vai ser pago.`, danger: true, confirmLabel: 'Cancelar', cancelLabel: 'Voltar' }))) return;
     const res = await cancelarPedidoFlashAction({ pedidoId: pedido.id, usuarioNome: usuarioAtual }, accessToken);
     if (!res.ok) { toast(res.erro || 'Erro ao cancelar pedido.', 'error'); return; }
     carregarPedidosFlash();
@@ -219,7 +220,7 @@ export default function BeneficiosPage() {
       `⚡ Cartão Flash: ${BRL(t.totalFlash)} — o arquivo será baixado e o pedido registrado\n` +
       `🏦 Lote de pagamento: ${BRL(t.totalLote)} — fica disponível em Financeiro RH (fonte Benefícios)` +
       (repetidos.length ? `\n\n⚠ ${repetidos.length} já tiveram benefício gerado neste mês: ${repetidos.join(', ')}` : '');
-    if (!confirm(msg)) return;
+    if (!(await confirmar(msg))) return;
 
     setGerandoBeneficio(true);
     try {
@@ -387,7 +388,7 @@ export default function BeneficiosPage() {
   };
 
   const removerBeneficio = async (id: number, tipo: string, nome: string) => {
-    if (!confirm(`Remover o benefício "${tipo}" de ${nome}?\n\nO histórico é preservado.`)) return;
+    if (!(await confirmar({ message: `Remover o benefício "${tipo}" de ${nome}?\n\nO histórico é preservado.`, danger: true, confirmLabel: 'Remover' }))) return;
     try {
       const res = await alternarBeneficioAction({ id, ativo: false, usuarioNome: usuarioAtual }, accessToken);
       if (!res.ok) throw new Error(res.erro);
@@ -400,7 +401,7 @@ export default function BeneficiosPage() {
   // Reativa com os mesmos valores de quando foi removido (editar depois, se mudou)
   const reativarBeneficio = async (b: LinhaFunc['beneficiosFixos'][0], nome: string) => {
     const valorTxt = `${BRL(b.valor)}${b.modalidade === 'POR_DIARIA' ? '/dia' : b.modalidade === 'DIAS_FIXOS' ? `/dia ×${b.qtdDias}` : '/mês'}`;
-    if (!confirm(`Reativar o benefício "${b.tipo}" de ${nome}?\n\nVolta com os valores de antes: ${valorTxt} via ${b.meio}. Se mudou, edite depois.`)) return;
+    if (!(await confirmar(`Reativar o benefício "${b.tipo}" de ${nome}?\n\nVolta com os valores de antes: ${valorTxt} via ${b.meio}. Se mudou, edite depois.`))) return;
     try {
       const res = await alternarBeneficioAction({ id: b.id, ativo: true, usuarioNome: usuarioAtual }, accessToken);
       if (!res.ok) throw new Error(res.erro);

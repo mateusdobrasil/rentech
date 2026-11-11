@@ -11,7 +11,7 @@ import {
 } from '../actions/actions-parametros';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
-import { useToast } from '../../../components/ui/NotificationProvider';
+import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 
@@ -52,6 +52,7 @@ interface Feriado { id: number; data_feriado: string; descricao: string | null; 
 export default function ParametrosRH() {
   const router = useRouter();
   const toast = useToast();
+  const confirmar = useConfirm();
   const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
 
   const [regras, setRegras] = useState<RegraRH[]>([]);
@@ -202,11 +203,9 @@ export default function ParametrosRH() {
   };
 
   const excluirFeriado = async (f: Feriado) => {
-    if (!confirm(
-      `Excluir o feriado ${formatarDataBR(f.data_feriado)}${f.descricao ? ` (${f.descricao})` : ''}?\n\n` +
+    if (!(await confirmar({ message: `Excluir o feriado ${formatarDataBR(f.data_feriado)}${f.descricao ? ` (${f.descricao})` : ''}?\n\n` +
       `Aplica-se a: ${nomeEmpresa(f.empresa_id)}.\n\n` +
-      `Atenção: espelhos de ponto e holerites EM ABERTO deste dia serão recalculados como dia útil. Folhas já fechadas não mudam.`
-    )) return;
+      `Atenção: espelhos de ponto e holerites EM ABERTO deste dia serão recalculados como dia útil. Folhas já fechadas não mudam.`, danger: true, confirmLabel: 'Excluir' }))) return;
 
     setSalvandoFeriado(true);
     try {
@@ -277,9 +276,9 @@ export default function ParametrosRH() {
   const removerCatalogo = async (tabela: 'folha_cargo' | 'folha_tipocontrato' | 'folha_departamento', item: ItemCatalogo) => {
     // Só pede confirmação especial pra quem tem vínculo verificado (cargo e
     // departamento); a verificação em si é feita dentro da action.
-    if (tabela === 'folha_tipocontrato' && !confirm(`Excluir "${item.nome}" do catálogo?`)) return;
-    if (tabela === 'folha_cargo' && !confirm(`Excluir "${item.nome}" do catálogo? (Só é possível se nenhum funcionário o utiliza.)`)) return;
-    if (tabela === 'folha_departamento' && !confirm(`Excluir "${item.nome}" do catálogo? (Só é possível se nenhum funcionário o utiliza.)`)) return;
+    if (tabela === 'folha_tipocontrato' && !(await confirmar({ message: `Excluir "${item.nome}" do catálogo?`, danger: true, confirmLabel: 'Excluir' }))) return;
+    if (tabela === 'folha_cargo' && !(await confirmar({ message: `Excluir "${item.nome}" do catálogo? (Só é possível se nenhum funcionário o utiliza.)`, danger: true, confirmLabel: 'Excluir' }))) return;
+    if (tabela === 'folha_departamento' && !(await confirmar({ message: `Excluir "${item.nome}" do catálogo? (Só é possível se nenhum funcionário o utiliza.)`, danger: true, confirmLabel: 'Excluir' }))) return;
 
     setSalvandoCatalogo(true);
     try {
@@ -395,7 +394,7 @@ export default function ParametrosRH() {
   // EXCLUSÃO PROTEGIDA: regra em uso não pode ser apagada (verificado na action)
   // ==========================================================================
   const deletarRegra = async (nome: string) => {
-    if (!confirm(`Tem certeza que deseja excluir o modelo ${nome}?\n\nSó será excluído se nenhum funcionário estiver vinculado a ele.`)) return;
+    if (!(await confirmar({ message: `Tem certeza que deseja excluir o modelo ${nome}?\n\nSó será excluído se nenhum funcionário estiver vinculado a ele.`, danger: true, confirmLabel: 'Excluir' }))) return;
 
     setDeletando(nome);
     try {

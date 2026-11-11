@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
+import { useConfirm } from '../../../components/ui/NotificationProvider';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
@@ -42,6 +43,7 @@ const empresaFormPadrao = { nome: '', razao_social: '', cnpj: '', ativo: true };
 
 export default function EmpresasPage() {
   const router = useRouter();
+  const confirmar = useConfirm();
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess({ nomeFallback: 'Usuário' });
 
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
@@ -142,7 +144,7 @@ export default function EmpresasPage() {
     const aviso = emUso > 0
       ? ` Atenção: ${emUso} funcionário(s) está(ão) vinculado(s) a esta empresa e ficará(ão) sem empresa definida.`
       : '';
-    if (!confirm(`Remover a empresa "${empresa.nome}"?${aviso}`)) return;
+    if (!(await confirmar({ message: `Remover a empresa "${empresa.nome}"?${aviso}`, danger: true, confirmLabel: 'Remover' }))) return;
 
     try {
       const { error } = await supabase.from('empresas').delete().eq('id', empresa.id);

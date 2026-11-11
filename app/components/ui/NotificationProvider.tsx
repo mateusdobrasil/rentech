@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 
 type ToastType = 'success' | 'error' | 'info';
 
@@ -23,6 +23,8 @@ interface PromptOptions {
   message: string;
   placeholder?: string;
   defaultValue?: string;
+  // 'date' abre o seletor de data (valor no formato AAAA-MM-DD)
+  inputType?: 'text' | 'date';
   confirmLabel?: string;
   cancelLabel?: string;
 }
@@ -104,6 +106,23 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     setPromptState(prev => ({ ...prev, open: false }));
   };
 
+  // Teclado nas caixas: Esc cancela; Enter confirma (no prompt, o Enter já
+  // é tratado no próprio campo).
+  useEffect(() => {
+    if (!confirmState.open && !promptState.open) return;
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (confirmState.open) respondConfirm(false); else respondPrompt(null);
+      } else if (e.key === 'Enter' && confirmState.open) {
+        e.preventDefault();
+        respondConfirm(true);
+      }
+    };
+    window.addEventListener('keydown', aoTeclar);
+    return () => window.removeEventListener('keydown', aoTeclar);
+  });
+
   return (
     <NotificationContext.Provider value={{ toast, confirm, prompt }}>
       {children}
@@ -128,11 +147,11 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       {/* Confirm dialog */}
       {confirmState.open && (
         <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white p-8 rounded-2xl shadow-2xl text-center max-w-sm w-full mx-4">
-            <h3 className="text-xl font-black uppercase tracking-wider mb-2 text-[#0C1D4D]">
+          <div role="alertdialog" aria-modal="true" className="bg-white p-6 sm:p-8 rounded-2xl shadow-2xl text-center max-w-md w-full">
+            <h3 className="text-lg sm:text-xl font-black uppercase tracking-wider mb-2 text-[#0C1D4D]">
               {confirmState.title || (confirmState.danger ? 'Atenção' : 'Confirmar ação')}
             </h3>
-            <p className="text-sm text-[#64748B] font-medium mb-6 whitespace-pre-line">{confirmState.message}</p>
+            <p className="text-sm text-[#64748B] font-medium mb-6 whitespace-pre-line max-h-[55vh] overflow-y-auto">{confirmState.message}</p>
             <div className="flex gap-3">
               <button
                 onClick={() => respondConfirm(false)}
@@ -141,6 +160,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
                 {confirmState.cancelLabel || 'Cancelar'}
               </button>
               <button
+                autoFocus
                 onClick={() => respondConfirm(true)}
                 className={`flex-1 py-3 text-white font-bold text-xs uppercase tracking-wider rounded-lg shadow-lg transition-colors ${confirmState.danger ? 'bg-red-600 hover:bg-red-700' : 'bg-[#0C1D4D] hover:bg-[#284B8C]'}`}
               >
@@ -154,13 +174,14 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       {/* Prompt dialog */}
       {promptState.open && (
         <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white p-8 rounded-2xl shadow-2xl text-center max-w-sm w-full mx-4">
-            <h3 className="text-xl font-black uppercase tracking-wider mb-2 text-[#0C1D4D]">
+          <div role="dialog" aria-modal="true" className="bg-white p-6 sm:p-8 rounded-2xl shadow-2xl text-center max-w-md w-full">
+            <h3 className="text-lg sm:text-xl font-black uppercase tracking-wider mb-2 text-[#0C1D4D]">
               {promptState.title || 'Informe um valor'}
             </h3>
-            <p className="text-sm text-[#64748B] font-medium mb-4 whitespace-pre-line">{promptState.message}</p>
+            <p className="text-sm text-[#64748B] font-medium mb-4 whitespace-pre-line max-h-[45vh] overflow-y-auto">{promptState.message}</p>
             <input
               autoFocus
+              type={promptState.inputType || 'text'}
               value={promptState.value}
               onChange={e => setPromptState(prev => ({ ...prev, value: e.target.value }))}
               placeholder={promptState.placeholder}

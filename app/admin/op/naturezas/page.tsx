@@ -4,7 +4,7 @@ import { useState, useEffect, Fragment } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { useAcessoRota } from '../useAcessoRota';
-import { useToast } from '../../../components/ui/NotificationProvider';
+import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import {
   listarNaturezasPagamentoAction, criarNaturezaPagamentoAction, excluirNaturezaPagamentoAction,
   salvarClassificacaoNaturezaAction, listarCentrosFinanceirosP2sAction, listarSubCentrosFinanceirosP2sAction,
@@ -33,6 +33,7 @@ export default function NaturezasPagamentoPage() {
   const router = useRouter();
   const { authLoading, acessoNegado, perfil } = useAcessoRota('/admin/op/naturezas');
   const toast = useToast();
+  const confirmar = useConfirm();
 
   const [naturezas, setNaturezas] = useState<NaturezaPagamento[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,7 +80,7 @@ export default function NaturezasPagamentoPage() {
 
   const excluir = async (n: NaturezaPagamento) => {
     if (!perfil) return;
-    if (!confirm(`Excluir a natureza "${n.natureza}"? OPs já criadas com ela não são afetadas — só deixa de aparecer como opção em novas OPs.`)) return;
+    if (!(await confirmar({ message: `Excluir a natureza "${n.natureza}"? OPs já criadas com ela não são afetadas — só deixa de aparecer como opção em novas OPs.`, danger: true, confirmLabel: 'Excluir' }))) return;
     setExcluindoId(n.id);
     const res = await excluirNaturezaPagamentoAction({ id: n.id }, perfil.accessToken);
     if (res.ok) await carregar();

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
+import { usePrompt } from '../../../components/ui/NotificationProvider';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { listarOPs, atualizarStatus, dispararEmailOP, reprovarOPAction, reabrirOPAction } from '../../op/actions';
@@ -61,6 +62,7 @@ const SELECT_FILTRO = 'w-full min-w-0 p-2.5 border border-[#CBD5E1] rounded-lg t
 
 export default function PainelFinanceiro() {
   const router = useRouter();
+  const perguntar = usePrompt();
 
   // Sessão + permissão da rota, resolvidas pelo hook compartilhado do módulo.
   const { authLoading, acessoNegado, perfil } = useAcessoRota('/admin/financeiro/ops');
@@ -260,9 +262,9 @@ export default function PainelFinanceiro() {
   // Reprovar OP (criada mas não autorizada pelo Financeiro) — pede o motivo
   // antes de confirmar, igual ao "Nome do lote" em /admin/financeiro/rh.
   // Cancelar o prompt (null) aborta sem nenhuma chamada.
-  const reprovarOP = (op: OP) => {
+  const reprovarOP = async (op: OP) => {
     if (!perfil) return;
-    const motivo = prompt(`Motivo da reprovação da OP #${op.numero_op} — ${op.empresa_recebedora} (opcional):`, '');
+    const motivo = (await perguntar({ message: `Motivo da reprovação da OP #${op.numero_op} — ${op.empresa_recebedora} (opcional):`, defaultValue: '' }));
     if (motivo === null) return;
     setDialog({
       open: true,

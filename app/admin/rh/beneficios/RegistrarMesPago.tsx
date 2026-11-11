@@ -8,6 +8,7 @@
 // vai pro lote, nenhum arquivo é baixado. Saiu do Grid em 2026-11-09 (lá
 // confundia com o Gerar Benefício normal).
 import { useEffect, useMemo, useState } from 'react';
+import { useConfirm } from '../../../components/ui/NotificationProvider';
 import { gridBeneficiosAction, gerarBeneficioAction } from '../actions/actions-beneficios';
 
 const BRL = (v: number) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -25,6 +26,7 @@ export default function RegistrarMesPago({ mesInicial, accessToken, usuarioAtual
   onFechar: () => void; onRegistrado: (mes: string) => void;
 }) {
   const [mes, setMes] = useState(mesInicial);
+  const confirmar = useConfirm();
   const [base, setBase] = useState<Base>(mesInicial <= mesAtualIso() ? 'INICIO_MES' : 'ATUAL');
   const [dataPago, setDataPago] = useState(ultimoDiaMesAnterior(mesInicial));
   const [funcionarios, setFuncionarios] = useState<any[]>([]);
@@ -59,12 +61,10 @@ export default function RegistrarMesPago({ mesInicial, accessToken, usuarioAtual
     const mesBR = mes.split('-').reverse().join('/');
     const dataBR = dataPago.split('-').reverse().join('/');
     const repetidos = nomes.filter(n => jaGerados[n]);
-    if (!confirm(
-      `REGISTRAR como já pagos em ${dataBR} os benefícios de ${mesBR} de ${nomes.length} funcionário(s)?\n\n` +
+    if (!(await confirmar(`REGISTRAR como já pagos em ${dataBR} os benefícios de ${mesBR} de ${nomes.length} funcionário(s)?\n\n` +
       `Nenhum arquivo Flash será baixado e nada vai para o lote — só fica o histórico, marcado como pago.\n\n` +
       `⚡ Cartão Flash: ${BRL(totais.flash)}\n🏦 Transferência: ${BRL(totais.lote)}` +
-      (repetidos.length ? `\n\n⚠ ${repetidos.length} já tinham benefício gerado neste mês: ${repetidos.join(', ')}` : '')
-    )) return;
+      (repetidos.length ? `\n\n⚠ ${repetidos.length} já tinham benefício gerado neste mês: ${repetidos.join(', ')}` : '')))) return;
 
     setGravando(true); setErro(null);
     const res = await gerarBeneficioAction({ mesReferencia: mes, nomes, base, jaPagoEm: dataPago, usuarioNome: usuarioAtual }, accessToken);

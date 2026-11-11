@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import { useConfirm } from '../../components/ui/NotificationProvider';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
@@ -13,6 +14,7 @@ import { Analytics } from "@vercel/analytics/next";
 // trocar a senha provisória mesmo assim.
 export default function MinhaConta() {
   const router = useRouter();
+  const confirmar = useConfirm();
 
   const [authLoading, setAuthLoading] = useState(true);
   const [perfil, setPerfil] = useState<{ nome: string; email: string; permissao: string } | null>(null);
@@ -124,7 +126,7 @@ export default function MinhaConta() {
 
   const desativarMfa = async () => {
     if (!fatorMfa) return;
-    if (!confirm('Desativar a autenticação em duas etapas? Você perderá a camada extra de proteção da área Financeira até ativar de novo.')) return;
+    if (!(await confirmar('Desativar a autenticação em duas etapas? Você perderá a camada extra de proteção da área Financeira até ativar de novo.'))) return;
     setProcessandoMfa(true);
     try {
       const { error } = await supabase.auth.mfa.unenroll({ factorId: fatorMfa.id });

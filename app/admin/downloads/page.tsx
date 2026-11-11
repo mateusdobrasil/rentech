@@ -8,7 +8,7 @@ import { registrarLogAuditoria } from '../../actions';
 import PaginationFooter from '../../components/ui/PaginationFooter';
 import { usePageAccess } from '../../components/hooks/usePageAccess';
 import { HubErro } from '../../components/ui/HubStates';
-import { useToast } from '../../components/ui/NotificationProvider';
+import { useToast, useConfirm } from '../../components/ui/NotificationProvider';
 
 const TAMANHO_PAGINA = 30;
 
@@ -27,6 +27,7 @@ export default function GestorDownloads() {
   const router = useRouter();
   const { usuarioAtual: usuarioNome, authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess({ nomeFallback: 'Usuário' });
   const toast = useToast();
+  const confirmar = useConfirm();
 
   // Estados de Dados
   const [arquivos, setArquivos] = useState<Arquivo[]>([]);
@@ -149,7 +150,7 @@ export default function GestorDownloads() {
   };
 
   const handleDeletar = async (arq: Arquivo) => {
-    if (!confirm(`Tem certeza que deseja remover "${arq.nome}"?`)) return;
+    if (!(await confirmar({ message: `Tem certeza que deseja remover "${arq.nome}"?`, danger: true, confirmLabel: 'Remover' }))) return;
 
     try {
       // Só tenta remover do storage se for um arquivo físico local

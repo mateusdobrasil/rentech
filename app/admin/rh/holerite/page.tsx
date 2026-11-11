@@ -15,7 +15,7 @@ import SepararHolerites from './SepararHolerites';
 import logoColorido from '../../../../app/imgs/logo.png';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
-import { useToast } from '../../../components/ui/NotificationProvider';
+import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
@@ -690,6 +690,7 @@ const extrairDadosSalariais = (f: FuncionarioFin | null) => f ? {
 export default function HoleritePage() {
   const router = useRouter();
   const toast = useToast();
+  const confirmar = useConfirm();
 
   const [loading, setLoading] = useState(false);
   const [loadingLote, setLoadingLote] = useState(false);
@@ -1007,10 +1008,12 @@ export default function HoleritePage() {
     if (nome === funcionarioSelecionado) return;
 
     if (temAlteracoesNaoSalvas) {
-      const salvar = confirm(
-        `Os bônus/descontos de ${formSelecionado?.nome_completo || 'este colaborador'} têm alterações não salvas.\n\n` +
-        `OK = Salvar antes de trocar\nCancelar = Descartar as alterações`
-      );
+      const salvar = await confirmar({
+        title: 'Alterações não salvas',
+        message: `Os bônus/descontos de ${formSelecionado?.nome_completo || 'este colaborador'} têm alterações não salvas.\n\nSalvar antes de trocar de colaborador?`,
+        confirmLabel: 'Salvar e trocar',
+        cancelLabel: 'Descartar',
+      });
       if (salvar) {
         const ok = await salvarBonusDescontos();
         if (!ok) return;
@@ -1299,12 +1302,10 @@ export default function HoleritePage() {
     }
 
     const totalLiquido = abertos.reduce((acc, l) => acc + l.dados.valorLiquidoReceber, 0);
-    if (!confirm(
-      `Fechar a folha de ${formatarMesAnoBR(mesReferencia)} para ${abertos.length} funcionário(s)?` +
+    if (!(await confirmar(`Fechar a folha de ${formatarMesAnoBR(mesReferencia)} para ${abertos.length} funcionário(s)?` +
       (jaFechados > 0 ? `\n(${jaFechados} já estava(m) fechado(s) e não será(ão) alterado(s).)` : '') +
       `\n\nTotal líquido a fechar: ${formatCurrency(totalLiquido)}\n\n` +
-      `Após o fechamento, os holerites ficam congelados e não mudam mesmo que o ponto, os feriados ou as regras sejam alterados.`
-    )) return;
+      `Após o fechamento, os holerites ficam congelados e não mudam mesmo que o ponto, os feriados ou as regras sejam alterados.`))) return;
 
     setLoadingLote(true);
     try {
@@ -1322,10 +1323,8 @@ export default function HoleritePage() {
   };
 
   const reabrirFolhaDe = async (fech: Fechamento) => {
-    if (!confirm(
-      `Reabrir a folha de ${fech.funcionario_nome} (${formatarMesAnoBR(fech.mes_referencia)})?\n\n` +
-      `O holerite voltará a ser calculado ao vivo e poderá mudar.`
-    )) return;
+    if (!(await confirmar(`Reabrir a folha de ${fech.funcionario_nome} (${formatarMesAnoBR(fech.mes_referencia)})?\n\n` +
+      `O holerite voltará a ser calculado ao vivo e poderá mudar.`))) return;
 
     setLoadingLote(true);
     try {
@@ -1348,11 +1347,9 @@ export default function HoleritePage() {
       return;
     }
 
-    if (!confirm(
-      `Reabrir a folha de ${formatarMesAnoBR(mesReferencia)} para TODOS os ${fechados.length} funcionário(s) fechado(s)?\n\n` +
+    if (!(await confirmar(`Reabrir a folha de ${formatarMesAnoBR(mesReferencia)} para TODOS os ${fechados.length} funcionário(s) fechado(s)?\n\n` +
       `Os holerites voltarão a ser calculados ao vivo e poderão mudar conforme o ponto, os feriados e as regras.\n\n` +
-      `Use apenas para corrigir um fechamento feito com dados errados.`
-    )) return;
+      `Use apenas para corrigir um fechamento feito com dados errados.`))) return;
 
     setLoadingLote(true);
     try {
@@ -1405,8 +1402,7 @@ export default function HoleritePage() {
     }
 
     const jaEnviado = item.statusAssinatura === 'ENVIADO' || item.statusAssinatura === 'VISUALIZADO';
-    if (!confirm(
-      (item.assinaturaDesatualizada
+    if (!(await confirmar((item.assinaturaDesatualizada
         ? `⚠ A folha foi reaberta e fechada de novo depois da assinatura anterior — o documento assinado é de uma versão antiga do holerite.\n\n`
         : '') +
       `${jaEnviado || item.assinaturaDesatualizada ? 'REENVIAR' : 'Enviar'} ${item.soDocumental ? 'os holerites da contabilidade' : 'o holerite'} de ${item.func.nome_completo} (${formatarMesAnoBR(mesReferencia)}) para assinatura?\n\n` +
@@ -1415,8 +1411,7 @@ export default function HoleritePage() {
       (item.soDocumental
         ? `\n📄 Contrato documental: envia os documentos da contabilidade + recibo com o valor do holerite OCR pagamento já lido para este mês.`
         : '\n🧾 Inclui o recibo de pagamento como último arquivo.') +
-      (sandboxAssinatura ? '\n🧪 MODO TESTE (sandbox): não gasta créditos e o documento é temporário.' : '\n⚠ MODO REAL: consome um documento do seu plano Autentique.')
-    )) return;
+      (sandboxAssinatura ? '\n🧪 MODO TESTE (sandbox): não gasta créditos e o documento é temporário.' : '\n⚠ MODO REAL: consome um documento do seu plano Autentique.')))) return;
 
     setEnviandoAssinatura(item.func.nome_completo);
     try {
@@ -1444,12 +1439,10 @@ export default function HoleritePage() {
       toast('Não há holerites fechados pendentes de envio neste mês.', 'info');
       return;
     }
-    if (!confirm(
-      `Enviar ${fechadosNaoAssinados.length} holerite(s) fechado(s) para assinatura?\n\n` +
+    if (!(await confirmar(`Enviar ${fechadosNaoAssinados.length} holerite(s) fechado(s) para assinatura?\n\n` +
       `🧾 Cada um sai com o recibo de pagamento anexado por último.\n` +
       `📄 Fichas documentais usam o valor do holerite OCR pagamento já lido — quem ainda não tem OCR rodado neste mês falha e aparece na lista de falhas.\n\n` +
-      (sandboxAssinatura ? '🧪 MODO TESTE (sandbox): não gasta créditos.' : `⚠ MODO REAL: consome ${fechadosNaoAssinados.length} documento(s) do seu plano Autentique.`)
-    )) return;
+      (sandboxAssinatura ? '🧪 MODO TESTE (sandbox): não gasta créditos.' : `⚠ MODO REAL: consome ${fechadosNaoAssinados.length} documento(s) do seu plano Autentique.`)))) return;
 
     setEnviandoAssinatura('LOTE');
     try {

@@ -13,7 +13,7 @@ import {
 } from '../actions/actions-afastamentos';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
-import { useToast } from '../../../components/ui/NotificationProvider';
+import { useToast, useConfirm, usePrompt } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 
@@ -40,6 +40,8 @@ interface Afastamento {
 export default function FeriasAfastamentosPage() {
   const router = useRouter();
   const toast = useToast();
+  const confirmar = useConfirm();
+  const perguntar = usePrompt();
   const [aba, setAba] = useState<'ferias' | 'afastamentos'>('ferias');
 
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
@@ -129,7 +131,7 @@ export default function FeriasAfastamentosPage() {
   };
 
   const cancelarAgendamento = async (periodo: PeriodoFerias) => {
-    if (!confirm('Cancelar este agendamento de férias? O período volta a ficar disponível.')) return;
+    if (!(await confirmar({ message: 'Cancelar este agendamento de férias? O período volta a ficar disponível.', danger: true, confirmLabel: 'Cancelar', cancelLabel: 'Voltar' }))) return;
     try {
       const res = await cancelarAgendamentoFeriasAction({ id: periodo.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
@@ -255,7 +257,7 @@ export default function FeriasAfastamentosPage() {
 
   const encerrarAgora = async (a: Afastamento) => {
     const hoje = new Date().toISOString().slice(0, 10);
-    const dataFim = prompt(`Data de fim do afastamento de ${a.funcionario_nome}:`, hoje);
+    const dataFim = (await perguntar({ title: 'Encerrar afastamento', message: `Data de fim do afastamento de ${a.funcionario_nome}:`, defaultValue: hoje, inputType: 'date', confirmLabel: 'Encerrar' }));
     if (!dataFim) return;
     try {
       const res = await encerrarAfastamentoAction({ id: a.id, dataFim }, accessToken);
@@ -265,7 +267,7 @@ export default function FeriasAfastamentosPage() {
   };
 
   const excluirAgora = async (a: Afastamento) => {
-    if (!confirm(`Excluir o afastamento de ${a.funcionario_nome} (${a.tipo})?\n\nEsta ação é permanente.`)) return;
+    if (!(await confirmar({ message: `Excluir o afastamento de ${a.funcionario_nome} (${a.tipo})?\n\nEsta ação é permanente.`, danger: true, confirmLabel: 'Excluir' }))) return;
     try {
       const res = await excluirAfastamentoAction({ id: a.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);

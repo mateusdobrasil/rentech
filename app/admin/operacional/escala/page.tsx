@@ -952,7 +952,7 @@ export default function EscalaPage() {
   const copiarDeOntem = async () => {
     if (!empresaId) return;
     const origem = diaAnterior(data);
-    if (!confirm(`Copiar a escala de ${fmtDataExtenso(origem)} para ${fmtDataExtenso(data)}?\n\nQuem já tem local definido hoje não será alterado.`)) return;
+    if (!(await confirm(`Copiar a escala de ${fmtDataExtenso(origem)} para ${fmtDataExtenso(data)}?\n\nQuem já tem local definido hoje não será alterado.`))) return;
     setCopiando(true);
     try {
       const res = await copiarEscalaAction({ empresaId, dataOrigem: origem, dataDestino: data, criadoPor: usuarioAtual }, accessToken);
@@ -1008,7 +1008,7 @@ export default function EscalaPage() {
     if (alocacoes.length === 0) { toast('Ninguém foi alocado hoje ainda.', 'error'); return; }
     const pendentes = alocacoes.filter(a => !a.notificado_em).length;
     if (pendentes === 0) { toast('Todo mundo já foi notificado dessa escala.', 'info'); return; }
-    if (!confirm(`Enviar WhatsApp pra ${pendentes} colaborador(es) que ainda não foram notificados da escala de ${fmtDataExtenso(data)}?\n\nQuem já foi notificado antes não recebe de novo.`)) return;
+    if (!(await confirm(`Enviar WhatsApp pra ${pendentes} colaborador(es) que ainda não foram notificados da escala de ${fmtDataExtenso(data)}?\n\nQuem já foi notificado antes não recebe de novo.`))) return;
     setNotificando(true);
     try {
       const res = await notificarColaboradoresAction({ empresaId, data }, accessToken);

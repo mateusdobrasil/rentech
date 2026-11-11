@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from 'react';
+import { useConfirm } from '../../../components/ui/NotificationProvider';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../actions';
@@ -184,6 +185,7 @@ const manutencaoVazia: Partial<Manutencao> = {
 
 export default function VisualizacaoFrota() {
   const router = useRouter();
+  const confirmar = useConfirm();
   const { usuarioAtual, permissaoNormalizada, permissaoBruta, authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess({ nomeFallback: 'Usuário' });
   const [podeGerenciar, setPodeGerenciar] = useState(false);
 
@@ -400,7 +402,7 @@ export default function VisualizacaoFrota() {
   };
 
   const excluirTipoManutencao = async (tipo: TipoManutencao) => {
-    if (!confirm(`Remover o tipo "${tipo.nome}"? Manutenções já registradas com esse tipo não serão alteradas.`)) return;
+    if (!(await confirmar({ message: `Remover o tipo "${tipo.nome}"? Manutenções já registradas com esse tipo não serão alteradas.`, danger: true, confirmLabel: 'Remover' }))) return;
 
     const { error } = await supabase.from('frota_tipos_manutencao').delete().eq('id', tipo.id);
     if (error) {

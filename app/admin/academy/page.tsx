@@ -7,7 +7,7 @@ import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../actions';
 import { usePageAccess } from '../../components/hooks/usePageAccess';
 import { HubErro } from '../../components/ui/HubStates';
-import { useToast } from '../../components/ui/NotificationProvider';
+import { useToast, useConfirm } from '../../components/ui/NotificationProvider';
 import { CATEGORIAS, NIVEIS, PUBLICOS, type Artigo, type CategoriaId, type Secao } from '../../academy/categorias';
 import { getYoutubeEmbedUrl } from '../../academy/youtube';
 
@@ -58,6 +58,7 @@ export default function GestaoAcademy() {
   const router = useRouter();
   const { usuarioAtual: usuarioNome, authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess({ nomeFallback: 'Usuário' });
   const toast = useToast();
+  const confirmar = useConfirm();
 
   const [artigos, setArtigos] = useState<Artigo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -222,7 +223,7 @@ export default function GestaoAcademy() {
   };
 
   const handleDeletar = async (artigo: Artigo) => {
-    if (!confirm(`Tem certeza que deseja excluir "${artigo.titulo}"? Esta ação não pode ser desfeita.`)) return;
+    if (!(await confirmar({ message: `Tem certeza que deseja excluir "${artigo.titulo}"? Esta ação não pode ser desfeita.`, danger: true, confirmLabel: 'Excluir' }))) return;
     const { error } = await supabase.from('academy_artigos').delete().eq('id', artigo.id);
     if (error) return toast(`Erro ao excluir: ${error.message}`, 'error');
     await registrarLogAuditoria({

@@ -350,10 +350,12 @@ export default function FuncionarioPage() {
     if (nome === funcionarioSelecionado) return;
 
     if (temAlteracoesNaoSalvas) {
-      const salvar = await confirm(
-        `A ficha de ${form.nome_completo || 'este colaborador'} tem alterações não salvas.\n\n` +
-        `Confirmar = Salvar antes de trocar\nCancelar = Descartar as alterações`
-      );
+      const salvar = await confirm({
+        title: 'Alterações não salvas',
+        message: `A ficha de ${form.nome_completo || 'este colaborador'} tem alterações não salvas.\n\nSalvar antes de trocar de colaborador?`,
+        confirmLabel: 'Salvar e trocar',
+        cancelLabel: 'Descartar',
+      });
       if (salvar) {
         const ok = await salvarColaborador();
         if (!ok) return;

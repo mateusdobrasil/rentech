@@ -12,7 +12,7 @@ import {
 import { FONTES_DADOS_DISPONIVEIS, EVENTOS_SISTEMA_DISPONIVEIS } from './catalogoAutomacoes';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
-import { useToast } from '../../../components/ui/NotificationProvider';
+import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import { supabase } from '../../../lib/supabase';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
@@ -79,6 +79,7 @@ export default function GestaoAgendamentos() {
   const router = useRouter();
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Gestor' });
   const toast = useToast();
+  const confirmar = useConfirm();
 
   // Empresa(s) que o usuário pode enxergar (Rentech × AlfaLight) — só quem é
   // literalmente "Administrador" (ehAdministradorGlobal) vê/edita automações
@@ -277,7 +278,7 @@ export default function GestaoAgendamentos() {
 
   const excluirAutomacao = async () => {
     if (!modalAutomacao?.id) return;
-    if (!confirm(`Excluir a automação "${modalAutomacao.form.nome}"? Isso não pode ser desfeito.`)) return;
+    if (!(await confirmar({ message: `Excluir a automação "${modalAutomacao.form.nome}"? Isso não pode ser desfeito.`, danger: true, confirmLabel: 'Excluir' }))) return;
 
     setSalvandoAutomacao(true);
     const res = await excluirAutomacaoAction(modalAutomacao.id, accessToken);

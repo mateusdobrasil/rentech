@@ -15,7 +15,7 @@ import {
 import type { ItemRescisao, MotivoRescisao } from '../../../../lib/calculoRescisao';
 import { usePageAccess } from '../../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../../components/ui/HubStates';
-import { useToast } from '../../../../components/ui/NotificationProvider';
+import { useToast, useConfirm } from '../../../../components/ui/NotificationProvider';
 
 const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 const fmtMoeda = (v: number | null | undefined) => (v == null ? 'R$ 0,00' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
@@ -321,6 +321,7 @@ const TermoRescisaoDoc = ({ rescisao, itens, totais, saldoFgts, valorMultaFgts, 
 export default function DetalheRescisaoPage() {
   const router = useRouter();
   const toast = useToast();
+  const confirmar = useConfirm();
   const params = useParams<{ id: string }>();
   const id = Number(params.id);
 
@@ -399,7 +400,7 @@ export default function DetalheRescisaoPage() {
 
   const [recalculando, setRecalculando] = useState(false);
   const recalcular = async () => {
-    if (!confirm('Recalcular vai sobrescrever qualquer edição manual feita nas linhas do cálculo e atualizar a estimativa do saldo do FGTS (mantendo o percentual da multa já salvo). Continuar?')) return;
+    if (!(await confirmar('Recalcular vai sobrescrever qualquer edição manual feita nas linhas do cálculo e atualizar a estimativa do saldo do FGTS (mantendo o percentual da multa já salvo). Continuar?'))) return;
     setRecalculando(true);
     try {
       const res = await recalcularRescisaoAction({ id, baseSalarialCalculo: baseEscolhida }, accessToken);
@@ -447,7 +448,7 @@ export default function DetalheRescisaoPage() {
   };
 
   const removerAnexo = async (anexoId: number) => {
-    if (!confirm('Remover este anexo?')) return;
+    if (!(await confirmar({ message: 'Remover este anexo?', danger: true, confirmLabel: 'Remover' }))) return;
     setRemovendoAnexoId(anexoId);
     try {
       const res = await removerAnexoRescisaoAction({ anexoId }, accessToken);
@@ -505,7 +506,7 @@ export default function DetalheRescisaoPage() {
 
   const [homologando, setHomologando] = useState(false);
   const homologar = async () => {
-    if (!confirm('Homologar esta rescisão vai marcar o funcionário como inativo, gravar a data de desligamento na ficha e lançar a movimentação de demissão. Esta ação não é facilmente reversível. Continuar?')) return;
+    if (!(await confirmar('Homologar esta rescisão vai marcar o funcionário como inativo, gravar a data de desligamento na ficha e lançar a movimentação de demissão. Esta ação não é facilmente reversível. Continuar?'))) return;
     setHomologando(true);
     try {
       const res = await homologarRescisaoAction({ id, usuarioNome: usuarioAtual }, accessToken);
@@ -520,7 +521,7 @@ export default function DetalheRescisaoPage() {
     const msg = pago
       ? 'Marcar esta rescisão como paga? Ela deixará de aparecer no filtro "Rescisão" do lote de pagamento em /admin/financeiro/rh.'
       : 'Desfazer a marcação de paga? A rescisão volta a aparecer no filtro "Rescisão" do lote de pagamento.';
-    if (!confirm(msg)) return;
+    if (!(await confirmar(msg))) return;
     setMarcandoPago(true);
     try {
       const res = await marcarRescisaoPagaAction({ id, pago, usuarioNome: usuarioAtual }, accessToken);
@@ -532,7 +533,7 @@ export default function DetalheRescisaoPage() {
 
   const [cancelando, setCancelando] = useState(false);
   const cancelar = async () => {
-    if (!confirm('Cancelar esta rescisão?')) return;
+    if (!(await confirmar({ message: 'Cancelar esta rescisão?', danger: true, confirmLabel: 'Cancelar', cancelLabel: 'Voltar' }))) return;
     setCancelando(true);
     try {
       const res = await cancelarRescisaoAction({ id }, accessToken);
@@ -561,10 +562,8 @@ export default function DetalheRescisaoPage() {
   useEffect(() => { if (rescisao?.status === 'HOMOLOGADA') carregarAssinatura(); }, [rescisao?.status]);
 
   const enviarParaAssinatura = async () => {
-    if (!confirm(
-      'Enviar o TRCT para assinatura do funcionário via Autentique?\n\n' +
-      (sandboxAssinatura ? '🧪 MODO TESTE (sandbox): não gasta créditos.' : '⚠ MODO REAL: consome um documento do plano Autentique.')
-    )) return;
+    if (!(await confirmar('Enviar o TRCT para assinatura do funcionário via Autentique?\n\n' +
+      (sandboxAssinatura ? '🧪 MODO TESTE (sandbox): não gasta créditos.' : '⚠ MODO REAL: consome um documento do plano Autentique.')))) return;
     setEnviandoAssinatura(true);
     try {
       const res = await enviarRescisaoParaAssinaturaAction({ id, usuarioNome: usuarioAtual, sandbox: sandboxAssinatura }, accessToken);

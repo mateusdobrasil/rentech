@@ -10,7 +10,7 @@ import { sincronizarEventosFeirasP2sAction } from '../../comercial/eventos-feira
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
-import { useToast } from '../../../components/ui/NotificationProvider';
+import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 // ============================================================================
@@ -254,6 +254,7 @@ export default function ChecklistCargaRetorno() {
   const router = useRouter();
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Usuário' });
   const toast = useToast();
+  const confirmar = useConfirm();
 
   const [dialog, setDialog] = useState<{ open: boolean; type: 'loading' | 'success' | 'error'; title: string; msg: string }>({ open: false, type: 'loading', title: '', msg: '' });
 
@@ -1339,13 +1340,13 @@ export default function ChecklistCargaRetorno() {
     const todosRetornoConferido = itens.length > 0 && itens.every(i => i.retorno_ok);
 
     if (statusSalvo === 'RASCUNHO' && todosSaidaConferida) {
-      if (confirm('Todos os itens de Saída (Separação) já estão conferidos.\n\nDeseja mudar o status para "Saída Conferida"?')) {
+      if ((await confirmar('Todos os itens de Saída (Separação) já estão conferidos.\n\nDeseja mudar o status para "Saída Conferida"?'))) {
         statusSalvo = 'SAIDA_CONFERIDA';
       }
     }
 
     if ((statusSalvo === 'RASCUNHO' || statusSalvo === 'SAIDA_CONFERIDA') && todosRetornoConferido) {
-      if (confirm('Todos os itens de Retorno (Desmontagem) já estão conferidos.\n\nDeseja mudar o status para "Finalizado"?')) {
+      if ((await confirmar('Todos os itens de Retorno (Desmontagem) já estão conferidos.\n\nDeseja mudar o status para "Finalizado"?'))) {
         statusSalvo = 'FINALIZADO';
       }
     }
@@ -1357,7 +1358,7 @@ export default function ChecklistCargaRetorno() {
       responsavelSaida = usuarioAtual;
       const divergentes = itensDivergentesSaida(itens);
       if (divergentes.length > 0) {
-        const confirmado = confirm(`⚠️ ${divergentes.length} item(ns) de saída com quantidade divergente da prevista.\n\nDeseja salvar mesmo assim?`);
+        const confirmado = (await confirmar(`⚠️ ${divergentes.length} item(ns) de saída com quantidade divergente da prevista.\n\nDeseja salvar mesmo assim?`));
         if (!confirmado) return;
       }
     }
@@ -1366,7 +1367,7 @@ export default function ChecklistCargaRetorno() {
       responsavelRetorno = usuarioAtual;
       const divergentes = itensDivergentesRetorno(itens);
       if (divergentes.length > 0) {
-        const confirmado = confirm(`⚠️ ${divergentes.length} item(ns) de retorno com quantidade divergente da saída.\n\nDeseja salvar mesmo assim?`);
+        const confirmado = (await confirmar(`⚠️ ${divergentes.length} item(ns) de retorno com quantidade divergente da saída.\n\nDeseja salvar mesmo assim?`));
         if (!confirmado) return;
       }
     }
@@ -1636,7 +1637,7 @@ export default function ChecklistCargaRetorno() {
   };
 
   const excluirChecklist = async (c: ChecklistGridRow) => {
-    if (!confirm(`Excluir o checklist ${gerarNumeroExibicao(c.numero)} (${c.evento_feira || c.cliente || 'sem evento'})? Essa ação não pode ser desfeita.`)) return;
+    if (!(await confirmar({ message: `Excluir o checklist ${gerarNumeroExibicao(c.numero)} (${c.evento_feira || c.cliente || 'sem evento'})? Essa ação não pode ser desfeita.`, danger: true, confirmLabel: 'Excluir' }))) return;
 
     const { error } = await supabase.from('checklists').delete().eq('id', c.id);
     if (error) {
@@ -1718,7 +1719,7 @@ export default function ChecklistCargaRetorno() {
   };
 
   const removerItemModelo = async (item: ModeloItem) => {
-    if (!confirm(`Remover "${item.descricao}" do modelo padrão?`)) return;
+    if (!(await confirmar({ message: `Remover "${item.descricao}" do modelo padrão?`, danger: true, confirmLabel: 'Remover' }))) return;
     const { error } = await supabase.from('checklist_modelo_itens').delete().eq('id', item.id);
     if (error) { toast(`Erro: ${error.message}`, 'error'); return; }
     registrarLogAuditoria({ usuario_nome: usuarioAtual, acao: 'REMOVEU ITEM DO MODELO PADRÃO DE CHECKLIST', setor: 'OPERACIONAL', equipamento_nome: item.descricao });

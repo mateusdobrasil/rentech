@@ -15,7 +15,7 @@ import {
 } from '../actions/actions-documentos-empresa';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
-import { useToast } from '../../../components/ui/NotificationProvider';
+import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
@@ -77,6 +77,7 @@ export default function DocumentosPage() {
 
   const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
   const toast = useToast();
+  const confirmar = useConfirm();
 
   // Restrição por empresa (multi-empresa): resolvida no servidor a partir de
   // perfis_usuarios_empresas em cada Server Action chamada abaixo (ver
@@ -176,7 +177,7 @@ export default function DocumentosPage() {
     if (!upCategoriaEmpresa) { toast('Escolha a categoria.', 'error'); return; }
     if (!upArquivoEmpresa) { toast('Selecione o arquivo.', 'error'); return; }
     if (catSelecionadaEmpresa?.exige_validade && !upValidadeEmpresa) {
-      if (!confirm('Esta categoria costuma ter validade e você não preencheu a data. Enviar mesmo assim?')) return;
+      if (!(await confirmar('Esta categoria costuma ter validade e você não preencheu a data. Enviar mesmo assim?'))) return;
     }
     setEnviandoEmpresa(true);
     try {
@@ -224,7 +225,7 @@ export default function DocumentosPage() {
   };
 
   const excluirEmpresa = async (doc: DocumentoEmpresa) => {
-    if (!confirm(`Excluir "${doc.categoria}${doc.titulo ? ' — ' + doc.titulo : ''}"?\n\nEsta ação é permanente.`)) return;
+    if (!(await confirmar({ message: `Excluir "${doc.categoria}${doc.titulo ? ' — ' + doc.titulo : ''}"?\n\nEsta ação é permanente.`, danger: true, confirmLabel: 'Excluir' }))) return;
     try {
       const res = await excluirDocumentoEmpresaAction({ id: doc.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);
@@ -283,7 +284,7 @@ export default function DocumentosPage() {
     if (!upCategoria) { toast('Escolha a categoria.', 'error'); return; }
     if (!upArquivo) { toast('Selecione o arquivo.', 'error'); return; }
     if (catSelecionada?.exige_validade && !upValidade) {
-      if (!confirm('Esta categoria costuma ter validade e você não preencheu a data. Enviar mesmo assim?')) return;
+      if (!(await confirmar('Esta categoria costuma ter validade e você não preencheu a data. Enviar mesmo assim?'))) return;
     }
     setEnviando(true);
     try {
@@ -341,7 +342,7 @@ export default function DocumentosPage() {
   };
 
   const excluir = async (doc: Documento) => {
-    if (!confirm(`Excluir "${doc.categoria}${doc.titulo ? ' — ' + doc.titulo : ''}" de ${doc.funcionario_nome}?\n\nEsta ação é permanente.`)) return;
+    if (!(await confirmar({ message: `Excluir "${doc.categoria}${doc.titulo ? ' — ' + doc.titulo : ''}" de ${doc.funcionario_nome}?\n\nEsta ação é permanente.`, danger: true, confirmLabel: 'Excluir' }))) return;
     try {
       const res = await excluirDocumentoAction({ id: doc.id }, accessToken);
       if (!res.ok) throw new Error(res.erro);

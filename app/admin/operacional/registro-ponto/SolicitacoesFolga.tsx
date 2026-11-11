@@ -9,7 +9,7 @@ import {
   listarSolicitacoesFolgaAction, aprovarSolicitacaoAction, rejeitarSolicitacaoAction,
   type SolicitacaoHistorico
 } from '../../rh/actions/actions-ponto-whatsapp';
-import { useToast } from '../../../components/ui/NotificationProvider';
+import { useToast, useConfirm, usePrompt } from '../../../components/ui/NotificationProvider';
 
 const DIAS_SEMANA_ABREV = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
@@ -113,6 +113,8 @@ function CalendarioFolgas({ solicitacoes }: { solicitacoes: SolicitacaoHistorico
 
 export default function SolicitacoesFolga({ usuarioAtual, accessToken, onCountChange, mostrarCalendario, filtroEmpresaId = null }: { usuarioAtual: string; accessToken: string; onCountChange?: (pendentes: number) => void; mostrarCalendario?: boolean; filtroEmpresaId?: number | null }) {
   const toast = useToast();
+  const confirmar = useConfirm();
+  const perguntar = usePrompt();
   const [solicitacoes, setSolicitacoes] = useState<SolicitacaoHistorico[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [processandoId, setProcessandoId] = useState<number | null>(null);
@@ -152,7 +154,7 @@ export default function SolicitacoesFolga({ usuarioAtual, accessToken, onCountCh
   // na fila, respostas fora de ordem sobrescreviam a lista com dados velhos
   // e a tela parecia travada sem atualizar.
   const aprovar = async (id: number) => {
-    if (!confirm('Aprovar esta folga? Isso abona os dias úteis do período em folha_ponto_abono e avisa o funcionário pelo WhatsApp.')) return;
+    if (!(await confirmar('Aprovar esta folga? Isso abona os dias úteis do período em folha_ponto_abono e avisa o funcionário pelo WhatsApp.'))) return;
     setProcessandoId(id);
     try {
       const res = await aprovarSolicitacaoAction({ id, aprovadorNome: usuarioAtual }, accessToken);
@@ -164,7 +166,7 @@ export default function SolicitacoesFolga({ usuarioAtual, accessToken, onCountCh
   };
 
   const rejeitar = async (id: number) => {
-    const motivo = prompt('Motivo da rejeição (o funcionário verá esta mensagem):');
+    const motivo = (await perguntar('Motivo da rejeição (o funcionário verá esta mensagem):'));
     if (!motivo?.trim()) return;
     setProcessandoId(id);
     try {

@@ -8,7 +8,7 @@
 // Regras de negócio em app/admin/operacional/actions/actions-multas.ts e
 // app/lib/multasCore.ts.
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import * as XLSX from 'xlsx';
@@ -143,6 +143,7 @@ export default function MultasDebitosPage() {
   const [consultandoIds, setConsultandoIds] = useState<Set<string>>(new Set());
   const [lote, setLote] = useState<{ atual: number; total: number } | null>(null);
   const [prazoIds, setPrazoIds] = useState<Set<string>>(new Set());
+  const travaPrazos = useRef<Set<string>>(new Set());
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
 
   const [detalheId, setDetalheId] = useState<string | null>(null);
@@ -275,15 +276,27 @@ export default function MultasDebitosPage() {
 
   // Senatran: infrações em aberto + prazo de indicação do condutor (cobrado por chamada).
   const buscarPrazos = async (v: VeiculoMultas) => {
-    const ok = await confirm({
-      title: 'Prazos de indicação (Senatran)',
-      message: `Buscar na Senatran as infrações em aberto do ${v.apelido} (${v.placa}) e o prazo para indicar o condutor? Custa ~R$ 0,32 pela lista + ~R$ 0,26 por infração nova ou ainda sem prazo. Infrações que ainda não chegaram ao Detran já entram aqui.`,
-      confirmLabel: 'Buscar',
-    });
-    if (!ok) return;
-    setPrazoIds(s => new Set(s).add(v.id));
-    const res = await buscarPrazosSenatranAction({ veiculoId: v.id }, accessToken);
-    setPrazoIds(s => { const n = new Set(s); n.delete(v.id); return n; });
+    // Trava já no clique (antes do confirm): duplo clique abria dois pedidos
+    // e a busca rodava 2x, pagando os detalhes em dobro (visto 2026-11-11).
+    if (travaPrazos.current.has(v.id)) return;
+    travaPrazos.current.add(v.id);
+    try {
+      const ok = await confirm({
+        title: 'Prazos de indicação (Senatran)',
+        message: `Buscar na Senatran as infrações em aberto do ${v.apelido} (${v.placa}) e o prazo para indicar o condutor? Custa ~R$ 0,28 pela lista + ~R$ 0,28 por infração nova ou ainda sem prazo. Infrações que ainda não chegaram ao Detran já entram aqui.`,
+        confirmLabel: 'Buscar',
+      });
+      if (!ok) return;
+      setPrazoIds(s => new Set(s).add(v.id));
+      const res = await buscarPrazosSenatranAction({ veiculoId: v.id }, accessToken);
+      setPrazoIds(s => { const n = new Set(s); n.delete(v.id); return n; });
+      tratarResultadoPrazos(v, res);
+    } finally {
+      travaPrazos.current.delete(v.id);
+    }
+  };
+
+  const tratarResultadoPrazos = async (v: VeiculoMultas, res: Awaited<ReturnType<typeof buscarPrazosSenatranAction>>) => {
     if (!res.ok) { toast(`${v.apelido}: ${res.erro}`, 'error'); return; }
     const i = res.info;
     toast(`${v.apelido}: ${i.infracoes} infração(ões) em aberto na Senatran · ${i.novas} nova(s) · ${i.prazos} prazo(s) atualizado(s)${i.indicadas ? ` · ${i.indicadas} já com condutor indicado` : ''} · custo ~R$ ${Number(i.preco || 0).toFixed(2).replace('.', ',')}`, 'success');

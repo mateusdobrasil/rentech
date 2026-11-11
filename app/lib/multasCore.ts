@@ -272,7 +272,22 @@ export interface ResultadoPrazosSenatran {
 
 const MAX_DETALHES_POR_VEICULO = 8;
 
+// Trava por veículo na instância do servidor: duas buscas simultâneas do
+// mesmo veículo pagariam os mesmos detalhes duas vezes.
+const prazosEmAndamento = new Set<string>();
+
 export async function atualizarPrazosSenatran(db: Db, veiculo: VeiculoConsulta, usuario: string): Promise<ResultadoPrazosSenatran> {
+  const vazio = { infracoes: 0, novas: 0, prazos: 0, indicadas: 0, detalhes: 0, preco: 0, avisos: [] as string[] };
+  if (prazosEmAndamento.has(veiculo.id)) return { ...vazio, ok: false, erro: `Já existe uma busca na Senatran em andamento para ${veiculo.apelido}.` };
+  prazosEmAndamento.add(veiculo.id);
+  try {
+    return await atualizarPrazosSenatranInterno(db, veiculo, usuario);
+  } finally {
+    prazosEmAndamento.delete(veiculo.id);
+  }
+}
+
+async function atualizarPrazosSenatranInterno(db: Db, veiculo: VeiculoConsulta, usuario: string): Promise<ResultadoPrazosSenatran> {
   const vazio = { infracoes: 0, novas: 0, prazos: 0, indicadas: 0, detalhes: 0, preco: 0, avisos: [] as string[] };
   if (veiculo.propriedade === 'ALUGADO') return { ...vazio, ok: false, erro: `${veiculo.apelido} é alugado — fora da consulta automática.` };
   if (!veiculo.placa) return { ...vazio, ok: false, erro: `Veículo ${veiculo.apelido} sem placa.` };

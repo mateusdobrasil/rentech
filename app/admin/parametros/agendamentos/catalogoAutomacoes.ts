@@ -16,6 +16,7 @@ export const FONTES_DADOS_DISPONIVEIS = [
   { valor: 'FROTA_VENCIMENTOS', label: 'Frota com documentação vencida (CRLV/Seguro)', variaveis: ['lista', 'quantidade'] },
   { valor: 'DOCUMENTOS_VENCIDOS', label: 'Documentos vencidos (RH e Empresa)', variaveis: ['lista', 'quantidade'] },
   { valor: 'ANIVERSARIANTES_SEMANA', label: 'Aniversariantes da semana (RH)', variaveis: ['lista', 'quantidade'] },
+  { valor: 'MULTAS_PRAZO_INDICACAO', label: 'Multas com prazo de indicação de condutor vencendo (≤ 7 dias)', variaveis: ['lista', 'quantidade'] },
 ] as const;
 export type FonteDados = typeof FONTES_DADOS_DISPONIVEIS[number]['valor'];
 

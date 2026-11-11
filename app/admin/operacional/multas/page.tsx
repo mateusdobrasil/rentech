@@ -23,7 +23,7 @@ import {
   lancarDescontoFolhaAction, atualizarStatusDebitoAction, salvarObservacaoDebitoAction,
   salvarDebitoManualAction, excluirDebitoManualAction, avisarCondutorAction,
   lerNotificacaoMultaAction, anexarNotificacaoAction, marcarIndicacaoCondutorAction,
-  salvarBoletoAction, buscarBoletoAction, buscarPrazosSenatranAction,
+  salvarBoletoAction, buscarBoletoAction, buscarPrazosSenatranAction, dadosIndicacaoCondutorAction, salvarRecursoAction,
   type DebitoMulta, type VeiculoMultas, type ConsultaMulta, type TipoDebitoMulta, type StatusDebito,
 } from '../actions/actions-multas';
 
@@ -223,6 +223,11 @@ export default function MultasDebitosPage() {
     });
   }, [debitosEscopo, filtroStatus, filtroTipo, filtroVeiculo, busca, veiculoPorId]);
 
+  const consultasEscopo = useMemo(
+    () => (filtroEmpresa === 'TODAS' ? consultas : consultas.filter(c => String(c.veiculo_id ? veiculoPorId.get(c.veiculo_id)?.empresa_id : null) === filtroEmpresa)),
+    [consultas, filtroEmpresa, veiculoPorId]
+  );
+
   const abertoPorVeiculo = useMemo(() => {
     const m = new Map<string, { qtd: number; valor: number }>();
     debitos.filter(d => d.status === 'ABERTO').forEach(d => {
@@ -299,7 +304,7 @@ export default function MultasDebitosPage() {
   const tratarResultadoPrazos = async (v: VeiculoMultas, res: Awaited<ReturnType<typeof buscarPrazosSenatranAction>>) => {
     if (!res.ok) { toast(`${v.apelido}: ${res.erro}`, 'error'); return; }
     const i = res.info;
-    toast(`${v.apelido}: ${i.infracoes} infração(ões) em aberto na Senatran · ${i.novas} nova(s) · ${i.prazos} prazo(s) atualizado(s)${i.indicadas ? ` · ${i.indicadas} já com condutor indicado` : ''} · custo ~R$ ${Number(i.preco || 0).toFixed(2).replace('.', ',')}`, 'success');
+    toast(`${v.apelido}: ${i.infracoes} infração(ões) em aberto na Senatran · ${i.novas} nova(s) · ${i.prazos} prazo(s) atualizado(s)${i.indicadas ? ` · ${i.indicadas} já com condutor indicado` : ''}${i.historico ? ` · ${i.historico} paga(s) no histórico` : ''}${i.pagasFora ? ` · ${i.pagasFora} marcada(s) como paga(s) (pagas fora do sistema)` : ''} · custo ~R$ ${Number(i.preco || 0).toFixed(2).replace('.', ',')}`, 'success');
     (i.avisos || []).slice(0, 2).forEach((a: string) => toast(a, 'info'));
     await carregar();
   };
@@ -611,6 +616,7 @@ export default function MultasDebitosPage() {
                                 return <span className={`font-black ${dias <= 3 ? 'text-red-600' : dias <= 7 ? 'text-amber-600' : 'text-sky-700'}`}>⏳ INDICAR ATÉ {fmtData(d.prazo_indicacao_condutor)}{dias < 0 ? ' (VENCIDO)' : ''}</span>;
                               })()}
                               {d.condutor_indicado_em && <span className="text-emerald-600 font-bold">✔ CONDUTOR INDICADO</span>}
+                              {d.recurso_status && <span className={`font-black ${d.recurso_status === 'DEFERIDO' ? 'text-emerald-600' : d.recurso_status === 'INDEFERIDO' ? 'text-red-600' : 'text-violet-600'}`}>⚖️ RECURSO {d.recurso_status}</span>}
                               {d.origem === 'MANUAL' && <span className="text-violet-600 font-bold">MANUAL</span>}
                               {d.fonte === 'RENAINF' && <span className="text-orange-600 font-bold">RENAINF</span>}
                               {d.fonte === 'SENATRAN' && <span className="text-sky-700 font-bold" title="Veio da Senatran — ainda não aparece no Detran (autuação em prazo de indicação)">SENATRAN</span>}
@@ -720,21 +726,24 @@ export default function MultasDebitosPage() {
         ) : aba === 'relatorios' ? (
           <Relatorios debitos={debitosEscopo} veiculoPorId={veiculoPorId} empresaNome={empresaNome} />
         ) : (
+          <>
+          <ResumoCustos consultas={consultasEscopo} debitos={debitosEscopo} />
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm overflow-x-auto">
-            <table className="w-full text-xs min-w-[760px]">
+            <table className="w-full text-xs min-w-[860px]">
               <thead>
                 <tr className="bg-[#F8FAFC] text-[10px] uppercase tracking-wider text-gray-500 text-left">
-                  <th className="p-3">Quando</th><th className="p-3">Veículo</th><th className="p-3">Resultado</th>
+                  <th className="p-3">Quando</th><th className="p-3">Serviço</th><th className="p-3">Veículo</th><th className="p-3">Resultado</th>
                   <th className="p-3 text-right">Encontrados</th><th className="p-3 text-right">Novos</th><th className="p-3 text-right">Baixados</th>
                   <th className="p-3 text-right">Custo</th><th className="p-3">Por</th><th className="p-3"></th>
                 </tr>
               </thead>
               <tbody>
-                {consultas.filter(c => filtroEmpresa === 'TODAS' || String(veiculoPorId.get(c.veiculo_id)?.empresa_id) === filtroEmpresa).map(c => {
-                  const v = veiculoPorId.get(c.veiculo_id);
+                {consultasEscopo.map(c => {
+                  const v = c.veiculo_id ? veiculoPorId.get(c.veiculo_id) : undefined;
                   return (
                     <tr key={c.id} className="border-t border-[#F1F5F9]">
                       <td className="p-3 whitespace-nowrap">{fmtDataHora(c.consultado_em)}</td>
+                      <td className="p-3 whitespace-nowrap"><span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${c.provedor === 'ANTHROPIC' ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-600'}`}>{rotuloServico(c)}</span></td>
                       <td className="p-3 whitespace-nowrap font-bold">{v?.apelido || '—'} <span className="font-mono text-gray-400 font-normal">{v?.placa}</span></td>
                       <td className="p-3 max-w-[280px]">
                         <span className={`font-black ${c.status === 'OK' ? 'text-green-600' : 'text-red-600'}`}>{c.status}</span>
@@ -743,16 +752,17 @@ export default function MultasDebitosPage() {
                       <td className="p-3 text-right">{c.encontrados}</td>
                       <td className="p-3 text-right">{c.novos}</td>
                       <td className="p-3 text-right">{c.baixados}</td>
-                      <td className="p-3 text-right whitespace-nowrap">{c.preco !== null ? fmtBRL(c.preco) : '—'}</td>
+                      <td className="p-3 text-right whitespace-nowrap">{c.preco === null ? '—' : c.provedor === 'ANTHROPIC' ? fmtUSD(c.preco) : fmtBRL(c.preco)}</td>
                       <td className="p-3 whitespace-nowrap text-gray-500">{c.consultado_por || '—'}</td>
                       <td className="p-3">{c.site_receipt && <a href={c.site_receipt} target="_blank" rel="noreferrer" className="text-[#336699] font-bold underline whitespace-nowrap">comprovante</a>}</td>
                     </tr>
                   );
                 })}
-                {consultas.length === 0 && <tr><td colSpan={9} className="p-10 text-center text-gray-400">Nenhuma consulta feita ainda.</td></tr>}
+                {consultasEscopo.length === 0 && <tr><td colSpan={10} className="p-10 text-center text-gray-400">Nenhuma consulta feita ainda.</td></tr>}
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
 
@@ -902,6 +912,53 @@ export default function MultasDebitosPage() {
           </div>
         </Modal>
       )}
+    </div>
+  );
+}
+
+const fmtUSD = (v: number | null | undefined) => `US$ ${Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+const ROTULO_SERVICO: Record<string, string> = {
+  'detran/sp/debitos': 'Detran-SP', 'senatran/infracoes': 'Senatran lista', 'senatran/download-infracao': 'Senatran detalhe',
+  'der/sp/penalidades': 'DER boleto', 'pref/sp/sao-paulo/multas-guias': 'Prefeitura boleto',
+};
+const rotuloServico = (c: ConsultaMulta) => c.provedor === 'ANTHROPIC' ? 'Leitura IA' : (ROTULO_SERVICO[c.servico || ''] || c.servico || 'Detran-SP');
+
+// ============================================================================
+// Resumo de custos do mês (aba Consultas): o que se gastou consultando e
+// o que se gastou com as multas em si.
+// ============================================================================
+function ResumoCustos({ consultas, debitos }: { consultas: ConsultaMulta[]; debitos: DebitoMulta[] }) {
+  const [mes, setMes] = useState(mesAtualIso());
+  const doMes = consultas.filter(c => c.consultado_em.slice(0, 7) === mes);
+  const infosimples = doMes.filter(c => c.provedor !== 'ANTHROPIC');
+  const ia = doMes.filter(c => c.provedor === 'ANTHROPIC');
+  const somaInfo = infosimples.reduce((s, c) => s + (Number(c.preco) || 0), 0);
+  const somaIa = ia.reduce((s, c) => s + (Number(c.preco) || 0), 0);
+  const porServico = new Map<string, { qtd: number; valor: number }>();
+  infosimples.forEach(c => { const k = rotuloServico(c); const a = porServico.get(k) || { qtd: 0, valor: 0 }; a.qtd++; a.valor += Number(c.preco) || 0; porServico.set(k, a); });
+
+  const pagasMes = debitos.filter(d => d.status === 'PAGO' && (d.pago_em || '').slice(0, 7) === mes);
+  const nicsMes = debitos.filter(d => d.eh_nic && d.status !== 'CANCELADO' && (d.primeira_consulta_em || d.created_at).slice(0, 7) === mes);
+  const novasMes = debitos.filter(d => d.tipo === 'MULTA' && (d.primeira_consulta_em || d.created_at).slice(0, 7) === mes);
+
+  return (
+    <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-4 mb-3">
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <p className="text-[10px] font-black uppercase tracking-wider text-gray-500">💰 Custos do mês</p>
+        <input type="month" value={mes} onChange={e => setMes(e.target.value || mesAtualIso())} className="p-1.5 border border-[#E2E8F0] rounded-lg text-xs" />
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Kpi titulo="Consultas Infosimples" valor={fmtBRL(somaInfo)} sub={`${infosimples.length} chamada(s)`} />
+        <Kpi titulo="Leituras por IA" valor={fmtUSD(somaIa)} sub={`${ia.length} leitura(s)`} />
+        <Kpi titulo="Multas pagas no mês" valor={fmtBRL(pagasMes.reduce((s, d) => s + d.valor, 0))} sub={`${pagasMes.length} débito(s)`} />
+        <Kpi titulo="Por não indicar condutor" valor={fmtBRL(nicsMes.reduce((s, d) => s + d.valor, 0))} sub={`${nicsMes.length} NIC nova(s) · ${novasMes.length} multa(s) nova(s) no mês`} destaque={nicsMes.length > 0} />
+      </div>
+      {porServico.size > 0 && (
+        <p className="text-[10px] text-gray-500 mt-2">
+          {Array.from(porServico.entries()).map(([k, v]) => `${k}: ${v.qtd}× = ${fmtBRL(v.valor)}`).join(' · ')}
+        </p>
+      )}
+      <p className="text-[10px] text-gray-400 mt-1">Considera as últimas 200 consultas carregadas. Leituras por IA em dólar (cobradas pela Anthropic).</p>
     </div>
   );
 }
@@ -1086,6 +1143,47 @@ function DetalheDebito({ debito: d, veiculo, empresaNome, origem, nicsDaOrigem, 
     await executar('desconto', () => lancarDescontoFolhaAction({ debitoId: d.id, parcelas, mesInicio, valorTotal: valorDescontoNum }, accessToken), 'Desconto lançado no Holerite.');
   };
 
+  // Indicação do condutor: copia os dados que o app SNE pede, ou gera o FICI em PDF.
+  const prepararIndicacao = async (modo: 'SNE' | 'FICI') => {
+    setSalvando(`indicacao-${modo}`);
+    try {
+      const res = await dadosIndicacaoCondutorAction({ debitoId: d.id }, accessToken);
+      if (!res.ok) { toast(res.erro || 'Falha ao carregar os dados.', 'error'); return; }
+      const x = res.info;
+      if (x.faltando.length) toast(`Cadastro de ${x.condutor.nome} sem: ${x.faltando.join(', ')}. Complete em RH › Funcionários (os campos ficam em branco).`, 'info');
+      if (x.cnhVencida) toast(`Atenção: a CNH de ${x.condutor.nome} está vencida no cadastro.`, 'error');
+      if (modo === 'SNE') {
+        const cpf = (x.condutor.cpf || '').replace(/\D/g, '');
+        const linhas = [
+          `AIT: ${x.multa.auto_infracao || ''}`,
+          `Placa: ${x.veiculo?.placa || ''}`,
+          `Órgão: ${x.multa.orgao_autuador || ''}`,
+          `Infração: ${fmtData(x.multa.data_infracao)} ${fmtHora(x.multa.hora_infracao)}`.trim(),
+          `Condutor: ${x.condutor.nome}`,
+          `CPF: ${cpf ? `${cpf.slice(0, 3)}.${cpf.slice(3, 6)}.${cpf.slice(6, 9)}-${cpf.slice(9)}` : '(sem CPF no cadastro)'}`,
+          `CNH: ${x.condutor.cnh_numero || '(sem CNH no cadastro)'}${x.condutor.cnh_categoria ? ` · categoria ${x.condutor.cnh_categoria}` : ''}${x.condutor.cnh_validade ? ` · validade ${fmtData(x.condutor.cnh_validade)}` : ''}`,
+          x.multa.prazo_indicacao ? `Indicar até: ${fmtData(x.multa.prazo_indicacao)}` : null,
+        ].filter(Boolean).join('\n');
+        try { await navigator.clipboard.writeText(linhas); toast('Dados copiados — cole no app SNE (Indicar condutor).', 'success'); }
+        catch { toast(linhas, 'info'); }
+      } else {
+        const { gerarFiciPdf } = await import('./gerarFici');
+        const blob = await gerarFiciPdf(x);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `FICI-${x.multa.auto_infracao || 'multa'}-${x.veiculo?.placa || ''}.pdf`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 10_000);
+        toast('Formulário gerado — colha a assinatura do condutor e anexe cópia da CNH.', 'success');
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'error');
+    } finally {
+      setSalvando(null);
+    }
+  };
+
   const avisarCondutor = async () => {
     if (!(await confirm({ message: `Enviar WhatsApp para ${d.condutor_nome} avisando desta multa?`, confirmLabel: 'Enviar' }))) return;
     await executar('aviso', () => avisarCondutorAction({ debitoId: d.id }, accessToken), 'Condutor avisado por WhatsApp.');
@@ -1112,6 +1210,21 @@ function DetalheDebito({ debito: d, veiculo, empresaNome, origem, nicsDaOrigem, 
   };
 
   const [linhaEditada, setLinhaEditada] = useState(d.linha_digitavel || '');
+  const [recursoStatus, setRecursoStatus] = useState<'' | 'PROTOCOLADO' | 'DEFERIDO' | 'INDEFERIDO'>(d.recurso_status || '');
+  const [recursoProtocolo, setRecursoProtocolo] = useState(d.recurso_protocolo || '');
+  const [prazoDefesa, setPrazoDefesa] = useState(d.prazo_defesa || '');
+  const recursoMudou = recursoStatus !== (d.recurso_status || '') || recursoProtocolo !== (d.recurso_protocolo || '') || prazoDefesa !== (d.prazo_defesa || '');
+
+  const salvarRecurso = async () => {
+    if (recursoStatus === 'DEFERIDO' && d.status === 'ABERTO'
+      && !(await confirm({ message: 'Recurso deferido anula a multa: o débito será CANCELADO. Confirmar?', confirmLabel: 'Confirmar' }))) return;
+    setSalvando('recurso');
+    const res = await salvarRecursoAction({ debitoId: d.id, status: recursoStatus || null, protocolo: recursoProtocolo || null, prazoDefesa: prazoDefesa || null }, accessToken);
+    setSalvando(null);
+    if (!res.ok) { toast(res.erro || 'Falha ao salvar o recurso.', 'error'); return; }
+    toast(res.info?.cancelado ? 'Recurso deferido — débito cancelado.' : res.info?.reaberto ? 'Recurso atualizado — débito reaberto.' : 'Recurso salvo.', 'success');
+    await onAlterado();
+  };
   const [buscandoBoleto, setBuscandoBoleto] = useState(false);
   const ehPrefeituraSP = /MUNICIPAL|PREFEITURA|\bCET\b|\bDSV\b/i.test(d.orgao_autuador || '') && /S[AÃ]O PAULO/i.test(d.municipio || '');
   const ehDerSP = /\bD\.?\s?E\.?\s?R\b\.?/i.test(d.orgao_autuador || '');
@@ -1240,6 +1353,19 @@ function DetalheDebito({ debito: d, veiculo, empresaNome, origem, nicsDaOrigem, 
                   <button onClick={() => definirCondutor(null, null)} disabled={!!salvando} className="text-[10px] font-black uppercase text-red-600 underline">Trocar</button>
                 )}
               </div>
+              {!d.eh_nic && !d.condutor_indicado_em && d.status === 'ABERTO' && (
+                <div className="w-full flex flex-wrap items-center gap-2 pt-2 border-t border-[#F1F5F9]">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">Indicar ao órgão:</span>
+                  <button onClick={() => prepararIndicacao('SNE')} disabled={!!salvando}
+                    className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase border border-[#E2E8F0] text-[#0C1D4D] hover:border-[#336699] disabled:opacity-50">
+                    {salvando === 'indicacao-SNE' ? '...' : '📋 Dados para o SNE'}
+                  </button>
+                  <button onClick={() => prepararIndicacao('FICI')} disabled={!!salvando}
+                    className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase border border-[#E2E8F0] text-[#0C1D4D] hover:border-[#336699] disabled:opacity-50">
+                    {salvando === 'indicacao-FICI' ? 'Gerando...' : '📄 Formulário FICI (PDF)'}
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <>
@@ -1308,6 +1434,40 @@ function DetalheDebito({ debito: d, veiculo, empresaNome, origem, nicsDaOrigem, 
                 {salvando === 'desconto' ? 'Lançando...' : `Lançar ${parcelas}x ${fmtBRL(valorParcela)}`}
               </button>
             </div>
+          )}
+        </Secao>
+      )}
+
+      {/* Defesa / recurso */}
+      {ehMulta && (
+        <Secao titulo="⚖️ Defesa / recurso">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+            <Campo label="Prazo de defesa">
+              <input type="date" value={prazoDefesa} onChange={e => setPrazoDefesa(e.target.value)} className="w-full p-2 border border-[#E2E8F0] rounded-lg text-sm" />
+            </Campo>
+            <Campo label="Situação do recurso">
+              <select value={recursoStatus} onChange={e => setRecursoStatus(e.target.value as typeof recursoStatus)} className="w-full p-2 border border-[#E2E8F0] rounded-lg text-sm">
+                <option value="">Sem recurso</option>
+                <option value="PROTOCOLADO">Protocolado (aguardando)</option>
+                <option value="DEFERIDO">Deferido (multa anulada)</option>
+                <option value="INDEFERIDO">Indeferido</option>
+              </select>
+            </Campo>
+            <Campo label="Nº do protocolo">
+              <input value={recursoProtocolo} onChange={e => setRecursoProtocolo(e.target.value)} className="w-full p-2 border border-[#E2E8F0] rounded-lg text-sm font-mono" />
+            </Campo>
+          </div>
+          {d.prazo_defesa && d.status === 'ABERTO' && !d.recurso_status && (() => {
+            const dias = diasAte(d.prazo_defesa);
+            return <p className={`text-[10px] font-bold mt-2 ${dias < 0 ? 'text-gray-400' : dias <= 7 ? 'text-amber-700' : 'text-sky-700'}`}>
+              {dias < 0 ? `Prazo de defesa encerrado em ${fmtData(d.prazo_defesa)}.` : `Defesa prévia até ${fmtData(d.prazo_defesa)} (${dias === 0 ? 'hoje' : `${dias} dia(s)`}).`}
+            </p>;
+          })()}
+          {d.recurso_atualizado_em && <p className="text-[10px] text-gray-400 mt-1">Atualizado por {d.recurso_atualizado_por} em {fmtDataHora(d.recurso_atualizado_em)}.</p>}
+          {recursoMudou && (
+            <button onClick={salvarRecurso} disabled={!!salvando} className="mt-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase bg-[#0C1D4D] text-white disabled:opacity-50">
+              {salvando === 'recurso' ? 'Salvando...' : 'Salvar recurso'}
+            </button>
           )}
         </Secao>
       )}

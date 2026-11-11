@@ -266,7 +266,7 @@ export async function enviarAvisoCondutor(db: Db, debitoId: string, usuario: str
 // ---------------------------------------------------------------------------
 export interface ResultadoPrazosSenatran {
   ok: boolean; erro?: string;
-  infracoes: number; novas: number; prazos: number; indicadas: number; detalhes: number;
+  infracoes: number; novas: number; prazos: number; indicadas: number; detalhes: number; historico: number; pagasFora: number;
   preco: number; avisos: string[];
 }
 
@@ -277,7 +277,7 @@ const MAX_DETALHES_POR_VEICULO = 8;
 const prazosEmAndamento = new Set<string>();
 
 export async function atualizarPrazosSenatran(db: Db, veiculo: VeiculoConsulta, usuario: string): Promise<ResultadoPrazosSenatran> {
-  const vazio = { infracoes: 0, novas: 0, prazos: 0, indicadas: 0, detalhes: 0, preco: 0, avisos: [] as string[] };
+  const vazio = { infracoes: 0, novas: 0, prazos: 0, indicadas: 0, detalhes: 0, historico: 0, pagasFora: 0, preco: 0, avisos: [] as string[] };
   if (prazosEmAndamento.has(veiculo.id)) return { ...vazio, ok: false, erro: `Já existe uma busca na Senatran em andamento para ${veiculo.apelido}.` };
   prazosEmAndamento.add(veiculo.id);
   try {
@@ -288,7 +288,7 @@ export async function atualizarPrazosSenatran(db: Db, veiculo: VeiculoConsulta, 
 }
 
 async function atualizarPrazosSenatranInterno(db: Db, veiculo: VeiculoConsulta, usuario: string): Promise<ResultadoPrazosSenatran> {
-  const vazio = { infracoes: 0, novas: 0, prazos: 0, indicadas: 0, detalhes: 0, preco: 0, avisos: [] as string[] };
+  const vazio = { infracoes: 0, novas: 0, prazos: 0, indicadas: 0, detalhes: 0, historico: 0, pagasFora: 0, preco: 0, avisos: [] as string[] };
   if (veiculo.propriedade === 'ALUGADO') return { ...vazio, ok: false, erro: `${veiculo.apelido} é alugado — fora da consulta automática.` };
   if (!veiculo.placa) return { ...vazio, ok: false, erro: `Veículo ${veiculo.apelido} sem placa.` };
 
@@ -359,6 +359,7 @@ async function atualizarPrazosSenatranInterno(db: Db, veiculo: VeiculoConsulta, 
     const indicado = !!d.condutor_nome;
     const camposPrazo = {
       ...(d.prazo_indicacao ? { prazo_indicacao_condutor: d.prazo_indicacao } : {}),
+      ...(d.prazo_defesa ? { prazo_defesa: d.prazo_defesa } : {}),
       ...(indicado ? { condutor_indicado_em: agora, condutor_indicado_por: `SENATRAN (${d.condutor_nome})`.slice(0, 120) } : {}),
       updated_at: agora,
     };
@@ -385,7 +386,30 @@ async function atualizarPrazosSenatranInterno(db: Db, veiculo: VeiculoConsulta, 
     }
   }
 
-  await registrar(lista.servico, true, lista.codigo, `${abertas.length} infração(ões) em aberto na Senatran; ${novas} nova(s); ${prazos} prazo(s); ${indicadas} já indicada(s)`, lista.preco, abertas.length, novas, lista.resposta);
+  // Histórico: infrações já pagas na Senatran. Sem custo extra (vêm na mesma
+  // lista). Pagas que o sistema não conhecia entram como PAGO (completa
+  // relatório/ranking); as que estavam ABERTAS aqui foram pagas fora do sistema.
+  let historico = 0, pagasFora = 0;
+  for (const p of lista.infracoes.filter(i => i.situacao && /^PAGA/i.test(i.situacao))) {
+    const atual = porAit.get(p.ait);
+    if (!atual) {
+      const { error } = await db.from('frota_multas_debitos').insert([{
+        empresa_id: veiculo.empresa_id, veiculo_id: veiculo.id, tipo: 'MULTA', origem: 'CONSULTA_API', fonte: 'SENATRAN',
+        chave_externa: `MULTA:${p.ait}`, auto_infracao: p.ait, descricao: p.descricao, orgao_autuador: p.codigo_orgao,
+        codigo_infracao: p.codigo_infracao, valor: p.valor, data_vencimento: p.data_vencimento, eh_nic: ehNic(p.descricao),
+        status: 'PAGO', status_alterado_por: 'SENATRAN (já paga)', primeira_consulta_em: agora, ultima_consulta_em: agora,
+        criado_por: usuario, updated_at: agora,
+      }]);
+      if (!error) historico++;
+    } else if (atual.status === 'ABERTO') {
+      const { error } = await db.from('frota_multas_debitos').update({
+        status: 'PAGO', baixa_automatica: true, pago_em: agora, status_alterado_por: 'SENATRAN (consta paga)', updated_at: agora,
+      }).eq('id', atual.id);
+      if (!error) pagasFora++;
+    }
+  }
+
+  await registrar(lista.servico, true, lista.codigo, `${abertas.length} infração(ões) em aberto na Senatran; ${novas} nova(s); ${prazos} prazo(s); ${indicadas} já indicada(s); ${historico} paga(s) no histórico${pagasFora ? `; ${pagasFora} paga(s) fora do sistema` : ''}`, lista.preco, abertas.length, novas, lista.resposta);
   if (novas) await vincularNics(db, [veiculo.id]);
 
   registrarLogAuditoria({
@@ -393,5 +417,56 @@ async function atualizarPrazosSenatranInterno(db: Db, veiculo: VeiculoConsulta, 
     equipamento_id: veiculo.id, equipamento_nome: `${veiculo.apelido} (${veiculo.placa}) — ${abertas.length} infração(ões), ${novas} nova(s), ${prazos} prazo(s)`,
   });
 
-  return { ok: true, infracoes: abertas.length, novas, prazos, indicadas, detalhes, preco: Math.round(preco * 100) / 100, avisos };
+  return { ok: true, infracoes: abertas.length, novas, prazos, indicadas, detalhes, historico, pagasFora, preco: Math.round(preco * 100) / 100, avisos };
+}
+
+// ---------------------------------------------------------------------------
+// Aviso diário de prazo de indicação (fonte de dados MULTAS_PRAZO_INDICACAO
+// do motor de automações — app/api/cron/motor). Multas ABERTAS, sem indicação
+// marcada, com prazo entre hoje e daqui a 7 dias. null = nada a avisar (o
+// motor não dispara).
+// ---------------------------------------------------------------------------
+export async function montarContextoPrazoIndicacao(empresaId: number | null): Promise<{ lista: string; quantidade: number } | null> {
+  const db = supabaseAdmin();
+  const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  const limite = new Date(new Date(`${hoje}T12:00:00`).getTime() + 7 * 86400000).toISOString().slice(0, 10);
+  let q = db.from('frota_multas_debitos')
+    .select('auto_infracao, prazo_indicacao_condutor, condutor_nome, empresa_id, veiculo:frota_veiculos(apelido, placa)')
+    .eq('tipo', 'MULTA').eq('status', 'ABERTO').is('condutor_indicado_em', null)
+    .gte('prazo_indicacao_condutor', hoje).lte('prazo_indicacao_condutor', limite)
+    .order('prazo_indicacao_condutor', { ascending: true });
+  if (empresaId) q = q.or(`empresa_id.is.null,empresa_id.eq.${empresaId}`);
+  const { data } = await q;
+  const linhas = ((data || []) as unknown as { auto_infracao: string | null; prazo_indicacao_condutor: string; condutor_nome: string | null; veiculo: { apelido: string; placa: string } | null }[]);
+  if (linhas.length === 0) return null;
+  const lista = linhas.map(m => {
+    const dias = Math.round((new Date(`${m.prazo_indicacao_condutor}T12:00:00`).getTime() - new Date(`${hoje}T12:00:00`).getTime()) / 86400000);
+    const quando = dias === 0 ? 'HOJE' : `em ${dias} dia(s)`;
+    return `• ${m.veiculo ? `${m.veiculo.apelido} (${m.veiculo.placa})` : '-'} — AIT ${m.auto_infracao || 'S/N'} — até ${fmtDataBR(m.prazo_indicacao_condutor)} (${quando}) — condutor: ${m.condutor_nome || 'a definir'}`;
+  }).join('\n');
+  return { lista, quantidade: linhas.length };
+}
+
+// ---------------------------------------------------------------------------
+// OP paga → multa paga. Multa ABERTA ligada a uma OP com status PAGO passa a
+// PAGO na hora, sem esperar sumir do Detran. Chamado ao abrir a tela e no cron.
+// ---------------------------------------------------------------------------
+export async function sincronizarPagamentoOps(db: Db): Promise<number> {
+  const { data: abertas } = await db.from('frota_multas_debitos').select('id').eq('status', 'ABERTO');
+  const ids = ((abertas || []) as { id: string }[]).map(a => a.id);
+  if (ids.length === 0) return 0;
+  const { data: ops } = await db.from('op_ordens_pagamento')
+    .select('numero_op, status, pago_em, multa_debito_ids')
+    .eq('status', 'PAGO').overlaps('multa_debito_ids', ids);
+  let atualizadas = 0;
+  for (const op of (ops || []) as { numero_op: number | null; pago_em: string | null; multa_debito_ids: string[] | null }[]) {
+    const alvo = (op.multa_debito_ids || []).filter(id => ids.includes(id));
+    if (!alvo.length) continue;
+    const { error } = await db.from('frota_multas_debitos').update({
+      status: 'PAGO', baixa_automatica: false, pago_em: op.pago_em || new Date().toISOString(),
+      status_alterado_por: `OP #${op.numero_op ?? '?'} PAGA`, updated_at: new Date().toISOString(),
+    }).in('id', alvo).eq('status', 'ABERTO');
+    if (!error) atualizadas += alvo.length;
+  }
+  return atualizadas;
 }

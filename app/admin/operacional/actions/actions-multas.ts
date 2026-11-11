@@ -20,8 +20,8 @@ import { validarAcesso, obterEmpresasPermitidas, empresaPermitida, mensagemAcess
 import { registrarLogAuditoria } from '../../../actions';
 import { provedorConfigurado, validadeCertificadoA1, prefeituraSpConfigurada, consultarBoletosPrefeituraSP, consultarPenalidadesDerSP } from '../../../lib/consultaDebitosVeiculares';
 import { normalizarBoleto, formatarLinhaDigitavel } from '../../../lib/boletoMulta';
-import { executarConsultaVeiculo, vincularNics, enviarAvisoCondutor, atualizarPrazosSenatran } from '../../../lib/multasCore';
-import { lerNotificacaoMulta, leituraConfigurada } from '../../../lib/leituraNotificacaoMulta';
+import { executarConsultaVeiculo, vincularNics, enviarAvisoCondutor, atualizarPrazosSenatran, sincronizarPagamentoOps } from '../../../lib/multasCore';
+import { lerNotificacaoMulta, leituraConfigurada, custoLeituraUsd } from '../../../lib/leituraNotificacaoMulta';
 import { extrairTextoNativoPdf } from '../../../lib/textract';
 
 const ROTA = '/admin/operacional/multas';
@@ -65,16 +65,19 @@ export interface DebitoMulta {
   notificacao_url: string | null; codigo_infracao: string | null;
   codigo_barras: string | null; linha_digitavel: string | null; boleto_url: string | null;
   boleto_fonte: string | null; boleto_atualizado_em: string | null;
+  prazo_defesa: string | null; recurso_status: 'PROTOCOLADO' | 'DEFERIDO' | 'INDEFERIDO' | null; recurso_protocolo: string | null;
+  recurso_atualizado_em: string | null; recurso_atualizado_por: string | null;
   op: { id: string; numero_op: number | null; status: string | null; pago_em: string | null } | null;
 }
 
 export interface ConsultaMulta {
-  id: string; veiculo_id: string; status: 'OK' | 'ERRO'; codigo: number | null; mensagem: string | null;
+  id: string; veiculo_id: string | null; status: 'OK' | 'ERRO'; codigo: number | null; mensagem: string | null;
   encontrados: number; novos: number; baixados: number; valor_total: number | null; preco: number | null;
   site_receipt: string | null; consultado_por: string | null; consultado_em: string;
+  provedor: string | null; servico: string | null;
 }
 
-const COLUNAS_DEBITO = 'id, empresa_id, veiculo_id, tipo, origem, fonte, descricao, auto_infracao, orgao_autuador, data_infracao, hora_infracao, local_infracao, municipio, exercicio, cota, valor, data_vencimento, status, baixa_automatica, pago_em, status_alterado_por, condutor_nome, condutor_checklist_id, condutor_confirmado_em, condutor_confirmado_por, desconto_descricao, desconto_parcelas, desconto_mes_inicio, desconto_valor_parcela, desconto_lancado_em, desconto_lancado_por, observacao, primeira_consulta_em, ultima_consulta_em, criado_por, created_at, updated_at, eh_nic, multa_origem_id, condutor_avisado_em, condutor_avisado_por, prazo_indicacao_condutor, condutor_indicado_em, condutor_indicado_por, notificacao_url, codigo_infracao, codigo_barras, linha_digitavel, boleto_url, boleto_fonte, boleto_atualizado_em';
+const COLUNAS_DEBITO = 'id, empresa_id, veiculo_id, tipo, origem, fonte, descricao, auto_infracao, orgao_autuador, data_infracao, hora_infracao, local_infracao, municipio, exercicio, cota, valor, data_vencimento, status, baixa_automatica, pago_em, status_alterado_por, condutor_nome, condutor_checklist_id, condutor_confirmado_em, condutor_confirmado_por, desconto_descricao, desconto_parcelas, desconto_mes_inicio, desconto_valor_parcela, desconto_lancado_em, desconto_lancado_por, observacao, primeira_consulta_em, ultima_consulta_em, criado_por, created_at, updated_at, eh_nic, multa_origem_id, condutor_avisado_em, condutor_avisado_por, prazo_indicacao_condutor, condutor_indicado_em, condutor_indicado_por, notificacao_url, codigo_infracao, codigo_barras, linha_digitavel, boleto_url, boleto_fonte, boleto_atualizado_em, prazo_defesa, recurso_status, recurso_protocolo, recurso_atualizado_em, recurso_atualizado_por';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -133,6 +136,8 @@ export async function carregarPainelMultasAction(accessToken: string): Promise<R
     // Liga NICs antigas/manuais à infração de origem antes de listar (barato:
     // só lê as multas e grava o que faltar).
     await vincularNics(db, null);
+    // OP paga pelo Financeiro → multa paga na hora (sem esperar o Detran).
+    await sincronizarPagamentoOps(db);
 
     const [veiculosRes, debitosRes, consultasRes, empresasRes, situacaoRes, certificado] = await Promise.all([
       filtrarEmpresa(db.from('frota_veiculos')
@@ -141,12 +146,12 @@ export async function carregarPainelMultasAction(accessToken: string): Promise<R
       filtrarEmpresa(db.from('frota_multas_debitos').select(COLUNAS_DEBITO)
         .order('data_vencimento', { ascending: true, nullsFirst: false }), auth.empresasPermitidas),
       filtrarEmpresa(db.from('frota_multas_consultas')
-        .select('id, veiculo_id, status, codigo, mensagem, encontrados, novos, baixados, valor_total, preco, site_receipt, consultado_por, consultado_em')
+        .select('id, veiculo_id, status, codigo, mensagem, encontrados, novos, baixados, valor_total, preco, site_receipt, consultado_por, consultado_em, provedor, servico')
         .order('consultado_em', { ascending: false }).limit(200), auth.empresasPermitidas),
       db.from('empresas').select('id, nome').eq('ativo', true).order('nome'),
       filtrarEmpresa(db.from('frota_multas_consultas')
         .select('veiculo_id, consultado_em, restricao_administrativa:resposta->data->0->>restricao_administrativa, restricao_financeira:resposta->data->0->>restricao_financeira, restricao_judiciaria:resposta->data->0->>restricao_judiciaria, restricao_tributaria:resposta->data->0->>restricao_tributaria, bloqueio_furto:resposta->data->0->>bloqueio_furto, ultimo_licenciamento:resposta->data->0->>ultimo_licenciamento, status_licenciamento:resposta->data->0->>status_licenciamento')
-        .eq('status', 'OK').order('consultado_em', { ascending: false }).limit(100), auth.empresasPermitidas),
+        .eq('status', 'OK').eq('servico', 'detran/sp/debitos').order('consultado_em', { ascending: false }).limit(100), auth.empresasPermitidas),
       validadeCertificadoA1(),
     ]);
     if (veiculosRes.error) throw new Error(veiculosRes.error.message);
@@ -155,7 +160,9 @@ export async function carregarPainelMultasAction(accessToken: string): Promise<R
 
     const consultas = (consultasRes.data || []) as ConsultaMulta[];
     const ultimaPorVeiculo = new Map<string, ConsultaMulta>();
-    consultas.forEach(c => { if (!ultimaPorVeiculo.has(c.veiculo_id)) ultimaPorVeiculo.set(c.veiculo_id, c); });
+    // "Última consulta" do card = a do Detran (o log tem também Senatran, boleto e leituras por IA).
+    consultas.filter(c => c.servico === 'detran/sp/debitos')
+      .forEach(c => { if (c.veiculo_id && !ultimaPorVeiculo.has(c.veiculo_id)) ultimaPorVeiculo.set(c.veiculo_id, c); });
 
     const situacaoPorVeiculo = new Map<string, NonNullable<VeiculoMultas['situacao']>>();
     ((situacaoRes.data || []) as unknown as (NonNullable<VeiculoMultas['situacao']> & { veiculo_id: string })[])
@@ -648,13 +655,15 @@ export async function lerNotificacaoMultaAction(params: { caminho: string }, acc
   // Veículo pela placa lida (só entre os que o usuário enxerga).
   let veiculoId: string | null = null;
   let veiculoDescricao: string | null = null;
+  let empresaVeiculo: number | null = null;
   const placaLida = normPlaca(d.placa);
   if (placaLida) {
     const { data: veics } = await db.from('frota_veiculos').select('id, apelido, placa, empresa_id');
     const v = ((veics || []) as { id: string; apelido: string; placa: string; empresa_id: number | null }[])
       .find(x => normPlaca(x.placa) === placaLida && empresaPermitida(auth.empresasPermitidas, x.empresa_id));
-    if (v) { veiculoId = v.id; veiculoDescricao = `${v.apelido} (${v.placa})`; }
+    if (v) { veiculoId = v.id; veiculoDescricao = `${v.apelido} (${v.placa})`; empresaVeiculo = v.empresa_id; }
   }
+  await registrarLeituraIa(db, { veiculoId, empresaId: empresaVeiculo, modelo: leitura.modelo, entrada: leitura.tokensEntrada, saida: leitura.tokensSaida, usuario: auth.perfil.nome.toUpperCase(), referencia: `escaneamento AIT ${d.auto_infracao || '?'}` });
 
   // AIT já cadastrado (veio pela consulta ou já foi escaneado)?
   let duplicado: { id: string; tipo: string; valor: number; prazo_indicacao_condutor: string | null } | null = null;
@@ -884,6 +893,7 @@ export async function buscarBoletoAction(params: { debitoId: string }, accessTok
         linha = sequencia;
       } else {
         const leitura = await lerNotificacaoMulta(pdf.buffer, 'application/pdf');
+        if (leitura.ok) await registrarLeituraIa(db, { veiculoId: veiculo.id, empresaId: veiculo.empresa_id, modelo: leitura.modelo, entrada: leitura.tokensEntrada, saida: leitura.tokensSaida, usuario, referencia: `PDF DER AIT ${m.auto_infracao || '?'}` });
         linha = leitura.ok ? (leitura.dados.linha_digitavel || leitura.dados.codigo_barras) : null;
         if (!leitura.ok) avisos.push(`AIT ${m.auto_infracao}: ${leitura.erro}`);
         else if (leitura.dados.observacoes) avisos.push(`AIT ${m.auto_infracao}: ${leitura.dados.observacoes}`);
@@ -924,4 +934,115 @@ export async function buscarPrazosSenatranAction(params: { veiculoId: string }, 
   const r = await atualizarPrazosSenatran(db, veiculo, auth.perfil.nome.toUpperCase());
   if (!r.ok) return { ok: false, erro: r.erro };
   return { ok: true, info: r };
+}
+
+// ---------------------------------------------------------------------------
+// Dados para indicar o condutor (FICI em PDF / "Dados para o SNE")
+// Lê a ficha com select('*') — funciona mesmo antes das colunas de CNH
+// existirem; o que faltar volta em `faltando` pra tela avisar.
+// ---------------------------------------------------------------------------
+export async function dadosIndicacaoCondutorAction(params: { debitoId: string }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  if (!r.ok) return { ok: false, erro: r.erro };
+  const d = r.debito;
+  if (d.tipo !== 'MULTA') return { ok: false, erro: 'Indicação de condutor só se aplica a multa.' };
+  if (!d.condutor_nome) return { ok: false, erro: 'Defina o condutor antes.' };
+
+  const [{ data: veic }, { data: func }, { data: emp }] = await Promise.all([
+    db.from('frota_veiculos').select('apelido, placa, renavam, marca, modelo').eq('id', d.veiculo_id).maybeSingle(),
+    db.from('folha_funcionarios').select('*').eq('nome_completo', d.condutor_nome).maybeSingle(),
+    d.empresa_id ? db.from('empresas').select('razao_social, nome, cnpj').eq('id', d.empresa_id).maybeSingle() : Promise.resolve({ data: null }),
+  ]);
+  if (!func) return { ok: false, erro: 'Condutor não encontrado no cadastro de funcionários.' };
+  if (!empresaPermitida(auth.empresasPermitidas, func.empresa_id)) return { ok: false, erro: 'Você não tem acesso a este colaborador.' };
+
+  const f = func as Record<string, unknown>;
+  const txt = (v: unknown) => (v === null || v === undefined || String(v).trim() === '' ? null : String(v).trim());
+  const endereco = [txt(f.endereco), txt(f.numero), txt(f.complemento)].filter(Boolean).join(', ');
+  const condutor = {
+    nome: d.condutor_nome,
+    cpf: txt(f.cpf),
+    cnh_numero: txt(f.cnh_numero),
+    cnh_categoria: txt(f.cnh_categoria),
+    cnh_validade: txt(f.cnh_validade),
+    endereco: endereco || null,
+    bairro: txt(f.bairro),
+    cidade: txt(f.cidade),
+    cep: txt(f.cep),
+    celular: txt(f.celular),
+  };
+  const faltando = [
+    !condutor.cpf && 'CPF', !condutor.cnh_numero && 'número da CNH', !condutor.cnh_categoria && 'categoria da CNH',
+    !condutor.cnh_validade && 'validade da CNH', !condutor.endereco && 'endereço',
+  ].filter(Boolean) as string[];
+  const cnhVencida = condutor.cnh_validade ? condutor.cnh_validade < new Date().toISOString().slice(0, 10) : false;
+
+  return {
+    ok: true,
+    info: {
+      multa: {
+        auto_infracao: d.auto_infracao, orgao_autuador: d.orgao_autuador, codigo_infracao: d.codigo_infracao,
+        descricao: d.descricao, data_infracao: d.data_infracao, hora_infracao: d.hora_infracao,
+        local_infracao: d.local_infracao, municipio: d.municipio, prazo_indicacao: d.prazo_indicacao_condutor,
+      },
+      veiculo: veic ? { placa: veic.placa, renavam: veic.renavam, marca_modelo: [veic.marca, veic.modelo].filter(Boolean).join(' ') || veic.apelido } : null,
+      empresa: emp ? { razao_social: (emp as { razao_social: string | null; nome: string }).razao_social || (emp as { nome: string }).nome, cnpj: (emp as { cnpj: string | null }).cnpj } : null,
+      condutor, faltando, cnhVencida,
+    },
+  };
+}
+
+// Registra uma leitura por IA no log de consultas (controle de custos).
+// preco em US$ (provedor ANTHROPIC). Sem veículo só grava depois do SQL
+// operacional_multas_custos.sql (veiculo_id passa a aceitar null) — antes
+// disso o insert falha em silêncio e nada quebra.
+async function registrarLeituraIa(db: ReturnType<typeof supabaseAdmin>, p: { veiculoId: string | null; empresaId: number | null; modelo: string; entrada: number; saida: number; usuario: string; referencia: string }) {
+  try {
+    await db.from('frota_multas_consultas').insert([{
+      empresa_id: p.empresaId, veiculo_id: p.veiculoId, provedor: 'ANTHROPIC', servico: `claude/${p.modelo}`,
+      status: 'OK', codigo: 200, mensagem: `${p.referencia} — ${p.entrada}+${p.saida} tokens`,
+      encontrados: 1, novos: 0, baixados: 0, preco: custoLeituraUsd(p.entrada, p.saida), consultado_por: p.usuario,
+    }]);
+  } catch { /* log de custo nunca bloqueia a leitura */ }
+}
+
+// ---------------------------------------------------------------------------
+// Defesa / recurso da multa. DEFERIDO cancela o débito (multa anulada);
+// sair de DEFERIDO reabre o que tinha sido cancelado por ele.
+// ---------------------------------------------------------------------------
+export async function salvarRecursoAction(params: { debitoId: string; status: 'PROTOCOLADO' | 'DEFERIDO' | 'INDEFERIDO' | null; protocolo: string | null; prazoDefesa?: string | null }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const usuario = auth.perfil.nome.toUpperCase();
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  if (!r.ok) return { ok: false, erro: r.erro };
+  const d = r.debito;
+  if (d.tipo !== 'MULTA') return { ok: false, erro: 'Recurso só se aplica a multa.' };
+  if (params.status && !['PROTOCOLADO', 'DEFERIDO', 'INDEFERIDO'].includes(params.status)) return { ok: false, erro: 'Situação de recurso inválida.' };
+
+  const agora = new Date().toISOString();
+  const cancelarPorRecurso = params.status === 'DEFERIDO' && d.status === 'ABERTO';
+  const reabrir = d.recurso_status === 'DEFERIDO' && params.status !== 'DEFERIDO' && d.status === 'CANCELADO' && d.status_alterado_por?.startsWith('RECURSO DEFERIDO');
+
+  const { error } = await db.from('frota_multas_debitos').update({
+    recurso_status: params.status,
+    recurso_protocolo: params.protocolo?.trim() || null,
+    ...(params.prazoDefesa !== undefined ? { prazo_defesa: params.prazoDefesa || null } : {}),
+    recurso_atualizado_em: agora,
+    recurso_atualizado_por: usuario,
+    ...(cancelarPorRecurso ? { status: 'CANCELADO', baixa_automatica: false, pago_em: null, status_alterado_por: `RECURSO DEFERIDO (${usuario})` } : {}),
+    ...(reabrir ? { status: 'ABERTO', status_alterado_por: usuario } : {}),
+    updated_at: agora,
+  }).eq('id', d.id);
+  if (error) return { ok: false, erro: error.message };
+
+  registrarLogAuditoria({
+    usuario_nome: usuario, acao: `RECURSO DE MULTA: ${params.status || 'SEM RECURSO'}`, setor: 'OPERACIONAL',
+    equipamento_id: d.id, equipamento_nome: `AIT ${d.auto_infracao || 'S/N'}${params.protocolo ? ` — protocolo ${params.protocolo}` : ''}${cancelarPorRecurso ? ' — débito cancelado' : ''}`,
+  });
+  return { ok: true, info: { cancelado: cancelarPorRecurso, reaberto: !!reabrir } };
 }

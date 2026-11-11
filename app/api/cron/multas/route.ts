@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
-import { executarConsultaVeiculo, type VeiculoConsulta } from '../../../lib/multasCore';
+import { executarConsultaVeiculo, sincronizarPagamentoOps, type VeiculoConsulta } from '../../../lib/multasCore';
 import { provedorConfigurado, validadeCertificadoA1 } from '../../../lib/consultaDebitosVeiculares';
 import { dispararAutomacoesPorEventoWhatsApp } from '../../../lib/automacoes';
 import { notificarPush } from '../../../lib/push';
@@ -49,6 +49,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ success: false, executado: false, motivo: 'Certificado A1 vencido.' });
   }
 
+  // OP paga → multa paga (antes de consultar, pra não contar como "em aberto").
+  await sincronizarPagamentoOps(db);
+
   const { data: veiculosData } = await db.from('frota_veiculos')
     .select('id, apelido, placa, renavam, empresa_id, propriedade, status')
     .eq('propriedade', 'PRÓPRIO').neq('status', 'INATIVO')
@@ -57,7 +60,7 @@ export async function GET(request: Request) {
 
   const limite = new Date(Date.now() - DIAS_SEM_RECONSULTAR * 86400000).toISOString();
   const { data: recentes } = await db.from('frota_multas_consultas')
-    .select('veiculo_id').eq('status', 'OK').gte('consultado_em', limite);
+    .select('veiculo_id').eq('status', 'OK').eq('servico', 'detran/sp/debitos').gte('consultado_em', limite);
   const jaConsultados = new Set(((recentes || []) as { veiculo_id: string }[]).map(r => r.veiculo_id));
   const pendentes = veiculos.filter(v => !jaConsultados.has(v.id));
 

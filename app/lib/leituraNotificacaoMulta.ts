@@ -10,6 +10,12 @@ import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import { z } from 'zod';
 
 const MODELO = 'claude-opus-5-5';
+// Preço do modelo por milhão de tokens (US$), pra registrar o custo de cada
+// leitura no log de consultas (controle de custos da tela de Multas).
+const PRECO_ENTRADA_USD_MTOK = 4;
+const PRECO_SAIDA_USD_MTOK = 20;
+export const custoLeituraUsd = (entrada: number, saida: number) =>
+  Math.round((entrada * PRECO_ENTRADA_USD_MTOK + saida * PRECO_SAIDA_USD_MTOK) / 1e6 * 10000) / 10000;
 
 export const NotificacaoMultaSchema = z.object({
   tipo_documento: z.enum(['NOTIFICACAO_AUTUACAO', 'NOTIFICACAO_PENALIDADE', 'OUTRO'])

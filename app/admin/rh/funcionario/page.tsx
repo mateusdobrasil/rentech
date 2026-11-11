@@ -67,6 +67,10 @@ interface FuncionarioFin {
   data_nascimento: string | null; cpf: string | null; celular: string | null; email: string | null;
   ponto_whatsapp_ativo: boolean;
   pode_dirigir: boolean;
+  // CNH (indicação de condutor de multas — Operacional › Multas e Débitos).
+  // Opcionais e fora do defaultForm de propósito: a ficha é gravada com
+  // upsert do form inteiro, então só vão pro banco quando preenchidos.
+  cnh_numero?: string | null; cnh_categoria?: string | null; cnh_validade?: string | null;
   banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null;
   pix_tipo: string | null; pix_chave: string | null;
   recebe_fechamento: boolean | null; recebe_holerite: boolean | null;
@@ -642,6 +646,22 @@ export default function FuncionarioPage() {
                         <input type="checkbox" id="pode_dirigir" checked={form.pode_dirigir} onChange={e => setForm({...form, pode_dirigir: e.target.checked})} className="w-4 h-4" />
                         <label htmlFor="pode_dirigir" className="text-[11px] font-bold text-gray-600 uppercase">🚗 Pode dirigir veículos da frota (libera o Checklist de Veículos no Portal)</label>
                       </div>
+                      {form.pode_dirigir && (
+                        <div className="col-span-2 grid grid-cols-3 gap-3 bg-white p-2.5 rounded-lg border border-indigo-100">
+                          <div className="col-span-3 text-[9px] font-black text-gray-500 uppercase">🪪 CNH — usada na indicação do condutor de multas</div>
+                          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Nº de registro</label><input type="text" inputMode="numeric" maxLength={11} value={form.cnh_numero || ''} onChange={e => setForm({...form, cnh_numero: e.target.value.replace(/\D/g, '') || null})} placeholder="00000000000" className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+                          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Categoria</label>
+                            <select value={form.cnh_categoria || ''} onChange={e => setForm({...form, cnh_categoria: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm bg-white">
+                              <option value="">—</option>
+                              {['A', 'B', 'AB', 'C', 'AC', 'D', 'AD', 'E', 'AE'].map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                          </div>
+                          <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Validade</label><input type="date" value={form.cnh_validade || ''} onChange={e => setForm({...form, cnh_validade: e.target.value || null})} className="w-full p-2 border border-gray-300 rounded text-sm" /></div>
+                          {form.cnh_validade && form.cnh_validade < new Date().toISOString().slice(0, 10) && (
+                            <p className="col-span-3 text-[10px] font-bold text-red-600">⚠ CNH vencida.</p>
+                          )}
+                        </div>
+                      )}
 
                       <div className="col-span-2 text-[10px] font-black text-indigo-600 uppercase tracking-wider mt-2">Dados Bancários (para pagamento)</div>
                       <div>

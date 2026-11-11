@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation'; // <-- CORRIGIDO: Import adicionado
 import { supabase } from '../../../lib/supabase';
-import { registrarLogAuditoria, criarUsuarioAcesso, listarAcessosPortalAction, vincularEmpresasUsuarioAction } from '../../../actions';
+import { criarUsuarioAcesso, listarAcessosPortalAction, vincularEmpresasUsuarioAction } from '../../../actions';
 import { formatarCpf } from '../../../portal/lib/cpf';
 import { Analytics } from "@vercel/analytics/next"; // <-- CORRIGIDO: Barra adicionada
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
@@ -12,6 +12,10 @@ import { HubErro } from '../../../components/ui/HubStates';
 import { useToast } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { resetarMfaUsuarioAction } from '../../actions-mfa';
+import {
+  atualizarAcessoUsuarioAction, salvarPaginaPermissaoAction, removerPaginaPermissaoAction,
+  alternar2faPaginaAction, adicionarSetorPermissaoAction, removerSetorPermissaoAction,
+} from './actions';
 
 // Setores de permissão: antes era uma lista fixa aqui no código, agora vem
 // do banco (tabela parametros_setores_permissao) e pode ser gerida na aba "Setores".
@@ -180,36 +184,20 @@ export default function GestaoPermissoes() {
     if (!modalEdicao.user) return;
     setLoading(true);
     try {
-      const { error } = await supabase
-        .from('perfis_usuarios')
-        .update({ permissao: modalEdicao.user.permissao, ativo: modalEdicao.user.ativo })
-        .eq('id', modalEdicao.user.id);
-
-      if (error) throw error;
+      // Gravação e log de auditoria no servidor (./actions.ts)
+      const res = await atualizarAcessoUsuarioAction({
+        perfilId: modalEdicao.user.id, permissao: modalEdicao.user.permissao, ativo: modalEdicao.user.ativo, usuarioNome: usuarioAtual,
+      }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
 
       await sincronizarVinculoEmpresas(modalEdicao.user.id, empresasSelecionadasEdicao);
-
-      const original = usuarios.find(u => u.id === modalEdicao.user!.id);
-      const acoes: string[] = [];
-      if (original?.permissao !== modalEdicao.user.permissao)
-        acoes.push(`PERMISSÃO: ${original?.permissao} → ${modalEdicao.user.permissao}`);
-      if (original?.ativo !== modalEdicao.user.ativo)
-        acoes.push(modalEdicao.user.ativo ? 'CONTA REATIVADA' : 'CONTA BLOQUEADA');
-
-      registrarLogAuditoria({
-        usuario_nome: usuarioAtual,
-        acao: 'ALTEROU ACESSO DE USUÁRIO',
-        setor: 'PERMISSÕES',
-        equipamento_id: modalEdicao.user.id,
-        equipamento_nome: `${modalEdicao.user.nome} — ${acoes.join(' | ')}`,
-      });
 
       setUsuarios(usuarios.map(u => u.id === modalEdicao.user?.id ? modalEdicao.user : u));
       mostrarFeedback('Permissões atualizadas com sucesso!', 'success');
       setModalEdicao({ open: false, user: null });
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      mostrarFeedback('Erro ao atualizar permissões no banco.', 'error');
+      mostrarFeedback(error.message || 'Erro ao atualizar permissões no banco.', 'error');
     } finally {
       setLoading(false);
     }
@@ -287,32 +275,11 @@ export default function GestaoPermissoes() {
 
     setLoading(true);
     try {
-      const payload = {
-        nome_pagina: formPagina.nome_pagina.toUpperCase().trim(),
-        endereco_route: formPagina.endereco_route.toLowerCase().trim(),
-        permissoes_permitidas: formPagina.permissoes_permitidas
-      };
-
-      let error;
-      if (editandoPaginaId) {
-        const { error: err } = await supabase.from('parametros_paginas_permissoes').update(payload).eq('id', editandoPaginaId);
-        error = err;
-      } else {
-        const { error: err } = await supabase.from('parametros_paginas_permissoes').insert([payload]);
-        error = err;
-      }
-
-      if (error) {
-        if (error.code === '23505') throw new Error('Já existe uma página mapeada para este endereço (URL).');
-        throw error;
-      }
-
-      registrarLogAuditoria({
-        usuario_nome: usuarioAtual,
-        acao: editandoPaginaId ? 'ATUALIZOU PERMISSÃO DE ROTA' : 'CADASTROU ROTA DE SISTEMA',
-        setor: 'PERMISSÕES',
-        equipamento_nome: `${payload.nome_pagina} → [${payload.permissoes_permitidas.join(', ')}]`,
-      });
+      const res = await salvarPaginaPermissaoAction({
+        id: editandoPaginaId, nome_pagina: formPagina.nome_pagina, endereco_route: formPagina.endereco_route,
+        permissoes_permitidas: formPagina.permissoes_permitidas, usuarioNome: usuarioAtual,
+      }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
 
       mostrarFeedback(editandoPaginaId ? 'Rota atualizada com sucesso!' : 'Nova rota mapeada com sucesso!', 'success');
       setFormPagina(formPaginaPadrao);
@@ -335,15 +302,15 @@ export default function GestaoPermissoes() {
     
     setLoading(true);
     try {
-      const { error } = await supabase.from('parametros_paginas_permissoes').delete().eq('id', id);
-      if (error) throw error;
-      
+      const res = await removerPaginaPermissaoAction({ id, usuarioNome: usuarioAtual }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+
       mostrarFeedback('Mapeamento de rota removido.', 'success');
       if (editandoPaginaId === id) { setFormPagina(formPaginaPadrao); setEditandoPaginaId(null); }
       carregarPaginas();
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      mostrarFeedback('Erro ao remover rota.', 'error');
+      mostrarFeedback(error.message || 'Erro ao remover rota.', 'error');
     } finally {
       setLoading(false);
     }
@@ -355,15 +322,8 @@ export default function GestaoPermissoes() {
   const alternar2FA = async (p: PaginaPermissao) => {
     const novoValor = !p.requer_2fa;
     try {
-      const { error } = await supabase.from('parametros_paginas_permissoes').update({ requer_2fa: novoValor }).eq('id', p.id);
-      if (error) throw error;
-
-      registrarLogAuditoria({
-        usuario_nome: usuarioAtual,
-        acao: novoValor ? 'ATIVOU EXIGÊNCIA DE 2FA' : 'DESATIVOU EXIGÊNCIA DE 2FA',
-        setor: 'PERMISSÕES',
-        equipamento_nome: `${p.nome_pagina} (${p.endereco_route})`,
-      });
+      const res = await alternar2faPaginaAction({ id: p.id!, requer2fa: novoValor, usuarioNome: usuarioAtual }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
 
       setPaginas(paginas.map(x => x.id === p.id ? { ...x, requer_2fa: novoValor } : x));
       mostrarFeedback(`2FA ${novoValor ? 'ativado' : 'desativado'} para "${p.nome_pagina}".`, 'success');
@@ -393,18 +353,8 @@ export default function GestaoPermissoes() {
 
     setSalvandoSetor(true);
     try {
-      const { error } = await supabase.from('parametros_setores_permissao').insert([{ nome }]);
-      if (error) {
-        if (error.code === '23505') throw new Error('Esse setor já está cadastrado.');
-        throw error;
-      }
-
-      registrarLogAuditoria({
-        usuario_nome: usuarioAtual,
-        acao: 'CADASTROU SETOR DE PERMISSÃO',
-        setor: 'PERMISSÕES',
-        equipamento_nome: nome,
-      });
+      const res = await adicionarSetorPermissaoAction({ nome, usuarioNome: usuarioAtual }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
 
       setNovoSetor('');
       mostrarFeedback('Setor cadastrado com sucesso!', 'success');
@@ -427,21 +377,14 @@ export default function GestaoPermissoes() {
     if (!confirm(`Remover o setor "${setor.nome}"?${aviso}`)) return;
 
     try {
-      const { error } = await supabase.from('parametros_setores_permissao').delete().eq('id', setor.id);
-      if (error) throw error;
-
-      registrarLogAuditoria({
-        usuario_nome: usuarioAtual,
-        acao: 'REMOVEU SETOR DE PERMISSÃO',
-        setor: 'PERMISSÕES',
-        equipamento_nome: setor.nome,
-      });
+      const res = await removerSetorPermissaoAction({ id: setor.id, usuarioNome: usuarioAtual }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
 
       mostrarFeedback('Setor removido.', 'success');
       carregarSetores();
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      mostrarFeedback('Erro ao remover setor.', 'error');
+      mostrarFeedback(error.message || 'Erro ao remover setor.', 'error');
     }
   };
 

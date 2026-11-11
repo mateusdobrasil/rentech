@@ -13,6 +13,7 @@ import { mensagemAcessoNegado, validarAcesso, obterEmpresasPermitidas, empresaPe
 import { consolidarDia, timestampBR, formatarPeriodoBR } from '../../../lib/pontoWhatsapp';
 import { notificarPontoWhatsApp } from '../../../lib/whatsapp';
 import { registrarLogAuditoria } from '../../../actions';
+import { buscarTodasPaginas } from '../../../lib/paginacao';
 
 type Resultado<T> = { ok: boolean; erro?: string; info?: T };
 
@@ -101,15 +102,20 @@ export async function listarLedgerPontoWhatsappAction(mesAno: string, accessToke
     const dataFim = `${ano}-${mes}-${String(ultimoDia).padStart(2, '0')}`;
 
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
-    let query = db
-      .from('folha_ponto_whatsapp_registros')
-      .select('nsr, funcionario_nome, tipo_batida, data_referencia, data_hora_batida, hash_registro')
-      .gte('data_referencia', dataInicio)
-      .lte('data_referencia', dataFim)
-      .order('nsr', { ascending: false });
-    if (empresasPermitidas) query = query.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
-
-    const { data, error } = await query;
+    // Paginado: o mês passa de 1.000 batidas (ago/set-2026 ~1.200) e a Data
+    // API cortava o resto em silêncio — sumiam as primeiras batidas do mês.
+    // NSR é único e sequencial, então serve de ordem estável pra paginar.
+    const { data, error } = await buscarTodasPaginas<RegistroLedger>((de, ate) => {
+      let query = db
+        .from('folha_ponto_whatsapp_registros')
+        .select('nsr, funcionario_nome, tipo_batida, data_referencia, data_hora_batida, hash_registro')
+        .gte('data_referencia', dataInicio)
+        .lte('data_referencia', dataFim)
+        .order('nsr', { ascending: false })
+        .range(de, ate);
+      if (empresasPermitidas) query = query.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
+      return query;
+    });
     if (error) throw new Error(error.message);
     return { ok: true, info: data || [] };
   } catch (e: any) {

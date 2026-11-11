@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
+import { buscarTodasPaginas } from '../../../lib/paginacao';
 import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
 import { importarPontoAction, importarAbonosAction, lancarPontoManualAction, descartarPontoManualAction, abonarDiaManualAction } from '../actions/actions-ponto';
@@ -282,20 +283,23 @@ export default function GestaoDePonto() {
     const { data: funcData } = await qHabilitados;
     const nomesHabilitados = new Set((funcData || []).map(f => f.nome_completo));
 
-    // Busca Abonos do Mês
-    const { data: abonosData, error: erroAbonos } = await supabase
+    // Abonos e registros do mês de todos — paginados: o mês chega perto do
+    // limite de 1.000 linhas da Data API, que corta sem avisar.
+    const { data: abonosData, error: erroAbonos } = await buscarTodasPaginas<any>((de, ate) => supabase
       .from('folha_ponto_abono')
       .select('id, funcionario_nome, data_abono, dia_todo, hora_inicio, hora_fim, minutos_abonados, motivo')
       .gte('data_abono', dataInicio)
-      .lte('data_abono', dataFim);
+      .lte('data_abono', dataFim)
+      .order('id').range(de, ate));
     if (abonosData) setAbonos(abonosData.filter(a => nomesHabilitados.has(a.funcionario_nome)));
 
-    const { data, error: erroRegistros } = await supabase
+    const { data, error: erroRegistros } = await buscarTodasPaginas<any>((de, ate) => supabase
       .from('folha_ponto_diaria')
       .select('id, funcionario_nome, data_registro, entrada_1, saida_1, entrada_2, saida_2, minutos_trabalhados')
       .gte('data_registro', dataInicio)
       .lte('data_registro', dataFim)
-      .order('data_registro', { ascending: true });
+      .order('data_registro', { ascending: true }).order('id')
+      .range(de, ate));
 
     if (data) setRegistros(data.filter(r => nomesHabilitados.has(r.funcionario_nome)));
 

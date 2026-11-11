@@ -6,6 +6,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
+import { buscarTodasPaginas } from '../../../lib/paginacao';
 import { Analytics } from "@vercel/analytics/next";
 import { fecharFolhaLoteAction, reabrirFolhaAction, salvarBonusDescontosAction, salvarDadosSalariaisAction } from '../actions/actions-folha';
 import { listarAbonosPendentesDoMesAction } from '../actions/actions-ponto-whatsapp';
@@ -866,19 +867,26 @@ export default function HoleritePage() {
     const dataInicio = `${ano}-${mes}-01`;
     const dataFim = `${ano}-${mes}-${new Date(Number(ano), Number(mes), 0).getDate()}`;
 
-    let queryPonto = supabase.from('folha_ponto_diaria')
-      .select('funcionario_nome, data_registro, minutos_trabalhados, entrada_1, saida_1, entrada_2, saida_2')
-      .gte('data_registro', dataInicio).lte('data_registro', dataFim);
-    let queryAbono = supabase.from('folha_ponto_abono')
-      .select('funcionario_nome, data_abono, minutos_abonados')
-      .gte('data_abono', dataInicio).lte('data_abono', dataFim);
-    if (nome) {
-      queryPonto = queryPonto.eq('funcionario_nome', nome);
-      queryAbono = queryAbono.eq('funcionario_nome', nome);
-    }
+    // Paginado: sem `nome` é o mês de TODOS (~700 linhas em 2026), perto do
+    // limite de 1.000 da Data API, que corta sem avisar — o holerite sairia
+    // sem parte do ponto de alguém.
+    const montarPonto = (de: number, ate: number) => {
+      let q = supabase.from('folha_ponto_diaria')
+        .select('funcionario_nome, data_registro, minutos_trabalhados, entrada_1, saida_1, entrada_2, saida_2')
+        .gte('data_registro', dataInicio).lte('data_registro', dataFim);
+      if (nome) q = q.eq('funcionario_nome', nome);
+      return q.order('id').range(de, ate);
+    };
+    const montarAbono = (de: number, ate: number) => {
+      let q = supabase.from('folha_ponto_abono')
+        .select('funcionario_nome, data_abono, minutos_abonados')
+        .gte('data_abono', dataInicio).lte('data_abono', dataFim);
+      if (nome) q = q.eq('funcionario_nome', nome);
+      return q.order('id').range(de, ate);
+    };
 
     const [{ data: pontoData }, { data: abonoData }, { data: fData }] = await Promise.all([
-      queryPonto, queryAbono, supabase.from('folha_feriados').select('*')
+      buscarTodasPaginas<any>(montarPonto), buscarTodasPaginas<any>(montarAbono), supabase.from('folha_feriados').select('*')
     ]);
 
     // Índice, e não lista: o feriado municipal só vale pra empresa daquela

@@ -9,6 +9,7 @@ import { painelDocumentosAction } from './actions-documentos-func';
 import { painelFeriasAction } from './actions-ferias';
 import { painelAfastamentosAction } from './actions-afastamentos';
 import { painelRescisoesAction } from './actions-rescisao';
+import { buscarTodasPaginas } from '../../../lib/paginacao';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -66,8 +67,10 @@ export async function painelRhAction(accessToken: string): Promise<Resultado> {
       filtroEmpresa(db.from('folha_holerites').select('funcionario_nome').eq('mes_referencia', mesAno)),
       filtroEmpresa(db.from('folha_holerite_assinaturas').select('id, status').not('status', 'in', '("ASSINADO","REJEITADO","CANCELADO")')),
       filtroEmpresa(db.from('folha_ponto_whatsapp_solicitacoes').select('id').eq('status', 'PENDENTE')),
-      filtroEmpresa(db.from('folha_ponto_diaria').select('funcionario_nome, data_registro, entrada_1, saida_1, entrada_2, saida_2')
-        .gte('data_registro', dataInicio).lte('data_registro', dataFim)),
+      // Paginado: ponto do mês de todos (~700 linhas em 2026) chega perto do
+      // limite de 1.000 da Data API, que corta sem avisar.
+      buscarTodasPaginas((de, ate) => filtroEmpresa(db.from('folha_ponto_diaria').select('funcionario_nome, data_registro, entrada_1, saida_1, entrada_2, saida_2')
+        .gte('data_registro', dataInicio).lte('data_registro', dataFim).order('id').range(de, ate))),
       painelFeriasAction(accessToken),
       painelAfastamentosAction(accessToken),
       painelRescisoesAction(accessToken)

@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
+import { buscarTodasPaginas } from '../../../lib/paginacao';
 import { Analytics } from "@vercel/analytics/next";
 import { gridBeneficiosAction } from '../actions/actions-beneficios';
 import { painelDocumentosAction } from '../actions/actions-documentos-func';
@@ -447,8 +448,9 @@ export default function RelatoriosRH() {
         supabase.from('folha_descontos').select('*'),
         supabase.from('folha_bonus').select('*'),
         supabase.from('folha_holerites').select('funcionario_nome, dados').eq('mes_referencia', mesAno),
-        supabase.from('folha_ponto_diaria').select('funcionario_nome, data_registro, minutos_trabalhados').gte('data_registro', dataInicio).lte('data_registro', dataFim),
-        supabase.from('folha_ponto_abono').select('funcionario_nome, data_abono, minutos_abonados').gte('data_abono', dataInicio).lte('data_abono', dataFim),
+        // Ponto e abonos do mês de todos — paginados (limite de 1.000 da Data API)
+        buscarTodasPaginas<any>((de, ate) => supabase.from('folha_ponto_diaria').select('funcionario_nome, data_registro, minutos_trabalhados').gte('data_registro', dataInicio).lte('data_registro', dataFim).order('id').range(de, ate)),
+        buscarTodasPaginas<any>((de, ate) => supabase.from('folha_ponto_abono').select('funcionario_nome, data_abono, minutos_abonados').gte('data_abono', dataInicio).lte('data_abono', dataFim).order('id').range(de, ate)),
         supabase.from('folha_feriados').select('*'),
         // VR/VT vêm da Gestão de Benefícios (tipos 6 e 7), mesma fonte do holerite
         supabase.from('folha_beneficios').select('funcionario_nome, tipo_id, valor_mensal').eq('ativo', true).in('tipo_id', [6, 7])

@@ -5,6 +5,7 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
+import { buscarTodasPaginas } from '../../../lib/paginacao';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -74,12 +75,15 @@ export async function importarPontoAction(payload: {
     // Dias com batida via WhatsApp (origem legal, imutável) nunca são apagados
     // pela reimportação do CSV — mesmo que o funcionário também apareça no
     // arquivo do Pontomais naquele mês.
-    const { data: diasWhatsapp } = await db.from('folha_ponto_diaria')
+    // Paginado: se esta lista viesse cortada no limite de 1.000 da Data API,
+    // o CSV gravaria por cima de dias que já têm batida via WhatsApp.
+    const { data: diasWhatsapp } = await buscarTodasPaginas<{ funcionario_nome: string; data_registro: string }>((de, ate) => db.from('folha_ponto_diaria')
       .select('funcionario_nome, data_registro')
       .in('funcionario_nome', nomes)
       .eq('origem', 'WHATSAPP')
       .gte('data_registro', `${anoRef}-${mesRef}-01`)
-      .lte('data_registro', dataFim);
+      .lte('data_registro', dataFim)
+      .order('id').range(de, ate));
 
     const diasPreservados = new Set((diasWhatsapp || []).map((d) => `${d.funcionario_nome}|${d.data_registro}`));
 
@@ -153,12 +157,13 @@ export async function importarAbonosAction(payload: {
     // Abono aprovado via WhatsApp (origem legal) nunca é apagado pela
     // reimportação do CSV — mesmo que o funcionário também apareça no
     // arquivo do Pontomais naquele mês.
-    const { data: diasWhatsapp } = await db.from('folha_ponto_abono')
+    const { data: diasWhatsapp } = await buscarTodasPaginas<{ funcionario_nome: string; data_abono: string }>((de, ate) => db.from('folha_ponto_abono')
       .select('funcionario_nome, data_abono')
       .in('funcionario_nome', nomes)
       .eq('origem', 'WHATSAPP')
       .gte('data_abono', `${anoRef}-${mesRef}-01`)
-      .lte('data_abono', dataFim);
+      .lte('data_abono', dataFim)
+      .order('id').range(de, ate));
 
     const diasPreservados = new Set((diasWhatsapp || []).map((d) => `${d.funcionario_nome}|${d.data_abono}`));
 

@@ -10,7 +10,7 @@ import { registrarLogAuditoria } from '../../actions';
 import { autentiqueCriarDocumento } from '../../lib/autentique';
 import { gerarReciboOpPdf } from '../../lib/gerarReciboOpPdf';
 import { normalizarItensOP } from './utils';
-import { obterPerfilValidado, possuiAcessoRota } from './actions';
+import { validarAcesso as validarAcessoCentral } from '../../lib/serverAuth';
 import { consultarEAtualizar } from './assinaturaOpCore';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
@@ -25,14 +25,9 @@ function normalizarCelularBR(celular?: string | null): string | null {
   return `+${comPais}`;
 }
 
+// serverAuth central: permissão + 2FA da rota (/admin/op/assinaturas exige).
 async function validarAcesso(accessToken: string) {
-  const perfil = await obterPerfilValidado(accessToken);
-  if (!perfil) return { ok: false as const, message: 'Sessão inválida ou expirada. Faça login novamente.' };
-
-  const autorizado = await possuiAcessoRota(perfil.permissaoNormalizada, ROTA_ASSINATURAS);
-  if (!autorizado) return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
-
-  return { ok: true as const, perfil };
+  return validarAcessoCentral(accessToken, ROTA_ASSINATURAS);
 }
 
 // ============================================================================

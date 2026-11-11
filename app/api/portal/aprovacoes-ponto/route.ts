@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { obterPerfilValidado } from '../../../lib/serverAuth';
+import { obterPerfilValidado, executarPeloApp } from '../../../lib/serverAuth';
 import {
   listarSolicitacoesPendentesAction,
   listarHistoricoSolicitacoesAction,
@@ -36,18 +36,18 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, erro: 'Sessão inválida ou expirada. Faça login novamente.' }, { status: 401 });
   }
 
-  const folgas = await listarSolicitacoesFolgaAction(accessToken);
+  const folgas = await executarPeloApp('/mobile/ponto', () => listarSolicitacoesFolgaAction(accessToken));
   const listaFolgas: SolicitacaoHistorico[] = folgas.ok ? (folgas.info || []) : [];
 
   if (filtro === 'pendentes') {
-    const resultado = await listarSolicitacoesPendentesAction(accessToken);
+    const resultado = await executarPeloApp('/mobile/ponto', () => listarSolicitacoesPendentesAction(accessToken));
     if (!resultado.ok) return NextResponse.json(resultado, { status: 401 });
     const pendentesFolga = listaFolgas.filter(s => s.status === 'PENDENTE');
     const info = [...(resultado.info || []), ...pendentesFolga].sort((a, b) => a.criado_em.localeCompare(b.criado_em));
     return NextResponse.json({ ok: true, info });
   }
 
-  const resultado = await listarHistoricoSolicitacoesAction(undefined, accessToken);
+  const resultado = await executarPeloApp('/mobile/ponto', () => listarHistoricoSolicitacoesAction(undefined, accessToken));
   if (!resultado.ok) return NextResponse.json(resultado, { status: 401 });
   const resolvidas = (resultado.info || []).filter(s => s.status !== 'PENDENTE');
   const resolvidasFolga = listaFolgas.filter(s => s.status !== 'PENDENTE');

@@ -7,13 +7,12 @@
 // app/admin/financeiro/ops/enviarOpP2sCore.ts). Tabela: op_naturezas_pagamento
 // (ver .sql/op_naturezas_pagamento.sql).
 //
-// Reaproveita obterPerfilValidado/possuiAcessoRota de ./actions (mesmo
-// padrão de validação de sessão/permissão do resto do módulo de OP) em vez
-// de duplicar essa lógica aqui.
+// Validação de sessão/permissão (+ 2FA da rota, se ela exigir) pelo
+// serverAuth central — o mesmo do resto do sistema.
 import { revalidatePath } from 'next/cache';
 import { registrarLogAuditoria } from '../../actions';
 import { supabaseAdmin } from '../../lib/supabase';
-import { obterPerfilValidado, possuiAcessoRota } from './actions';
+import { validarAcesso, validarAcessoAlgumaRota } from '../../lib/serverAuth';
 import { consultarObjetos, criterioRef, type AmbienteP2s } from '../../lib/p2s';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
@@ -21,11 +20,7 @@ type Resultado = { ok: boolean; erro?: string; info?: any };
 const ROTA = '/admin/op/naturezas';
 
 async function validarAcessoGestao(accessToken: string) {
-  const perfil = await obterPerfilValidado(accessToken);
-  if (!perfil) return { ok: false as const, message: 'Sessão inválida ou expirada. Faça login novamente.' };
-  const autorizado = await possuiAcessoRota(perfil.permissaoNormalizada, ROTA);
-  if (!autorizado) return { ok: false as const, message: 'Você não tem permissão para executar esta ação.' };
-  return { ok: true as const, perfil };
+  return validarAcesso(accessToken, ROTA);
 }
 
 export interface NaturezaPagamento {
@@ -56,14 +51,8 @@ export async function listarNaturezasPagamentoAction(accessToken: string): Promi
 // QUALQUER uma dessas duas rotas (quem tem acesso a essas telas precisa ver
 // a lista pra preencher o formulário, não só quem administra a tabela).
 export async function listarNaturezasPagamentoParaSelectAction(accessToken: string): Promise<Resultado> {
-  const perfil = await obterPerfilValidado(accessToken);
-  if (!perfil) return { ok: false, erro: 'Sessão inválida ou expirada. Faça login novamente.' };
-
-  const [temNova, temResponsavel] = await Promise.all([
-    possuiAcessoRota(perfil.permissaoNormalizada, '/admin/op/nova'),
-    possuiAcessoRota(perfil.permissaoNormalizada, '/admin/op/responsavel'),
-  ]);
-  if (!temNova && !temResponsavel) return { ok: false, erro: 'Você não tem permissão para executar esta ação.' };
+  const acesso = await validarAcessoAlgumaRota(accessToken, ['/admin/op/nova', '/admin/op/responsavel']);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
   const { data, error } = await db.from('op_naturezas_pagamento').select('natureza').order('natureza');

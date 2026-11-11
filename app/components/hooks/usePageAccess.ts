@@ -98,7 +98,9 @@ export function usePageAccess(options: UsePageAccessOptions = {}) {
   // rotas). Acompanha a renovação e mantém o token sempre atual.
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((evento, session) => {
-      if ((evento === 'TOKEN_REFRESHED' || evento === 'SIGNED_IN') && session?.access_token) {
+      // MFA_CHALLENGE_VERIFIED: o código do 2FA sobe o token pra aal2, que o
+      // servidor passa a exigir nas rotas com 2FA (serverAuth.validarAcesso).
+      if ((evento === 'TOKEN_REFRESHED' || evento === 'SIGNED_IN' || evento === 'MFA_CHALLENGE_VERIFIED') && session?.access_token) {
         setAccessToken(atual => (atual ? session.access_token : atual)); // só depois de liberado o acesso
       }
     });

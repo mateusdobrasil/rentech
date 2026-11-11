@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { executarPeloApp } from '../../../../lib/serverAuth';
 import { buscarOP } from '../../../../admin/op/actions';
 
 // GET /api/portal/op/[id]
@@ -8,7 +9,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const authHeader = request.headers.get('authorization') || '';
   const accessToken = authHeader.replace(/^Bearer\s+/i, '');
 
-  const resultado = await buscarOP(id, accessToken);
+  const resultado = await executarPeloApp('/mobile/op', () => buscarOP(id, accessToken));
   if (!resultado.success) return NextResponse.json({ ok: false, erro: resultado.message }, { status: 401 });
   return NextResponse.json({ ok: true, info: resultado.data });
 }

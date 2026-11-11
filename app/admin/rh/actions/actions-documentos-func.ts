@@ -4,7 +4,7 @@
 // Gestão de documentos dos funcionários: upload no Storage, metadados no banco,
 // controle de validade e painel de pendências.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { mensagemAcessoNegado, validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
+import { validarAcesso, validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -13,11 +13,7 @@ const BUCKET = 'documentos-funcionarios';
 const ROTAS_PERMITIDAS = ['/admin/rh/documentos', '/admin/rh/funcionario', '/admin/rh/relatorios'];
 
 async function validarAcessoQualquerRota(accessToken: string) {
-  for (const rota of ROTAS_PERMITIDAS) {
-    const acesso = await validarAcesso(accessToken, rota);
-    if (acesso.ok) return acesso;
-  }
-  return { ok: false as const, message: await mensagemAcessoNegado(accessToken) };
+  return validarAcessoAlgumaRota(accessToken, ROTAS_PERMITIDAS);
 }
 
 async function empresaIdDoFuncionario(db: ReturnType<typeof supabaseAdmin>, funcionarioNome: string): Promise<number | null> {

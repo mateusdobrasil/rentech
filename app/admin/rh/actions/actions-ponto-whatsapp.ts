@@ -9,7 +9,7 @@
 // de verdade quando aprovadas aqui pelo RH — o funcionário nunca aprova a
 // própria exceção.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { mensagemAcessoNegado, validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
+import { validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { consolidarDia, timestampBR, formatarPeriodoBR } from '../../../lib/pontoWhatsapp';
 import { notificarPontoWhatsApp } from '../../../lib/whatsapp';
 import { registrarLogAuditoria } from '../../../actions';
@@ -22,11 +22,7 @@ type Resultado<T> = { ok: boolean; erro?: string; info?: T };
 const ROTAS_PERMITIDAS = ['/admin/rh/ponto', '/admin/operacional/registro-ponto', '/admin/rh/holerite'];
 
 async function validarAcessoPontoWhatsapp(accessToken: string) {
-  for (const rota of ROTAS_PERMITIDAS) {
-    const acesso = await validarAcesso(accessToken, rota);
-    if (acesso.ok) return acesso;
-  }
-  return { ok: false as const, message: await mensagemAcessoNegado(accessToken) };
+  return validarAcessoAlgumaRota(accessToken, ROTAS_PERMITIDAS);
 }
 
 export interface EstatisticasPontoWhatsapp {

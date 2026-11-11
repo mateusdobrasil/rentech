@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { executarPeloApp } from '../../../../lib/serverAuth';
 import { urlAnexoSolicitacaoAction } from '../../../../admin/rh/actions/actions-ponto-whatsapp';
 
 // GET /api/portal/aprovacoes-ponto/anexo?id=123
@@ -13,7 +14,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, erro: 'Parâmetro "id" inválido.' }, { status: 400 });
   }
 
-  const resultado = await urlAnexoSolicitacaoAction({ id }, accessToken);
+  const resultado = await executarPeloApp('/mobile/ponto', () => urlAnexoSolicitacaoAction({ id }, accessToken));
   if (!resultado.ok) return NextResponse.json(resultado, { status: 400 });
   return NextResponse.json({ ok: true, info: resultado.info });
 }

@@ -5,7 +5,7 @@
 // O VR/VT NÃO é gravado aqui — é lido do holerite (contrato + ficha) e apenas
 // exibido junto no painel, para não duplicar a fonte da verdade.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { mensagemAcessoNegado, validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
+import { validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
 import { registrarLogAuditoria } from '../../../actions';
 import { gravarGeracaoBeneficios, categoriaMeio, pedidosFlashCancelados, inicioDaCompetencia, type BaseBeneficios } from '../../../lib/beneficiosGeracoes';
@@ -15,11 +15,7 @@ type Resultado = { ok: boolean; erro?: string; info?: any };
 const ROTAS_PERMITIDAS = ['/admin/rh/beneficios', '/admin/rh/relatorios'];
 
 async function validarAcessoQualquerRota(accessToken: string) {
-  for (const rota of ROTAS_PERMITIDAS) {
-    const acesso = await validarAcesso(accessToken, rota);
-    if (acesso.ok) return acesso;
-  }
-  return { ok: false as const, message: await mensagemAcessoNegado(accessToken) };
+  return validarAcessoAlgumaRota(accessToken, ROTAS_PERMITIDAS);
 }
 
 // ============================================================================

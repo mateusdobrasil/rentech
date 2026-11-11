@@ -6,7 +6,7 @@
 // A separação por página é feita no CLIENTE (pdf-lib); aqui recebemos cada
 // pedaço já em base64 e persistimos.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { mensagemAcessoNegado, validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
+import { validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { extrairTextoPdf, identificarFuncionarioNoTexto } from '../../../lib/textract';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
@@ -17,11 +17,7 @@ const BUCKET = 'documentos-folha';
 const ROTAS_PERMITIDAS = ['/admin/rh/holerite', '/admin/financeiro/rh'];
 
 async function validarAcessoDocumentos(accessToken: string) {
-  for (const rota of ROTAS_PERMITIDAS) {
-    const acesso = await validarAcesso(accessToken, rota);
-    if (acesso.ok) return acesso;
-  }
-  return { ok: false as const, message: await mensagemAcessoNegado(accessToken) };
+  return validarAcessoAlgumaRota(accessToken, ROTAS_PERMITIDAS);
 }
 
 const slug = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')

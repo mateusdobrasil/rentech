@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { obterPerfilValidado } from '../../../../lib/serverAuth';
+import { obterPerfilValidado, executarPeloApp } from '../../../../lib/serverAuth';
 import { rejeitarSolicitacaoAction } from '../../../../admin/rh/actions/actions-ponto-whatsapp';
 
 // POST /api/portal/aprovacoes-ponto/rejeitar
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, erro: 'Informe o motivo da rejeição.' }, { status: 400 });
   }
 
-  const resultado = await rejeitarSolicitacaoAction({ id: body.id, aprovadorNome: perfil.nome, motivoRejeicao: body.motivoRejeicao }, accessToken);
+  const resultado = await executarPeloApp('/mobile/ponto', () => rejeitarSolicitacaoAction({ id: body.id, aprovadorNome: perfil.nome, motivoRejeicao: body.motivoRejeicao }, accessToken));
   if (!resultado.ok) return NextResponse.json(resultado, { status: 400 });
   return NextResponse.json({ ok: true });
 }

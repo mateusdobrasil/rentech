@@ -7,7 +7,7 @@ import nodemailer from 'nodemailer';
 import { dispararAutomacoesPorEventoWhatsApp } from '../../lib/automacoes';
 import { notificarPush } from '../../lib/push';
 import { normalizarPermissao, ehAltaGestaoOP } from '../../lib/permissoes';
-import { obterEmpresasPermitidas, empresaPermitida } from '../../lib/serverAuth';
+import { obterEmpresasPermitidas, empresaPermitida, validarAcesso as validarAcessoCentral, validarAcessoAlgumaRota as validarAcessoAlgumaRotaCentral } from '../../lib/serverAuth';
 import { gerarHtmlEmailOP } from './emailTemplate';
 import { ItemOPNormalizado, validarNovaOP, validarItensOP } from './utils';
 import { criarContaPagarParaOP, atualizarContaPagarParaOP } from '../financeiro/ops/enviarOpP2sCore';
@@ -142,14 +142,13 @@ type ResultadoAcesso =
   | { ok: true; perfil: PerfilValidado }
   | { ok: false; message: string };
 
+// Delegam pro serverAuth central, que além da permissão cobra o 2FA da rota
+// quando ela exige (ex.: /admin/financeiro/ops) — ver app/lib/serverAuth.ts.
 async function validarAcesso(accessToken: string, rota: string): Promise<ResultadoAcesso> {
-  const perfil = await obterPerfilValidado(accessToken);
-  if (!perfil) return { ok: false, message: 'Sessão inválida ou expirada. Faça login novamente.' };
-
-  const autorizado = await possuiAcessoRota(perfil.permissaoNormalizada, rota);
-  if (!autorizado) return { ok: false, message: 'Você não tem permissão para executar esta ação.' };
-
-  return { ok: true, perfil };
+  return validarAcessoCentral(accessToken, rota);
+}
+async function validarAcessoAlgumaRota(accessToken: string, rotas: string[]): Promise<ResultadoAcesso> {
+  return validarAcessoAlgumaRotaCentral(accessToken, rotas);
 }
 
 // 1. Criar Nova OP (exige acesso à rota /admin/op/nova)
@@ -510,16 +509,11 @@ export async function reabrirOPAction(opId: string, accessToken: string) {
 
 // 4. Buscar OP Específica para Edição
 export async function buscarOP(opId: string, accessToken: string) {
-  const perfil = await obterPerfilValidado(accessToken);
-  if (!perfil) return { success: false, message: 'Sessão inválida ou expirada. Faça login novamente.' };
-
-  const [temResponsavel, temFinanceiro] = await Promise.all([
-    possuiAcessoRota(perfil.permissaoNormalizada, '/admin/op/responsavel'),
-    possuiAcessoRota(perfil.permissaoNormalizada, '/admin/financeiro/ops'),
-  ]);
-  if (!temResponsavel && !temFinanceiro) {
-    return { success: false, message: 'Você não tem permissão para executar esta ação.' };
-  }
+  const acesso = await validarAcessoAlgumaRota(accessToken, ['/admin/op/responsavel', '/admin/financeiro/ops']);
+  if (!acesso.ok) return { success: false, message: acesso.message };
+  const { perfil } = acesso;
+  // Ver OP de outro responsável: só com acesso completo ao Financeiro (permissão + 2FA)
+  const temFinanceiro = (await validarAcesso(accessToken, '/admin/financeiro/ops')).ok;
 
   try {
     const { data: op, error } = await supabaseAdmin
@@ -662,16 +656,11 @@ async function enviarEmailOPInterno(op: any, emailSolicitante: string, apenasCop
 // para um destinatário arbitrário informado na chamada — para que esta action
 // não possa virar um "relay" de e-mails para terceiros.
 export async function dispararEmailOP(opId: string, accessToken: string, apenasCopia: boolean = false) {
-  const perfil = await obterPerfilValidado(accessToken);
-  if (!perfil) return { success: false, message: 'Sessão inválida ou expirada. Faça login novamente.' };
-
-  const [temResponsavel, temFinanceiro] = await Promise.all([
-    possuiAcessoRota(perfil.permissaoNormalizada, '/admin/op/responsavel'),
-    possuiAcessoRota(perfil.permissaoNormalizada, '/admin/financeiro/ops'),
-  ]);
-  if (!temResponsavel && !temFinanceiro) {
-    return { success: false, message: 'Você não tem permissão para executar esta ação.' };
-  }
+  const acesso = await validarAcessoAlgumaRota(accessToken, ['/admin/op/responsavel', '/admin/financeiro/ops']);
+  if (!acesso.ok) return { success: false, message: acesso.message };
+  const { perfil } = acesso;
+  // Ver OP de outro responsável: só com acesso completo ao Financeiro (permissão + 2FA)
+  const temFinanceiro = (await validarAcesso(accessToken, '/admin/financeiro/ops')).ok;
 
   try {
     const { data: op, error } = await supabaseAdmin

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { obterPerfilValidado, possuiAcessoRota } from '../../../lib/serverAuth';
+import { obterPerfilValidado, possuiAcessoRota, executarPeloApp } from '../../../lib/serverAuth';
 import { listarOPs } from '../../../admin/op/actions';
 
 // GET /api/portal/op
@@ -21,7 +21,7 @@ export async function GET(request: Request) {
   const temFinanceiro = await possuiAcessoRota(perfil.permissaoNormalizada, '/admin/financeiro/ops');
   const rota = temFinanceiro ? '/admin/financeiro/ops' : '/admin/op/responsavel';
 
-  const resultado = await listarOPs(accessToken, rota);
+  const resultado = await executarPeloApp('/mobile/op', () => listarOPs(accessToken, rota));
   if (!resultado.success) return NextResponse.json({ ok: false, erro: resultado.message }, { status: 401 });
   return NextResponse.json({ ok: true, info: resultado.data });
 }

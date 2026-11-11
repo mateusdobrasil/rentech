@@ -4,7 +4,7 @@
 // Server actions para as GRAVAÇÕES sensíveis do módulo de folha.
 // Rodam no servidor com service role — a lógica de escrita sai do browser.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { mensagemAcessoNegado, validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
+import { validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
@@ -12,11 +12,7 @@ type Resultado = { ok: boolean; erro?: string; info?: any };
 const ROTAS_PERMITIDAS = ['/admin/rh/funcionario', '/admin/rh/holerite'];
 
 async function validarAcessoQualquerRota(accessToken: string) {
-  for (const rota of ROTAS_PERMITIDAS) {
-    const acesso = await validarAcesso(accessToken, rota);
-    if (acesso.ok) return acesso;
-  }
-  return { ok: false as const, message: await mensagemAcessoNegado(accessToken) };
+  return validarAcessoAlgumaRota(accessToken, ROTAS_PERMITIDAS);
 }
 
 // ============================================================================

@@ -16,7 +16,7 @@
 // empresa é o obterEmpresasPermitidas/empresaPermitida explícito em cada
 // action, como no resto do sistema.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso, obterEmpresasPermitidas, empresaPermitida, mensagemAcessoNegado } from '../../../lib/serverAuth';
+import { validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
 import { provedorConfigurado, validadeCertificadoA1, prefeituraSpConfigurada, consultarBoletosPrefeituraSP, consultarPenalidadesDerSP } from '../../../lib/consultaDebitosVeiculares';
 import { normalizarBoleto, formatarLinhaDigitavel } from '../../../lib/boletoMulta';
@@ -83,16 +83,10 @@ const COLUNAS_DEBITO = 'id, empresa_id, veiculo_id, tipo, origem, fonte, descric
 // Helpers
 // ---------------------------------------------------------------------------
 async function autorizar(accessToken: string, rotas: string[] = [ROTA]) {
-  let ultimaMensagem = '';
-  for (const rota of rotas) {
-    const acesso = await validarAcesso(accessToken, rota);
-    if (acesso.ok) {
-      const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
-      return { ok: true as const, perfil: acesso.perfil, empresasPermitidas };
-    }
-    ultimaMensagem = acesso.message;
-  }
-  return { ok: false as const, erro: rotas.length > 1 ? await mensagemAcessoNegado(accessToken) : ultimaMensagem };
+  const acesso = await validarAcessoAlgumaRota(accessToken, rotas);
+  if (!acesso.ok) return { ok: false as const, erro: acesso.message };
+  const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+  return { ok: true as const, perfil: acesso.perfil, empresasPermitidas };
 }
 
 // Carrega o débito e confere a empresa — barra IDOR (id de outra empresa).

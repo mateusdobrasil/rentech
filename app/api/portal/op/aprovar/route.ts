@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { executarPeloApp } from '../../../../lib/serverAuth';
 import { atualizarStatus } from '../../../../admin/op/actions';
 
 // POST /api/portal/op/aprovar
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, erro: 'OP não informada.' }, { status: 400 });
   }
 
-  const resultado = await atualizarStatus(body.opId, 'PAGO', accessToken);
+  const resultado = await executarPeloApp('/mobile/op', () => atualizarStatus(body.opId, 'PAGO', accessToken));
   if (!resultado.success) return NextResponse.json({ ok: false, erro: resultado.message }, { status: 401 });
   return NextResponse.json({ ok: true });
 }

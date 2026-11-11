@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { obterPerfilValidado } from '../../../../lib/serverAuth';
+import { obterPerfilValidado, executarPeloApp } from '../../../../lib/serverAuth';
 import { aprovarSolicitacaoAction } from '../../../../admin/rh/actions/actions-ponto-whatsapp';
 
 // POST /api/portal/aprovacoes-ponto/aprovar
@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, erro: 'Corpo da requisição inválido.' }, { status: 400 });
   }
 
-  const resultado = await aprovarSolicitacaoAction({ id: body.id, aprovadorNome: perfil.nome }, accessToken);
+  const resultado = await executarPeloApp('/mobile/ponto', () => aprovarSolicitacaoAction({ id: body.id, aprovadorNome: perfil.nome }, accessToken));
   if (!resultado.ok) return NextResponse.json(resultado, { status: 400 });
   return NextResponse.json({ ok: true });
 }

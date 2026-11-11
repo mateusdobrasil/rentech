@@ -7,6 +7,7 @@ import { supabase } from '../lib/supabase';
 import { registrarLogAuditoria } from '../actions';
 import logoPB from '../imgs/logo_pb.png';
 import { Analytics } from "@vercel/analytics/next"
+import RecuperarSenha from './RecuperarSenha';
 
 export default function Login() {
   return (
@@ -38,6 +39,7 @@ function LoginForm() {
   const [senha, setSenha] = useState('');
   const [erro, setErro] = useState('');
   const [loading, setLoading] = useState(false);
+  const [recuperando, setRecuperando] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -126,7 +128,10 @@ function LoginForm() {
           </div>
         )}
 
-        {/* Formulário */}
+        {recuperando ? (
+          <RecuperarSenha emailInicial={email} aoVoltar={(e) => { setEmail(e); setSenha(''); setErro(''); setRecuperando(false); }} />
+        ) : (
+        /* Formulário */
         <form onSubmit={handleLogin} className="space-y-5">
 
           <div>
@@ -173,7 +178,16 @@ function LoginForm() {
             {loading ? 'AUTENTICANDO...' : 'ENTRAR NO SISTEMA'}
           </button>
 
+          <button
+            type="button"
+            onClick={() => { setErro(''); setRecuperando(true); }}
+            className="w-full text-[11px] font-bold text-[#999999] hover:text-white uppercase tracking-widest py-1 transition-colors"
+          >
+            Esqueci minha senha
+          </button>
+
         </form>
+        )}
 
         <div className="mt-8 text-center border-t border-[#284B8C]/30 pt-6">
           <p className="text-[10px] text-[#666666] font-bold uppercase tracking-widest">

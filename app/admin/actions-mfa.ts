@@ -14,8 +14,8 @@
 //      cadastra o celular novo em Minha Conta.
 // Tabela: .sql/Pendentes/acesso_mfa_codigos_email.sql
 import { createHmac, randomInt, timingSafeEqual } from 'crypto';
-import nodemailer from 'nodemailer';
 import { supabaseAdmin } from '../lib/supabase';
+import { enviarEmailSistema, mascararEmail } from '../lib/emailSistema';
 import { validarAcesso } from '../lib/serverAuth';
 import { ehAdministradorGlobal } from '../lib/permissoes';
 import { registrarLogAuditoria } from '../actions';
@@ -31,10 +31,18 @@ const ESPERA_REENVIO_S = 60;
 const segredo = () => process.env.MFA_CODIGO_SEGREDO || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const hashCodigo = (userId: string, codigo: string) => createHmac('sha256', segredo()).update(`${userId}:${codigo}`).digest('hex');
 
-const mascararEmail = (email: string) => {
-  const [nome, dominio] = email.split('@');
-  return `${nome.slice(0, 1)}${'*'.repeat(Math.max(1, nome.length - 1))}@${dominio}`;
-};
+// Senha trocada pelo "Esqueci minha senha" (app/login/actions.ts) há menos de
+// 24h → o plano B por e-mail fica bloqueado: senão quem tivesse só a caixa de
+// e-mail trocaria a senha E passaria pelo 2FA. Tabela ainda não criada = sem
+// trava (não derruba o plano B).
+const HORAS_BLOQUEIO_APOS_TROCA_SENHA = 24;
+const MSG_BLOQUEIO_TROCA_SENHA = `Sua senha foi redefinida pelo e-mail há menos de ${HORAS_BLOQUEIO_APOS_TROCA_SENHA}h. Por segurança, neste período o código por e-mail não libera o 2FA: use o aplicativo autenticador ou peça ao Administrador para resetar o seu 2FA.`;
+async function senhaTrocadaPorEmailRecente(userId: string): Promise<boolean> {
+  const desde = new Date(Date.now() - HORAS_BLOQUEIO_APOS_TROCA_SENHA * 3600000).toISOString();
+  const { data, error } = await supabaseAdmin().from('acesso_senha_codigos_email')
+    .select('id').eq('user_id', userId).gte('usado_em', desde).limit(1);
+  return !error && !!(data && data.length > 0);
+}
 
 // Usuário dono do token + a sessão de login dele (claim session_id do JWT,
 // que muda a cada login). getUser valida o token antes de ler o claim.
@@ -50,15 +58,7 @@ async function usuarioESessao(accessToken: string) {
   return { user: data.user, sessaoId };
 }
 
-async function enviarEmail(para: string, assunto: string, texto: string) {
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT) || 465,
-    secure: Number(process.env.SMTP_PORT) === 465,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
-  await transporter.sendMail({ from: `"Sistema Rentech" <${process.env.SMTP_USER}>`, to: para, subject: assunto, text: texto });
-}
+const enviarEmail = enviarEmailSistema;
 
 export async function enviarCodigoMfaEmailAction(accessToken: string): Promise<Resultado> {
   const us = await usuarioESessao(accessToken);
@@ -73,6 +73,7 @@ export async function enviarCodigoMfaEmailAction(accessToken: string): Promise<R
     if (!(fatores?.factors || []).some(f => f.factor_type === 'totp' && f.status === 'verified')) {
       return { ok: false, erro: 'Você ainda não tem a autenticação em duas etapas cadastrada. Cadastre em Minha Conta.' };
     }
+    if (await senhaTrocadaPorEmailRecente(us.user.id)) return { ok: false, erro: MSG_BLOQUEIO_TROCA_SENHA };
 
     const desde = new Date(Date.now() - 15 * 60000).toISOString();
     const { data: recentes } = await db.from('acesso_mfa_codigos_email')
@@ -121,6 +122,7 @@ export async function verificarCodigoMfaEmailAction(payload: { codigo: string },
       .eq('user_id', us.user.id).is('usado_em', null).gt('expira_em', new Date().toISOString())
       .order('criado_em', { ascending: false }).limit(1).maybeSingle();
     if (!linha) return { ok: false, erro: 'Código expirado ou inexistente. Peça um novo.' };
+    if (await senhaTrocadaPorEmailRecente(us.user.id)) return { ok: false, erro: MSG_BLOQUEIO_TROCA_SENHA };
     if (linha.tentativas >= MAX_TENTATIVAS) {
       await db.from('acesso_mfa_codigos_email').update({ expira_em: new Date().toISOString() }).eq('id', linha.id);
       return { ok: false, erro: 'Tentativas demais com este código. Peça um novo.' };

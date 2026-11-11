@@ -13,6 +13,7 @@ import { supabaseAdmin } from '../../lib/supabase';
 import { resolverProvedorAutomacao, enviarComJanela, type ProvedorAutomacao, type TemplateMeta } from '../../lib/whatsapp';
 import { somenteDigitos, cpfValido, emailSinteticoPortal } from '../lib/cpf';
 import { carregarNomesEmpresas, nomeEmpresaPara } from '../../lib/empresa';
+import { registrarLogAuditoria } from '../../actions';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -103,7 +104,21 @@ async function enviarCodigoAcessoWhatsApp(celular: string, codigo: string, empre
 // (ativo=true, sem vínculo de portal ainda) e dispara o código por WhatsApp.
 // ============================================================================
 export async function solicitarAcessoAction(payload: { cpf: string }): Promise<Resultado> {
-  const cpf = somenteDigitos(payload.cpf);
+  return enviarCodigoPorCpf(payload.cpf, 'PRIMEIRO_ACESSO');
+}
+
+// "Esqueci minha senha" do portal (tour de melhorias 2026-11-11, item 5):
+// mesmo código por WhatsApp, só que pra quem JÁ tem acesso. O e-mail do
+// login do portal é sintético (emailSinteticoPortal), então o e-mail de
+// recuperação do Supabase não chegaria a ninguém.
+export async function solicitarRedefinicaoSenhaAction(payload: { cpf: string }): Promise<Resultado> {
+  return enviarCodigoPorCpf(payload.cpf, 'REDEFINIR_SENHA');
+}
+
+// PRIMEIRO_ACESSO só envia pra quem ainda não tem conta; REDEFINIR_SENHA só
+// pra quem já tem. Resposta sempre genérica nos dois casos.
+async function enviarCodigoPorCpf(cpfBruto: string, finalidade: 'PRIMEIRO_ACESSO' | 'REDEFINIR_SENHA'): Promise<Resultado> {
+  const cpf = somenteDigitos(cpfBruto);
   if (!cpfValido(cpf)) return { ok: false, erro: 'CPF inválido. Confira os números digitados.' };
 
   const db = supabaseAdmin();
@@ -143,7 +158,7 @@ export async function solicitarAcessoAction(payload: { cpf: string }): Promise<R
         .eq('funcionario_nome', funcionario.nome_completo)
         .maybeSingle();
 
-      if (!jaTemAcesso) {
+      if (finalidade === 'PRIMEIRO_ACESSO' ? !jaTemAcesso : !!jaTemAcesso) {
         const codigo = gerarCodigo();
         const expiraEm = new Date(Date.now() + VALIDADE_CODIGO_MIN * 60 * 1000).toISOString();
 
@@ -160,7 +175,7 @@ export async function solicitarAcessoAction(payload: { cpf: string }): Promise<R
     }
 
     // Resposta idêntica em todos os casos (CPF não encontrado, sem celular,
-    // já tem conta, ou código enviado com sucesso).
+    // já tem / ainda não tem conta, ou código enviado com sucesso).
     return { ok: true, info: { mensagem: MSG_GENERICA } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
@@ -260,6 +275,50 @@ export async function criarContaAction(payload: { cpf: string; token: string; se
 
     await db.from('portal_acesso_otps').update({ usado: true }).eq('id', otp.id);
 
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// ESQUECI MINHA SENHA — passo final: com o código do WhatsApp já conferido
+// (verificarCodigoAction), troca a senha da conta existente.
+// ============================================================================
+export async function redefinirSenhaPortalAction(payload: { cpf: string; token: string; senha: string }): Promise<Resultado> {
+  const cpf = somenteDigitos(payload.cpf);
+  if ((payload.senha || '').length < 8) return { ok: false, erro: 'A senha precisa ter pelo menos 8 caracteres.' };
+  if (!payload.token) return { ok: false, erro: 'Verificação expirada. Refaça o processo.' };
+
+  const db = supabaseAdmin();
+  try {
+    const { data: otp } = await db
+      .from('portal_acesso_otps')
+      .select('*')
+      .eq('cpf', cpf)
+      .eq('token_verificacao', payload.token)
+      .eq('usado', false)
+      .not('verificado_em', 'is', null)
+      .order('criado_em', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!otp || new Date(otp.expira_em) < new Date()) return { ok: false, erro: 'Verificação expirada. Refaça o processo.' };
+
+    const { data: vinculo } = await db
+      .from('portal_funcionarios_auth')
+      .select('auth_user_id')
+      .eq('funcionario_nome', otp.funcionario_nome)
+      .maybeSingle();
+    if (!vinculo?.auth_user_id) return { ok: false, erro: 'Você ainda não tem acesso ao portal. Use "Solicitar acesso".' };
+
+    const { error } = await db.auth.admin.updateUserById(vinculo.auth_user_id, { password: payload.senha });
+    if (error) {
+      const fraca = /weak|pwned|leaked|characters|password/i.test(error.message);
+      return { ok: false, erro: fraca ? 'Essa senha foi recusada (fraca ou conhecida em vazamentos). Escolha outra.' : error.message };
+    }
+    await db.from('portal_acesso_otps').update({ usado: true }).eq('id', otp.id);
+
+    registrarLogAuditoria({ usuario_nome: otp.funcionario_nome, acao: 'PORTAL: SENHA REDEFINIDA POR CÓDIGO NO WHATSAPP', setor: 'PORTAL' });
     return { ok: true };
   } catch (e: any) {
     return { ok: false, erro: e.message };

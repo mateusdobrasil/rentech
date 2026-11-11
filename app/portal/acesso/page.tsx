@@ -1,15 +1,26 @@
 "use client";
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { formatarCpf, somenteDigitos } from '../lib/cpf';
-import { solicitarAcessoAction, verificarCodigoAction, criarContaAction } from '../actions/actions-acesso';
+import { solicitarAcessoAction, solicitarRedefinicaoSenhaAction, verificarCodigoAction, criarContaAction, redefinirSenhaPortalAction } from '../actions/actions-acesso';
 
 type Etapa = 'cpf' | 'codigo' | 'senha' | 'concluido';
 
 export default function SolicitarAcessoPage() {
+  return (
+    <Suspense fallback={null}>
+      <SolicitarAcesso />
+    </Suspense>
+  );
+}
+
+// ?modo=senha → "Esqueci minha senha" (mesmo código no WhatsApp, só que pra
+// quem já tem acesso; no fim troca a senha em vez de criar a conta).
+function SolicitarAcesso() {
   const router = useRouter();
+  const redefinindo = useSearchParams().get('modo') === 'senha';
   const [etapa, setEtapa] = useState<Etapa>('cpf');
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState('');
@@ -23,7 +34,7 @@ export default function SolicitarAcessoPage() {
 
   const enviarCpf = async () => {
     setErro(''); setCarregando(true);
-    const res = await solicitarAcessoAction({ cpf });
+    const res = await (redefinindo ? solicitarRedefinicaoSenhaAction : solicitarAcessoAction)({ cpf });
     setCarregando(false);
     if (!res.ok) { setErro(res.erro || 'Erro ao solicitar acesso.'); return; }
     setMensagem(res.info.mensagem);
@@ -43,9 +54,9 @@ export default function SolicitarAcessoPage() {
     setErro('');
     if (senha !== confirmarSenha) { setErro('As senhas não coincidem.'); return; }
     setCarregando(true);
-    const res = await criarContaAction({ cpf, token, senha });
+    const res = await (redefinindo ? redefinirSenhaPortalAction : criarContaAction)({ cpf, token, senha });
     setCarregando(false);
-    if (!res.ok) { setErro(res.erro || 'Erro ao criar acesso.'); return; }
+    if (!res.ok) { setErro(res.erro || (redefinindo ? 'Erro ao trocar a senha.' : 'Erro ao criar acesso.')); return; }
     setEtapa('concluido');
   };
 
@@ -56,7 +67,7 @@ export default function SolicitarAcessoPage() {
         <div className="text-center mb-8">
           <div className="text-4xl mb-2">🔐</div>
           <h1 className="text-xl font-black text-[#0C1D4D] uppercase tracking-wider">Portal do Funcionário</h1>
-          <p className="text-xs text-[#64748B] font-medium mt-1">Solicitar acesso</p>
+          <p className="text-xs text-[#64748B] font-medium mt-1">{redefinindo ? 'Esqueci minha senha' : 'Solicitar acesso'}</p>
         </div>
 
         {erro && (
@@ -84,7 +95,7 @@ export default function SolicitarAcessoPage() {
               {carregando ? 'Enviando...' : 'Receber código pelo WhatsApp'}
             </button>
             <button onClick={() => router.push('/portal/login')} className="w-full text-[#336699] font-bold text-xs py-2">
-              Já tenho acesso — fazer login
+              {redefinindo ? '⬅ Voltar para o login' : 'Já tenho acesso — fazer login'}
             </button>
           </div>
         )}
@@ -119,7 +130,7 @@ export default function SolicitarAcessoPage() {
         {etapa === 'senha' && (
           <div className="space-y-4">
             <div>
-              <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Crie uma senha (mín. 8 caracteres)</label>
+              <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">{redefinindo ? 'Senha nova' : 'Crie uma senha'} (mín. 8 caracteres)</label>
               <input
                 type="password"
                 className="w-full p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-semibold focus:border-[#336699] outline-none"
@@ -141,7 +152,7 @@ export default function SolicitarAcessoPage() {
               disabled={carregando || senha.length < 8}
               className="w-full bg-[#16A34A] hover:bg-[#15803D] text-white font-black text-xs uppercase tracking-widest py-3.5 rounded-xl shadow-lg transition-colors disabled:opacity-40"
             >
-              {carregando ? 'Criando acesso...' : 'Criar meu acesso'}
+              {carregando ? (redefinindo ? 'Salvando...' : 'Criando acesso...') : (redefinindo ? 'Salvar senha nova' : 'Criar meu acesso')}
             </button>
           </div>
         )}
@@ -149,7 +160,7 @@ export default function SolicitarAcessoPage() {
         {etapa === 'concluido' && (
           <div className="text-center space-y-4">
             <div className="text-5xl">✅</div>
-            <p className="text-sm text-[#0C1D4D] font-bold">Acesso criado com sucesso!</p>
+            <p className="text-sm text-[#0C1D4D] font-bold">{redefinindo ? 'Senha alterada! Entre com a senha nova.' : 'Acesso criado com sucesso!'}</p>
             <button
               onClick={() => router.push('/portal/login')}
               className="w-full bg-[#0C1D4D] hover:bg-[#284B8C] text-white font-black text-xs uppercase tracking-widest py-3.5 rounded-xl shadow-lg transition-colors"

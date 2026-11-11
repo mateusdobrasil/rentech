@@ -86,6 +86,9 @@ function PortalLoginForm() {
           >
             {carregando ? 'Entrando...' : 'Entrar'}
           </button>
+          <button onClick={() => router.push('/portal/acesso?modo=senha')} className="w-full text-[#64748B] hover:text-[#336699] font-bold text-xs py-1">
+            Esqueci minha senha
+          </button>
           <button onClick={() => router.push('/portal/acesso')} className="w-full text-[#336699] font-bold text-xs py-2">
             Ainda não tenho acesso — solicitar
           </button>

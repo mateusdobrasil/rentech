@@ -3,6 +3,7 @@
 // app/reunioes/.../actions-ponto.ts  (ajuste o caminho de import conforme a localização real)
 // Server actions para a importação de PONTO (batidas e abonos), com service role.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { resolverFicha, filtrarPorFuncionario, camposVinculo, type RefFuncionario } from '../../../lib/funcionarioRef';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
 import { buscarTodasPaginas } from '../../../lib/paginacao';
@@ -28,6 +29,11 @@ async function mapaEmpresasELimite(db: ReturnType<typeof supabaseAdmin>, nomes: 
 }
 
 // Verifica se há folha fechada no mês (trava de reimportação)
+async function folhaFechadaDoFuncionario(db: ReturnType<typeof supabaseAdmin>, ref: RefFuncionario, mesAno: string): Promise<boolean> {
+  const { data } = await filtrarPorFuncionario(db.from('folha_holerites').select('id'), ref).eq('mes_referencia', mesAno).limit(1);
+  return !!(data && data.length);
+}
+
 async function nomesComFolhaFechada(db: ReturnType<typeof supabaseAdmin>, mesAno: string): Promise<string[]> {
   const { data, error } = await db.from('folha_holerites').select('funcionario_nome').eq('mes_referencia', mesAno);
   if (error) return [];
@@ -213,6 +219,8 @@ export async function importarAbonosAction(payload: {
 // mesma regra usada para bloquear o fechamento da folha em lote.
 // ============================================================================
 export async function lancarPontoManualAction(payload: {
+  // ID da ficha (preferido) — sem ele, localiza pelo nome como antes
+  funcionarioId?: string | null;
   funcionarioNome: string;
   dataRegistro: string; // YYYY-MM-DD
   entrada1: string | null;
@@ -234,14 +242,13 @@ export async function lancarPontoManualAction(payload: {
 
   try {
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
-    const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+    const { ref, ficha: func } = await resolverFicha(db, { funcionarioId: payload.funcionarioId, funcionarioNome });
     if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
       return { ok: false, erro: 'Você não tem permissão para lançar ponto para este funcionário.' };
     }
 
     const mesAno = dataRegistro.slice(0, 7);
-    const fechados = await nomesComFolhaFechada(db, mesAno);
-    if (fechados.includes(funcionarioNome)) {
+    if (await folhaFechadaDoFuncionario(db, ref, mesAno)) {
       return { ok: false, erro: `A folha de ${mesAno} já foi fechada para ${funcionarioNome}. Reabra a folha desse mês na tela de Holerites antes de lançar o ponto.` };
     }
 
@@ -280,9 +287,8 @@ export async function lancarPontoManualAction(payload: {
       return { ok: false, erro: 'Os horários informados resultam em zero ou tempo negativo trabalhado. Confira as batidas.' };
     }
 
-    const { data: existente } = await db.from('folha_ponto_diaria')
-      .select('id, origem')
-      .eq('funcionario_nome', funcionarioNome)
+    const { data: existente } = await filtrarPorFuncionario(db.from('folha_ponto_diaria')
+      .select('id, origem'), ref)
       .eq('data_registro', dataRegistro)
       .maybeSingle();
 
@@ -307,7 +313,7 @@ export async function lancarPontoManualAction(payload: {
       if (error) throw new Error(error.message);
     } else {
       const { error } = await db.from('folha_ponto_diaria').insert({
-        funcionario_nome: funcionarioNome, empresa_id: func?.empresa_id ?? null, data_registro: dataRegistro,
+        ...camposVinculo(ref), empresa_id: func?.empresa_id ?? null, data_registro: dataRegistro,
         entrada_1: entrada1, saida_1: saida1, entrada_2: entrada2, saida_2: saida2,
         minutos_trabalhados: minutosTrabalhados, origem: 'MANUAL_RH'
       });
@@ -336,6 +342,8 @@ export async function lancarPontoManualAction(payload: {
 // verificação de inconsistências.
 // ============================================================================
 export async function descartarPontoManualAction(payload: {
+  // ID da ficha (preferido) — sem ele, localiza pelo nome como antes
+  funcionarioId?: string | null;
   funcionarioNome: string;
   dataRegistro: string; // YYYY-MM-DD
   usuarioNome: string;
@@ -349,20 +357,18 @@ export async function descartarPontoManualAction(payload: {
 
   try {
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
-    const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+    const { ref, ficha: func } = await resolverFicha(db, { funcionarioId: payload.funcionarioId, funcionarioNome });
     if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
       return { ok: false, erro: 'Você não tem permissão para alterar o ponto deste funcionário.' };
     }
 
     const mesAno = dataRegistro.slice(0, 7);
-    const fechados = await nomesComFolhaFechada(db, mesAno);
-    if (fechados.includes(funcionarioNome)) {
+    if (await folhaFechadaDoFuncionario(db, ref, mesAno)) {
       return { ok: false, erro: `A folha de ${mesAno} já foi fechada para ${funcionarioNome}. Reabra a folha desse mês na tela de Holerites antes de descartar o ponto.` };
     }
 
-    const { data: existente } = await db.from('folha_ponto_diaria')
-      .select('id, origem')
-      .eq('funcionario_nome', funcionarioNome)
+    const { data: existente } = await filtrarPorFuncionario(db.from('folha_ponto_diaria')
+      .select('id, origem'), ref)
       .eq('data_registro', dataRegistro)
       .maybeSingle();
 
@@ -405,6 +411,8 @@ export async function descartarPontoManualAction(payload: {
 // sem depender de CSV ou do fluxo de aprovação via WhatsApp.
 // ============================================================================
 export async function abonarDiaManualAction(payload: {
+  // ID da ficha (preferido) — sem ele, localiza pelo nome como antes
+  funcionarioId?: string | null;
   funcionarioNome: string;
   dataAbono: string; // YYYY-MM-DD
   motivo: string;
@@ -421,20 +429,18 @@ export async function abonarDiaManualAction(payload: {
     if (!motivo?.trim()) return { ok: false, erro: 'Informe o motivo do abono.' };
 
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
-    const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+    const { ref, ficha: func } = await resolverFicha(db, { funcionarioId: payload.funcionarioId, funcionarioNome });
     if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
       return { ok: false, erro: 'Você não tem permissão para abonar dia para este funcionário.' };
     }
 
     const mesAno = dataAbono.slice(0, 7);
-    const fechados = await nomesComFolhaFechada(db, mesAno);
-    if (fechados.includes(funcionarioNome)) {
+    if (await folhaFechadaDoFuncionario(db, ref, mesAno)) {
       return { ok: false, erro: `A folha de ${mesAno} já foi fechada para ${funcionarioNome}. Reabra a folha desse mês na tela de Holerites antes de abonar o dia.` };
     }
 
-    const { data: existente } = await db.from('folha_ponto_abono')
-      .select('id, origem')
-      .eq('funcionario_nome', funcionarioNome)
+    const { data: existente } = await filtrarPorFuncionario(db.from('folha_ponto_abono')
+      .select('id, origem'), ref)
       .eq('data_abono', dataAbono)
       .maybeSingle();
 
@@ -453,7 +459,7 @@ export async function abonarDiaManualAction(payload: {
       if (error) throw new Error(error.message);
     } else {
       const { error } = await db.from('folha_ponto_abono').insert({
-        funcionario_nome: funcionarioNome, empresa_id: func?.empresa_id ?? null, data_abono: dataAbono,
+        ...camposVinculo(ref), empresa_id: func?.empresa_id ?? null, data_abono: dataAbono,
         dia_todo: true, hora_inicio: null, hora_fim: null,
         minutos_abonados: 480, motivo, origem: 'MANUAL_RH'
       });

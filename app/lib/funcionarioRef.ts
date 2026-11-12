@@ -33,6 +33,30 @@ export function filtrarFicha<T>(consulta: T, r: RefOuNome): T {
     : (consulta as any).eq('nome_completo', ref.funcionarioNome);
 }
 
+// SERVIDOR: acha a ficha UMA vez — pelo ID quando a tela mandou, senão pelo
+// nome — e devolve a referência com ID (e o nome ATUAL da ficha) pra action
+// usar em todas as consultas/gravações seguintes. `colunas` = campos extras da
+// ficha (ex.: 'empresa_id'). Ficha não encontrada → ref só com o nome recebido
+// e ficha null (mesmo comportamento de antes, quando tudo era pelo nome).
+export async function resolverFicha<T extends Record<string, any> = Record<string, any>>(
+  db: any,
+  quem: { funcionarioId?: string | null; funcionarioNome?: string | null },
+  colunas = 'empresa_id'
+): Promise<{ ref: RefFuncionario; ficha: (T & { id: string; nome_completo: string }) | null }> {
+  const sel = `id, nome_completo${colunas ? ', ' + colunas : ''}`;
+  let q = db.from('folha_funcionarios').select(sel);
+  q = quem.funcionarioId ? q.eq('id', quem.funcionarioId) : q.eq('nome_completo', quem.funcionarioNome || '');
+  const { data } = await q.maybeSingle();
+  if (!data) return { ref: { funcionarioId: null, funcionarioNome: quem.funcionarioNome || '' }, ficha: null };
+  return { ref: { funcionarioId: data.id, funcionarioNome: data.nome_completo }, ficha: data };
+}
+
+// Campos de vínculo pra gravar num registro novo (nome atual + ID quando houver)
+export const camposVinculo = (r: RefFuncionario) => ({
+  funcionario_nome: r.funcionarioNome,
+  ...(r.funcionarioId ? { funcionario_id: r.funcionarioId } : {}),
+});
+
 // O registro (com funcionario_id/funcionario_nome) é deste funcionário?
 export function pertenceAo(linha: { funcionario_id?: string | null; funcionario_nome?: string | null }, r: RefOuNome): boolean {
   const ref = comoRef(r);

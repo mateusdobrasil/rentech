@@ -22,6 +22,7 @@ import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 interface Assinatura {
   id: number;
   funcionario_nome: string;
+  funcionario_id?: string | null;
   mes_referencia: string;
   cpf: string | null;
   autentique_doc_id: string | null;
@@ -138,7 +139,7 @@ export default function AssinaturasPage() {
   const atualizarStatusRescisao = async (a: Assinatura) => {
     setAtualizandoRescisao(a.funcionario_nome);
     try {
-      const res = await consultarAssinaturaAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia }, accessToken);
+      const res = await consultarAssinaturaAction({ funcionarioId: a.funcionario_id ?? null, funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       carregarRescisoes();
     } catch (e: any) {
@@ -153,7 +154,7 @@ export default function AssinaturasPage() {
       `O link de assinatura deixa de funcionar e o registro fica marcado como CANCELADO (não é apagado).`))) return;
     setCancelandoRescisao(a.funcionario_nome);
     try {
-      const res = await cancelarAssinaturaAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia, canceladoPor: usuarioAtual }, accessToken);
+      const res = await cancelarAssinaturaAction({ funcionarioId: a.funcionario_id ?? null, funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia, canceladoPor: usuarioAtual }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       toast('Envio cancelado.', 'success');
       carregarRescisoes();
@@ -167,7 +168,7 @@ export default function AssinaturasPage() {
   const abrirAssinadoRescisao = async (a: Assinatura) => {
     setBaixandoRescisao(a.funcionario_nome);
     try {
-      const res = await baixarAssinadoAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia }, accessToken);
+      const res = await baixarAssinadoAction({ funcionarioId: a.funcionario_id ?? null, funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
     } catch (e: any) {
@@ -231,7 +232,7 @@ export default function AssinaturasPage() {
   const atualizarStatus = async (a: Assinatura) => {
     setAtualizando(a.funcionario_nome);
     try {
-      const res = await consultarAssinaturaAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia }, accessToken);
+      const res = await consultarAssinaturaAction({ funcionarioId: a.funcionario_id ?? null, funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       carregar(mesReferencia);
     } catch (e: any) {
@@ -247,7 +248,7 @@ export default function AssinaturasPage() {
       `Você pode enviar um novo documento para este funcionário depois.`))) return;
     setCancelando(a.funcionario_nome);
     try {
-      const res = await cancelarAssinaturaAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia, canceladoPor: usuarioAtual }, accessToken);
+      const res = await cancelarAssinaturaAction({ funcionarioId: a.funcionario_id ?? null, funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia, canceladoPor: usuarioAtual }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       toast('Envio cancelado.', 'success');
       carregar(mesReferencia);
@@ -281,7 +282,7 @@ export default function AssinaturasPage() {
   const abrirAssinado = async (a: Assinatura) => {
     setBaixandoAssinado(a.funcionario_nome);
     try {
-      const res = await baixarAssinadoAction({ funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia }, accessToken);
+      const res = await baixarAssinadoAction({ funcionarioId: a.funcionario_id ?? null, funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       window.open(res.info.url, '_blank', 'noopener,noreferrer');
     } catch (e: any) {

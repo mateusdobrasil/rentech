@@ -7,6 +7,7 @@
 // Itaú/PIX via API SISPAG hoje — ver app/lib/itauSispag.ts. Cadastro de
 // parceiros/bancos vive em app/admin/integracao/actions.ts (tela Integrações).
 import { supabaseAdmin } from '../../../lib/supabase';
+import { resolverFicha, filtrarPorFuncionario } from '../../../lib/funcionarioRef';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
 import { extrairTextoPdf, extrairValorLiquido } from '../../../lib/textract';
@@ -784,13 +785,12 @@ export async function processarOcrAwsAction(
       if (mesReferencia && funcionarioNome) {
         const db = supabaseAdmin();
         const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
-        const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+        const { ref, ficha: func } = await resolverFicha(db, { funcionarioNome });
         if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
           return { ok: false, erro: 'Você não tem permissão para processar OCR deste funcionário.' };
         }
-        await db.from('folha_documentos_contabeis')
-          .update({ valor_ocr: valor, ocr_processado_em: new Date().toISOString() })
-          .eq('funcionario_nome', funcionarioNome)
+        await filtrarPorFuncionario(db.from('folha_documentos_contabeis')
+          .update({ valor_ocr: valor, ocr_processado_em: new Date().toISOString() }), ref)
           .eq('mes_referencia', mesReferencia)
           .eq('tipo', tipo);
       }
@@ -825,6 +825,7 @@ export async function processarOcrAwsAction(
 // Só atualiza se já existir uma linha do documento (nome+mês+tipo) — se não
 // existir (ex.: fonte sem PDF de contabilidade nenhum), não faz nada.
 export async function salvarValorOcrManualAction(payload: {
+  funcionarioId?: string | null; // ID da ficha (preferido)
   funcionarioNome: string;
   mesReferencia: string;
   tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO_CONTABILIDADE';
@@ -836,14 +837,13 @@ export async function salvarValorOcrManualAction(payload: {
   const db = supabaseAdmin();
   try {
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
-    const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', payload.funcionarioNome).maybeSingle();
+    const { ref, ficha: func } = await resolverFicha(db, { funcionarioId: payload.funcionarioId, funcionarioNome: payload.funcionarioNome });
     if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
       return { ok: false, erro: 'Você não tem permissão para editar o valor deste funcionário.' };
     }
 
-    const { error } = await db.from('folha_documentos_contabeis')
-      .update({ valor_ocr: payload.valor, ocr_processado_em: new Date().toISOString() })
-      .eq('funcionario_nome', payload.funcionarioNome)
+    const { error } = await filtrarPorFuncionario(db.from('folha_documentos_contabeis')
+      .update({ valor_ocr: payload.valor, ocr_processado_em: new Date().toISOString() }), ref)
       .eq('mes_referencia', payload.mesReferencia)
       .eq('tipo', payload.tipo);
     if (error) throw new Error(error.message);

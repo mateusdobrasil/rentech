@@ -651,6 +651,7 @@ export default function HoleritePage() {
     setLoading(true);
     try {
       const res = await salvarBonusDescontosAction({
+        funcionarioId: formSelecionado.id ?? null,
         funcionarioNome: funcionarioSelecionado,
         descontos: descontosSelecionado,
         bonus: bonusSelecionado,
@@ -659,6 +660,7 @@ export default function HoleritePage() {
       if (!res.ok) throw new Error(res.erro);
 
       const resSalarial = await salvarDadosSalariaisAction({
+        funcionarioId: formSelecionado.id ?? null,
         funcionarioNome: funcionarioSelecionado,
         salario_folha: formSelecionado.salario_folha,
         salario_contrato: formSelecionado.salario_contrato,
@@ -918,7 +920,7 @@ export default function HoleritePage() {
       const nomesAbertos = abertos.map(l => l.func.nome_completo);
       const [{ porFuncionario }, resAbonos] = await Promise.all([
         buscarPontoDoMes(mesReferencia, undefined, Object.fromEntries(abertos.map(l => [l.func.id, l.func.nome_completo]))),
-        listarAbonosPendentesDoMesAction({ mesAno: mesReferencia, nomes: nomesAbertos }, accessToken)
+        listarAbonosPendentesDoMesAction({ mesAno: mesReferencia, nomes: nomesAbertos, ids: abertos.map(l => l.func.id).filter((i): i is string => !!i) }, accessToken)
       ]);
       if (!resAbonos.ok) throw new Error(resAbonos.erro);
 
@@ -933,8 +935,9 @@ export default function HoleritePage() {
         .filter(r => r.dias.length > 0);
 
       const abonosPorNome: Record<string, string[]> = {};
+      const nomeDaFicha: Record<string, string> = Object.fromEntries(abertos.map(l => [l.func.id, l.func.nome_completo]));
       (resAbonos.info || []).forEach(a => {
-        (abonosPorNome[a.funcionario_nome] ||= []).push(a.data_referencia.split('-').reverse().join('/'));
+        (abonosPorNome[(a.funcionario_id && nomeDaFicha[a.funcionario_id]) || a.funcionario_nome] ||= []).push(a.data_referencia.split('-').reverse().join('/'));
       });
       const relatorioAbonos = Object.entries(abonosPorNome).map(([nome, dias]) => ({ nome, dias }));
 
@@ -1055,6 +1058,7 @@ export default function HoleritePage() {
     setGerandoPrevia(item.func.nome_completo);
     try {
       const res = await previaDocumentoAssinaturaAction({
+        funcionarioId: item.func.id ?? null,
         funcionarioNome: item.func.nome_completo,
         mesReferencia,
         soDocumental: item.soDocumental,
@@ -1099,6 +1103,7 @@ export default function HoleritePage() {
     setEnviandoAssinatura(item.func.nome_completo);
     try {
       const res = await enviarHoleriteAssinaturaAction({
+        funcionarioId: item.func.id ?? null,
         funcionarioNome: item.func.nome_completo,
         mesReferencia,
         enviadoPor: usuarioAtual,

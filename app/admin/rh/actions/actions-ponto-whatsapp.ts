@@ -9,6 +9,7 @@
 // de verdade quando aprovadas aqui pelo RH — o funcionário nunca aprova a
 // própria exceção.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { filtrarPorFuncionario, camposVinculo, type RefFuncionario } from '../../../lib/funcionarioRef';
 import { validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { consolidarDia, timestampBR, formatarPeriodoBR } from '../../../lib/pontoWhatsapp';
 import { notificarPontoWhatsApp } from '../../../lib/whatsapp';
@@ -186,6 +187,7 @@ export async function listarSolicitacoesFolgaAction(accessToken: string): Promis
 
 export interface AbonoPendenteResumo {
   funcionario_nome: string;
+  funcionario_id?: string | null;
   data_referencia: string;
   motivo: string;
 }
@@ -198,13 +200,14 @@ export interface AbonoPendenteResumo {
 // compara só data_referencia (início) contra o mês, não o intervalo inteiro
 // de uma folga em período — revisitar se aparecer caso de período cruzando
 // virada de mês.
-export async function listarAbonosPendentesDoMesAction(payload: { mesAno: string; nomes: string[] }, accessToken: string): Promise<Resultado<AbonoPendenteResumo[]>> {
+export async function listarAbonosPendentesDoMesAction(payload: { mesAno: string; nomes: string[]; ids?: string[] }, accessToken: string): Promise<Resultado<AbonoPendenteResumo[]>> {
   const acesso = await validarAcessoPontoWhatsapp(accessToken);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
   try {
-    if (!payload.nomes.length) return { ok: true, info: [] };
+    const porIds = !!payload.ids?.length;
+    if (!porIds && !payload.nomes.length) return { ok: true, info: [] };
     const [ano, mes] = payload.mesAno.split('-');
     const dataInicio = `${ano}-${mes}-01`;
     const ultimoDia = new Date(Number(ano), Number(mes), 0).getDate();
@@ -213,12 +216,12 @@ export async function listarAbonosPendentesDoMesAction(payload: { mesAno: string
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     let query = db
       .from('folha_ponto_whatsapp_solicitacoes')
-      .select('funcionario_nome, data_referencia, motivo')
+      .select('funcionario_nome, funcionario_id, data_referencia, motivo')
       .eq('status', 'PENDENTE')
       .in('tipo', ['ABONO_DIA', 'FOLGA_DIA'])
       .gte('data_referencia', dataInicio)
       .lte('data_referencia', dataFim)
-      .in('funcionario_nome', payload.nomes);
+      .in(porIds ? 'funcionario_id' : 'funcionario_nome', porIds ? payload.ids! : payload.nomes);
     if (empresasPermitidas) query = query.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
     const { data, error } = await query;
     if (error) throw new Error(error.message);
@@ -324,10 +327,9 @@ function diasEntre(inicioIso: string, fimIso: string): string[] {
 // Grava (ou atualiza, se já existir) uma linha de folha_ponto_abono pra um
 // dia — mesmo padrão de abonarDiaManualAction (actions-ponto.ts), reusado
 // aqui tanto pro Abono de dia único quanto, em loop, pro período de Folga.
-async function gravarAbonoDoDia(db: ReturnType<typeof supabaseAdmin>, funcionarioNome: string, empresaId: number | null, dataAbono: string, motivo: string): Promise<void> {
-  const { data: existente } = await db.from('folha_ponto_abono')
-    .select('id')
-    .eq('funcionario_nome', funcionarioNome)
+async function gravarAbonoDoDia(db: ReturnType<typeof supabaseAdmin>, funcionario: RefFuncionario, empresaId: number | null, dataAbono: string, motivo: string): Promise<void> {
+  const { data: existente } = await filtrarPorFuncionario(db.from('folha_ponto_abono')
+    .select('id'), funcionario)
     .eq('data_abono', dataAbono)
     .maybeSingle();
 
@@ -336,7 +338,7 @@ async function gravarAbonoDoDia(db: ReturnType<typeof supabaseAdmin>, funcionari
     const { error } = await db.from('folha_ponto_abono').update(payload).eq('id', existente.id);
     if (error) throw new Error(`Falha ao gravar o abono de ${dataAbono}: ${error.message}`);
   } else {
-    const { error } = await db.from('folha_ponto_abono').insert({ funcionario_nome: funcionarioNome, empresa_id: empresaId, data_abono: dataAbono, ...payload });
+    const { error } = await db.from('folha_ponto_abono').insert({ ...camposVinculo(funcionario), empresa_id: empresaId, data_abono: dataAbono, ...payload });
     if (error) throw new Error(`Falha ao gravar o abono de ${dataAbono}: ${error.message}`);
   }
 }
@@ -380,11 +382,11 @@ export async function aprovarSolicitacaoAction(payload: { id: number; aprovadorN
     } else if (solicitacao.tipo === 'FOLGA_DIA') {
       const dias = diasEntre(solicitacao.data_referencia, solicitacao.data_referencia_fim || solicitacao.data_referencia);
       for (const dia of dias) {
-        await gravarAbonoDoDia(db, solicitacao.funcionario_nome, solicitacao.empresa_id, dia, solicitacao.motivo);
+        await gravarAbonoDoDia(db, { funcionarioId: solicitacao.funcionario_id, funcionarioNome: solicitacao.funcionario_nome }, solicitacao.empresa_id, dia, solicitacao.motivo);
       }
     } else {
       const { error: abonoErr } = await db.from('folha_ponto_abono').insert({
-        funcionario_nome: solicitacao.funcionario_nome,
+        ...camposVinculo({ funcionarioId: solicitacao.funcionario_id, funcionarioNome: solicitacao.funcionario_nome }),
         empresa_id: solicitacao.empresa_id,
         data_abono: solicitacao.data_referencia,
         dia_todo: true,

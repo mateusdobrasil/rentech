@@ -9,6 +9,7 @@
 // endpoint de Server Action alcançável direto por RPC sem nenhuma das duas
 // checagens acima.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { filtrarPorFuncionario } from '../../../lib/funcionarioRef';
 import { registrarLogAuditoria } from '../../../actions';
 import { autentiqueConsultarDocumento } from '../../../lib/autentique';
 
@@ -22,6 +23,7 @@ function slug(s: string): string {
 }
 
 export async function baixarAssinado(payload: {
+  funcionarioId?: string | null; // ID da ficha (preferido) — vínculo por ID
   funcionarioNome: string; mesReferencia: string;
   // Quem pediu o download — RH manda o próprio nome (sessão admin), o Portal
   // manda o nome do funcionário dono do documento (sessão dele mesmo). Só
@@ -30,10 +32,9 @@ export async function baixarAssinado(payload: {
 }): Promise<Resultado> {
   const db = supabaseAdmin();
   try {
-    const { data: ctrl } = await db
+    const { data: ctrl } = await filtrarPorFuncionario(db
       .from('folha_holerite_assinaturas')
-      .select('autentique_doc_id, arquivo_assinado, status')
-      .eq('funcionario_nome', payload.funcionarioNome)
+      .select('autentique_doc_id, arquivo_assinado, status'), { funcionarioId: payload.funcionarioId, funcionarioNome: payload.funcionarioNome })
       .eq('mes_referencia', payload.mesReferencia)
       .maybeSingle();
     if (!ctrl?.autentique_doc_id) return { ok: false, erro: 'Nenhum envio encontrado para este documento.' };

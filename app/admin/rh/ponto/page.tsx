@@ -626,6 +626,7 @@ export default function GestaoDePonto() {
     setLancandoManual(true);
     try {
       const payloadBase = {
+        funcionarioId: refDoFuncionario(manualFuncionario).funcionarioId,
         funcionarioNome: manualFuncionario,
         dataRegistro: manualData,
         entrada1: manualE1 || null,
@@ -684,6 +685,7 @@ export default function GestaoDePonto() {
     setDescartandoManual(true);
     try {
       const res = await descartarPontoManualAction({
+        funcionarioId: refDoFuncionario(manualFuncionario).funcionarioId,
         funcionarioNome: manualFuncionario,
         dataRegistro: manualData,
         usuarioNome: usuarioAtual,
@@ -728,6 +730,7 @@ export default function GestaoDePonto() {
     setAbonando(true);
     try {
       const res = await abonarDiaManualAction({
+        funcionarioId: refDoFuncionario(abonoFuncionario).funcionarioId,
         funcionarioNome: abonoFuncionario,
         dataAbono: abonoData,
         motivo: abonoMotivo,

@@ -5,6 +5,7 @@
 // O VR/VT NÃO é gravado aqui — é lido do holerite (contrato + ficha) e apenas
 // exibido junto no painel, para não duplicar a fonte da verdade.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { resolverFicha, filtrarPorFuncionario, camposVinculo } from '../../../lib/funcionarioRef';
 import { validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
 import { registrarLogAuditoria } from '../../../actions';
@@ -715,6 +716,8 @@ export async function criarMeioBeneficioAction(payload: { nome: string }, access
 // ============================================================================
 export async function salvarBeneficioAction(payload: {
   id?: number;
+  // ID da ficha (preferido) — sem ele, localiza pelo nome como antes
+  funcionarioId?: string | null;
   funcionarioNome: string;
   tipoId: number;
   meioId: number;
@@ -741,7 +744,7 @@ export async function salvarBeneficioAction(payload: {
 
   try {
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
-    const { data: funcAlvo } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+    const { ref, ficha: funcAlvo } = await resolverFicha(db, { funcionarioId: payload.funcionarioId, funcionarioNome });
     if (!empresaPermitida(empresasPermitidas, funcAlvo?.empresa_id)) {
       return { ok: false, erro: 'Você não tem permissão para conceder benefício a este funcionário.' };
     }
@@ -781,9 +784,8 @@ export async function salvarBeneficioAction(payload: {
       // a unique (funcionario_nome, tipo_id) continua valendo — então re-adicionar
       // um tipo já removido batia no 23505. Se existir inativo, reativa o mesmo
       // registro com os valores novos (preserva o histórico dele).
-      const { data: existente } = await db.from('folha_beneficios')
-        .select('id, ativo, valor_mensal, meio_id, modalidade, qtd_dias')
-        .eq('funcionario_nome', funcionarioNome).eq('tipo_id', tipoId).maybeSingle();
+      const { data: existente } = await filtrarPorFuncionario(db.from('folha_beneficios')
+        .select('id, ativo, valor_mensal, meio_id, modalidade, qtd_dias'), ref).eq('tipo_id', tipoId).maybeSingle();
       if (existente?.ativo) {
         return { ok: false, erro: 'Este funcionário já tem este tipo de benefício. Edite o existente.' };
       }
@@ -809,7 +811,7 @@ export async function salvarBeneficioAction(payload: {
 
       // Criação
       const { data: novo, error } = await db.from('folha_beneficios').insert({
-        funcionario_nome: funcionarioNome, tipo_id: tipoId, meio_id: meioId,
+        ...camposVinculo(ref), tipo_id: tipoId, meio_id: meioId,
         valor_mensal: valorMensal, modalidade, qtd_dias: diasField, observacao: observacao || null
       }).select('id').single();
       if (error) {

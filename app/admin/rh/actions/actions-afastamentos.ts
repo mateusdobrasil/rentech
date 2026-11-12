@@ -5,6 +5,7 @@
 // Reaproveita o bucket de Storage do módulo de Documentos (documentos-funcionarios)
 // para o anexo opcional do atestado/laudo.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { resolverFicha, filtrarPorFuncionario, camposVinculo, type RefFuncionario } from '../../../lib/funcionarioRef';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
@@ -35,16 +36,16 @@ const addDiasIso = (iso: string, dias: number): string => {
 // usada no lançamento manual de ponto).
 // ============================================================================
 async function sincronizarAbonosAfastamento(db: ReturnType<typeof supabaseAdmin>, params: {
-  afastamentoId: number; funcionarioNome: string; empresaId: number | null; dataInicio: string; dataFimEfetivo: string; tipoNome: string;
+  afastamentoId: number; funcionario: RefFuncionario; empresaId: number | null; dataInicio: string; dataFimEfetivo: string; tipoNome: string;
 }) {
-  const { afastamentoId, funcionarioNome, empresaId, dataInicio, dataFimEfetivo, tipoNome } = params;
+  const { afastamentoId, funcionario, empresaId, dataInicio, dataFimEfetivo, tipoNome } = params;
 
   const dias: string[] = [];
   for (let d = dataInicio; d <= dataFimEfetivo; d = addDiasIso(d, 1)) dias.push(d);
 
   const mesesEnvolvidos = Array.from(new Set(dias.map(d => d.slice(0, 7))));
   const { data: fechadas } = mesesEnvolvidos.length
-    ? await db.from('folha_holerites').select('mes_referencia').eq('funcionario_nome', funcionarioNome).in('mes_referencia', mesesEnvolvidos)
+    ? await filtrarPorFuncionario(db.from('folha_holerites').select('mes_referencia'), funcionario).in('mes_referencia', mesesEnvolvidos)
     : { data: [] as { mes_referencia: string }[] };
   const mesesFechados = new Set((fechadas || []).map(f => f.mes_referencia));
   const diasValidos = new Set(dias.filter(d => !mesesFechados.has(d.slice(0, 7))));
@@ -59,12 +60,12 @@ async function sincronizarAbonosAfastamento(db: ReturnType<typeof supabaseAdmin>
   if (!diasFaltando.length) return;
 
   // Não sobrescreve dia que já tenha abono lançado por outra fonte
-  const { data: ocupadosPorOutros } = await db.from('folha_ponto_abono')
-    .select('data_abono').eq('funcionario_nome', funcionarioNome).in('data_abono', diasFaltando);
+  const { data: ocupadosPorOutros } = await filtrarPorFuncionario(db.from('folha_ponto_abono')
+    .select('data_abono'), funcionario).in('data_abono', diasFaltando);
   const ocupados = new Set((ocupadosPorOutros || []).map(o => o.data_abono));
 
   const novos = diasFaltando.filter(d => !ocupados.has(d)).map(d => ({
-    funcionario_nome: funcionarioNome, empresa_id: empresaId, data_abono: d, dia_todo: true,
+    ...camposVinculo(funcionario), empresa_id: empresaId, data_abono: d, dia_todo: true,
     hora_inicio: null, hora_fim: null, minutos_abonados: 480,
     motivo: `Afastamento: ${tipoNome}`, origem: 'AFASTAMENTO', afastamento_id: afastamentoId
   }));
@@ -159,6 +160,8 @@ export async function painelAfastamentosAction(accessToken: string): Promise<Res
 // ============================================================================
 export async function salvarAfastamentoAction(payload: {
   id?: number;
+  // ID da ficha (preferido) — sem ele, localiza pelo nome como antes
+  funcionarioId?: string | null;
   funcionarioNome: string;
   tipoId: number;
   dataInicio: string;
@@ -184,7 +187,7 @@ export async function salvarAfastamentoAction(payload: {
   }
 
   try {
-    const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+    const { ref, ficha: func } = await resolverFicha(db, { funcionarioId: payload.funcionarioId, funcionarioNome });
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
       return { ok: false, erro: 'Você não tem permissão para lançar afastamento para este funcionário.' };
@@ -227,7 +230,7 @@ export async function salvarAfastamentoAction(payload: {
       afastamentoId = id;
     } else {
       const { data: novo, error } = await db.from('folha_afastamentos').insert({
-        funcionario_nome: funcionarioNome, empresa_id: func?.empresa_id ?? null, tipo_id: tipoId, data_inicio: dataInicio, data_fim: dataFim || null,
+        ...camposVinculo(ref), empresa_id: func?.empresa_id ?? null, tipo_id: tipoId, data_inicio: dataInicio, data_fim: dataFim || null,
         cid: cid || null, observacao: observacao || null, status,
         storage_path: storagePath, nome_arquivo: nomeArquivoSalvo, criado_por: usuarioNome
       }).select('id').single();
@@ -236,7 +239,7 @@ export async function salvarAfastamentoAction(payload: {
     }
 
     await sincronizarAbonosAfastamento(db, {
-      afastamentoId, funcionarioNome, empresaId: func?.empresa_id ?? null, dataInicio, dataFimEfetivo: dataFim || hojeIso(), tipoNome
+      afastamentoId, funcionario: ref, empresaId: func?.empresa_id ?? null, dataInicio, dataFimEfetivo: dataFim || hojeIso(), tipoNome
     });
 
     return { ok: true, info: { id: afastamentoId } };
@@ -254,7 +257,7 @@ export async function encerrarAfastamentoAction(payload: { id: number; dataFim: 
 
   const db = supabaseAdmin();
   try {
-    const { data: atual } = await db.from('folha_afastamentos').select('funcionario_nome, data_inicio, tipo_id, empresa_id').eq('id', payload.id).maybeSingle();
+    const { data: atual } = await db.from('folha_afastamentos').select('funcionario_nome, funcionario_id, data_inicio, tipo_id, empresa_id').eq('id', payload.id).maybeSingle();
     if (!atual) return { ok: false, erro: 'Afastamento não encontrado.' };
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     if (!empresaPermitida(empresasPermitidas, atual.empresa_id)) return { ok: false, erro: 'Afastamento não encontrado.' };
@@ -267,7 +270,7 @@ export async function encerrarAfastamentoAction(payload: { id: number; dataFim: 
 
     const { data: tipoRow } = await db.from('folha_afastamento_tipos').select('nome').eq('id', atual.tipo_id).maybeSingle();
     await sincronizarAbonosAfastamento(db, {
-      afastamentoId: payload.id, funcionarioNome: atual.funcionario_nome, empresaId: atual.empresa_id, dataInicio: atual.data_inicio,
+      afastamentoId: payload.id, funcionario: { funcionarioId: atual.funcionario_id, funcionarioNome: atual.funcionario_nome }, empresaId: atual.empresa_id, dataInicio: atual.data_inicio,
       dataFimEfetivo: payload.dataFim, tipoNome: tipoRow?.nome || 'AFASTAMENTO'
     });
 

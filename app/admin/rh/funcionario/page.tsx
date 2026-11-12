@@ -59,6 +59,7 @@ interface RegraContrato {
 }
 
 interface FuncionarioFin {
+  id?: string; // folha_funcionarios.id (vínculo por ID)
   nome_completo: string; cargo: string; departamento: string; empresa_id: number | null; tipo_contrato: string; ativo: boolean;
   recebe_transporte: boolean; valor_transporte: number;
   recebe_refeicao: boolean; valor_refeicao: number;
@@ -314,6 +315,7 @@ export default function FuncionarioPage() {
       });
 
       const res = await uploadFotoFuncionarioAction({
+        funcionarioId: form.id ?? null,
         funcionarioNome: form.nome_completo,
         arquivoBase64: base64,
         nomeArquivo: arquivo.name,

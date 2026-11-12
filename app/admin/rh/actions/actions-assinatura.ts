@@ -7,6 +7,7 @@
 // - grava o controle em folha_holerite_assinaturas (service role)
 // - chama o cliente da Autentique (lib/autentique)
 import { supabaseAdmin } from '../../../lib/supabase';
+import { resolverFicha, filtrarPorFuncionario, filtrarFicha, comoRef, type RefOuNome } from '../../../lib/funcionarioRef';
 import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
 import { validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
@@ -76,13 +77,13 @@ async function baixarAnexoContabil(
   db: ReturnType<typeof supabaseAdmin>,
   mesReferencia: string,
   tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL',
-  funcionarioNome: string
+  funcionario: RefOuNome
 ): Promise<Uint8Array | null> {
+  const funcionarioNome = comoRef(funcionario).funcionarioNome;
   // Confirma no banco que há registro (evita chamada de Storage à toa)
-  const { data: reg } = await db
+  const { data: reg } = await filtrarPorFuncionario(db
     .from('folha_documentos_contabeis')
-    .select('storage_path')
-    .eq('funcionario_nome', funcionarioNome)
+    .select('storage_path'), funcionario)
     .eq('mes_referencia', mesReferencia)
     .eq('tipo', tipo)
     .maybeSingle();
@@ -99,7 +100,7 @@ async function baixarAnexoContabil(
 // simplesmente não anexa (não bloqueia o envio).
 async function gerarEspelhoPontoBytes(
   db: ReturnType<typeof supabaseAdmin>,
-  funcionarioNome: string,
+  funcionario: RefOuNome,
   cpf: string | null,
   mesReferencia: string,
   dataAdmissao?: string | null,
@@ -109,18 +110,17 @@ async function gerarEspelhoPontoBytes(
   // espelho de quem é de Osasco zeraria a carga num feriado de São Paulo.
   empresaId: number | null = null
 ): Promise<Uint8Array | null> {
+  const funcionarioNome = comoRef(funcionario).funcionarioNome;
   const [ano, mes] = mesReferencia.split('-');
   const dataInicio = `${ano}-${mes}-01`;
   const dataFim = `${ano}-${mes}-${new Date(Number(ano), Number(mes), 0).getDate()}`;
 
   const [{ data: pontoData }, { data: abonoData }, { data: fData }] = await Promise.all([
-    db.from('folha_ponto_diaria')
-      .select('data_registro, minutos_trabalhados, entrada_1, saida_1, entrada_2, saida_2')
-      .eq('funcionario_nome', funcionarioNome)
+    filtrarPorFuncionario(db.from('folha_ponto_diaria')
+      .select('data_registro, minutos_trabalhados, entrada_1, saida_1, entrada_2, saida_2'), funcionario)
       .gte('data_registro', dataInicio).lte('data_registro', dataFim),
-    db.from('folha_ponto_abono')
-      .select('data_abono, minutos_abonados, motivo')
-      .eq('funcionario_nome', funcionarioNome)
+    filtrarPorFuncionario(db.from('folha_ponto_abono')
+      .select('data_abono, minutos_abonados, motivo'), funcionario)
       .gte('data_abono', dataInicio).lte('data_abono', dataFim),
     db.from('folha_feriados').select('*')
   ]);
@@ -172,13 +172,12 @@ function deduzirFormaPagamento(func: { pix_chave?: string | null; banco_conta?: 
 // não rodou para ele.
 async function buscarValorOcrPagamento(
   db: ReturnType<typeof supabaseAdmin>,
-  funcionarioNome: string,
+  funcionario: RefOuNome,
   mesReferencia: string
 ): Promise<number | null> {
-  const { data } = await db
+  const { data } = await filtrarPorFuncionario(db
     .from('folha_documentos_contabeis')
-    .select('valor_ocr')
-    .eq('funcionario_nome', funcionarioNome)
+    .select('valor_ocr'), funcionario)
     .eq('mes_referencia', mesReferencia)
     .eq('tipo', 'HOLERITE_MENSAL')
     .maybeSingle();
@@ -379,6 +378,7 @@ async function gerarReciboBytes(
 async function gerarResumoRecebimentosBytes(
   db: ReturnType<typeof supabaseAdmin>,
   p: {
+    funcionarioId?: string | null;
     funcionarioNome: string;
     cpf: string | null;
     mesReferencia: string;
@@ -395,9 +395,8 @@ async function gerarResumoRecebimentosBytes(
   const cpfDigitos = (p.cpf || '').replace(/\D/g, '');
 
   const [{ data: docs }, { data: ops }] = await Promise.all([
-    db.from('folha_documentos_contabeis')
-      .select('tipo, valor_ocr')
-      .eq('funcionario_nome', funcionarioNome)
+    filtrarPorFuncionario(db.from('folha_documentos_contabeis')
+      .select('tipo, valor_ocr'), { funcionarioId: p.funcionarioId, funcionarioNome })
       .eq('mes_referencia', mesReferencia)
       .in('tipo', ['ADIANTAMENTO', 'DECIMO_TERCEIRO', 'FERIAS']),
     cpfDigitos.length === 11
@@ -677,6 +676,7 @@ export async function enviarDocumentoAvulsoAction(payload: {
 // ENVIAR HOLERITE PARA ASSINATURA (somente folha FECHADA)
 // ============================================================================
 export async function enviarHoleriteAssinaturaAction(payload: {
+  funcionarioId?: string | null; // ID da ficha (preferido)
   funcionarioNome: string;
   mesReferencia: string;
   enviadoPor: string;
@@ -691,12 +691,14 @@ export async function enviarHoleriteAssinaturaAction(payload: {
   const { funcionarioNome, mesReferencia, enviadoPor, sandbox, soDocumental, valorManual } = payload;
 
   try {
+    // Ficha resolvida uma vez (pelo ID quando a tela manda) — vínculo por ID
+    const { ref } = await resolverFicha(db, { funcionarioId: payload.funcionarioId, funcionarioNome }, '');
+
     // 1) Folha fechada: obrigatória para contratos com cálculo. Para contratos
     // "só documentais", não há folha — envia apenas os anexos da contabilidade.
-    const { data: fechamento } = await db
+    const { data: fechamento } = await filtrarPorFuncionario(db
       .from('folha_holerites')
-      .select('dados, fechado_em')
-      .eq('funcionario_nome', funcionarioNome)
+      .select('dados, fechado_em'), ref)
       .eq('mes_referencia', mesReferencia)
       .maybeSingle();
     if (!soDocumental && !fechamento?.dados) {
@@ -704,10 +706,9 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     }
 
     // 2) Busca dados pessoais (CPF, celular, e-mail) da ficha
-    const { data: func } = await db
+    const { data: func } = await filtrarFicha(db
       .from('folha_funcionarios')
-      .select('cpf, celular, email, data_admissao, data_desligamento, pix_chave, banco_conta, empresa_id')
-      .eq('nome_completo', funcionarioNome)
+      .select('cpf, celular, email, data_admissao, data_desligamento, pix_chave, banco_conta, empresa_id'), ref)
       .maybeSingle();
 
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
@@ -722,7 +723,7 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     // não há folha calculada pra somar.
     const gatilhoDoisPagamentos = !soDocumental && precisaHoleriteContabilidade(fechamento?.dados);
     const valorOcrPagamento = (gatilhoDoisPagamentos || soDocumental)
-      ? await buscarValorOcrPagamento(db, funcionarioNome, mesReferencia)
+      ? await buscarValorOcrPagamento(db, ref, mesReferencia)
       : null;
     // "=== null" sozinho não bastava: uma linha de folha_documentos_contabeis
     // com valor_ocr = 0 (OCR leu errado, ou a linha foi criada sem valor)
@@ -770,10 +771,9 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     // assinado é de uma versão antiga do holerite (reabrirFolhaAction só
     // apaga o snapshot em folha_holerites, nunca toca nesta tabela), então
     // precisa deixar passar um novo envio com os valores corrigidos.
-    const { data: existente } = await db
+    const { data: existente } = await filtrarPorFuncionario(db
       .from('folha_holerite_assinaturas')
-      .select('status, enviado_em')
-      .eq('funcionario_nome', funcionarioNome)
+      .select('status, enviado_em'), ref)
       .eq('mes_referencia', mesReferencia)
       .maybeSingle();
     if (existente?.status === 'ASSINADO') {
@@ -795,13 +795,13 @@ export async function enviarHoleriteAssinaturaAction(payload: {
 
     // 4b) Espelho de ponto do mês (batidas + abonos), se houver registro.
     const espelhoBytes = await gerarEspelhoPontoBytes(
-      db, funcionarioNome, cpfLimpo || func?.cpf || null, mesReferencia,
+      db, ref, cpfLimpo || func?.cpf || null, mesReferencia,
       func?.data_admissao, func?.data_desligamento, nomeEmpresa, func?.empresa_id ?? null
     );
 
     // 4c) Anexa os documentos da contabilidade que existirem no Storage.
-    const adiantamento = await baixarAnexoContabil(db, mesReferencia, 'ADIANTAMENTO', funcionarioNome);
-    const holeriteMensal = await baixarAnexoContabil(db, mesReferencia, 'HOLERITE_MENSAL', funcionarioNome);
+    const adiantamento = await baixarAnexoContabil(db, mesReferencia, 'ADIANTAMENTO', ref);
+    const holeriteMensal = await baixarAnexoContabil(db, mesReferencia, 'HOLERITE_MENSAL', ref);
 
     // Documental exige o holerite real da contabilidade — o recibo sozinho
     // (valor digitado) não substitui esse anexo.
@@ -813,7 +813,7 @@ export async function enviarHoleriteAssinaturaAction(payload: {
     // pagamento — o recibo é sempre o ÚLTIMO arquivo do pacote.
     const beneficiosMes = await buscarBeneficiosCompetencia(db, funcionarioNome, mesReferencia);
     const resumoRecebimentosBytes = await gerarResumoRecebimentosBytes(db, {
-      funcionarioNome, cpf: func?.cpf || null, mesReferencia, dados: soDocumental ? null : fechamento?.dados,
+      funcionarioId: ref.funcionarioId, funcionarioNome, cpf: func?.cpf || null, mesReferencia, dados: soDocumental ? null : fechamento?.dados,
       detalhamentoRecibo, beneficios: beneficiosMes, empresaNome: nomeEmpresa
     });
     const formaPagamento = deduzirFormaPagamento(func);
@@ -1013,6 +1013,7 @@ export async function listarAssinaturasAction(payload: { mesReferencia: string }
 // Não cria nada na Autentique nem gasta documentos do plano.
 // ============================================================================
 export async function previaDocumentoAssinaturaAction(payload: {
+  funcionarioId?: string | null; // ID da ficha (preferido)
   funcionarioNome: string;
   mesReferencia: string;
   soDocumental?: boolean;
@@ -1026,11 +1027,11 @@ export async function previaDocumentoAssinaturaAction(payload: {
   const { funcionarioNome, mesReferencia, soDocumental, dadosAoVivo, valorManual } = payload;
 
   try {
+    const { ref } = await resolverFicha(db, { funcionarioId: payload.funcionarioId, funcionarioNome }, '');
     // Snapshot congelado (se fechado) ou dados ao vivo (prévia de folha aberta)
-    const { data: fechamento } = await db
+    const { data: fechamento } = await filtrarPorFuncionario(db
       .from('folha_holerites')
-      .select('dados, fechado_em')
-      .eq('funcionario_nome', funcionarioNome)
+      .select('dados, fechado_em'), ref)
       .eq('mes_referencia', mesReferencia)
       .maybeSingle();
 
@@ -1039,10 +1040,9 @@ export async function previaDocumentoAssinaturaAction(payload: {
       return { ok: false, erro: 'Sem dados para gerar a prévia: feche a folha ou envie o cálculo ao vivo.' };
     }
 
-    const { data: func } = await db
+    const { data: func } = await filtrarFicha(db
       .from('folha_funcionarios')
-      .select('cpf, data_admissao, data_desligamento, pix_chave, banco_conta, empresa_id')
-      .eq('nome_completo', funcionarioNome)
+      .select('cpf, data_admissao, data_desligamento, pix_chave, banco_conta, empresa_id'), ref)
       .maybeSingle();
 
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
@@ -1053,7 +1053,7 @@ export async function previaDocumentoAssinaturaAction(payload: {
 
     const gatilhoDoisPagamentos = !soDocumental && precisaHoleriteContabilidade(dados);
     const valorOcrPagamento = (gatilhoDoisPagamentos || soDocumental)
-      ? await buscarValorOcrPagamento(db, funcionarioNome, mesReferencia)
+      ? await buscarValorOcrPagamento(db, ref, mesReferencia)
       : null;
     if (gatilhoDoisPagamentos && valorOcrPagamento === null) {
       return { ok: false, erro: `Este funcionário recebe o salário base pelo holerite da contabilidade, mas o valor ainda não foi lido (OCR) para ${funcionarioNome} neste mês. Rode o OCR na tela de Financeiro antes de gerar a prévia.` };
@@ -1079,16 +1079,16 @@ export async function previaDocumentoAssinaturaAction(payload: {
     }) : null;
 
     const espelhoBytes = await gerarEspelhoPontoBytes(
-      db, funcionarioNome, func?.cpf || null, mesReferencia,
+      db, ref, func?.cpf || null, mesReferencia,
       func?.data_admissao, func?.data_desligamento, nomeEmpresa, func?.empresa_id ?? null
     );
 
-    const adiantamento = await baixarAnexoContabil(db, mesReferencia, 'ADIANTAMENTO', funcionarioNome);
-    const holeriteMensal = await baixarAnexoContabil(db, mesReferencia, 'HOLERITE_MENSAL', funcionarioNome);
+    const adiantamento = await baixarAnexoContabil(db, mesReferencia, 'ADIANTAMENTO', ref);
+    const holeriteMensal = await baixarAnexoContabil(db, mesReferencia, 'HOLERITE_MENSAL', ref);
 
     const beneficiosMes = await buscarBeneficiosCompetencia(db, funcionarioNome, mesReferencia);
     const resumoRecebimentosBytes = await gerarResumoRecebimentosBytes(db, {
-      funcionarioNome, cpf: func?.cpf || null, mesReferencia, dados: soDocumental ? null : dados,
+      funcionarioId: ref.funcionarioId, funcionarioNome, cpf: func?.cpf || null, mesReferencia, dados: soDocumental ? null : dados,
       detalhamentoRecibo, beneficios: beneficiosMes, empresaNome: nomeEmpresa
     });
     const formaPagamento = deduzirFormaPagamento(func);
@@ -1179,36 +1179,35 @@ export async function atualizarTodasAssinaturasAction(payload: {
 // sessão do próprio funcionário — não tem (nem deveria ter) um accessToken
 // de admin pra passar aqui.
 export async function baixarAssinadoAction(payload: {
-  funcionarioNome: string; mesReferencia: string;
+  funcionarioId?: string | null; funcionarioNome: string; mesReferencia: string;
 }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcessoQualquerRota(accessToken);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
-  const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', payload.funcionarioNome).maybeSingle();
+  const { ref, ficha: func } = await resolverFicha(db, { funcionarioId: payload.funcionarioId, funcionarioNome: payload.funcionarioNome });
   const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
   if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
     return { ok: false, erro: 'Você não tem permissão para acessar este documento.' };
   }
 
-  return baixarAssinado({ ...payload, solicitadoPor: acesso.perfil.nome });
+  return baixarAssinado({ ...payload, funcionarioId: ref.funcionarioId, solicitadoPor: acesso.perfil.nome });
 }
 
 // ============================================================================
 // CONSULTAR STATUS (fallback do webhook — uso pontual)
 // ============================================================================
 export async function consultarAssinaturaAction(payload: {
-  funcionarioNome: string; mesReferencia: string;
+  funcionarioId?: string | null; funcionarioNome: string; mesReferencia: string;
 }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcessoQualquerRota(accessToken);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
   try {
-    const { data: ctrl } = await db
+    const { data: ctrl } = await filtrarPorFuncionario(db
       .from('folha_holerite_assinaturas')
-      .select('autentique_doc_id, empresa_id, status')
-      .eq('funcionario_nome', payload.funcionarioNome)
+      .select('autentique_doc_id, empresa_id, status'), { funcionarioId: payload.funcionarioId, funcionarioNome: payload.funcionarioNome })
       .eq('mes_referencia', payload.mesReferencia)
       .maybeSingle();
     if (!ctrl?.autentique_doc_id) return { ok: false, erro: 'Nenhum envio encontrado para este holerite.' };
@@ -1265,6 +1264,7 @@ export async function consultarAssinaturaAction(payload: {
 // normalmente, menos quando já está ASSINADO).
 // ============================================================================
 export async function cancelarAssinaturaAction(payload: {
+  funcionarioId?: string | null; // ID da ficha (preferido)
   funcionarioNome: string;
   mesReferencia: string;
   canceladoPor: string;
@@ -1276,10 +1276,10 @@ export async function cancelarAssinaturaAction(payload: {
   const { funcionarioNome, mesReferencia, canceladoPor } = payload;
 
   try {
-    const { data: atual } = await db
+    const refCancel = { funcionarioId: payload.funcionarioId, funcionarioNome };
+    const { data: atual } = await filtrarPorFuncionario(db
       .from('folha_holerite_assinaturas')
-      .select('status, autentique_doc_id, empresa_id')
-      .eq('funcionario_nome', funcionarioNome)
+      .select('status, autentique_doc_id, empresa_id'), refCancel)
       .eq('mes_referencia', mesReferencia)
       .maybeSingle();
     if (!atual) return { ok: false, erro: 'Nenhum envio encontrado para este holerite.' };
@@ -1306,15 +1306,14 @@ export async function cancelarAssinaturaAction(payload: {
       }
     }
 
-    const { error } = await db
+    const { error } = await filtrarPorFuncionario(db
       .from('folha_holerite_assinaturas')
       .update({
         status: 'CANCELADO',
         cancelado_por: canceladoPor || null,
         cancelado_em: new Date().toISOString(),
         atualizado_em: new Date().toISOString()
-      })
-      .eq('funcionario_nome', funcionarioNome)
+      }), refCancel)
       .eq('mes_referencia', mesReferencia);
     if (error) throw new Error(error.message);
 

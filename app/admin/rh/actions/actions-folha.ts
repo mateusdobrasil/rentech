@@ -4,6 +4,7 @@
 // Server actions para as GRAVAÇÕES sensíveis do módulo de folha.
 // Rodam no servidor com service role — a lógica de escrita sai do browser.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { resolverFicha, filtrarPorFuncionario, filtrarFicha, camposVinculo } from '../../../lib/funcionarioRef';
 import { validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
 
@@ -85,12 +86,18 @@ export async function salvarColaboradorAction(payload: {
       if (upsertError) throw new Error(`Falha ao gravar a ficha: ${upsertError.message}`);
     }
 
-    const { error: delDep } = await db.from('folha_dependentes').delete().eq('funcionario_nome', form.nome_completo);
+    // ID da ficha (nova: acabou de ser criada pelo upsert) — dependentes e
+    // movimentações passam a ser regravados por ele (vínculo por ID).
+    const refFicha = fichaId
+      ? { funcionarioId: fichaId, funcionarioNome: form.nome_completo }
+      : (await resolverFicha(db, { funcionarioNome: form.nome_completo }, '')).ref;
+
+    const { error: delDep } = await filtrarPorFuncionario(db.from('folha_dependentes').delete(), refFicha);
     if (delDep) throw new Error(`Falha ao limpar dependentes antigos: ${delDep.message}`);
 
     if (dependentes.length > 0) {
       const limpaDependentes = dependentes.map((d: any) => ({
-        funcionario_nome: form.nome_completo,
+        ...camposVinculo(refFicha),
         tipo_dependente: d.tipo_dependente || null,
         nome_completo: d.nome_completo || null,
         cpf: d.cpf || null,
@@ -100,12 +107,12 @@ export async function salvarColaboradorAction(payload: {
       if (insDep) throw new Error(`Falha ao gravar dependentes: ${insDep.message}`);
     }
 
-    const { error: delMov } = await db.from('folha_movimentacoes').delete().eq('funcionario_nome', form.nome_completo);
+    const { error: delMov } = await filtrarPorFuncionario(db.from('folha_movimentacoes').delete(), refFicha);
     if (delMov) throw new Error(`Falha ao limpar movimentações antigas: ${delMov.message}`);
 
     if (movimentacoes.length > 0) {
       const limpaMovimentacoes = movimentacoes.map((m: any) => ({
-        funcionario_nome: form.nome_completo,
+        ...camposVinculo(refFicha),
         motivo: m.motivo || null,
         cargo: m.cargo || null,
         data_movimentacao: m.data_movimentacao || null
@@ -178,6 +185,8 @@ export async function atribuirEmpresaEmMassaAction(payload: {
 // SALVAR BÔNUS E DESCONTOS DE UM FUNCIONÁRIO (usado pela página de Holerite)
 // ============================================================================
 export async function salvarBonusDescontosAction(payload: {
+  // ID da ficha (preferido) — sem ele, localiza pelo nome como antes
+  funcionarioId?: string | null;
   funcionarioNome: string;
   descontos: any[];
   bonus: any[];
@@ -192,18 +201,18 @@ export async function salvarBonusDescontosAction(payload: {
   if (!funcionarioNome) return { ok: false, erro: 'Funcionário não informado.' };
 
   const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
-  const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+  const { ref, ficha: func } = await resolverFicha(db, { funcionarioId: payload.funcionarioId, funcionarioNome });
   if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
     return { ok: false, erro: 'Você não tem permissão para alterar dados deste funcionário.' };
   }
 
   try {
-    const { error: delDesc } = await db.from('folha_descontos').delete().eq('funcionario_nome', funcionarioNome);
+    const { error: delDesc } = await filtrarPorFuncionario(db.from('folha_descontos').delete(), ref);
     if (delDesc) throw new Error(`Falha ao limpar descontos antigos: ${delDesc.message}`);
 
     if (descontos.length > 0) {
       const limpaDescontos = descontos.map((d: any) => ({
-        funcionario_nome: funcionarioNome,
+        ...camposVinculo(ref),
         descricao: d.descricao || 'DESCONTO', tipo: d.tipo,
         parcelas: d.tipo === 'FIXO' ? 1 : (Number(d.parcelas) || 1),
         mes_inicio: d.mes_inicio,
@@ -217,12 +226,12 @@ export async function salvarBonusDescontosAction(payload: {
       if (insDesc) throw new Error(`Falha ao gravar descontos: ${insDesc.message}`);
     }
 
-    const { error: delBonus } = await db.from('folha_bonus').delete().eq('funcionario_nome', funcionarioNome);
+    const { error: delBonus } = await filtrarPorFuncionario(db.from('folha_bonus').delete(), ref);
     if (delBonus) throw new Error(`Falha ao limpar bônus antigos: ${delBonus.message}`);
 
     if (bonus.length > 0) {
       const limpaBonus = bonus.map((b: any) => ({
-        funcionario_nome: funcionarioNome,
+        ...camposVinculo(ref),
         descricao: b.descricao || 'PRÊMIO', recorrencia: b.recorrencia,
         mes_referencia: b.mes_referencia, valor: Number(b.valor) || 0,
         mes_fim: b.recorrencia === 'MENSAL' ? (b.mes_fim || null) : null
@@ -247,6 +256,8 @@ export async function salvarBonusDescontosAction(payload: {
 // SALVAR DADOS SALARIAIS DE UM FUNCIONÁRIO (usado pela página de Holerite)
 // ============================================================================
 export async function salvarDadosSalariaisAction(payload: {
+  // ID da ficha (preferido) — sem ele, localiza pelo nome como antes
+  funcionarioId?: string | null;
   funcionarioNome: string;
   salario_folha: number;
   salario_contrato: number;
@@ -284,13 +295,13 @@ export async function salvarDadosSalariaisAction(payload: {
   }
 
   const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
-  const { data: func } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+  const { ref, ficha: func } = await resolverFicha(db, { funcionarioId: payload.funcionarioId, funcionarioNome });
   if (!empresaPermitida(empresasPermitidas, func?.empresa_id)) {
     return { ok: false, erro: 'Você não tem permissão para alterar dados deste funcionário.' };
   }
 
   try {
-    const { error } = await db
+    const { error } = await filtrarFicha(db
       .from('folha_funcionarios')
       .update({
         salario_folha: Number(salario_folha) || 0,
@@ -299,8 +310,7 @@ export async function salvarDadosSalariaisAction(payload: {
         valor_premio_diaria_viagem: Number(valor_premio_diaria_viagem) || 0,
         diaria_extra: Number(diaria_extra) || 0,
         ...reducao
-      })
-      .eq('nome_completo', funcionarioNome);
+      }), ref);
     if (error) throw new Error(`Falha ao gravar os dados salariais: ${error.message}`);
 
     await registrarLogAuditoria({

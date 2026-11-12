@@ -4,6 +4,7 @@
 // Gestão de documentos dos funcionários: upload no Storage, metadados no banco,
 // controle de validade e painel de pendências.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { resolverFicha, filtrarPorFuncionario, filtrarFicha, camposVinculo } from '../../../lib/funcionarioRef';
 import { validarAcesso, validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
@@ -14,11 +15,6 @@ const ROTAS_PERMITIDAS = ['/admin/rh/documentos', '/admin/rh/funcionario', '/adm
 
 async function validarAcessoQualquerRota(accessToken: string) {
   return validarAcessoAlgumaRota(accessToken, ROTAS_PERMITIDAS);
-}
-
-async function empresaIdDoFuncionario(db: ReturnType<typeof supabaseAdmin>, funcionarioNome: string): Promise<number | null> {
-  const { data } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
-  return data?.empresa_id ?? null;
 }
 
 const slug = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -93,6 +89,8 @@ export async function storagePathDocumentoAction(payload: {
 // no anexo de OPs), e um documento digitalizado um pouco maior já bastava
 // pra disparar "An unexpected response was received from the server".
 export async function uploadDocumentoAction(payload: {
+  // ID da ficha (preferido) — sem ele, localiza pelo nome como antes
+  funcionarioId?: string | null;
   funcionarioNome: string;
   categoriaId: number;
   titulo?: string | null;
@@ -117,7 +115,8 @@ export async function uploadDocumentoAction(payload: {
 
   try {
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
-    const empresaIdFunc = await empresaIdDoFuncionario(db, funcionarioNome);
+    const { ref, ficha } = await resolverFicha(db, { funcionarioId: payload.funcionarioId, funcionarioNome });
+    const empresaIdFunc = ficha?.empresa_id ?? null;
     if (!empresaPermitida(empresasPermitidas, empresaIdFunc)) {
       // O arquivo já foi parar no bucket a esta altura (upload direto do
       // cliente, antes desta checagem) — remove pra não deixar órfão.
@@ -126,7 +125,7 @@ export async function uploadDocumentoAction(payload: {
     }
 
     const { error: dbErr } = await db.from('folha_documentos').insert({
-      funcionario_nome: funcionarioNome,
+      ...camposVinculo(ref),
       empresa_id: empresaIdFunc,
       categoria_id: categoriaId,
       titulo: titulo || null,
@@ -157,6 +156,8 @@ export async function uploadDocumentoAction(payload: {
 // foto vigente por funcionário (a antiga é sobrescrita no mesmo caminho).
 // ============================================================================
 export async function uploadFotoFuncionarioAction(payload: {
+  // ID da ficha (preferido) — sem ele, localiza pelo nome como antes
+  funcionarioId?: string | null;
   funcionarioNome: string;
   arquivoBase64: string;
   nomeArquivo: string;
@@ -174,7 +175,8 @@ export async function uploadFotoFuncionarioAction(payload: {
 
   try {
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
-    const empresaIdFunc = await empresaIdDoFuncionario(db, funcionarioNome);
+    const { ref: refFoto, ficha: fichaFoto } = await resolverFicha(db, { funcionarioId: payload.funcionarioId, funcionarioNome });
+    const empresaIdFunc = fichaFoto?.empresa_id ?? null;
     if (!empresaPermitida(empresasPermitidas, empresaIdFunc)) {
       return { ok: false, erro: 'Você não tem permissão para alterar a foto deste funcionário.' };
     }
@@ -188,7 +190,7 @@ export async function uploadFotoFuncionarioAction(payload: {
     });
     if (upErr) throw new Error(`Falha no upload: ${upErr.message}`);
 
-    const { error: dbErr } = await db.from('folha_funcionarios').update({ foto_path: path }).eq('nome_completo', funcionarioNome);
+    const { error: dbErr } = await filtrarFicha(db.from('folha_funcionarios').update({ foto_path: path }), refFoto);
     if (dbErr) throw new Error(dbErr.message);
 
     return { ok: true, info: { path } };
@@ -216,6 +218,7 @@ export async function urlFotoFuncionarioAction(payload: { fotoPath: string }, ac
 // Anexa o status de validade calculado (OK / VENCENDO / VENCIDO).
 // ============================================================================
 export async function listarDocumentosAction(payload: {
+  funcionarioId?: string | null;
   funcionarioNome?: string | null;
   categoriaId?: number | null;
 }, accessToken: string): Promise<Resultado> {
@@ -229,7 +232,7 @@ export async function listarDocumentosAction(payload: {
     let q = db.from('folha_documentos')
       .select('id, funcionario_nome, empresa_id, categoria_id, titulo, storage_path, nome_arquivo, tipo_mime, tamanho_bytes, data_validade, observacao, criado_em, visivel_portal')
       .order('criado_em', { ascending: false });
-    if (payload.funcionarioNome) q = q.eq('funcionario_nome', payload.funcionarioNome);
+    if (payload.funcionarioId || payload.funcionarioNome) q = filtrarPorFuncionario(q, { funcionarioId: payload.funcionarioId, funcionarioNome: payload.funcionarioNome || '' });
     if (payload.categoriaId) q = q.eq('categoria_id', payload.categoriaId);
     if (empresasPermitidas) q = q.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
 

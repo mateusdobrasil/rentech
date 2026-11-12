@@ -7,6 +7,7 @@
 // (app/lib/calculoRescisao.ts); os demais só recebem o anexo do TRCT
 // fornecido pela contabilidade — nenhum valor é calculado nesse caso.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { filtrarPorFuncionario, filtrarFicha, camposVinculo, type RefFuncionario } from '../../../lib/funcionarioRef';
 import { validarAcesso, validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
@@ -111,15 +112,15 @@ const getParcelaAtual = (mesInicio: string, mesRef: string): number => {
 // (dependentes, períodos de férias, descontos ativos) para um funcionário PROPRIO.
 // ============================================================================
 async function montarCalculo(db: ReturnType<typeof supabaseAdmin>, params: {
-  funcionarioNome: string; salarioBase: number; dataAdmissao: string; dataDesligamento: string;
+  funcionario: RefFuncionario; salarioBase: number; dataAdmissao: string; dataDesligamento: string;
   motivo: MotivoRescisao; tipoAvisoPrevio: TipoAvisoPrevio;
 }) {
-  const { funcionarioNome, salarioBase, dataAdmissao, dataDesligamento, motivo, tipoAvisoPrevio } = params;
+  const { funcionario, salarioBase, dataAdmissao, dataDesligamento, motivo, tipoAvisoPrevio } = params;
 
   const [depRes, feriasRes, descontosRes] = await Promise.all([
-    db.from('folha_dependentes').select('id', { count: 'exact', head: true }).eq('funcionario_nome', funcionarioNome),
-    db.from('folha_ferias').select('periodo_aquisitivo_fim, periodo_concessivo_fim, status').eq('funcionario_nome', funcionarioNome),
-    db.from('folha_descontos').select('descricao, tipo, parcelas, mes_inicio, mes_fim, valor_parcela').eq('funcionario_nome', funcionarioNome)
+    filtrarPorFuncionario(db.from('folha_dependentes').select('id', { count: 'exact', head: true }), funcionario),
+    filtrarPorFuncionario(db.from('folha_ferias').select('periodo_aquisitivo_fim, periodo_concessivo_fim, status'), funcionario),
+    filtrarPorFuncionario(db.from('folha_descontos').select('descricao, tipo, parcelas, mes_inicio, mes_fim, valor_parcela'), funcionario)
   ]);
 
   const periodos = feriasRes.data || [];
@@ -166,26 +167,24 @@ async function montarCalculo(db: ReturnType<typeof supabaseAdmin>, params: {
 // mesmo padrão de sincronizarAbonosAfastamento em actions-afastamentos.ts.
 // ============================================================================
 async function sincronizarFichaRescisao(db: ReturnType<typeof supabaseAdmin>, params: {
-  funcionarioNome: string; dataDesligamento: string; cargo: string | null;
+  funcionario: RefFuncionario; dataDesligamento: string; cargo: string | null;
 }) {
-  const { funcionarioNome, dataDesligamento, cargo } = params;
+  const { funcionario, dataDesligamento, cargo } = params;
 
-  await db.from('folha_funcionarios')
-    .update({ ativo: false, data_desligamento: dataDesligamento })
-    .eq('nome_completo', funcionarioNome).eq('ativo', true);
+  await filtrarFicha(db.from('folha_funcionarios')
+    .update({ ativo: false, data_desligamento: dataDesligamento }), funcionario).eq('ativo', true);
 
-  const { data: movExistente } = await db.from('folha_movimentacoes')
-    .select('id').eq('funcionario_nome', funcionarioNome).eq('motivo', 'DEMISSAO')
+  const { data: movExistente } = await filtrarPorFuncionario(db.from('folha_movimentacoes')
+    .select('id'), funcionario).eq('motivo', 'DEMISSAO')
     .eq('data_movimentacao', dataDesligamento).maybeSingle();
   if (!movExistente) {
     await db.from('folha_movimentacoes').insert({
-      funcionario_nome: funcionarioNome, motivo: 'DEMISSAO', cargo: cargo || null, data_movimentacao: dataDesligamento
+      ...camposVinculo(funcionario), motivo: 'DEMISSAO', cargo: cargo || null, data_movimentacao: dataDesligamento
     });
   }
 
-  await db.from('folha_ferias')
-    .update({ status: 'CANCELADA', observacao: 'Quitada na rescisão do funcionário' })
-    .eq('funcionario_nome', funcionarioNome).eq('status', 'DISPONIVEL').lt('periodo_concessivo_fim', dataDesligamento);
+  await filtrarPorFuncionario(db.from('folha_ferias')
+    .update({ status: 'CANCELADA', observacao: 'Quitada na rescisão do funcionário' }), funcionario).eq('status', 'DISPONIVEL').lt('periodo_concessivo_fim', dataDesligamento);
 }
 
 // ============================================================================
@@ -200,7 +199,7 @@ export async function listarFuncionariosElegiveisRescisaoAction(accessToken: str
   try {
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     let qFuncs = db.from('folha_funcionarios')
-      .select('nome_completo, cargo, data_desligamento, salario_folha, salario_contrato').eq('ativo', true).order('nome_completo');
+      .select('id, nome_completo, cargo, data_desligamento, salario_folha, salario_contrato').eq('ativo', true).order('nome_completo');
     if (empresasPermitidas) qFuncs = qFuncs.in('empresa_id', empresasPermitidas);
     const { data: funcs, error } = await qFuncs;
     if (error) throw new Error(error.message);
@@ -209,9 +208,11 @@ export async function listarFuncionariosElegiveisRescisaoAction(accessToken: str
     const resolucao = await resolverFontesPagamento(db, nomes);
 
     const { data: abertas } = nomes.length
-      ? await db.from('folha_rescisoes').select('funcionario_nome, status').in('funcionario_nome', nomes)
-      : { data: [] as { funcionario_nome: string; status: string }[] };
-    const bloqueados = new Set((abertas || []).filter(r => !STATUS_FINAIS.includes(r.status)).map(r => r.funcionario_nome));
+      ? await db.from('folha_rescisoes').select('funcionario_nome, funcionario_id, status').in('funcionario_id', (funcs || []).map(f => f.id))
+      : { data: [] as { funcionario_nome: string; funcionario_id: string | null; status: string }[] };
+    // Bloqueia pela ficha (ID) — o nome gravado na rescisão fica de reserva
+    const nomePorId: Record<string, string> = Object.fromEntries((funcs || []).map(f => [f.id, f.nome_completo]));
+    const bloqueados = new Set((abertas || []).filter(r => !STATUS_FINAIS.includes(r.status)).map(r => (r.funcionario_id && nomePorId[r.funcionario_id]) || r.funcionario_nome));
 
     const linhas = (funcs || [])
       .filter(f => !bloqueados.has(f.nome_completo))
@@ -234,6 +235,7 @@ export async function listarFuncionariosElegiveisRescisaoAction(accessToken: str
 // CRIAR rescisão. Congela tipo_folha e, se PROPRIO, já calcula as verbas.
 // ============================================================================
 export async function criarRescisaoAction(payload: {
+  funcionarioId?: string | null; // ID da ficha (preferido)
   funcionarioNome: string; dataDesligamento: string; motivo: MotivoRescisao;
   tipoAvisoPrevio: TipoAvisoPrevio; usuarioNome: string; baseSalarialCalculo?: BaseSalarialRescisao;
 }, accessToken: string): Promise<Resultado> {
@@ -250,9 +252,10 @@ export async function criarRescisaoAction(payload: {
   }
 
   try {
-    const { data: func, error: funcErr } = await db.from('folha_funcionarios')
-      .select('nome_completo, cargo, departamento, empresa_id, data_admissao, salario_folha, salario_contrato')
-      .eq('nome_completo', funcionarioNome).maybeSingle();
+    const { data: func, error: funcErr } = await (payload.funcionarioId
+      ? db.from('folha_funcionarios').select('id, nome_completo, cargo, departamento, empresa_id, data_admissao, salario_folha, salario_contrato').eq('id', payload.funcionarioId)
+      : db.from('folha_funcionarios').select('id, nome_completo, cargo, departamento, empresa_id, data_admissao, salario_folha, salario_contrato').eq('nome_completo', funcionarioNome)
+    ).maybeSingle();
     if (funcErr) throw new Error(funcErr.message);
     if (!func) return { ok: false, erro: 'Funcionário não encontrado.' };
     if (func.data_admissao && dataDesligamento < func.data_admissao) {
@@ -263,8 +266,10 @@ export async function criarRescisaoAction(payload: {
       return { ok: false, erro: 'Você não tem permissão para abrir rescisão para este funcionário.' };
     }
 
-    const { data: abertaExistente } = await db.from('folha_rescisoes')
-      .select('id, status').eq('funcionario_nome', funcionarioNome).order('id', { ascending: false }).limit(1).maybeSingle();
+    // Referência da ficha (ID + nome atual) — usada daqui pra frente
+    const ref: RefFuncionario = { funcionarioId: func.id, funcionarioNome: func.nome_completo };
+    const { data: abertaExistente } = await filtrarPorFuncionario(db.from('folha_rescisoes')
+      .select('id, status'), ref).order('id', { ascending: false }).limit(1).maybeSingle();
     if (abertaExistente && !STATUS_FINAIS.includes(abertaExistente.status)) {
       return { ok: false, erro: 'Já existe uma rescisão em andamento para este funcionário.' };
     }
@@ -283,7 +288,7 @@ export async function criarRescisaoAction(payload: {
     const diasAvisoPrevio = calcularDiasAvisoPrevio(func.data_admissao || dataDesligamento, dataDesligamento, motivo);
 
     const registro: any = {
-      funcionario_nome: funcionarioNome, empresa_id: func.empresa_id, cargo: func.cargo, departamento: func.departamento,
+      ...camposVinculo(ref), empresa_id: func.empresa_id, cargo: func.cargo, departamento: func.departamento,
       data_admissao: func.data_admissao, data_desligamento: dataDesligamento, motivo, tipo_aviso_previo: tipoAvisoPrevio,
       dias_aviso_previo: diasAvisoPrevio, tipo_folha: tipoFolha,
       fgts_percentual_multa: calcularPercentualMultaFgts(motivo) * 100,
@@ -293,7 +298,7 @@ export async function criarRescisaoAction(payload: {
     if (tipoFolha === 'PROPRIO') {
       const salarioBase = resolverSalarioBase(func, baseSalarialCalculo);
       const resultado = await montarCalculo(db, {
-        funcionarioNome, salarioBase, dataAdmissao: func.data_admissao, dataDesligamento, motivo, tipoAvisoPrevio
+        funcionario: ref, salarioBase, dataAdmissao: func.data_admissao, dataDesligamento, motivo, tipoAvisoPrevio
       });
       registro.dados_calculo = resultado;
       registro.valor_total_liquido = resultado.valorLiquido;
@@ -320,7 +325,7 @@ export async function criarRescisaoAction(payload: {
     // espera a homologação) — é o mesmo campo que a folha usa pra prorated
     // o mês (montarDadosHolerite). NÃO mexe em "ativo": o funcionário só é
     // inativado quando a rescisão é homologada.
-    await db.from('folha_funcionarios').update({ data_desligamento: dataDesligamento }).eq('nome_completo', funcionarioNome);
+    await filtrarFicha(db.from('folha_funcionarios').update({ data_desligamento: dataDesligamento }), ref);
 
     await registrarLogAuditoria({
       usuario_nome: usuarioNome, acao: `ABERTURA DE RESCISÃO: ${funcionarioNome}`, setor: 'RECURSOS HUMANOS / RESCISÃO'
@@ -360,7 +365,7 @@ export async function obterRescisaoAction(payload: { id: number }, accessToken: 
     // momento do cálculo; isso aqui é só pra comparar antes de recalcular).
     let salarioFolha = 0, salarioContrato = 0;
     if (data.tipo_folha === 'PROPRIO') {
-      const { data: func } = await db.from('folha_funcionarios').select('salario_folha, salario_contrato').eq('nome_completo', data.funcionario_nome).maybeSingle();
+      const { data: func } = await filtrarFicha(db.from('folha_funcionarios').select('salario_folha, salario_contrato'), { funcionarioId: data.funcionario_id, funcionarioNome: data.funcionario_nome }).maybeSingle();
       salarioFolha = Number(func?.salario_folha) || 0;
       salarioContrato = Number(func?.salario_contrato) || 0;
     }
@@ -472,11 +477,11 @@ export async function recalcularRescisaoAction(
       ? (payload.baseSalarialCalculo as BaseSalarialRescisao)
       : (BASES_SALARIAIS_VALIDAS.includes(r.base_salarial_calculo) ? r.base_salarial_calculo : 'FOLHA');
 
-    const { data: func } = await db.from('folha_funcionarios').select('salario_folha, salario_contrato').eq('nome_completo', r.funcionario_nome).maybeSingle();
+    const { data: func } = await filtrarFicha(db.from('folha_funcionarios').select('salario_folha, salario_contrato'), { funcionarioId: r.funcionario_id, funcionarioNome: r.funcionario_nome }).maybeSingle();
     const salarioBase = resolverSalarioBase(func || { salario_folha: 0, salario_contrato: 0 }, baseSalarialCalculo);
 
     const resultado = await montarCalculo(db, {
-      funcionarioNome: r.funcionario_nome, salarioBase, dataAdmissao: r.data_admissao, dataDesligamento: r.data_desligamento,
+      funcionario: { funcionarioId: r.funcionario_id, funcionarioNome: r.funcionario_nome }, salarioBase, dataAdmissao: r.data_admissao, dataDesligamento: r.data_desligamento,
       motivo: r.motivo, tipoAvisoPrevio: r.tipo_aviso_previo
     });
 
@@ -731,7 +736,7 @@ export async function homologarRescisaoAction(payload: { id: number; usuarioNome
     if (updErr) throw new Error(updErr.message);
 
     await sincronizarFichaRescisao(db, {
-      funcionarioNome: r.funcionario_nome, dataDesligamento: r.data_desligamento, cargo: r.cargo
+      funcionario: { funcionarioId: r.funcionario_id, funcionarioNome: r.funcionario_nome }, dataDesligamento: r.data_desligamento, cargo: r.cargo
     });
 
     await registrarLogAuditoria({
@@ -754,7 +759,7 @@ export async function cancelarRescisaoAction(payload: { id: number; motivo?: str
 
   const db = supabaseAdmin();
   try {
-    const { data: r, error } = await db.from('folha_rescisoes').select('status, funcionario_nome, empresa_id').eq('id', payload.id).maybeSingle();
+    const { data: r, error } = await db.from('folha_rescisoes').select('status, funcionario_nome, funcionario_id, empresa_id').eq('id', payload.id).maybeSingle();
     if (error) throw new Error(error.message);
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
@@ -770,7 +775,7 @@ export async function cancelarRescisaoAction(payload: { id: number; motivo?: str
     // criarRescisaoAction). Se a rescisão nunca chegou a ser homologada,
     // desfaz — o funcionário volta a não ter data de desligamento.
     if (!jaHomologada) {
-      await db.from('folha_funcionarios').update({ data_desligamento: null }).eq('nome_completo', r.funcionario_nome);
+      await filtrarFicha(db.from('folha_funcionarios').update({ data_desligamento: null }), { funcionarioId: r.funcionario_id, funcionarioNome: r.funcionario_nome });
     }
 
     return { ok: true, info: { avisoManual: jaHomologada } };
@@ -963,14 +968,13 @@ export async function obterAssinaturaRescisaoAction(payload: { id: number }, acc
 
   const db = supabaseAdmin();
   try {
-    const { data: r } = await db.from('folha_rescisoes').select('funcionario_nome, empresa_id').eq('id', payload.id).maybeSingle();
+    const { data: r } = await db.from('folha_rescisoes').select('funcionario_nome, funcionario_id, empresa_id').eq('id', payload.id).maybeSingle();
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
 
-    const { data: assinatura } = await db.from('folha_holerite_assinaturas')
-      .select('status, link_assinatura, sandbox, enviado_em, assinado_em, arquivo_assinado')
-      .eq('funcionario_nome', r.funcionario_nome).eq('mes_referencia', marcadorAssinatura(payload.id)).maybeSingle();
+    const { data: assinatura } = await filtrarPorFuncionario(db.from('folha_holerite_assinaturas')
+      .select('status, link_assinatura, sandbox, enviado_em, assinado_em, arquivo_assinado'), { funcionarioId: r.funcionario_id, funcionarioNome: r.funcionario_nome }).eq('mes_referencia', marcadorAssinatura(payload.id)).maybeSingle();
 
     return { ok: true, info: { assinatura: assinatura || null } };
   } catch (e: any) {
@@ -986,7 +990,7 @@ export async function atualizarAssinaturaRescisaoAction(payload: { id: number },
 
   const db = supabaseAdmin();
   try {
-    const { data: r } = await db.from('folha_rescisoes').select('funcionario_nome, empresa_id').eq('id', payload.id).maybeSingle();
+    const { data: r } = await db.from('folha_rescisoes').select('funcionario_nome, funcionario_id, empresa_id').eq('id', payload.id).maybeSingle();
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
@@ -1002,7 +1006,7 @@ export async function baixarAssinadoRescisaoAction(payload: { id: number }, acce
 
   const db = supabaseAdmin();
   try {
-    const { data: r } = await db.from('folha_rescisoes').select('funcionario_nome, empresa_id').eq('id', payload.id).maybeSingle();
+    const { data: r } = await db.from('folha_rescisoes').select('funcionario_nome, funcionario_id, empresa_id').eq('id', payload.id).maybeSingle();
     if (!r) return { ok: false, erro: 'Rescisão não encontrada.' };
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     if (!empresaPermitida(empresasPermitidas, r.empresa_id)) return { ok: false, erro: 'Rescisão não encontrada.' };
@@ -1052,7 +1056,7 @@ export async function listarAssinaturasRescisaoAction(accessToken: string): Prom
 // carregada (r = select('*')) — reaproveitado pela visualização e pelo envio
 // para assinatura, pra não duplicar a montagem dos parâmetros do PDF.
 async function montarPdfBytesRescisao(db: ReturnType<typeof supabaseAdmin>, r: any): Promise<Uint8Array> {
-  const { data: func } = await db.from('folha_funcionarios').select('cpf').eq('nome_completo', r.funcionario_nome).maybeSingle();
+  const { data: func } = await filtrarFicha(db.from('folha_funcionarios').select('cpf'), { funcionarioId: r.funcionario_id, funcionarioNome: r.funcionario_nome }).maybeSingle();
   const dados = r.dados_calculo as any;
 
   return gerarRescisaoPdf({

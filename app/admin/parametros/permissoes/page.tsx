@@ -1133,13 +1133,13 @@ export default function GestaoPermissoes() {
       {/* MODAL DE REGISTRO DE NOVO USUÁRIO */}
       {modalNovoUsuario && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden transform transition-all animate-none">
-            <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[calc(100dvh-2rem)]">
+            <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white shrink-0">
               <h3 className="font-black uppercase tracking-wider text-sm">Registrar Novo Usuário</h3>
               <button onClick={() => setModalNovoUsuario(false)} className="text-white hover:text-red-400 text-2xl leading-none">&times;</button>
             </div>
 
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 overflow-y-auto">
               <div>
                 <label className="block text-[10px] font-black text-[#64748B] uppercase tracking-widest mb-1">Nome Completo</label>
                 <input
@@ -1217,10 +1217,11 @@ export default function GestaoPermissoes() {
                 </div>
               )}
 
-              <div className="pt-4 border-t border-[#E2E8F0] flex gap-3">
-                <button onClick={() => setModalNovoUsuario(false)} className="flex-1 py-3.5 bg-gray-100 text-gray-500 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-gray-200 transition-colors">Cancelar</button>
-                <button onClick={criarNovoUsuario} disabled={criandoUsuario} className="flex-1 py-3.5 bg-[#0C1D4D] text-white font-black text-[10px] uppercase tracking-widest rounded-xl shadow-md hover:bg-[#284B8C] transition-colors disabled:opacity-50">{criandoUsuario ? '...' : 'Registrar Usuário'}</button>
-              </div>
+            </div>
+            {/* Botões fora da área que rola: sempre visíveis, mesmo em tela baixa */}
+            <div className="shrink-0 px-6 pb-6 pt-4 border-t border-[#E2E8F0] bg-white flex gap-3">
+              <button onClick={() => setModalNovoUsuario(false)} className="flex-1 py-3.5 bg-gray-100 text-gray-500 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-gray-200 transition-colors">Cancelar</button>
+              <button onClick={criarNovoUsuario} disabled={criandoUsuario} className="flex-1 py-3.5 bg-[#0C1D4D] text-white font-black text-[10px] uppercase tracking-widest rounded-xl shadow-md hover:bg-[#284B8C] transition-colors disabled:opacity-50">{criandoUsuario ? '...' : 'Registrar Usuário'}</button>
             </div>
           </div>
         </div>
@@ -1229,13 +1230,13 @@ export default function GestaoPermissoes() {
       {/* MODAL EXISTENTE DE EDIÇÃO DE ACESSO DO COLABORADOR */}
       {modalEdicao.open && modalEdicao.user && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden transform transition-all animate-none">
-            <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[calc(100dvh-2rem)]">
+            <div className="bg-[#0C1D4D] p-5 flex justify-between items-center text-white shrink-0">
               <h3 className="font-black uppercase tracking-wider text-sm">Privilégios de Acesso</h3>
               <button onClick={() => setModalEdicao({ open: false, user: null })} className="text-white hover:text-red-400 text-2xl leading-none">&times;</button>
             </div>
             
-            <div className="p-6 space-y-6">
+            <div className="p-6 space-y-6 overflow-y-auto">
               <div className="bg-[#F8FAFC] border border-[#E2E8F0] p-4 rounded-xl text-center shadow-inner">
                 <div className="w-14 h-16 bg-[#336699] text-white rounded-full flex items-center justify-center text-xl font-black mx-auto mb-2">
                   {modalEdicao.user.nome.charAt(0)}
@@ -1330,10 +1331,11 @@ export default function GestaoPermissoes() {
                 </div>
               )}
 
-              <div className="pt-4 border-t border-[#E2E8F0] flex gap-3">
-                <button onClick={() => setModalEdicao({ open: false, user: null })} className="flex-1 py-3.5 bg-gray-100 text-gray-500 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-gray-200 transition-colors">Cancelar</button>
-                <button onClick={salvarPermissao} disabled={loading} className="flex-1 py-3.5 bg-[#0C1D4D] text-white font-black text-[10px] uppercase tracking-widest rounded-xl shadow-md hover:bg-[#284B8C] transition-colors disabled:opacity-50">{loading ? '...' : 'Salvar Regras'}</button>
-              </div>
+            </div>
+            {/* Botões fora da área que rola: sempre visíveis, mesmo em tela baixa */}
+            <div className="shrink-0 px-6 pb-6 pt-4 border-t border-[#E2E8F0] bg-white flex gap-3">
+              <button onClick={() => setModalEdicao({ open: false, user: null })} className="flex-1 py-3.5 bg-gray-100 text-gray-500 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-gray-200 transition-colors">Cancelar</button>
+              <button onClick={salvarPermissao} disabled={loading} className="flex-1 py-3.5 bg-[#0C1D4D] text-white font-black text-[10px] uppercase tracking-widest rounded-xl shadow-md hover:bg-[#284B8C] transition-colors disabled:opacity-50">{loading ? '...' : 'Salvar Regras'}</button>
             </div>
           </div>
         </div>

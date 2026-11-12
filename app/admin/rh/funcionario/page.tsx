@@ -337,10 +337,15 @@ export default function FuncionarioPage() {
       const res = await salvarColaboradorAction({ form, dependentes, movimentacoes, usuarioNome: usuarioAtual }, accessToken);
       if (!res.ok) throw new Error(res.erro);
 
-      toast("Ficha guardada com sucesso!", 'success');
-      setSnapshotFicha(JSON.stringify({ form, dependentes, movimentacoes }));
+      // Nome como o servidor gravou (maiúsculo, sem espaço sobrando). Se o nome
+      // foi corrigido, a ficha foi RENOMEADA (mesmo ID) e os registros dela
+      // acompanharam — a seleção passa a apontar pro nome novo.
+      const nomeSalvo: string = res.info?.nome || form.nome_completo;
+      toast(res.info?.renomeado ? `Ficha guardada. Nome alterado para ${nomeSalvo} — documentos, benefícios, holerites e ponto acompanharam.` : "Ficha guardada com sucesso!", 'success');
+      setForm(f => ({ ...f, nome_completo: nomeSalvo }));
+      setSnapshotFicha(JSON.stringify({ form: { ...form, nome_completo: nomeSalvo }, dependentes, movimentacoes }));
       carregarListaFuncionarios();
-      if (funcionarioSelecionado === 'NOVO') setFuncionarioSelecionado(form.nome_completo);
+      if (funcionarioSelecionado === 'NOVO' || funcionarioSelecionado !== nomeSalvo) setFuncionarioSelecionado(nomeSalvo);
       return true;
     } catch (e: any) { toast("Erro ao salvar: " + e.message, 'error'); return false; }
     finally { setLoading(false); }

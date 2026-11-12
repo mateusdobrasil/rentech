@@ -37,13 +37,32 @@ export async function salvarColaboradorAction(payload: {
   if (!empresaPermitida(empresasPermitidas, form.empresa_id)) {
     return { ok: false, erro: 'Você não tem permissão para gravar funcionários dessa empresa.' };
   }
-  const { data: existenteFunc } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', String(form.nome_completo).trim().toUpperCase()).maybeSingle();
-  if (existenteFunc && !empresaPermitida(empresasPermitidas, existenteFunc.empresa_id)) {
-    return { ok: false, erro: 'Você não tem permissão para editar este funcionário.' };
-  }
+  // Nome sempre em MAIÚSCULO e sem espaço sobrando no banco
+  form.nome_completo = String(form.nome_completo).trim().replace(/\s+/g, ' ').toUpperCase();
 
-  // Nome sempre em MAIÚSCULO no banco (padroniza a chave usada em todas as tabelas)
-  form.nome_completo = String(form.nome_completo).trim().toUpperCase();
+  // Ficha existente é localizada pelo ID (não pelo nome): assim corrigir o nome
+  // RENOMEIA a ficha em vez de criar outra. Os registros ligados (documentos,
+  // benefícios, holerites, ponto...) acompanham pelo gatilho do banco —
+  // .sql/Pendentes/funcionario_id_fase1.sql. Caso Ramon, 11/2026.
+  const fichaId: string | null = form.id || null;
+  let nomeAnterior: string | null = null;
+  if (fichaId) {
+    const { data: atual } = await db.from('folha_funcionarios').select('nome_completo, empresa_id').eq('id', fichaId).maybeSingle();
+    if (!atual) return { ok: false, erro: 'Ficha não encontrada. Recarregue a página.' };
+    if (!empresaPermitida(empresasPermitidas, atual.empresa_id)) {
+      return { ok: false, erro: 'Você não tem permissão para editar este funcionário.' };
+    }
+    if (atual.nome_completo !== form.nome_completo) {
+      const { data: outro } = await db.from('folha_funcionarios').select('id').eq('nome_completo', form.nome_completo).neq('id', fichaId).maybeSingle();
+      if (outro) return { ok: false, erro: `Já existe outro colaborador chamado ${form.nome_completo}.` };
+      nomeAnterior = atual.nome_completo;
+    }
+  } else {
+    const { data: existenteFunc } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', form.nome_completo).maybeSingle();
+    if (existenteFunc && !empresaPermitida(empresasPermitidas, existenteFunc.empresa_id)) {
+      return { ok: false, erro: 'Você não tem permissão para editar este funcionário.' };
+    }
+  }
 
   // CPF/Celular chegam mascarados da tela (000.000.000-00 / (00) 00000-0000)
   // — o banco guarda só dígitos. Limpa aqui (não só no client) pra garantir
@@ -52,10 +71,19 @@ export async function salvarColaboradorAction(payload: {
   if (form.celular) form.celular = String(form.celular).replace(/\D/g, '') || null;
 
   try {
-    const { error: upsertError } = await db
-      .from('folha_funcionarios')
-      .upsert(form, { onConflict: 'nome_completo' });
-    if (upsertError) throw new Error(`Falha ao gravar a ficha: ${upsertError.message}`);
+    if (fichaId) {
+      const { id: _id, ...campos } = form;
+      const { error: updError } = await db.from('folha_funcionarios').update(campos).eq('id', fichaId);
+      if (updError) {
+        if (updError.code === '23505') throw new Error(`Já existe outro colaborador chamado ${form.nome_completo}.`);
+        throw new Error(`Falha ao gravar a ficha: ${updError.message}`);
+      }
+    } else {
+      const { error: upsertError } = await db
+        .from('folha_funcionarios')
+        .upsert(form, { onConflict: 'nome_completo' });
+      if (upsertError) throw new Error(`Falha ao gravar a ficha: ${upsertError.message}`);
+    }
 
     const { error: delDep } = await db.from('folha_dependentes').delete().eq('funcionario_nome', form.nome_completo);
     if (delDep) throw new Error(`Falha ao limpar dependentes antigos: ${delDep.message}`);
@@ -91,8 +119,15 @@ export async function salvarColaboradorAction(payload: {
       acao: `ATUALIZAÇÃO FINANCEIRA INTEGRADA: ${form.nome_completo}`,
       setor: 'RECURSOS HUMANOS / HOLERITES'
     });
+    if (nomeAnterior) {
+      await registrarLogAuditoria({
+        usuario_nome: usuarioNome,
+        acao: `RENOMEOU COLABORADOR: ${nomeAnterior} → ${form.nome_completo}`,
+        setor: 'RECURSOS HUMANOS'
+      });
+    }
 
-    return { ok: true };
+    return { ok: true, info: { nome: form.nome_completo, renomeado: !!nomeAnterior } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

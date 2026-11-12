@@ -19,6 +19,7 @@ import { gerarEspelhoPontoPdf } from '../../lib/gerarEspelhoPontoPdf';
 import { montarEspelhoDoMes } from '../lib/espelhoPonto';
 import { existeSolicitacaoPendente, type TipoBatida } from '../../lib/pontoWhatsapp';
 import { notificarPush } from '../../lib/push';
+import { filtrarFicha, filtrarPorFuncionario, type RefOuNome } from '../../lib/funcionarioRef';
 import { registrarLogAuditoria } from '../../actions';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
@@ -41,7 +42,7 @@ export async function buscarMeuEspelhoPontoAction(accessToken: string, mesRefere
 
   const db = supabaseAdmin();
   try {
-    const espelho = await montarEspelhoDoMes(db, func.funcionarioNome, mesReferencia);
+    const espelho = await montarEspelhoDoMes(db, func, mesReferencia);
     return { ok: true, info: espelho };
   } catch (e: any) {
     return { ok: false, erro: e.message };
@@ -54,7 +55,7 @@ export async function baixarMeuEspelhoPontoPdfAction(accessToken: string, mesRef
 
   const db = supabaseAdmin();
   try {
-    const espelho = await montarEspelhoDoMes(db, func.funcionarioNome, mesReferencia);
+    const espelho = await montarEspelhoDoMes(db, func, mesReferencia);
     const bytes = await gerarEspelhoPontoPdf({
       nome: func.funcionarioNome,
       cpf: espelho.cpf,
@@ -97,10 +98,9 @@ export async function listarMinhasSolicitacoesPontoAction(accessToken: string, m
     const dataInicio = `${ano}-${mes}-01`;
     const dataFim = `${ano}-${mes}-${String(new Date(Number(ano), Number(mes), 0).getDate()).padStart(2, '0')}`;
 
-    const { data, error } = await db
+    const { data, error } = await filtrarPorFuncionario(db
       .from('folha_ponto_whatsapp_solicitacoes')
-      .select('id, tipo, data_referencia, tipo_batida, horario_solicitado, motivo, status, motivo_rejeicao')
-      .eq('funcionario_nome', func.funcionarioNome)
+      .select('id, tipo, data_referencia, tipo_batida, horario_solicitado, motivo, status, motivo_rejeicao'), func)
       .neq('tipo', 'FOLGA_DIA')
       .gte('data_referencia', dataInicio)
       .lte('data_referencia', dataFim);
@@ -116,8 +116,8 @@ export async function listarMinhasSolicitacoesPontoAction(accessToken: string, m
 // app/lib/pontoWhatsapp.ts); aqui também precisa do celular (pra notificação
 // de aprovação/rejeição, que continua saindo por WhatsApp mesmo quando o
 // pedido nasceu no Portal).
-async function celularEEmpresaDoFuncionario(db: ReturnType<typeof supabaseAdmin>, funcionarioNome: string): Promise<{ celular: string | null; empresaId: number | null }> {
-  const { data } = await db.from('folha_funcionarios').select('celular, empresa_id').eq('nome_completo', funcionarioNome).maybeSingle();
+async function celularEEmpresaDoFuncionario(db: ReturnType<typeof supabaseAdmin>, funcionario: RefOuNome): Promise<{ celular: string | null; empresaId: number | null }> {
+  const { data } = await filtrarFicha(db.from('folha_funcionarios').select('celular, empresa_id'), funcionario).maybeSingle();
   return { celular: data?.celular || null, empresaId: data?.empresa_id ?? null };
 }
 
@@ -143,13 +143,14 @@ export async function solicitarJustificativaBatidaAction(
 
   const db = supabaseAdmin();
   try {
-    const jaExiste = await existeSolicitacaoPendente(db, func.funcionarioNome, dataReferencia, 'JUSTIFICATIVA_BATIDA', tipoBatida);
+    const jaExiste = await existeSolicitacaoPendente(db, func, dataReferencia, 'JUSTIFICATIVA_BATIDA', tipoBatida);
     if (jaExiste) return { ok: false, erro: 'Você já tem uma solicitação pendente para esse dia/batida. Aguarde a análise.' };
 
-    const { celular, empresaId } = await celularEEmpresaDoFuncionario(db, func.funcionarioNome);
+    const { celular, empresaId } = await celularEEmpresaDoFuncionario(db, func);
     const { error } = await db.from('folha_ponto_whatsapp_solicitacoes').insert({
       tipo: 'JUSTIFICATIVA_BATIDA',
       funcionario_nome: func.funcionarioNome,
+      ...(func.funcionarioId ? { funcionario_id: func.funcionarioId } : {}),
       empresa_id: empresaId,
       celular,
       data_referencia: dataReferencia,
@@ -196,13 +197,14 @@ export async function solicitarAbonoDiaAction(
 
   const db = supabaseAdmin();
   try {
-    const jaExiste = await existeSolicitacaoPendente(db, func.funcionarioNome, dataReferencia, 'ABONO_DIA', null);
+    const jaExiste = await existeSolicitacaoPendente(db, func, dataReferencia, 'ABONO_DIA', null);
     if (jaExiste) return { ok: false, erro: 'Você já tem uma solicitação de abono pendente para esse dia. Aguarde a análise.' };
 
-    const { celular, empresaId } = await celularEEmpresaDoFuncionario(db, func.funcionarioNome);
+    const { celular, empresaId } = await celularEEmpresaDoFuncionario(db, func);
     const { error } = await db.from('folha_ponto_whatsapp_solicitacoes').insert({
       tipo: 'ABONO_DIA',
       funcionario_nome: func.funcionarioNome,
+      ...(func.funcionarioId ? { funcionario_id: func.funcionarioId } : {}),
       empresa_id: empresaId,
       celular,
       data_referencia: dataReferencia,

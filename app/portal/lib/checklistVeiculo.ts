@@ -11,6 +11,7 @@
 // identidade (Portal por CPF ou equipe por cargo OPERACIONAL) é o chamador:
 // actions-checklist-veiculo.ts (Portal) ou resolverMotorista.ts (mobile).
 import { supabaseAdmin } from '../../lib/supabase';
+import { filtrarFicha, type RefOuNome } from '../../lib/funcionarioRef';
 
 export type Etapa = 'SAIDA' | 'RETORNO';
 const BUCKET_FROTA = 'frota';
@@ -33,8 +34,8 @@ export interface GpsCaptura {
 // resolverMotorista.ts também precisa chamar isso a partir de uma Route
 // Handler, e importar de dentro de um módulo "use server" é um padrão frágil
 // fora do protocolo de Server Actions do Next.
-export async function exigirPermissaoDirigir(db: ReturnType<typeof supabaseAdmin>, funcionarioNome: string): Promise<boolean> {
-  const { data } = await db.from('folha_funcionarios').select('pode_dirigir').eq('nome_completo', funcionarioNome).maybeSingle();
+export async function exigirPermissaoDirigir(db: ReturnType<typeof supabaseAdmin>, funcionario: RefOuNome): Promise<boolean> {
+  const { data } = await filtrarFicha(db.from('folha_funcionarios').select('pode_dirigir'), funcionario).maybeSingle();
   return !!data?.pode_dirigir;
 }
 

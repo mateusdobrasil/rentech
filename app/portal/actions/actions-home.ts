@@ -32,14 +32,14 @@ export async function carregarPortalHomeAction(accessToken: string): Promise<Res
   // virava silenciosamente "sem crachá"/"sem permissão de dirigir",
   // indistinguível de um funcionário que genuinamente não tem crachá.
   const [cracha, docs, holerites, podeDirigir] = await Promise.all([
-    buscarCrachaDados(db, func.funcionarioNome)
+    buscarCrachaDados(db, func)
       .then(cracha => ({ cracha, erro: null as string | null }))
       .catch((e: any) => ({ cracha: null, erro: e.message || 'Erro ao carregar o crachá.' })),
-    carregarDocumentosPorNome(db, func.funcionarioNome)
+    carregarDocumentosPorNome(db, func)
       .then(documentos => ({ documentos, erro: null as string | null }))
       .catch((e: any) => ({ documentos: [] as any[], erro: e.message || 'Erro ao carregar documentos.' })),
-    carregarHoleritesPorNome(db, func.funcionarioNome).catch(() => []),
-    exigirPermissaoDirigir(db, func.funcionarioNome)
+    carregarHoleritesPorNome(db, func).catch(() => []),
+    exigirPermissaoDirigir(db, func)
       .then(podeDirigir => ({ podeDirigir, erro: null as string | null }))
       .catch((e: any) => ({ podeDirigir: false, erro: e.message || 'Erro ao verificar permissão de dirigir.' })),
   ]);

@@ -6,6 +6,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
+import { filtrarPorFuncionario, type RefFuncionario } from '../../../lib/funcionarioRef';
 import { buscarTodasPaginas } from '../../../lib/paginacao';
 import { Analytics } from "@vercel/analytics/next";
 import { fecharFolhaLoteAction, reabrirFolhaAction, salvarBonusDescontosAction, salvarDadosSalariaisAction } from '../actions/actions-folha';
@@ -82,6 +83,7 @@ const getParcelaAtual = (mesInicio: string, mesRef: string) => {
 };
 
 interface FuncionarioFin {
+  id?: string; // folha_funcionarios.id (vínculo por ID)
   nome_completo: string; cargo: string; tipo_contrato: string; ativo: boolean;
   recebe_transporte: boolean; valor_transporte: number;
   recebe_refeicao: boolean; valor_refeicao: number;
@@ -533,7 +535,9 @@ export default function HoleritePage() {
     }
   };
 
-  const buscarPontoDoMes = async (mesAno: string, nome?: string) => {
+  // ref: só um colaborador (filtra pelo ID). nomePorId: mês de todos — agrupa
+  // pela ficha (ID → nome atual), com o nome gravado como reserva.
+  const buscarPontoDoMes = async (mesAno: string, ref?: RefFuncionario, nomePorId?: Record<string, string>) => {
     const [ano, mes] = mesAno.split('-');
     const dataInicio = `${ano}-${mes}-01`;
     const dataFim = `${ano}-${mes}-${new Date(Number(ano), Number(mes), 0).getDate()}`;
@@ -543,16 +547,16 @@ export default function HoleritePage() {
     // sem parte do ponto de alguém.
     const montarPonto = (de: number, ate: number) => {
       let q = supabase.from('folha_ponto_diaria')
-        .select('funcionario_nome, data_registro, minutos_trabalhados, entrada_1, saida_1, entrada_2, saida_2')
+        .select('funcionario_nome, funcionario_id, data_registro, minutos_trabalhados, entrada_1, saida_1, entrada_2, saida_2')
         .gte('data_registro', dataInicio).lte('data_registro', dataFim);
-      if (nome) q = q.eq('funcionario_nome', nome);
+      if (ref) q = filtrarPorFuncionario(q, ref);
       return q.order('id').range(de, ate);
     };
     const montarAbono = (de: number, ate: number) => {
       let q = supabase.from('folha_ponto_abono')
-        .select('funcionario_nome, data_abono, minutos_abonados')
+        .select('funcionario_nome, funcionario_id, data_abono, minutos_abonados')
         .gte('data_abono', dataInicio).lte('data_abono', dataFim);
-      if (nome) q = q.eq('funcionario_nome', nome);
+      if (ref) q = filtrarPorFuncionario(q, ref);
       return q.order('id').range(de, ate);
     };
 
@@ -564,8 +568,11 @@ export default function HoleritePage() {
     // cidade, então cada funcionário resolve a lista dele na hora de apurar.
     const indiceFeriados = indexarFeriados(fData);
 
+    const chaveDe = (r: { funcionario_nome: string; funcionario_id?: string | null }) =>
+      ref ? ref.funcionarioNome : ((r.funcionario_id && nomePorId?.[r.funcionario_id]) || r.funcionario_nome);
     const porFuncionario: Record<string, Record<string, RegistroDiaPonto>> = {};
-    (pontoData || []).forEach(p => {
+    (pontoData || []).forEach(registro => {
+      const p = { ...registro, funcionario_nome: chaveDe(registro) };
       if (!porFuncionario[p.funcionario_nome]) porFuncionario[p.funcionario_nome] = {};
       if (!porFuncionario[p.funcionario_nome][p.data_registro]) porFuncionario[p.funcionario_nome][p.data_registro] = { trabalhados: 0, abonados: 0, entrada_1: null, saida_1: null, entrada_2: null, saida_2: null };
       porFuncionario[p.funcionario_nome][p.data_registro].trabalhados = p.minutos_trabalhados;
@@ -574,7 +581,8 @@ export default function HoleritePage() {
       porFuncionario[p.funcionario_nome][p.data_registro].entrada_2 = p.entrada_2;
       porFuncionario[p.funcionario_nome][p.data_registro].saida_2 = p.saida_2;
     });
-    (abonoData || []).forEach(a => {
+    (abonoData || []).forEach(registro => {
+      const a = { ...registro, funcionario_nome: chaveDe(registro) };
       if (!porFuncionario[a.funcionario_nome]) porFuncionario[a.funcionario_nome] = {};
       if (!porFuncionario[a.funcionario_nome][a.data_abono]) porFuncionario[a.funcionario_nome][a.data_abono] = { trabalhados: 0, abonados: 0, entrada_1: null, saida_1: null, entrada_2: null, saida_2: null };
       porFuncionario[a.funcionario_nome][a.data_abono].abonados = a.minutos_abonados;
@@ -603,23 +611,25 @@ export default function HoleritePage() {
       return;
     }
     setFormSelecionado(funcData);
+    // Pelo ID da ficha (vínculo por ID — app/lib/funcionarioRef.ts)
+    const refFunc: RefFuncionario = { funcionarioId: funcData.id, funcionarioNome: nome };
 
-    const { data: descData } = await supabase.from('folha_descontos').select('*').eq('funcionario_nome', nome);
+    const { data: descData } = await filtrarPorFuncionario(supabase.from('folha_descontos').select('*'), refFunc);
     const descontosCarregados = descData ? descData.map(d => ({ ...d, tipo: d.tipo || 'PARCELADO' })) : [];
     setDescontosSelecionado(descontosCarregados);
 
-    const { data: bonusData } = await supabase.from('folha_bonus').select('*').eq('funcionario_nome', nome);
+    const { data: bonusData } = await filtrarPorFuncionario(supabase.from('folha_bonus').select('*'), refFunc);
     const bonusCarregados = bonusData || [];
     setBonusSelecionado(bonusCarregados);
 
     setSnapshotBonusDesc(JSON.stringify({ descontosSelecionado: descontosCarregados, bonusSelecionado: bonusCarregados, dadosSalariais: extrairDadosSalariais(funcData) }));
 
-    const { data: fechData } = await supabase
-      .from('folha_holerites').select('*')
-      .eq('funcionario_nome', nome).eq('mes_referencia', mesAno).maybeSingle();
+    const { data: fechData } = await filtrarPorFuncionario(supabase
+      .from('folha_holerites').select('*'), refFunc)
+      .eq('mes_referencia', mesAno).maybeSingle();
     setFechamentoSelecionado(fechData || null);
 
-    const { porFuncionario, indiceFeriados } = await buscarPontoDoMes(mesAno, nome);
+    const { porFuncionario, indiceFeriados } = await buscarPontoDoMes(mesAno, refFunc);
     setApuracaoSelecionado(apurarPonto(porFuncionario[nome] || {}, [...feriadosDaEmpresa(indiceFeriados, funcData.empresa_id ?? null)], mesAno, funcData.data_admissao, funcData.data_desligamento));
 
     setLoading(false);
@@ -815,13 +825,16 @@ export default function HoleritePage() {
       // filtrar por mês) — mas só interessam os funcionários ativos que
       // aparecem na grade, então cortamos por nome em vez de trazer a tabela
       // inteira (incluindo desligados que nem seriam exibidos aqui).
-      const nomesAtivos = (funcs || []).map(f => f.nome_completo);
+      const idsAtivos = (funcs || []).map(f => f.id).filter(Boolean);
+      // ID da ficha → nome atual: agrupa tudo pela ficha (o nome gravado fica de reserva)
+      const nomePorId: Record<string, string> = Object.fromEntries((funcs || []).map(f => [f.id, f.nome_completo]));
+      const chaveFunc = (r: { funcionario_nome: string; funcionario_id?: string | null }) => (r.funcionario_id && nomePorId[r.funcionario_id]) || r.funcionario_nome;
       const [{ data: descs, error: erroDescs }, { data: bons, error: erroBons }, { data: fechs, error: erroFechs }, { data: assins, error: erroAssins }, ponto] = await Promise.all([
-        nomesAtivos.length ? supabase.from('folha_descontos').select('*').in('funcionario_nome', nomesAtivos) : Promise.resolve({ data: [] as Desconto[], error: null }),
-        nomesAtivos.length ? supabase.from('folha_bonus').select('*').in('funcionario_nome', nomesAtivos) : Promise.resolve({ data: [] as Bonus[], error: null }),
+        idsAtivos.length ? supabase.from('folha_descontos').select('*').in('funcionario_id', idsAtivos) : Promise.resolve({ data: [] as Desconto[], error: null }),
+        idsAtivos.length ? supabase.from('folha_bonus').select('*').in('funcionario_id', idsAtivos) : Promise.resolve({ data: [] as Bonus[], error: null }),
         supabase.from('folha_holerites').select('*').eq('mes_referencia', mesAno),
-        supabase.from('folha_holerite_assinaturas').select('funcionario_nome, status, enviado_em').eq('mes_referencia', mesAno),
-        buscarPontoDoMes(mesAno)
+        supabase.from('folha_holerite_assinaturas').select('funcionario_nome, funcionario_id, status, enviado_em').eq('mes_referencia', mesAno),
+        buscarPontoDoMes(mesAno, undefined, nomePorId)
       ]);
 
       if (erroFuncs || erroDescs || erroBons || erroFechs || erroAssins) {
@@ -835,24 +848,24 @@ export default function HoleritePage() {
 
       const assinPorFunc: Record<string, string> = {};
       const assinEnviadoEmPorFunc: Record<string, string | null> = {};
-      (assins || []).forEach(a => { assinPorFunc[a.funcionario_nome] = a.status; assinEnviadoEmPorFunc[a.funcionario_nome] = a.enviado_em; });
+      (assins || []).forEach(a => { const k = chaveFunc(a); assinPorFunc[k] = a.status; assinEnviadoEmPorFunc[k] = a.enviado_em; });
 
       const descPorFunc: Record<string, Desconto[]> = {};
       (descs || []).forEach(d => {
-        const key = d.funcionario_nome;
+        const key = chaveFunc(d);
         if (!descPorFunc[key]) descPorFunc[key] = [];
         descPorFunc[key].push({ ...d, tipo: d.tipo || 'PARCELADO' });
       });
 
       const bonusPorFunc: Record<string, Bonus[]> = {};
       (bons || []).forEach(b => {
-        const key = b.funcionario_nome;
+        const key = chaveFunc(b);
         if (!bonusPorFunc[key]) bonusPorFunc[key] = [];
         bonusPorFunc[key].push(b);
       });
 
       const fechPorFunc: Record<string, Fechamento> = {};
-      (fechs || []).forEach(f => { fechPorFunc[f.funcionario_nome] = f; });
+      (fechs || []).forEach(f => { fechPorFunc[chaveFunc(f)] = f; });
 
       const admitidoAteOMes = (dataAdmissao: string | null) => {
         if (!dataAdmissao) return true;
@@ -904,7 +917,7 @@ export default function HoleritePage() {
       // não aprovada/rejeitada pelo RH, o dia conta como falta no cálculo.
       const nomesAbertos = abertos.map(l => l.func.nome_completo);
       const [{ porFuncionario }, resAbonos] = await Promise.all([
-        buscarPontoDoMes(mesReferencia),
+        buscarPontoDoMes(mesReferencia, undefined, Object.fromEntries(abertos.map(l => [l.func.id, l.func.nome_completo]))),
         listarAbonosPendentesDoMesAction({ mesAno: mesReferencia, nomes: nomesAbertos }, accessToken)
       ]);
       if (!resAbonos.ok) throw new Error(resAbonos.erro);

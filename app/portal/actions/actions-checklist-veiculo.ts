@@ -13,6 +13,7 @@
 // (app/api/portal/checklist-veiculo/*, via resolverMotorista.ts), que também
 // aceita contas de equipe (STAFF/OPERACIONAL) — ver ../lib/resolverMotorista.ts.
 import { supabaseAdmin } from '../../lib/supabase';
+import { filtrarFicha } from '../../lib/funcionarioRef';
 import { resolverFuncionarioPortal } from './actions-acesso';
 import {
   abrirChecklistCore,
@@ -34,7 +35,7 @@ export async function podeDirigirAction(accessToken: string): Promise<Resultado>
   if (!func) return { ok: false, erro: ERRO_SESSAO };
 
   const db = supabaseAdmin();
-  const podeDirigir = await exigirPermissaoDirigir(db, func.funcionarioNome);
+  const podeDirigir = await exigirPermissaoDirigir(db, func);
   return { ok: true, info: { podeDirigir } };
 }
 
@@ -43,7 +44,7 @@ export async function carregarChecklistVeiculoAction(accessToken: string): Promi
   if (!func) return { ok: false, erro: ERRO_SESSAO };
 
   const db = supabaseAdmin();
-  if (!(await exigirPermissaoDirigir(db, func.funcionarioNome))) return { ok: false, erro: ERRO_SEM_PERMISSAO };
+  if (!(await exigirPermissaoDirigir(db, func))) return { ok: false, erro: ERRO_SEM_PERMISSAO };
 
   try {
     const info = await carregarChecklistVeiculoCore(db, func.funcionarioNome);
@@ -64,10 +65,10 @@ export async function abrirChecklistAction(accessToken: string, payload: {
   if (!func) return { ok: false, erro: ERRO_SESSAO };
 
   const db = supabaseAdmin();
-  if (!(await exigirPermissaoDirigir(db, func.funcionarioNome))) return { ok: false, erro: ERRO_SEM_PERMISSAO };
+  if (!(await exigirPermissaoDirigir(db, func))) return { ok: false, erro: ERRO_SEM_PERMISSAO };
 
   try {
-    const { data: funcRow } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', func.funcionarioNome).maybeSingle();
+    const { data: funcRow } = await filtrarFicha(db.from('folha_funcionarios').select('empresa_id'), func).maybeSingle();
     const info = await abrirChecklistCore(db, {
       motoristaNome: func.funcionarioNome,
       empresaId: funcRow?.empresa_id ?? null,

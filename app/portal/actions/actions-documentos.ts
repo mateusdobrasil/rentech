@@ -9,6 +9,7 @@
 import { supabaseAdmin } from '../../lib/supabase';
 import { resolverFuncionarioPortal } from './actions-acesso';
 import { baixarAssinado } from '../../admin/rh/actions/assinaturaDownloadCore';
+import { filtrarPorFuncionario, pertenceAo, type RefOuNome } from '../../lib/funcionarioRef';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -25,11 +26,11 @@ const ERRO_SESSAO = 'Sessão inválida ou expirada. Faça login novamente.';
 // ============================================================================
 // Consulta pura (sem resolver sessão) — usada tanto pelo action isolado
 // abaixo quanto pela carga combinada da home do Portal (actions-home.ts).
-export async function carregarDocumentosPorNome(db: ReturnType<typeof supabaseAdmin>, funcionarioNome: string) {
-  const { data, error } = await db
+// funcionario: referência com ID (portal) ou só o nome — ver app/lib/funcionarioRef.ts
+export async function carregarDocumentosPorNome(db: ReturnType<typeof supabaseAdmin>, funcionario: RefOuNome) {
+  const { data, error } = await filtrarPorFuncionario(db
     .from('folha_documentos')
-    .select('id, categoria_id, titulo, nome_arquivo, tipo_mime, tamanho_bytes, data_validade, criado_em')
-    .eq('funcionario_nome', funcionarioNome)
+    .select('id, categoria_id, titulo, nome_arquivo, tipo_mime, tamanho_bytes, data_validade, criado_em'), funcionario)
     .eq('visivel_portal', true)
     .order('criado_em', { ascending: false });
   if (error) throw new Error(error.message);
@@ -46,7 +47,7 @@ export async function listarMeusDocumentosAction(accessToken: string): Promise<R
 
   const db = supabaseAdmin();
   try {
-    const documentos = await carregarDocumentosPorNome(db, func.funcionarioNome);
+    const documentos = await carregarDocumentosPorNome(db, func);
     return { ok: true, info: { documentos } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
@@ -61,13 +62,13 @@ export async function urlMeuDocumentoAction(accessToken: string, payload: { id: 
   try {
     const { data: doc } = await db
       .from('folha_documentos')
-      .select('storage_path, nome_arquivo, funcionario_nome, visivel_portal')
+      .select('storage_path, nome_arquivo, funcionario_nome, funcionario_id, visivel_portal')
       .eq('id', payload.id)
       .maybeSingle();
 
     // Confere posse do documento no servidor — nunca confia que o ID
     // pedido pelo cliente já "é" do funcionário certo.
-    if (!doc || doc.funcionario_nome !== func.funcionarioNome || !doc.visivel_portal) {
+    if (!doc || !pertenceAo(doc, func) || !doc.visivel_portal) {
       return { ok: false, erro: 'Documento não encontrado.' };
     }
 
@@ -89,11 +90,10 @@ export async function urlMeuDocumentoAction(accessToken: string, payload: { id: 
 // ============================================================================
 // Consulta pura (sem resolver sessão) — usada tanto pelo action isolado
 // abaixo quanto pela carga combinada da home do Portal (actions-home.ts).
-export async function carregarHoleritesPorNome(db: ReturnType<typeof supabaseAdmin>, funcionarioNome: string) {
-  const { data, error } = await db
+export async function carregarHoleritesPorNome(db: ReturnType<typeof supabaseAdmin>, funcionario: RefOuNome) {
+  const { data, error } = await filtrarPorFuncionario(db
     .from('folha_holerite_assinaturas')
-    .select('id, mes_referencia, status, assinado_em')
-    .eq('funcionario_nome', funcionarioNome)
+    .select('id, mes_referencia, status, assinado_em'), funcionario)
     .eq('status', 'ASSINADO')
     // Exclui avulsos (marcador "AVULSO-<mes>-<timestamp>", ver actions-assinatura.ts)
     // — o Portal só lista holerites mensais de verdade nesta aba.
@@ -109,7 +109,7 @@ export async function listarMeusHoleritesAction(accessToken: string): Promise<Re
 
   const db = supabaseAdmin();
   try {
-    const holerites = await carregarHoleritesPorNome(db, func.funcionarioNome);
+    const holerites = await carregarHoleritesPorNome(db, func);
     return { ok: true, info: { holerites } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
@@ -124,11 +124,11 @@ export async function urlMeuHoleriteAction(accessToken: string, payload: { id: n
   try {
     const { data: holerite } = await db
       .from('folha_holerite_assinaturas')
-      .select('funcionario_nome, mes_referencia, status')
+      .select('funcionario_nome, funcionario_id, mes_referencia, status')
       .eq('id', payload.id)
       .maybeSingle();
 
-    if (!holerite || holerite.funcionario_nome !== func.funcionarioNome || holerite.status !== 'ASSINADO') {
+    if (!holerite || !pertenceAo(holerite, func) || holerite.status !== 'ASSINADO') {
       return { ok: false, erro: 'Holerite não encontrado.' };
     }
 

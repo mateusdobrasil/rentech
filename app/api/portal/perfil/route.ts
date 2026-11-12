@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { resolverFuncionarioPortal } from '../../../portal/actions/actions-acesso';
 import { supabaseAdmin } from '../../../lib/supabase';
+import { filtrarFicha } from '../../../lib/funcionarioRef';
 
 // GET /api/portal/perfil
 // Authorization: Bearer <access_token>
@@ -20,10 +21,9 @@ export async function GET(request: Request) {
   }
 
   const db = supabaseAdmin();
-  const { data: folha } = await db
+  const { data: folha } = await filtrarFicha(db
     .from('folha_funcionarios')
-    .select('cargo, matricula_esocial, pode_dirigir')
-    .eq('nome_completo', func.funcionarioNome)
+    .select('cargo, matricula_esocial, pode_dirigir'), func)
     .maybeSingle();
 
   return NextResponse.json({

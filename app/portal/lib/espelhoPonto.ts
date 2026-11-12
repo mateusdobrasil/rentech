@@ -6,6 +6,7 @@
 // dentro deles não são um jeito confiável de compartilhar lógica com uma Route
 // Handler, daí a extração pra cá.
 import { supabaseAdmin } from '../../lib/supabase';
+import { filtrarFicha, filtrarPorFuncionario, type RefOuNome } from '../../lib/funcionarioRef';
 import { RegistroPontoDia } from '../../lib/gerarEspelhoPontoPdf';
 import { indexarFeriados, feriadosDaEmpresa } from '../../lib/feriados';
 
@@ -20,7 +21,8 @@ export interface EspelhoDoMes {
 
 export async function montarEspelhoDoMes(
   db: ReturnType<typeof supabaseAdmin>,
-  funcionarioNome: string,
+  // referência com ID (portal) ou só o nome — app/lib/funcionarioRef.ts
+  funcionario: RefOuNome,
   mesReferencia: string
 ): Promise<EspelhoDoMes> {
   const [ano, mes] = mesReferencia.split('-');
@@ -28,14 +30,12 @@ export async function montarEspelhoDoMes(
   const dataFim = `${ano}-${mes}-${new Date(Number(ano), Number(mes), 0).getDate()}`;
 
   const [{ data: func }, { data: pontoData }, { data: abonoData }, { data: fData }] = await Promise.all([
-    db.from('folha_funcionarios').select('cpf, data_admissao, data_desligamento, empresa_id').eq('nome_completo', funcionarioNome).maybeSingle(),
-    db.from('folha_ponto_diaria')
-      .select('data_registro, minutos_trabalhados, entrada_1, saida_1, entrada_2, saida_2')
-      .eq('funcionario_nome', funcionarioNome)
+    filtrarFicha(db.from('folha_funcionarios').select('cpf, data_admissao, data_desligamento, empresa_id'), funcionario).maybeSingle(),
+    filtrarPorFuncionario(db.from('folha_ponto_diaria')
+      .select('data_registro, minutos_trabalhados, entrada_1, saida_1, entrada_2, saida_2'), funcionario)
       .gte('data_registro', dataInicio).lte('data_registro', dataFim),
-    db.from('folha_ponto_abono')
-      .select('data_abono, minutos_abonados, motivo')
-      .eq('funcionario_nome', funcionarioNome)
+    filtrarPorFuncionario(db.from('folha_ponto_abono')
+      .select('data_abono, minutos_abonados, motivo'), funcionario)
       .gte('data_abono', dataInicio).lte('data_abono', dataFim),
     // select('*') traz empresa_id: feriado municipal só vale pra empresa dele
     // (Rentech em São Paulo/SP, Alfa Light em Osasco/SP).

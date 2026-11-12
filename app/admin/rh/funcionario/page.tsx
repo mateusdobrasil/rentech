@@ -5,6 +5,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
+import { filtrarPorFuncionario } from '../../../lib/funcionarioRef';
 import { Analytics } from "@vercel/analytics/next";
 import { salvarColaboradorAction, atribuirEmpresaEmMassaAction } from '../actions/actions-folha';
 import { uploadFotoFuncionarioAction, urlFotoFuncionarioAction } from '../actions/actions-documentos-func';
@@ -273,10 +274,12 @@ export default function FuncionarioPage() {
       if (fotoRes.ok) setFotoPreviewUrl(fotoRes.info.url);
     }
 
-    const { data: depData } = await supabase.from('folha_dependentes').select('*').eq('funcionario_nome', nome);
+    // Pelo ID da ficha (vínculo por ID — app/lib/funcionarioRef.ts)
+    const refFunc = { funcionarioId: funcData.id, funcionarioNome: nome };
+    const { data: depData } = await filtrarPorFuncionario(supabase.from('folha_dependentes').select('*'), refFunc);
     setDependentes(depData || []);
 
-    const { data: movData } = await supabase.from('folha_movimentacoes').select('*').eq('funcionario_nome', nome);
+    const { data: movData } = await filtrarPorFuncionario(supabase.from('folha_movimentacoes').select('*'), refFunc);
     setMovimentacoes(movData || []);
 
     setSnapshotFicha(JSON.stringify({

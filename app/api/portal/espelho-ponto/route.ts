@@ -29,7 +29,7 @@ export async function GET(request: Request) {
 
   try {
     const db = supabaseAdmin();
-    const espelho = await montarEspelhoDoMes(db, func.funcionarioNome, mes);
+    const espelho = await montarEspelhoDoMes(db, func, mes);
     return NextResponse.json({ ok: true, info: espelho });
   } catch (e) {
     const erro = e instanceof Error ? e.message : 'Erro ao montar o espelho de ponto.';

@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { supabase } from '../../../lib/supabase';
+import { filtrarPorFuncionario } from '../../../lib/funcionarioRef';
 import { buscarTodasPaginas } from '../../../lib/paginacao';
 import { Analytics } from "@vercel/analytics/next";
 import { registrarLogAuditoria } from '../../../actions';
@@ -140,7 +141,7 @@ export default function GestaoDePonto() {
   const [listaFuncionariosAtivos, setListaFuncionariosAtivos] = useState<string[]>([]);
   // Mesmos funcionários, com admissão/desligamento — usado só para calcular
   // faltas do mês (mesma regra de apurarPonto() em /admin/rh/holerite).
-  const [funcionariosAtivosDetalhe, setFuncionariosAtivosDetalhe] = useState<{ nome_completo: string; data_admissao: string | null; data_desligamento: string | null; empresa_id?: number | null }[]>([]);
+  const [funcionariosAtivosDetalhe, setFuncionariosAtivosDetalhe] = useState<{ id?: string; nome_completo: string; data_admissao: string | null; data_desligamento: string | null; empresa_id?: number | null }[]>([]);
 
   // Escopo escolhido no seletor de empresa da tela (por cima do que o
   // usuário já pode ver, resolvido no servidor). Único ponto de controle:
@@ -204,7 +205,7 @@ export default function GestaoDePonto() {
     // Só entra nos controles de ponto quem bate ponto pelo WhatsApp — quem
     // tem essa opção desligada na ficha não gera batida nenhuma por aqui,
     // então não faz sentido aparecer nos seletores nem na apuração de faltas.
-    let q = supabase.from('folha_funcionarios').select('nome_completo, data_admissao, data_desligamento, empresa_id').eq('ativo', true).eq('ponto_whatsapp_ativo', true).order('nome_completo');
+    let q = supabase.from('folha_funcionarios').select('id, nome_completo, data_admissao, data_desligamento, empresa_id').eq('ativo', true).eq('ponto_whatsapp_ativo', true).order('nome_completo');
     if (empresasPermitidas) q = q.in('empresa_id', empresasPermitidas);
     q.then(({ data }) => {
         setListaFuncionariosAtivos((data || []).map(f => f.nome_completo));
@@ -212,11 +213,13 @@ export default function GestaoDePonto() {
       });
   }, [authLoading, acessoNegado, empresasPermitidas]);
 
+  // Referência do colaborador escolhido no seletor (nome) → com o ID da ficha
+  const refDoFuncionario = (nome: string) => ({ funcionarioId: funcionariosAtivosDetalhe.find(f => f.nome_completo === nome)?.id ?? null, funcionarioNome: nome });
+
   const verificarRegistroExistente = async (funcionario: string, data: string) => {
     setVerificandoExistente(true);
-    const { data: reg } = await supabase.from('folha_ponto_diaria')
-      .select('origem, entrada_1, saida_1, entrada_2, saida_2')
-      .eq('funcionario_nome', funcionario)
+    const { data: reg } = await filtrarPorFuncionario(supabase.from('folha_ponto_diaria')
+      .select('origem, entrada_1, saida_1, entrada_2, saida_2'), refDoFuncionario(funcionario))
       .eq('data_registro', data)
       .maybeSingle();
     setRegistroExistente(reg || null);
@@ -240,9 +243,8 @@ export default function GestaoDePonto() {
 
   const verificarAbonoExistente = async (funcionario: string, data: string) => {
     setVerificandoAbonoExistente(true);
-    const { data: reg } = await supabase.from('folha_ponto_abono')
-      .select('origem, motivo')
-      .eq('funcionario_nome', funcionario)
+    const { data: reg } = await filtrarPorFuncionario(supabase.from('folha_ponto_abono')
+      .select('origem, motivo'), refDoFuncionario(funcionario))
       .eq('data_abono', data)
       .maybeSingle();
     setAbonoExistente(reg || null);

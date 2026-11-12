@@ -145,7 +145,7 @@ async function enviarCodigoPorCpf(cpfBruto: string, finalidade: 'PRIMEIRO_ACESSO
     // formatação garantida) e não há índice funcional para buscar direto.
     const { data: candidatos } = await db
       .from('folha_funcionarios')
-      .select('nome_completo, cpf, celular, empresa_id')
+      .select('id, nome_completo, cpf, celular, empresa_id')
       .eq('ativo', true)
       .not('cpf', 'is', null);
 
@@ -155,7 +155,7 @@ async function enviarCodigoPorCpf(cpfBruto: string, finalidade: 'PRIMEIRO_ACESSO
       const { data: jaTemAcesso } = await db
         .from('portal_funcionarios_auth')
         .select('id')
-        .eq('funcionario_nome', funcionario.nome_completo)
+        .eq('funcionario_id', funcionario.id)
         .maybeSingle();
 
       if (finalidade === 'PRIMEIRO_ACESSO' ? !jaTemAcesso : !!jaTemAcesso) {
@@ -251,7 +251,7 @@ export async function criarContaAction(payload: { cpf: string; token: string; se
     const { data: jaTemAcesso } = await db
       .from('portal_funcionarios_auth')
       .select('id')
-      .eq('funcionario_nome', otp.funcionario_nome)
+      .eq(otp.funcionario_id ? 'funcionario_id' : 'funcionario_nome', otp.funcionario_id || otp.funcionario_nome)
       .maybeSingle();
     if (jaTemAcesso) return { ok: false, erro: 'Este funcionário já possui acesso. Faça login.' };
 
@@ -266,6 +266,7 @@ export async function criarContaAction(payload: { cpf: string; token: string; se
     const { error: vinculoError } = await db.from('portal_funcionarios_auth').insert({
       auth_user_id: criado.user.id,
       funcionario_nome: otp.funcionario_nome,
+      ...(otp.funcionario_id ? { funcionario_id: otp.funcionario_id } : {}),
       cpf,
     });
     if (vinculoError) {
@@ -307,7 +308,7 @@ export async function redefinirSenhaPortalAction(payload: { cpf: string; token: 
     const { data: vinculo } = await db
       .from('portal_funcionarios_auth')
       .select('auth_user_id')
-      .eq('funcionario_nome', otp.funcionario_nome)
+      .eq(otp.funcionario_id ? 'funcionario_id' : 'funcionario_nome', otp.funcionario_id || otp.funcionario_nome)
       .maybeSingle();
     if (!vinculo?.auth_user_id) return { ok: false, erro: 'Você ainda não tem acesso ao portal. Use "Solicitar acesso".' };
 
@@ -332,6 +333,10 @@ export async function redefinirSenhaPortalAction(payload: { cpf: string; token: 
 // ============================================================================
 export interface FuncionarioPortal {
   authUserId: string;
+  // ID da ficha (folha_funcionarios.id) — identidade estável: as funções do
+  // portal filtram por ele (app/lib/funcionarioRef.ts). O nome vem da ficha
+  // atual, só pra exibição/registros de texto.
+  funcionarioId: string | null;
   funcionarioNome: string;
 }
 
@@ -344,10 +349,16 @@ export async function resolverFuncionarioPortal(accessToken: string): Promise<Fu
 
   const { data: vinculo, error: vinculoError } = await db
     .from('portal_funcionarios_auth')
-    .select('funcionario_nome')
+    .select('funcionario_nome, funcionario_id')
     .eq('auth_user_id', userData.user.id)
     .maybeSingle();
   if (vinculoError || !vinculo) return null;
 
-  return { authUserId: userData.user.id, funcionarioNome: vinculo.funcionario_nome };
+  // Pelo ID do vínculo, o nome vem da ficha ATUAL (se o RH corrigiu o nome,
+  // o portal já enxerga o novo, sem depender de nada mais).
+  if (vinculo.funcionario_id) {
+    const { data: ficha } = await db.from('folha_funcionarios').select('nome_completo').eq('id', vinculo.funcionario_id).maybeSingle();
+    return { authUserId: userData.user.id, funcionarioId: vinculo.funcionario_id, funcionarioNome: ficha?.nome_completo || vinculo.funcionario_nome };
+  }
+  return { authUserId: userData.user.id, funcionarioId: null, funcionarioNome: vinculo.funcionario_nome };
 }

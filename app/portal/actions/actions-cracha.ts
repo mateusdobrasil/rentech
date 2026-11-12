@@ -6,6 +6,7 @@
 // parâmetro do cliente — sempre resolvida no servidor via access_token
 // (resolverFuncionarioPortal).
 import { supabaseAdmin } from '../../lib/supabase';
+import { filtrarFicha, type RefOuNome } from '../../lib/funcionarioRef';
 import { resolverFuncionarioPortal } from './actions-acesso';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
@@ -18,11 +19,11 @@ const ERRO_SESSAO = 'Sessão inválida ou expirada. Faça login novamente.';
 // Consulta pura (sem resolver sessão) — usada tanto pelo action isolado
 // abaixo quanto pela carga combinada da home do Portal (actions-home.ts),
 // que já resolveu a sessão uma vez pra todas as seções da página.
-export async function buscarCrachaDados(db: ReturnType<typeof supabaseAdmin>, funcionarioNome: string) {
-  const { data, error } = await db
+// funcionario: referência com ID (portal) ou só o nome — app/lib/funcionarioRef.ts
+export async function buscarCrachaDados(db: ReturnType<typeof supabaseAdmin>, funcionario: RefOuNome) {
+  const { data, error } = await filtrarFicha(db
     .from('folha_funcionarios')
-    .select('nome_completo, cargo, cpf, foto_path, data_nascimento, empresa_id')
-    .eq('nome_completo', funcionarioNome)
+    .select('nome_completo, cargo, cpf, foto_path, data_nascimento, empresa_id'), funcionario)
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) return null;
@@ -60,7 +61,7 @@ export async function buscarMeuCrachaAction(accessToken: string): Promise<Result
 
   const db = supabaseAdmin();
   try {
-    const info = await buscarCrachaDados(db, func.funcionarioNome);
+    const info = await buscarCrachaDados(db, func);
     if (!info) return { ok: false, erro: 'Cadastro não encontrado.' };
     return { ok: true, info };
   } catch (e: any) {

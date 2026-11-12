@@ -23,6 +23,7 @@
 import { supabaseAdmin } from '../../lib/supabase';
 import { normalizarPermissao } from '../../lib/permissoes';
 import { possuiAcessoRota } from '../../lib/serverAuth';
+import { filtrarFicha } from '../../lib/funcionarioRef';
 import { resolverFuncionarioPortal } from '../actions/actions-acesso';
 import { exigirPermissaoDirigir } from './checklistVeiculo';
 
@@ -61,8 +62,8 @@ export async function resolverMotorista(accessToken: string): Promise<MotoristaR
 
   const func = await resolverFuncionarioPortal(accessToken);
   if (!func) return null;
-  if (!(await exigirPermissaoDirigir(db, func.funcionarioNome))) return null;
+  if (!(await exigirPermissaoDirigir(db, func))) return null;
 
-  const { data: funcRow } = await db.from('folha_funcionarios').select('empresa_id').eq('nome_completo', func.funcionarioNome).maybeSingle();
+  const { data: funcRow } = await filtrarFicha(db.from('folha_funcionarios').select('empresa_id'), func).maybeSingle();
   return { motoristaNome: func.funcionarioNome, empresaId: funcRow?.empresa_id ?? null, via: 'PORTAL' };
 }

@@ -10,6 +10,7 @@
 // que só vira ajuste/abono de verdade quando o RH aprova (ver
 // actions-ponto-whatsapp.ts) — o funcionário nunca aprova a própria exceção.
 import { supabaseAdmin } from './supabase';
+import { filtrarPorFuncionario, type RefOuNome } from './funcionarioRef';
 import { registrarLogAuditoria } from '../actions';
 import { dispararAutomacoesPorEventoWhatsApp } from './automacoes';
 import { notificarPush } from './push';
@@ -260,10 +261,10 @@ async function batidasFaltantesNoDia(db: Db, funcionarioNome: string, dataRefere
 // Exportada porque app/portal/actions/actions-ponto.ts reaproveita o mesmo
 // dedupe antes de inserir uma solicitação nova (justificativa/abono criados
 // direto no Portal, não só via WhatsApp).
-export async function existeSolicitacaoPendente(db: Db, funcionarioNome: string, dataReferencia: string, tipo: 'JUSTIFICATIVA_BATIDA' | 'ABONO_DIA' | 'FOLGA_DIA', tipoBatida: TipoBatida | null): Promise<boolean> {
-  let query = db.from('folha_ponto_whatsapp_solicitacoes')
-    .select('id')
-    .eq('funcionario_nome', funcionarioNome)
+// funcionario: referência com ID (portal) ou só o nome (fluxo WhatsApp) — app/lib/funcionarioRef.ts
+export async function existeSolicitacaoPendente(db: Db, funcionario: RefOuNome, dataReferencia: string, tipo: 'JUSTIFICATIVA_BATIDA' | 'ABONO_DIA' | 'FOLGA_DIA', tipoBatida: TipoBatida | null): Promise<boolean> {
+  let query = filtrarPorFuncionario(db.from('folha_ponto_whatsapp_solicitacoes')
+    .select('id'), funcionario)
     .eq('data_referencia', dataReferencia)
     .eq('tipo', tipo)
     .eq('status', 'PENDENTE');

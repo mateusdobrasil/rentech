@@ -240,24 +240,35 @@ export default function RelatoriosRH() {
 
     const carregarQuadro = async () => {
       setLoadingQuadro(true);
-      let qFuncsQuadro = supabase.from('folha_funcionarios').select('nome_completo, cargo, ativo, data_admissao, data_desligamento, empresa_id');
-      if (empresasPermitidas) qFuncsQuadro = qFuncsQuadro.in('empresa_id', empresasPermitidas);
-      const [{ data: funcsData }, { data: movsData }, docsRes] = await Promise.all([
-        qFuncsQuadro,
-        supabase.from('folha_movimentacoes').select('funcionario_nome, motivo, cargo, data_movimentacao').order('data_movimentacao', { ascending: false }),
-        painelDocumentosAction(accessToken),
-      ]);
-      if (!vivo) return;
-      const nomesPermitidos = new Set((funcsData || []).map(f => f.nome_completo));
-      setTodosFuncionarios(funcsData || []);
-      setMovimentacoes((movsData || []).filter(m => nomesPermitidos.has(m.funcionario_nome)));
-      if (docsRes.ok) setDocumentosPanel(docsRes.info);
-      setLoadingQuadro(false);
+      try {
+        let qFuncsQuadro = supabase.from('folha_funcionarios').select('nome_completo, cargo, ativo, data_admissao, data_desligamento, empresa_id');
+        if (empresasPermitidas) qFuncsQuadro = qFuncsQuadro.in('empresa_id', empresasPermitidas);
+        const [{ data: funcsData, error: erroFuncs }, { data: movsData }, docsRes] = await Promise.all([
+          qFuncsQuadro,
+          supabase.from('folha_movimentacoes').select('funcionario_nome, motivo, cargo, data_movimentacao').order('data_movimentacao', { ascending: false }),
+          painelDocumentosAction(accessToken),
+        ]);
+        if (!vivo) return;
+        if (erroFuncs) throw new Error(erroFuncs.message);
+        const nomesPermitidos = new Set((funcsData || []).map(f => f.nome_completo));
+        setTodosFuncionarios(funcsData || []);
+        setMovimentacoes((movsData || []).filter(m => nomesPermitidos.has(m.funcionario_nome)));
+        if (docsRes.ok) setDocumentosPanel(docsRes.info);
+        else toast('Documentos: ' + (docsRes.erro || 'não foi possível carregar.'), 'error');
+      } catch (e: any) {
+        if (vivo) toast('Erro ao montar o quadro de pessoal: ' + e.message, 'error');
+      } finally {
+        // Nunca deixa as abas Quadro/Compliance presas em "Montando..."
+        if (vivo) setLoadingQuadro(false);
+      }
     };
     carregarQuadro();
 
     return () => { vivo = false; };
-  }, [authLoading, acessoNegado, accessToken]);
+    // empresasPermitidas nas dependências: ela chega DEPOIS do login (outro
+    // efeito busca), e sem isso a guarda acima saía na 1ª vez e o efeito nunca
+    // rodava de novo — as abas ficavam presas em "Montando..." (11/2026).
+  }, [authLoading, acessoNegado, accessToken, empresasPermitidas]);
 
   // Carrega as assinaturas (holerites + avulsos) do mês selecionado
   useEffect(() => {

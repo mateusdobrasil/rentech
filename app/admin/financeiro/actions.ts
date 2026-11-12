@@ -442,8 +442,11 @@ export async function detalheLoteRelatorioAction(payload: { loteId: number; empr
 
     const itens = itensBrutos.map((i, idx) => {
       const ehPix = (i.metodo || '').toUpperCase() === 'PIX';
+      const boletos: { linha?: string }[] = Array.isArray(i.boletos) ? i.boletos : [];
       const destino = ehPix
         ? `PIX ${String(i.pix_tipo || '').toLowerCase()} ${mascarar(i.pix_chave)}`.trim()
+        : (i.metodo || '').toUpperCase() === 'BOLETO'
+        ? (boletos.length > 1 ? `${boletos.length} boletos (arquivo SISPAG)` : `boleto ${String(boletos[0]?.linha || '').slice(0, 5)}… (arquivo SISPAG)`)
         : [i.banco_codigo && `banco ${i.banco_codigo}`, i.banco_agencia && `ag ${i.banco_agencia}`, i.banco_conta && `cc ${mascarar(i.banco_conta)}`].filter(Boolean).join(' · ') || '—';
       return {
         seq: idx + 1,

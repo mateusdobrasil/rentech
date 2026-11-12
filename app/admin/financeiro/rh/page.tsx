@@ -19,6 +19,8 @@ import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm, usePrompt } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { formatarDataBR } from '../../../lib/formatadores';
+import { extrairBoletos, validarBoletosItem, gerarArquivoSispagBoletos, type BoletoLote, type PagamentoBoletoCnab } from '../../../lib/sispagBoletos';
+import { formatarLinhaDigitavel } from '../../../lib/boletoMulta';
 
 // Contas bancárias no sistema são salvas como "12345-6" (número-DAC). O CNAB
 // exige o dígito verificador em campo separado do número da conta.
@@ -152,6 +154,14 @@ interface ItemLote {
   // da contabilidade): bônus/descontos lançados em /admin/rh/holerite pro mês
   // que NÃO entram no valor pago. Só aviso — não muda valor nem desmarca.
   avisoLancamentosInternos?: string | null;
+  // metodo 'BOLETO' (OP do tipo BOLETO ou conta a pagar com linha
+  // digitável): boletos lidos dos dados de pagamento — vão no arquivo
+  // "SISPAG Itaú (Boletos)", nunca pela API. favorecido = nome do
+  // beneficiário sem o "— OP #n"; boleto_linha = texto salvo na conta a pagar.
+  boletos?: BoletoLote[] | null;
+  favorecido?: string | null;
+  numeroOp?: number | null;
+  boleto_linha?: string | null;
   pronto: boolean;
   // Preenchidos por enviarLoteAoBancoAction após a chamada à API do Itaú
   // (app/lib/itauSispag.ts) — ausentes até o item ser realmente enviado.
@@ -522,10 +532,12 @@ export default function FinanceiroPage() {
 
   const abrirEdicaoPagamentoCP = (it: ItemLote) => {
     setEditandoPagamentoCP({
-      chaveEdit: `${it.funcionario_nome}::${it.fonte}`, modo: 'PIX',
+      chaveEdit: `${it.funcionario_nome}::${it.fonte}`,
+      modo: it.metodo === 'BOLETO' ? 'BOLETO' : it.metodo === 'TED' ? 'CONTA' : 'PIX',
       documento: it.cpf || '', pixTipo: it.pix_tipo || 'CPF-CNPJ', pixChave: it.pix_chave || '',
       bancoCodigo: it.banco_codigo || '', bancoAgencia: it.banco_agencia || '',
       bancoConta: it.banco_conta || '', bancoTipo: it.banco_tipo || 'CORRENTE',
+      boletoLinha: it.boleto_linha || '',
     });
   };
 
@@ -534,10 +546,16 @@ export default function FinanceiroPage() {
     if (!edit || !it.contaPagarId) return;
     const chavePixOk = edit.modo === 'PIX' && edit.pixChave.trim();
     const contaOk = edit.modo === 'CONTA' && edit.bancoCodigo.trim() && edit.bancoAgencia.trim() && edit.bancoConta.trim();
-    if (!chavePixOk && !contaOk) {
-      toast(edit.modo === 'PIX' ? 'Digite a chave PIX.' : 'Preencha banco, agência e conta.', 'error');
+    const leituraBoleto = edit.modo === 'BOLETO' ? extrairBoletos(edit.boletoLinha) : null;
+    const boletoOk = !!leituraBoleto && leituraBoleto.boletos.length > 0;
+    if (!chavePixOk && !contaOk && !boletoOk) {
+      toast(edit.modo === 'PIX' ? 'Digite a chave PIX.' : edit.modo === 'CONTA' ? 'Preencha banco, agência e conta.' : 'Cole a linha digitável do boleto (47 ou 48 dígitos) ou o código de barras (44).', 'error');
       return;
     }
+    // Boleto: confere dígitos, CPF/CNPJ do beneficiário e valor antes de
+    // salvar — mesma checagem que o servidor faz ao montar o lote.
+    const alertaBoleto = leituraBoleto ? validarBoletosItem({ ...leituraBoleto, valorTotal: it.valor, documentoFavorecido: edit.documento }) : null;
+    if (alertaBoleto) { toast(alertaBoleto, 'error'); return; }
     setSalvandoPagamentoCP(true);
     try {
       const res = await salvarDadosPagamentoContaPagarAction({
@@ -549,18 +567,22 @@ export default function FinanceiroPage() {
         bancoAgencia: edit.modo === 'CONTA' ? edit.bancoAgencia.trim() : null,
         bancoConta: edit.modo === 'CONTA' ? edit.bancoConta.trim() : null,
         bancoTipo: edit.modo === 'CONTA' ? edit.bancoTipo : null,
+        boletoLinha: edit.modo === 'BOLETO' ? edit.boletoLinha.trim() : null,
       }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setItens(prev => prev.map(i => (i.funcionario_nome === it.funcionario_nome && i.fonte === it.fonte) ? {
         ...i,
         cpf: edit.documento.replace(/\D/g, ''),
-        metodo: edit.modo === 'PIX' ? 'PIX' : 'TED',
+        metodo: edit.modo === 'PIX' ? 'PIX' : edit.modo === 'CONTA' ? 'TED' : 'BOLETO',
         pix_tipo: edit.modo === 'PIX' ? edit.pixTipo : null,
         pix_chave: edit.modo === 'PIX' ? edit.pixChave.trim() : null,
         banco_codigo: edit.modo === 'CONTA' ? edit.bancoCodigo.trim() : null,
         banco_agencia: edit.modo === 'CONTA' ? edit.bancoAgencia.trim() : null,
         banco_conta: edit.modo === 'CONTA' ? edit.bancoConta.trim() : null,
         banco_tipo: edit.modo === 'CONTA' ? edit.bancoTipo : null,
+        boletos: leituraBoleto ? leituraBoleto.boletos : null,
+        boleto_linha: edit.modo === 'BOLETO' ? edit.boletoLinha.trim() : null,
+        alerta: edit.modo === 'BOLETO' ? null : i.alerta,
         pronto: i.valor > 0,
       } : i));
       setEditandoPagamentoCP(null);
@@ -587,9 +609,10 @@ export default function FinanceiroPage() {
   // aparecer num lote. `chaveEdit` identifica a linha (mesma chave usada no
   // key={} do <tr>, "nome::fonte").
   const [editandoPagamentoCP, setEditandoPagamentoCP] = useState<{
-    chaveEdit: string; modo: 'PIX' | 'CONTA';
+    chaveEdit: string; modo: 'PIX' | 'CONTA' | 'BOLETO';
     documento: string; pixTipo: string; pixChave: string;
     bancoCodigo: string; bancoAgencia: string; bancoConta: string; bancoTipo: string;
+    boletoLinha: string;
   } | null>(null);
   const [salvandoPagamentoCP, setSalvandoPagamentoCP] = useState(false);
 
@@ -659,7 +682,9 @@ export default function FinanceiroPage() {
     if (prontos.length === 0) { toast('Nenhum pagamento pronto para exportar.', 'info'); return; }
     const cab = 'Funcionário;CPF;Fonte;Método;Chave PIX / Conta;Valor';
     const linhas = prontos.map(i => {
-      const destino = i.metodo === 'PIX' ? `${i.pix_tipo}: ${i.pix_chave}` : `Ag ${i.banco_agencia} C/C ${i.banco_conta} (${i.banco_codigo})`;
+      const destino = i.metodo === 'PIX' ? `${i.pix_tipo}: ${i.pix_chave}`
+        : i.metodo === 'BOLETO' ? `Boleto ${(i.boletos || []).map(b => b.linha).join(' / ')}`
+        : `Ag ${i.banco_agencia} C/C ${i.banco_conta} (${i.banco_codigo})`;
       return `"${i.funcionario_nome}";${i.cpf};"${i.fonte_rotulo}";${i.metodo};"${destino}";${i.valor.toFixed(2).replace('.', ',')}`;
     });
     const csv = '﻿' + [cab, ...linhas, `"TOTAL";;;;;${totalSelecionado.toFixed(2).replace('.', ',')}`].join('\n');
@@ -954,6 +979,78 @@ export default function FinanceiroPage() {
     const a = document.createElement('a');
     a.href = url;
     a.download = `SISPAG_CC_TED_${mesReferencia.replace('-', '')}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Boletos (OP do tipo BOLETO e contas a pagar com linha digitável): a API
+  // do SISPAG não inclui boleto, então vão por arquivo CNAB 240 — Segmento
+  // J + J-52 (boleto bancário, formas 30/31) e Segmento O (arrecadação:
+  // multas, concessionárias, tributos). Montagem em app/lib/sispagBoletos.ts.
+  // Igual aos outros arquivos, gerar o arquivo NÃO dá baixa em nada: a OP /
+  // conta continua em aberto até a baixa manual (ou conciliação com o P2S)
+  // depois que o Itaú efetivar.
+  const exportarCnabBoletos = async () => {
+    const itensBoleto = prontos.filter(i => i.metodo === 'BOLETO' && (i.boletos || []).length > 0);
+    if (itensBoleto.length === 0) { toast('Nenhum boleto pronto para exportar.', 'info'); return; }
+
+    const cfg = integracoes.find(i => i.parceiro === 'ITAU')?.config || {};
+    const camposFaltando = (['cnpj', 'razao_social', 'agencia_debito', 'conta_debito'] as const)
+      .filter(campo => !String(cfg[campo] || '').trim());
+    if (camposFaltando.length > 0) {
+      toast(`Configure primeiro (tela Integrações → ⚙ Configurar Itaú): ${camposFaltando.join(', ')}.`, 'error');
+      return;
+    }
+
+    // Revalida aqui também (o item pode ter vindo de um lote salvo antes).
+    const comProblema = itensBoleto
+      .map(i => ({ i, erro: validarBoletosItem({ boletos: i.boletos || [], trechosNaoLidos: [], valorTotal: i.valor, documentoFavorecido: i.cpf }) }))
+      .filter(x => x.erro);
+    if (comProblema.length > 0) {
+      toast(`${comProblema[0].i.funcionario_nome}: ${comProblema[0].erro}`, 'error');
+      return;
+    }
+
+    // Boleto vencido não pode ir com data de pagamento no passado — vai pra hoje.
+    const hojeIso = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+    const pagamentos: PagamentoBoletoCnab[] = [];
+    let ajustadosParaHoje = 0;
+    itensBoleto.forEach(item => {
+      const dataItem = item.dataPagamento || dataPagamento;
+      const dataPag = dataItem < hojeIso ? hojeIso : dataItem;
+      if (dataPag !== dataItem) ajustadosParaHoje++;
+      const ref = item.fonte === 'OP' ? `OP${item.numeroOp ?? ''}` : `CP${item.contaPagarId ?? ''}`;
+      const boletos = item.boletos || [];
+      boletos.forEach((b, idx) => pagamentos.push({
+        favorecido: item.favorecido || item.funcionario_nome.split(' — ')[0],
+        documentoFavorecido: item.cpf,
+        dataPagamento: dataPag,
+        vencimentoPadrao: item.dataPagamento,
+        seuNumero: boletos.length > 1 ? `${ref}-${idx + 1}` : ref,
+        boleto: b,
+        // Um boleto: paga o valor do item; vários: cada um pelo valor do
+        // próprio código (a soma já foi conferida contra o total da OP).
+        valorPagamento: boletos.length > 1 ? (b.valor || 0) : item.valor,
+      }));
+    });
+
+    let resultado: ReturnType<typeof gerarArquivoSispagBoletos>;
+    try {
+      const contaDebitoSep = separarContaDac(cfg.conta_debito);
+      resultado = gerarArquivoSispagBoletos({
+        empresa: { cnpj: cfg.cnpj, razaoSocial: cfg.razao_social, agencia: cfg.agencia_debito, conta: contaDebitoSep.conta, dac: contaDebitoSep.dac },
+        pagamentos,
+      });
+    } catch (e) { toast(`Não foi possível gerar o arquivo: ${e instanceof Error ? e.message : String(e)}`, 'error'); return; }
+
+    const resumo = resultado.lotes.map(l => `${l.rotulo}: ${l.qtd} (${BRL(l.total)})`).join(' · ');
+    if (!(await confirmar(`Gerar arquivo SISPAG com ${pagamentos.length} boleto(s) — ${resumo}.${ajustadosParaHoje ? ` ${ajustadosParaHoje} item(ns) com vencimento já passado vão com data de pagamento de hoje.` : ''} Depois de enviar no Itaú Empresas, dê baixa nas OPs/contas quando o banco efetivar.`))) return;
+
+    const blob = new Blob([resultado.conteudo], { type: 'text/plain;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `SISPAG_BOLETOS_${mesReferencia.replace('-', '')}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -1352,6 +1449,7 @@ export default function FinanceiroPage() {
                 <div className="flex flex-col gap-2">
                   <button onClick={exportarCnabItauPix} className="text-xs font-black bg-[#ec7000] hover:bg-[#c95f00] text-white px-4 py-2.5 rounded-lg uppercase tracking-wider">📄 SISPAG Itaú (PIX)</button>
                   <button onClick={exportarCnabContaCorrenteTed} className="text-xs font-black bg-[#0369A1] hover:bg-[#025688] text-white px-4 py-2.5 rounded-lg uppercase tracking-wider">📄 SISPAG Itaú (Conta/TED)</button>
+                  <button onClick={exportarCnabBoletos} className="text-xs font-black bg-amber-600 hover:bg-amber-700 text-white px-4 py-2.5 rounded-lg uppercase tracking-wider">📄 SISPAG Itaú (Boletos)</button>
                 </div>
               </div>
             </div>
@@ -1469,8 +1567,14 @@ export default function FinanceiroPage() {
                                     ? <span className="text-amber-600 font-black">⚠ Pagar manualmente: {it.nota}</span>
                                     : <span className="text-amber-600 font-black">⚠ Sem dados bancários na ficha</span>)
                                 : it.metodo === 'PIX' ? `PIX ${it.pix_tipo}: ${it.pix_chave}`
+                                : it.metodo === 'BOLETO'
+                                ? <span className="font-mono" title={(it.boletos || []).map(b => `${b.rotulo ? b.rotulo + ': ' : ''}${formatarLinhaDigitavel(b.linha)}`).join('\n')}>
+                                    {(it.boletos || []).length > 1
+                                      ? `${it.boletos!.length} boletos · ${it.boletos!.map(b => b.rotulo || formatarLinhaDigitavel(b.linha).slice(0, 11)).join(', ')}`
+                                      : `Boleto ${formatarLinhaDigitavel(it.boletos?.[0]?.linha)}`}
+                                  </span>
                                 : `Ag ${it.banco_agencia} · C/C ${it.banco_conta}`}
-                              {!it.alerta && it.metodo !== 'SEM_DADOS' && it.fonte === 'CONTAS_PAGAR' && (
+                              {it.metodo !== 'SEM_DADOS' && it.fonte === 'CONTAS_PAGAR' && (
                                 <button type="button" onClick={() => abrirEdicaoPagamentoCP(it)} className="ml-1 text-gray-400 hover:text-orange-600 underline">✏ editar</button>
                               )}
                             </span>
@@ -1490,14 +1594,24 @@ export default function FinanceiroPage() {
                                   <label className="flex items-center gap-1 text-[10px] font-bold text-gray-600">
                                     <input type="radio" checked={editandoPagamentoCP.modo === 'CONTA'} onChange={() => setEditandoPagamentoCP(v => v && { ...v, modo: 'CONTA' })} /> Ag/Conta
                                   </label>
+                                  <label className="flex items-center gap-1 text-[10px] font-bold text-gray-600">
+                                    <input type="radio" checked={editandoPagamentoCP.modo === 'BOLETO'} onChange={() => setEditandoPagamentoCP(v => v && { ...v, modo: 'BOLETO' })} /> Boleto
+                                  </label>
                                 </div>
                                 <input
                                   type="text" value={editandoPagamentoCP.documento}
                                   onChange={e => setEditandoPagamentoCP(v => v && { ...v, documento: e.target.value })}
-                                  placeholder="CPF/CNPJ do favorecido"
+                                  placeholder={editandoPagamentoCP.modo === 'BOLETO' ? 'CPF/CNPJ do beneficiário do boleto' : 'CPF/CNPJ do favorecido'}
                                   className="w-full p-1.5 border border-gray-300 rounded text-[11px]"
                                 />
-                                {editandoPagamentoCP.modo === 'PIX' ? (
+                                {editandoPagamentoCP.modo === 'BOLETO' ? (
+                                  <textarea
+                                    rows={2} value={editandoPagamentoCP.boletoLinha}
+                                    onChange={e => setEditandoPagamentoCP(v => v && { ...v, boletoLinha: e.target.value })}
+                                    placeholder="Linha digitável do boleto (ou código de barras)"
+                                    className="w-full p-1.5 border border-gray-300 rounded text-[11px] font-mono"
+                                  />
+                                ) : editandoPagamentoCP.modo === 'PIX' ? (
                                   <div className="flex gap-2">
                                     <select
                                       value={editandoPagamentoCP.pixTipo}
@@ -1565,7 +1679,7 @@ export default function FinanceiroPage() {
                           <td className="p-3">
                             {it.metodo === 'SEM_DADOS'
                               ? <span className="text-[10px] font-black text-amber-600 uppercase">⚠</span>
-                              : <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase ${it.metodo === 'PIX' ? 'bg-teal-100 text-teal-700' : 'bg-blue-100 text-blue-700'}`}>{it.metodo}</span>}
+                              : <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase ${it.metodo === 'PIX' ? 'bg-teal-100 text-teal-700' : it.metodo === 'BOLETO' ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-700'}`}>{it.metodo}</span>}
                           </td>
                           <td className="p-3 text-right">
                             {editavel ? (

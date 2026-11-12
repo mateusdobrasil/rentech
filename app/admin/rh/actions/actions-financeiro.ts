@@ -18,6 +18,7 @@ import { gravarGeracaoBeneficios, beneficiosGeradosParaLote } from '../../../lib
 import { marcarContaPagarQuitada } from '../../../lib/p2s';
 import { ispbPorCompe } from '../../../lib/bancosCompeIspb';
 import { formatarMoeda } from '../../../lib/formatadores';
+import { extrairBoletos, validarBoletosItem } from '../../../lib/sispagBoletos';
 
 const ROTA = '/admin/financeiro/rh';
 
@@ -300,11 +301,18 @@ export async function montarLoteSalariosAction(payload: {
     // trazer contas até a "Data de pagamento" escolhida) acontece no CLIENTE,
     // igual já é feito pra OP — ver dentroDoFiltroData em
     // app/admin/financeiro/rh/page.tsx.
-    let contasPagarPendentes: { id: number; descricao: string | null; fornecedor: string | null; centro: string | null; valor: number | null; valor_pago: number | null; data_vencimento: string | null; documento_fornecedor: string | null; pix_tipo: string | null; pix_chave: string | null; banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null }[] = [];
+    let contasPagarPendentes: { id: number; descricao: string | null; fornecedor: string | null; centro: string | null; valor: number | null; valor_pago: number | null; data_vencimento: string | null; documento_fornecedor: string | null; pix_tipo: string | null; pix_chave: string | null; banco_codigo: string | null; banco_agencia: string | null; banco_conta: string | null; banco_tipo: string | null; boleto_linha?: string | null }[] = [];
     if (fontes.includes('CONTAS_PAGAR')) {
-      const { data: contas } = await db.from('financeiro_contas_pagar')
-        .select('id, descricao, fornecedor, centro, valor, valor_pago, data_vencimento, documento_fornecedor, pix_tipo, pix_chave, banco_codigo, banco_agencia, banco_conta, banco_tipo')
-        .eq('quitado', false).is('pago_em', null);
+      const COLUNAS_CP = 'id, descricao, fornecedor, centro, valor, valor_pago, data_vencimento, documento_fornecedor, pix_tipo, pix_chave, banco_codigo, banco_agencia, banco_conta, banco_tipo';
+      // boleto_linha vem de .sql/Pendentes/contas_pagar_boleto_linha.sql —
+      // enquanto o SQL não roda, a coluna não existe e a consulta cai pra
+      // versão sem ela (as contas continuam aparecendo, só sem boleto).
+      const consultarContas = (colunas: string) => db.from('financeiro_contas_pagar')
+        .select(colunas).eq('quitado', false).is('pago_em', null) as unknown as Promise<{ data: typeof contasPagarPendentes | null; error: { message?: string } | null }>;
+      const comBoleto = await consultarContas(COLUNAS_CP + ', boleto_linha');
+      const contas = comBoleto.error && /boleto_linha/.test(comBoleto.error.message || '')
+        ? (await consultarContas(COLUNAS_CP)).data
+        : comBoleto.data;
       // Conta cuja Descricao cita "OP: <número>" (ou "#<número>") nasceu de
       // uma Ordem de Pagamento nossa (ver criarContaPagarParaOP) — já tem
       // caminho próprio de pagamento pela fonte 'OP' (ou pela conciliação
@@ -600,10 +608,18 @@ export async function montarLoteSalariosAction(payload: {
       // banco_agencia + banco_conta) — enviarLoteAoBancoAction e a exportação
       // CNAB já sabem lidar com isso, sem precisar saber que veio de uma OP.
       const ehTed = !ehPix && !!(op.banco_codigo && op.banco_agencia && op.banco_conta);
-      const metodo = ehPix ? 'PIX' : ehTed ? 'TED' : 'SEM_DADOS';
+      // BOLETO com linha digitável legível nos dados de pagamento: não vai
+      // pela API (que só aceita Pix), e sim pelo arquivo "SISPAG Itaú
+      // (Boletos)" da tela do lote — ver app/lib/sispagBoletos.ts.
+      const leituraBoleto = !ehPix && !ehTed && String(op.tipo_pagamento || '').toUpperCase() === 'BOLETO'
+        ? extrairBoletos(op.dados_pagamento) : null;
+      const ehBoleto = !!leituraBoleto && (leituraBoleto.boletos.length > 0 || leituraBoleto.trechosNaoLidos.length > 0);
+      const metodo = ehPix ? 'PIX' : ehTed ? 'TED' : ehBoleto ? 'BOLETO' : 'SEM_DADOS';
       const valor = Number(op.total_geral || 0);
       const nomeOp = op.empresa_recebedora ? `${op.empresa_recebedora} — OP #${op.numero_op}` : `OP #${op.numero_op}`;
-      const alertaDadosOp = metodo === 'SEM_DADOS' ? null : validarDadosPagamentoItem({
+      const alertaDadosOp = metodo === 'SEM_DADOS' ? null : metodo === 'BOLETO' ? validarBoletosItem({
+        ...leituraBoleto!, valorTotal: valor, documentoFavorecido: op.cnpj_cpf_recebedora,
+      }) : validarDadosPagamentoItem({
         funcionario_nome: nomeOp, metodo,
         pix_tipo: ehPix ? (op.chave_pix || null) : null, pix_chave: ehPix ? (op.dados_pagamento || null) : null,
         cpf: String(op.cnpj_cpf_recebedora || '').replace(/\D/g, ''),
@@ -636,9 +652,12 @@ export async function montarLoteSalariosAction(payload: {
         // (BOLETO, DINHEIRO, ou TRANSFERÊNCIA sem conta cadastrada) — mostra
         // ao usuário o que foi digitado na OP em vez do aviso genérico de
         // "sem dados bancários".
-        nota: (!ehPix && !ehTed) ? [op.tipo_pagamento, op.dados_pagamento].filter(Boolean).join(': ') : null,
+        nota: (!ehPix && !ehTed && !ehBoleto) ? [op.tipo_pagamento, op.dados_pagamento].filter(Boolean).join(': ') : null,
+        boletos: ehBoleto ? leituraBoleto!.boletos : null,
+        favorecido: op.empresa_recebedora || null,
+        numeroOp: op.numero_op,
         alerta: alertaDadosOp,
-        pronto: (ehPix || ehTed) && valor > 0 && !alertaDadosOp
+        pronto: (ehPix || ehTed || ehBoleto) && valor > 0 && !alertaDadosOp
       });
     });
 
@@ -652,14 +671,18 @@ export async function montarLoteSalariosAction(payload: {
     contasPagarPendentes.forEach(c => {
       const temPix = !!c.pix_chave;
       const temConta = !!(c.banco_codigo && c.banco_agencia && c.banco_conta);
-      const metodo = temPix ? 'PIX' : temConta ? 'TED' : 'SEM_DADOS';
+      const leituraBoleto = !temPix && !temConta && c.boleto_linha ? extrairBoletos(c.boleto_linha) : null;
+      const temBoleto = !!leituraBoleto && (leituraBoleto.boletos.length > 0 || leituraBoleto.trechosNaoLidos.length > 0);
+      const metodo = temPix ? 'PIX' : temConta ? 'TED' : temBoleto ? 'BOLETO' : 'SEM_DADOS';
       const saldo = Number(c.valor || 0) - Number(c.valor_pago || 0);
       // "(#id)" no fim garante nome único por linha (chaveEdit no front é
       // funcionario_nome+fonte) — sem isso, duas contas do mesmo fornecedor
       // com a mesma descrição (ex.: "VALE REFEIÇÃO" de dois meses em aberto
       // ao mesmo tempo) colidiriam e o toggle/edição de uma mexeria nas duas.
       const nomeContaPagar = c.fornecedor ? `${c.fornecedor} — ${c.descricao || 'Conta a pagar'} (#${c.id})` : `${c.descricao || 'Conta a pagar'} (#${c.id})`;
-      const alertaDadosCp = metodo === 'SEM_DADOS' ? null : validarDadosPagamentoItem({
+      const alertaDadosCp = metodo === 'SEM_DADOS' ? null : metodo === 'BOLETO' ? validarBoletosItem({
+        ...leituraBoleto!, valorTotal: saldo, documentoFavorecido: c.documento_fornecedor,
+      }) : validarDadosPagamentoItem({
         funcionario_nome: nomeContaPagar, metodo,
         pix_tipo: temPix ? c.pix_tipo : null, pix_chave: temPix ? c.pix_chave : null,
         cpf: String(c.documento_fornecedor || '').replace(/\D/g, ''),
@@ -689,8 +712,11 @@ export async function montarLoteSalariosAction(payload: {
         banco_conta: temConta ? c.banco_conta : null,
         banco_tipo: temConta ? c.banco_tipo : null,
         nota: c.centro || null,
+        boletos: temBoleto ? leituraBoleto!.boletos : null,
+        boleto_linha: c.boleto_linha || null,
+        favorecido: c.fornecedor || null,
         alerta: alertaDadosCp,
-        pronto: (temPix || temConta) && saldo > 0 && !alertaDadosCp
+        pronto: (temPix || temConta || temBoleto) && saldo > 0 && !alertaDadosCp
       });
     });
 

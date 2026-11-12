@@ -45,13 +45,17 @@ export async function salvarDadosPagamentoContaPagarAction(payload: {
   bancoAgencia?: string | null;
   bancoConta?: string | null;
   bancoTipo?: string | null;
+  // Linha digitável (ou código de barras) do boleto — pago pelo arquivo
+  // "SISPAG Itaú (Boletos)" da tela do lote. Precisa da coluna criada por
+  // .sql/Pendentes/contas_pagar_boleto_linha.sql.
+  boletoLinha?: string | null;
 }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, '/admin/financeiro/rh');
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
   try {
-    const { error } = await db.from('financeiro_contas_pagar').update({
+    const campos: Record<string, string | null> = {
       documento_fornecedor: payload.documentoFornecedor || null,
       pix_tipo: payload.pixTipo || null,
       pix_chave: payload.pixChave || null,
@@ -59,7 +63,13 @@ export async function salvarDadosPagamentoContaPagarAction(payload: {
       banco_agencia: payload.bancoAgencia || null,
       banco_conta: payload.bancoConta || null,
       banco_tipo: payload.bancoTipo || null,
-    }).eq('id', payload.id);
+    };
+    let { error } = await db.from('financeiro_contas_pagar').update({ ...campos, boleto_linha: payload.boletoLinha || null }).eq('id', payload.id);
+    if (error && /boleto_linha/.test(error.message || '')) {
+      // Coluna ainda não existe: salvar boleto exige o SQL; PIX/conta seguem sem ela.
+      if (payload.boletoLinha) throw new Error('Para salvar boleto em Contas a Pagar, rode antes o SQL .sql/Pendentes/contas_pagar_boleto_linha.sql.');
+      ({ error } = await db.from('financeiro_contas_pagar').update(campos).eq('id', payload.id));
+    }
     if (error) throw new Error(error.message);
     return { ok: true };
   } catch (e: any) {

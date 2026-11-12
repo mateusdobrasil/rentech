@@ -9,6 +9,7 @@ import { validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } fr
 import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
 import { registrarLogAuditoria } from '../../../actions';
 import { gravarGeracaoBeneficios, categoriaMeio, pedidosFlashCancelados, inicioDaCompetencia, type BaseBeneficios } from '../../../lib/beneficiosGeracoes';
+import { formatarDataBR } from '../../../lib/formatadores';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -509,7 +510,7 @@ export async function beneficiosPorMesAction(payload: { mesReferencia: string },
 
   const db = supabaseAdmin();
   const mes = payload.mesReferencia;
-  const dataBR = (iso: string | null | undefined) => iso ? String(iso).slice(0, 10).split('-').reverse().join('/') : '';
+  const dataBR = (iso: string | null | undefined) => formatarDataBR(iso, '');
   try {
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
 

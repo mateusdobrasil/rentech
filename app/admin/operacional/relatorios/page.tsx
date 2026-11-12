@@ -7,6 +7,7 @@ import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import { formatarMoeda } from '../../../lib/formatadores';
 
 // ============================================================================
 // PALETA (ordem fixa — identidade nunca depende de rank/valor)
@@ -49,7 +50,7 @@ interface Equipamento {
 // ============================================================================
 // UTILITÁRIOS
 // ============================================================================
-const formatCurrency = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
+const formatCurrency = formatarMoeda;
 const formatNumero = (v: number) => new Intl.NumberFormat('pt-BR').format(v || 0);
 
 // ============================================================================

@@ -9,6 +9,7 @@ import { carregarPortalHomeAction } from './actions/actions-home';
 import MeuCracha, { type DadosCracha } from './MeuCracha';
 import ChecklistVeiculo from './ChecklistVeiculo';
 import EspelhoPonto from './EspelhoPonto';
+import { formatarDataBR } from '../lib/formatadores';
 
 // Mesma ideia do admin (app/admin/ExigirMFA.tsx), só que com limite de 30min
 // em vez de 1h — funcionário no celular/totem tende a esquecer aberto com
@@ -31,7 +32,7 @@ interface HoleritePortal {
   id: number; mes_referencia: string; status: string; assinado_em: string | null;
 }
 
-const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
+const fmtData = (d: string | null) => formatarDataBR(d);
 const fmtMesReferencia = (m: string) => {
   const [ano, mes] = m.split('-');
   if (!ano || !mes) return m;

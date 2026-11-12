@@ -18,6 +18,7 @@ import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm, usePrompt } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import { formatarDataBR } from '../../../lib/formatadores';
 
 // Contas bancárias no sistema são salvas como "12345-6" (número-DAC). O CNAB
 // exige o dígito verificador em campo separado do número da conta.
@@ -28,7 +29,7 @@ const separarContaDac = (contaComDac: string | null | undefined): { conta: strin
 
 const BRL = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtDataHora = (d: string) => new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
+const fmtData = (d: string | null) => formatarDataBR(d);
 const fmtMesBR = (m: string) => { const [a, mm] = m.split('-'); return `${mm}/${a}`; };
 // Espelha STATUS_PIX_SUCESSO em actions-financeiro.ts — itens já pagos com
 // sucesso via API (PIX por chave OU por dados bancários, ambos passam pelo

@@ -12,6 +12,7 @@ import { DialogOP, DialogOPState, BotaoLinkAssinatura } from '../DialogOP';
 import { supabase } from '../../../lib/supabase';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { buscarColaboradoresParaOpAction, type ColaboradorParaOp } from '../../comercial/parceiros/actions';
+import { formatarMoeda } from '../../../lib/formatadores';
 
 // Os itens em memória já chegam normalizados (ver normalizarItensOP) — não há
 // mais motivo para este tipo carregar os campos legados (description/quantity)
@@ -239,8 +240,7 @@ export default function PainelResponsavel() {
   const filtrosAtivos = busca || filtroResponsavel || filtroFavorecido || vencimentoDe || vencimentoAte || (empresasCatalogoVisivel.length > 1 && filtroEmpresa);
 
   // Utilitários
-  const formatarMoeda = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
-  const formatarData = (d: string) => d ? new Date(d).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '---';
+    const formatarData = (d: string) => d ? new Date(d).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '---';
 
   // Lógica de edição
   const abrirEdicao = (op: OP) => {

@@ -14,11 +14,14 @@ import { useToast } from '../../../components/ui/NotificationProvider';
 import { indexarFeriados, feriadosDaEmpresa } from '../../../lib/feriados';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
+// Motor da folha — o mesmo do holerite (fonte única)
+import { apurarPonto, montarDadosHolerite, mapearRegrasContrato, type Desconto, type Bonus } from '../../../lib/motorFolha';
+import { formatarMoeda } from '../../../lib/formatadores';
 
 // ============================================================================
-// UTILITÁRIOS (mesmas fórmulas do holerite, para os números baterem)
+// UTILITÁRIOS
 // ============================================================================
-const formatCurrency = (value: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
+const formatCurrency = formatarMoeda;
 const formatTimeStr = (totalMins: number) => {
   const neg = totalMins < 0; const abs = Math.abs(totalMins);
   return `${neg ? '-' : ''}${Math.floor(abs / 60).toString().padStart(2, '0')}:${(abs % 60).toString().padStart(2, '0')}`;
@@ -27,10 +30,6 @@ const formatarMesAnoBR = (mesAnoIso: string) => {
   if (!mesAnoIso) return '';
   const [ano, mes] = mesAnoIso.split('-');
   return `${mes}/${ano}`;
-};
-const getDiaSemana = (dataIso: string) => {
-  const p = dataIso.split('-');
-  return new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10)).getDay();
 };
 
 // ============================================================================
@@ -49,31 +48,6 @@ const COR_STATUS_ASSINATURA: Record<string, string> = { 'ENVIADO': '#D97706', 'V
 // ============================================================================
 // INTERFACES
 // ============================================================================
-interface RegraContrato {
-  nome_regra: string; paga_salario_base: boolean; calcula_extras_padrao: boolean;
-  percentual_extra_semana: number; percentual_extra_sabado: number;
-  tipo_pagamento_fds: 'HORA_PERCENTUAL' | 'VALOR_DIARIA';
-  percentual_extra_dom_fer: number; valor_diaria_fds: number; desconta_faltas: boolean;
-  direito_vr?: boolean; direito_vt?: boolean; modalidade_beneficio?: 'POR_DIA' | 'VALOR_FECHADO';
-  // Diária por dia excedente — mesma regra do holerite (ver montarDadosHolerite
-  // em app/admin/rh/holerite/page.tsx).
-  paga_dias_excedentes?: boolean; dias_base_mes?: number | null;
-  // Redução sazonal — mesma regra do holerite (meio salário nos meses da ficha).
-  permite_reducao_sazonal?: boolean;
-}
-interface FuncionarioFin {
-  nome_completo: string; cargo: string; tipo_contrato: string; ativo: boolean;
-  recebe_transporte: boolean; valor_transporte: number;
-  recebe_refeicao: boolean; valor_refeicao: number;
-  salario_folha: number; salario_contrato: number; valor_diaria: number; valor_adiantamento: number;
-  // Diária por dia excedente — ver montarDadosHolerite no holerite.
-  diaria_extra?: number;
-  reducao_sazonal_ativa?: boolean | null; reducao_sazonal_mes1?: number | null; reducao_sazonal_mes2?: number | null;
-  // Empresa do funcionário: define quais feriados municipais valem para ele.
-  empresa_id?: number | null;
-}
-interface Desconto { funcionario_nome?: string; descricao: string; tipo: 'FIXO' | 'PARCELADO'; parcelas: number; mes_inicio: string; mes_fim: string; valor_parcela: number; }
-interface Bonus { funcionario_nome?: string; descricao: string; recorrencia: 'MENSAL' | 'UNICO'; mes_referencia: string; valor: number; mes_fim?: string | null; }
 
 interface LinhaRelatorio {
   nome: string; cargo: string; tipoContrato: string;
@@ -88,137 +62,6 @@ interface Movimentacao { funcionario_nome: string; motivo: 'ADMISSAO' | 'DEMISSA
 interface LinhaDocumentos { nome: string; cargo: string; totalDocs: number; vencidos: number; vencendo: number; semDocumentos: boolean; }
 interface PainelDocumentos { linhas: LinhaDocumentos[]; totais: { funcionarios: number; semDocumentos: number; totalDocs: number; vencidos: number; vencendo: number } }
 interface Assinatura { funcionario_nome: string; mes_referencia: string; status: 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO'; titulo_avulso?: string | null; }
-
-const REGRA_PADRAO: RegraContrato = {
-  nome_regra: 'PADRÃO', paga_salario_base: true, calcula_extras_padrao: true,
-  percentual_extra_semana: 60, percentual_extra_sabado: 60, tipo_pagamento_fds: 'HORA_PERCENTUAL',
-  percentual_extra_dom_fer: 100, valor_diaria_fds: 0, desconta_faltas: true
-};
-
-// ============================================================================
-// APURAÇÃO DO PONTO — idêntica ao holerite
-// ============================================================================
-const apurarPonto = (
-  dias: Record<string, { trabalhados: number; abonados: number }>,
-  feriados: string[], mesAno: string,
-  dataAdmissao?: string | null, dataDesligamento?: string | null
-) => {
-  let mins60 = 0, mins100 = 0, diasFds = 0, minsTrabalhadosTotal = 0, qtdVr = 0, qtdVt = 0;
-  // Dias com trabalho de fato, em qualquer dia da semana — base da diária por
-  // dia excedente. Abono não conta.
-  let diasTrabalhados = 0;
-
-  Object.entries(dias).forEach(([dataIso, v]) => {
-    const diaSemana = getDiaSemana(dataIso);
-    const isFeriado = feriados.includes(dataIso);
-    const abonEfetivo = (isFeriado || diaSemana === 0 || diaSemana === 6) ? 0 : v.abonados;
-    if (v.trabalhados > 0) diasTrabalhados++;
-    minsTrabalhadosTotal += v.trabalhados + abonEfetivo;
-
-    if (isFeriado || diaSemana === 0) {
-      if (v.trabalhados > 0) { mins100 += v.trabalhados; diasFds++; qtdVt += 1; qtdVr += v.trabalhados > 480 ? 2 : 1; }
-    } else if (diaSemana === 6) {
-      if (v.trabalhados > 0) { mins60 += v.trabalhados; diasFds++; qtdVt += 1; qtdVr += v.trabalhados > 480 ? 2 : 1; }
-    } else {
-      const extraDia = (v.trabalhados + v.abonados) - 480;
-      if (extraDia > 0) mins60 += extraDia;
-      if (extraDia > 180) qtdVr += 1;
-    }
-  });
-
-  let faltas = 0;
-  const temRegistro = Object.values(dias).some(v => v.trabalhados > 0 || v.abonados > 0);
-  if (temRegistro) {
-    const [ano, mes] = mesAno.split('-').map(Number);
-    const diasNoMes = new Date(ano, mes, 0).getDate();
-    const hoje = new Date(); hoje.setHours(23, 59, 59, 999);
-    for (let d = 1; d <= diasNoMes; d++) {
-      const data = new Date(ano, mes - 1, d);
-      if (data > hoje) break;
-      const dataIso = `${ano}-${String(mes).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      if (dataAdmissao && dataIso < dataAdmissao) continue;
-      if (dataDesligamento && dataIso > dataDesligamento) continue;
-      const ds = data.getDay();
-      if (ds === 0 || ds === 6 || feriados.includes(dataIso)) continue;
-      const reg = dias[dataIso];
-      if (!(reg && (reg.trabalhados > 0 || reg.abonados > 0))) faltas++;
-    }
-  }
-
-  return { mins60, mins100, diasFds, faltas, minsTrabalhadosTotal, qtdVr, qtdVt, diasTrabalhados };
-};
-
-// ============================================================================
-// MOTOR DE CÁLCULO — idêntico ao holerite
-// ============================================================================
-const calcularFinanceiro = (
-  func: FuncionarioFin, regras: Record<string, RegraContrato>,
-  descontosFunc: Desconto[], bonusFunc: Bonus[],
-  ap: { mins60: number; mins100: number; diasFds: number; faltas: number; qtdVr: number; qtdVt: number; diasTrabalhados: number }, mesRef: string,
-  // Valor unitário de VR/VT vem da Gestão de Benefícios (fonte única), igual ao
-  // holerite. O contrato governa só o direito e a modalidade.
-  beneficios: { vr: number; vt: number } = { vr: 0, vt: 0 }
-) => {
-  const regra = regras[func.tipo_contrato] || { ...REGRA_PADRAO, nome_regra: func.tipo_contrato || 'PADRÃO' };
-  const salarioBaseCalculo = func.salario_folha > 0 ? func.salario_folha : func.salario_contrato;
-  const valorHoraBase = salarioBaseCalculo / 220;
-
-  let totalExtra60 = 0, totalExtra100 = 0, totalDiarias = 0;
-  if (regra.calcula_extras_padrao) {
-    if (regra.tipo_pagamento_fds === 'HORA_PERCENTUAL') {
-      totalExtra60 = (ap.mins60 / 60) * valorHoraBase * (1 + regra.percentual_extra_semana / 100);
-      totalExtra100 = (ap.mins100 / 60) * valorHoraBase * (1 + regra.percentual_extra_dom_fer / 100);
-    } else {
-      totalDiarias = ap.diasFds * regra.valor_diaria_fds;
-    }
-  }
-
-  // Redução sazonal: nos meses da ficha recebe metade do salário de contrato —
-  // base intacta, a diferença sai do complemento (ver montarDadosHolerite em
-  // app/admin/rh/holerite/page.tsx).
-  const mesNum = Number(mesRef.slice(5, 7));
-  const reducaoSazonal = !!regra.permite_reducao_sazonal && !!func.reducao_sazonal_ativa &&
-    [func.reducao_sazonal_mes1, func.reducao_sazonal_mes2].includes(mesNum);
-  const salarioBaseExibido = regra.paga_salario_base ? func.salario_folha : 0;
-  const complemento = !regra.paga_salario_base ? 0
-    : reducaoSazonal
-      ? Math.max(0, func.salario_contrato * 0.5 - salarioBaseExibido)
-      : Math.max(0, func.salario_contrato - func.salario_folha);
-
-  const descAtivos = descontosFunc.filter(d => d.tipo === 'FIXO'
-    ? (mesRef >= d.mes_inicio && (!d.mes_fim || d.mes_fim === '2099-12' || mesRef <= d.mes_fim))
-    : (mesRef >= d.mes_inicio && mesRef <= d.mes_fim));
-  const bonusAtivos = bonusFunc.filter(b => b.recorrencia === 'MENSAL' ? (!b.mes_fim || mesRef <= b.mes_fim) : b.mes_referencia === mesRef);
-  const totalBonus = bonusAtivos.reduce((s, b) => s + b.valor, 0);
-  const totalDesc = descAtivos.reduce((s, d) => s + d.valor_parcela, 0);
-
-  // VR/VT por evento (regra 4): direito e modalidade da regra, valores da ficha
-  const modalidade = (regra as any).modalidade_beneficio || 'POR_DIA';
-  const diariaVr = modalidade === 'VALOR_FECHADO' ? (beneficios.vr / 30) : beneficios.vr;
-  const diariaVt = modalidade === 'VALOR_FECHADO' ? (beneficios.vt / 30) : beneficios.vt;
-  const totalVr = ((regra as any).direito_vr ? ap.qtdVr : 0) * diariaVr;
-  const totalVt = ((regra as any).direito_vt ? ap.qtdVt : 0) * diariaVt;
-  const totalAdicionais = totalVr + totalVt;
-
-  // Acerto de VR/VT por falta: 1 diária descontada por dia de falta (conforme direito)
-  const descontoBeneficios = ((regra as any).direito_vr ? ap.faltas * diariaVr : 0) + ((regra as any).direito_vt ? ap.faltas * diariaVt : 0);
-
-  // Diária por dia excedente: cada dia com ponto acima da base do contrato paga
-  // uma diária, no valor da ficha. Soma aos extras, não substitui.
-  const diasBase = regra.paga_dias_excedentes ? (regra.dias_base_mes ?? 0) : 0;
-  const diasExcedentes = diasBase > 0 ? Math.max(0, ap.diasTrabalhados - diasBase) : 0;
-  const totalDiariasExcedentes = diasExcedentes * (func.diaria_extra || 0);
-
-  const baseFaltas = func.salario_contrato > 0 ? func.salario_contrato : func.salario_folha;
-  const diasFaltas = regra.desconta_faltas ? ap.faltas : 0;
-  const valorDescontoFaltas = diasFaltas > 0 ? (baseFaltas / 30) * diasFaltas : 0;
-
-  const totalCreditos = salarioBaseExibido + complemento + totalBonus + totalExtra60 + totalExtra100 + totalDiarias + totalDiariasExcedentes + totalAdicionais;
-  const totalDebitos = func.valor_adiantamento + totalDesc + valorDescontoFaltas + descontoBeneficios;
-  const liquido = totalCreditos - totalDebitos;
-
-  return { totalCreditos, totalDebitos, liquido };
-};
 
 // ============================================================================
 // CARTÃO DE INDICADOR
@@ -457,18 +300,7 @@ export default function RelatoriosRH() {
       ]);
 
       // Mapa de regras
-      const regras: Record<string, RegraContrato> = {};
-      (regrasData || []).forEach((r) => {
-        regras[r.nome_regra] = {
-          nome_regra: r.nome_regra, paga_salario_base: r.paga_salario_base, calcula_extras_padrao: r.calcula_extras_padrao,
-          percentual_extra_semana: r.percentual_extra_semana ?? 60, percentual_extra_sabado: r.percentual_extra_sabado ?? 60,
-          tipo_pagamento_fds: r.tipo_pagamento_fds === 'HORA_100' ? 'HORA_PERCENTUAL' : (r.tipo_pagamento_fds || 'HORA_PERCENTUAL'),
-          percentual_extra_dom_fer: r.percentual_extra_dom_fer ?? 100, valor_diaria_fds: r.valor_diaria_fds ?? 0, desconta_faltas: r.desconta_faltas,
-          direito_vr: r.direito_vr ?? false, direito_vt: r.direito_vt ?? false, modalidade_beneficio: r.modalidade_beneficio || 'POR_DIA',
-          paga_dias_excedentes: r.paga_dias_excedentes ?? false, dias_base_mes: r.dias_base_mes ?? null,
-          permite_reducao_sazonal: r.permite_reducao_sazonal ?? false
-        };
-      });
+      const regras = mapearRegrasContrato(regrasData);
 
       // Feriado municipal vale só pra empresa daquela cidade — cada funcionário
       // resolve a própria lista na hora de apurar.
@@ -509,7 +341,7 @@ export default function RelatoriosRH() {
         return true;
       };
 
-      const resultado: LinhaRelatorio[] = (funcs || []).filter(trabalhouNoMes).map((f: FuncionarioFin) => {
+      const resultado: LinhaRelatorio[] = (funcs || []).filter(trabalhouNoMes).map((f: any) => {
         const ap = apurarPonto(porFunc[f.nome_completo] || {}, [...feriadosDaEmpresa(indiceFeriados, f.empresa_id ?? null)], mesAno, (f as any).data_admissao, (f as any).data_desligamento);
         const fechado = !!fechPorFunc[f.nome_completo];
 
@@ -519,8 +351,9 @@ export default function RelatoriosRH() {
           const snap = fechPorFunc[f.nome_completo];
           totalCreditos = snap.totalCreditos; totalDebitos = snap.totalDebitos; liquido = snap.valorLiquidoReceber;
         } else {
-          const fin = calcularFinanceiro(f, regras, descPorFunc[f.nome_completo] || [], bonusPorFunc[f.nome_completo] || [], ap, mesAno, beneficiosVrVt[f.nome_completo] || { vr: 0, vt: 0 });
-          totalCreditos = fin.totalCreditos; totalDebitos = fin.totalDebitos; liquido = fin.liquido;
+          // Mesmo motor do holerite (app/lib/motorFolha.ts) — os números batem
+          const fin = montarDadosHolerite(f, regras, descPorFunc[f.nome_completo] || [], bonusPorFunc[f.nome_completo] || [], ap, mesAno, beneficiosVrVt[f.nome_completo] || { vr: 0, vt: 0 });
+          totalCreditos = fin.totalCreditos; totalDebitos = fin.totalDebitos; liquido = fin.valorLiquidoReceber;
         }
 
         return {

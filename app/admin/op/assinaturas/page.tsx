@@ -11,6 +11,7 @@ import {
 } from '../actions-assinatura';
 import { supabase } from '../../../lib/supabase';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import { formatarMoeda } from '../../../lib/formatadores';
 
 interface ControleAssinatura {
   status: string;
@@ -37,7 +38,7 @@ interface OPComAssinatura {
 }
 
 const dataHora = (iso: string | null) => iso ? new Date(iso).toLocaleString('pt-BR') : '—';
-const formatarMoeda = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
+
 
 type StatusAssinatura = 'NAO_ENVIADO' | 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO';
 

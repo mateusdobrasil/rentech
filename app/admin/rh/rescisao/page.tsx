@@ -14,8 +14,9 @@ import { useToast } from '../../../components/ui/NotificationProvider';
 import { supabase } from '../../../lib/supabase';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import { formatarDataBR } from '../../../lib/formatadores';
 
-const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
+const fmtData = (d: string | null) => formatarDataBR(d);
 const fmtMoeda = (v: number | null) => (v == null ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
 
 const MOTIVOS: { value: MotivoRescisao; label: string }[] = [

@@ -10,8 +10,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useConfirm } from '../../../components/ui/NotificationProvider';
 import { gridBeneficiosAction, gerarBeneficioAction } from '../actions/actions-beneficios';
+import { formatarMoeda } from '../../../lib/formatadores';
 
-const BRL = (v: number) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const BRL = formatarMoeda;
 const mesAtualIso = () => { const h = new Date(); return `${h.getFullYear()}-${String(h.getMonth() + 1).padStart(2, '0')}`; };
 // Pagamento adiantado: sugere o último dia do mês anterior à competência
 const ultimoDiaMesAnterior = (mes: string) => {

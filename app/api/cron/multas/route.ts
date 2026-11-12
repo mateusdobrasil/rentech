@@ -4,6 +4,7 @@ import { executarConsultaVeiculo, sincronizarPagamentoOps, type VeiculoConsulta 
 import { provedorConfigurado, validadeCertificadoA1 } from '../../../lib/consultaDebitosVeiculares';
 import { dispararAutomacoesPorEventoWhatsApp } from '../../../lib/automacoes';
 import { notificarPush } from '../../../lib/push';
+import { formatarMoeda } from '../../../lib/formatadores';
 
 // Consulta semanal de Multas e Débitos (/admin/operacional/multas).
 //
@@ -23,7 +24,7 @@ const CHAVE_CARD_CONTROLE = 'consulta-semanal-multas';
 const ROTA_TELA = '/admin/operacional/multas';
 const DIAS_SEM_RECONSULTAR = 5;
 const ORCAMENTO_MS = 200_000; // para de iniciar consulta nova depois disso
-const fmtBRL = (v: number) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const fmtBRL = formatarMoeda;
 
 export async function GET(request: Request) {
   const authHeader = request.headers.get('authorization');

@@ -8,6 +8,7 @@ import { useModuleAccess } from '../../components/hooks/useModuleAccess';
 import ModuleGrid from '../../components/ui/ModuleGrid';
 import { HubLoading, HubPerfilNaoLocalizado, HubErro } from '../../components/ui/HubStates';
 import HubBackButton from '../../components/ui/HubBackButton';
+import { formatarMoeda } from '../../lib/formatadores';
 
 // Lista de módulos do hub. As permissões de cada um NÃO ficam mais aqui —
 // vêm da tabela parametros_paginas_permissoes (gerida em /admin/permissoes),
@@ -63,7 +64,7 @@ interface PainelFinanceiro {
   contasPagar: { vencidas: ValorQtd; vencendo7d: ValorQtd } | null;
 }
 
-const BRL = (v: number) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const BRL = formatarMoeda;
 
 export default function FinanceiroHub() {
   const router = useRouter();

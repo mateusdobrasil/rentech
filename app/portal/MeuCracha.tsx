@@ -11,6 +11,7 @@ import Image from 'next/image';
 import QRCode from 'qrcode';
 import logoColorido from '../imgs/logo.png';
 import { formatarCpf } from './lib/cpf';
+import { formatarDataBR } from '../lib/formatadores';
 
 const NAVY = "#26315F";
 const BLUE = "#4A69B2";
@@ -32,7 +33,7 @@ export interface DadosCracha {
   ehAlfaLight?: boolean;
 }
 
-const fmtDataNascimento = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
+const fmtDataNascimento = (d: string | null) => formatarDataBR(d);
 
 function QrBox({ dataUrl, size = 64 }: { dataUrl: string; size?: number }) {
   return (

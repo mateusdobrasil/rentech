@@ -16,8 +16,9 @@ import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm, usePrompt } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
+import { formatarDataBR } from '../../../lib/formatadores';
 
-const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
+const fmtData = (d: string | null) => formatarDataBR(d);
 
 // ============================================================================
 // TIPOS

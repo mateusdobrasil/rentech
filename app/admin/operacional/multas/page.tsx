@@ -26,6 +26,7 @@ import {
   salvarBoletoAction, buscarBoletoAction, buscarPrazosSenatranAction, dadosIndicacaoCondutorAction, salvarRecursoAction,
   type DebitoMulta, type VeiculoMultas, type ConsultaMulta, type TipoDebitoMulta, type StatusDebito,
 } from '../actions/actions-multas';
+import { formatarMoeda } from '../../../lib/formatadores';
 
 // ============================================================================
 // Apoio visual
@@ -33,7 +34,7 @@ import {
 const ICONE_TIPO: Record<TipoDebitoMulta, string> = { MULTA: '🚨', IPVA: '🧾', LICENCIAMENTO: '🪪', OUTRO: '📎' };
 const LABEL_TIPO: Record<TipoDebitoMulta, string> = { MULTA: 'Multa', IPVA: 'IPVA', LICENCIAMENTO: 'Licenciamento', OUTRO: 'Outro' };
 
-const fmtBRL = (v: number | null | undefined) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const fmtBRL = formatarMoeda;
 const fmtData = (d?: string | null) => (d ? d.slice(0, 10).split('-').reverse().join('/') : '—');
 const fmtDataHora = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';

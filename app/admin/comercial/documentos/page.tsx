@@ -10,6 +10,7 @@ import { useToast } from '../../../components/ui/NotificationProvider';
 import { supabase } from '../../../lib/supabase';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
+import { formatarDataBR } from '../../../lib/formatadores';
 
 const fmtTamanho = (b: number | null) => {
   if (!b) return '—';
@@ -17,7 +18,7 @@ const fmtTamanho = (b: number | null) => {
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
   return `${(b / 1024 / 1024).toFixed(1)} MB`;
 };
-const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
+const fmtData = (d: string | null) => formatarDataBR(d);
 
 interface DocumentoEmpresa {
   id: number; categoria_id: number; categoria: string; empresa_id: number | null;

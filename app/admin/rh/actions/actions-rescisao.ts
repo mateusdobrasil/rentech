@@ -19,6 +19,7 @@ import {
   calcularRescisao, calcularDiasAvisoPrevio, calcularPercentualMultaFgts, calcularEstimativaFgts,
   type MotivoRescisao, type TipoAvisoPrevio, type ItemRescisao
 } from '../../../lib/calculoRescisao';
+import { formatarMoeda } from '../../../lib/formatadores';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -45,7 +46,7 @@ const AVISO_LABEL: Record<string, string> = { INDENIZADO: 'Indenizado', TRABALHA
 const slug = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '')
   .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
 
-const moedaSimples = (v: number): string => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const moedaSimples = formatarMoeda;
 
 const hojeIso = (): string => {
   const h = new Date();

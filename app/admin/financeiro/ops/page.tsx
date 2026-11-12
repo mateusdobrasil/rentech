@@ -16,6 +16,7 @@ import { normalizarItensOP, ItemOPNormalizado } from '../../op/utils';
 import { DialogOP, DialogOPState, BotaoLinkAssinatura } from '../../op/DialogOP';
 import { supabase } from '../../../lib/supabase';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import { formatarMoeda } from '../../../lib/formatadores';
 
 // Os itens em memória já chegam normalizados (ver normalizarItensOP) — não há
 // mais motivo para este tipo carregar os campos legados (description/quantity)
@@ -165,8 +166,7 @@ export default function PainelFinanceiro() {
   }, [ops]);
 
   // Formatadores Básicos
-  const formatarMoeda = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
-  const formatarData = (d: string) => {
+    const formatarData = (d: string) => {
     if (!d) return '---';
     const date = new Date(d);
     return date.toLocaleDateString('pt-BR', { timeZone: 'UTC' });

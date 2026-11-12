@@ -7,14 +7,15 @@ import { supabaseAdmin } from './supabase';
 import { consultarDebitosVeiculo, consultarInfracoesSenatran, baixarInfracaoSenatran, type DebitoConsultado } from './consultaDebitosVeiculares';
 import { resolverProvedor, enviarComJanela, type TemplateMeta } from './whatsapp';
 import { registrarLogAuditoria } from '../actions';
+import { formatarMoeda, formatarDataBR } from './formatadores';
 
 type Db = ReturnType<typeof supabaseAdmin>;
 
 export const CHAVE_AVISO_CONDUTOR = 'multa-aviso-condutor';
 const TEMPLATE_AVISO_CONDUTOR_PADRAO = 'multa_aviso_condutor';
 
-const fmtBRL = (v: number) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-const fmtDataBR = (d: string | null | undefined) => (d ? d.slice(0, 10).split('-').reverse().join('/') : '');
+const fmtBRL = formatarMoeda;
+const fmtDataBR = (d: string | null | undefined) => formatarDataBR(d, '');
 
 // "MULTA, POR NAO IDENTIFICACAO DO CONDUTOR INFRATOR, IMPOSTA A PESSOA JURIDICA"
 export function ehNic(descricao: string | null | undefined): boolean {

@@ -18,6 +18,7 @@ import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import { formatarDataBR } from '../../../lib/formatadores';
 
 const fmtTamanho = (b: number | null) => {
   if (!b) return '—';
@@ -25,7 +26,7 @@ const fmtTamanho = (b: number | null) => {
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
   return `${(b / 1024 / 1024).toFixed(1)} MB`;
 };
-const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
+const fmtData = (d: string | null) => formatarDataBR(d);
 
 interface Categoria { id: number; nome: string; exige_validade: boolean; }
 interface Documento {

@@ -5,6 +5,7 @@
 // valendo o deles; no SNE a indicação é feita pelo app. Serve também de
 // comprovante assinado pelo condutor.
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
+import { formatarDataBR } from '../../../lib/formatadores';
 
 export interface DadosFici {
   multa: {
@@ -20,7 +21,7 @@ export interface DadosFici {
   };
 }
 
-const dataBR = (d: string | null) => (d ? d.slice(0, 10).split('-').reverse().join('/') : '');
+const dataBR = (d: string | null) => formatarDataBR(d, '');
 const cpfFmt = (c: string | null) => { const d = (c || '').replace(/\D/g, ''); return d.length === 11 ? `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}` : (c || ''); };
 const cnpjFmt = (c: string | null) => { const d = (c || '').replace(/\D/g, ''); return d.length === 14 ? `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}` : (c || ''); };
 const horaFmt = (h: string | null) => (h && !/^00:00(:00)?$/.test(h) ? h.slice(0, 5) : '');

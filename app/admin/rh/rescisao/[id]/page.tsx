@@ -16,61 +16,11 @@ import type { ItemRescisao, MotivoRescisao } from '../../../../lib/calculoRescis
 import { usePageAccess } from '../../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../../components/ui/HubStates';
 import { useToast, useConfirm } from '../../../../components/ui/NotificationProvider';
+import { formatarMoeda, formatarDataBR, numeroParaExtenso } from '../../../../lib/formatadores';
 
-const fmtData = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
-const fmtMoeda = (v: number | null | undefined) => (v == null ? 'R$ 0,00' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
+const fmtData = (d: string | null) => formatarDataBR(d);
+const fmtMoeda = formatarMoeda;
 
-// ============================================================================
-// VALOR POR EXTENSO (pt-BR) — mesmo texto usado na prévia do Holerite
-// (app/admin/rh/holerite/page.tsx), duplicado aqui porque é uma função local
-// não exportada por lá.
-// ============================================================================
-const UNIDADES = ['', 'UM', 'DOIS', 'TRÊS', 'QUATRO', 'CINCO', 'SEIS', 'SETE', 'OITO', 'NOVE'];
-const DEZ_A_DEZENOVE = ['DEZ', 'ONZE', 'DOZE', 'TREZE', 'QUATORZE', 'QUINZE', 'DEZESSEIS', 'DEZESSETE', 'DEZOITO', 'DEZENOVE'];
-const DEZENAS = ['', '', 'VINTE', 'TRINTA', 'QUARENTA', 'CINQUENTA', 'SESSENTA', 'SETENTA', 'OITENTA', 'NOVENTA'];
-const CENTENAS = ['', 'CENTO', 'DUZENTOS', 'TREZENTOS', 'QUATROCENTOS', 'QUINHENTOS', 'SEISCENTOS', 'SETECENTOS', 'OITOCENTOS', 'NOVECENTOS'];
-
-const trioParaExtenso = (n: number): string => {
-  if (n === 0) return '';
-  if (n === 100) return 'CEM';
-  const c = Math.floor(n / 100);
-  const resto = n % 100;
-  const d = Math.floor(resto / 10);
-  const u = resto % 10;
-  const partes: string[] = [];
-  if (c > 0) partes.push(CENTENAS[c]);
-  if (resto >= 10 && resto <= 19) {
-    partes.push(DEZ_A_DEZENOVE[resto - 10]);
-  } else {
-    if (d > 0) partes.push(DEZENAS[d]);
-    if (u > 0) partes.push(UNIDADES[u]);
-  }
-  return partes.join(' E ');
-};
-
-const numeroParaExtenso = (valor: number): string => {
-  const negativo = valor < 0;
-  const absoluto = Math.abs(valor || 0);
-  let reais = Math.floor(absoluto);
-  let centavos = Math.round((absoluto - reais) * 100);
-  if (centavos === 100) { reais += 1; centavos = 0; }
-
-  const milhoes = Math.floor(reais / 1_000_000);
-  const milhares = Math.floor((reais % 1_000_000) / 1000);
-  const resto = reais % 1000;
-
-  const partes: string[] = [];
-  if (milhoes > 0) partes.push(`${trioParaExtenso(milhoes)} ${milhoes === 1 ? 'MILHÃO' : 'MILHÕES'}`);
-  if (milhares > 0) partes.push(milhares === 1 ? 'MIL' : `${trioParaExtenso(milhares)} MIL`);
-  if (resto > 0) partes.push(trioParaExtenso(resto));
-
-  let texto = partes.length > 0 ? partes.join(' E ') : 'ZERO';
-  if (reais === 1) texto += ' REAL';
-  else if (milhoes > 0 && reais % 1_000_000 === 0) texto += ' DE REAIS';
-  else texto += ' REAIS';
-  if (centavos > 0) texto += ` E ${trioParaExtenso(centavos)} ${centavos === 1 ? 'CENTAVO' : 'CENTAVOS'}`;
-  return `${negativo ? 'MENOS ' : ''}${texto}`;
-};
 
 // ============================================================================
 // INPUT COM MÁSCARA DE MOEDA (R$) — mesmo componente usado em holerite/page.tsx

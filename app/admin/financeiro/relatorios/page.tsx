@@ -9,11 +9,12 @@ import { HubErro } from '../../../components/ui/HubStates';
 import { supabase } from '../../../lib/supabase';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import RelatorioLote from './RelatorioLote';
+import { formatarMoeda } from '../../../lib/formatadores';
 
 // ============================================================================
 // FORMATADORES
 // ============================================================================
-const BRL = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
+const BRL = formatarMoeda;
 const fmtMesBR = (m: string) => { const [a, mm] = (m || '').split('-'); return mm ? `${mm}/${a}` : '—'; };
 const fmtDataBR = (d: string) => { if (!d) return '—'; const [a, m, dd] = d.split('-'); return `${dd}/${m}/${a}`; };
 const fmtDataHora = (d: string) => new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });

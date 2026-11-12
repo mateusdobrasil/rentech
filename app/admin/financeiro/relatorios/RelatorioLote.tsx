@@ -6,8 +6,9 @@
 // listarLotesRelatorioAction / detalheLoteRelatorioAction (../actions.ts).
 import { useEffect, useMemo, useState } from 'react';
 import { listarLotesRelatorioAction, detalheLoteRelatorioAction, atualizarStatusItauLoteAction } from '../actions';
+import { formatarMoeda } from '../../../lib/formatadores';
 
-const BRL = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
+const BRL = formatarMoeda;
 const fmtMesBR = (m: string) => { const [a, mm] = (m || '').split('-'); return mm ? `${mm}/${a}` : '—'; };
 const fmtDataBR = (d: string | null) => { if (!d) return '—'; const [a, m, dd] = d.slice(0, 10).split('-'); return `${dd}/${m}/${a}`; };
 const fmtDataHora = (d: string | null) => d ? new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';

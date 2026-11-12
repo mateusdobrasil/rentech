@@ -15,8 +15,9 @@ import { supabase } from '../../../lib/supabase';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 import BeneficiosPorMes from './BeneficiosPorMes';
+import { formatarMoeda } from '../../../lib/formatadores';
 
-const BRL = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
+const BRL = formatarMoeda;
 
 interface LinhaFunc {
   nome: string; cargo: string; contrato: string; empresaId?: number | null;

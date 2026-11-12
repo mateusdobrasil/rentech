@@ -16,6 +16,7 @@ import { gravarStatusItauItemLote } from '../../../lib/loteStatusItau';
 import { gravarGeracaoBeneficios, beneficiosGeradosParaLote } from '../../../lib/beneficiosGeracoes';
 import { marcarContaPagarQuitada } from '../../../lib/p2s';
 import { ispbPorCompe } from '../../../lib/bancosCompeIspb';
+import { formatarMoeda } from '../../../lib/formatadores';
 
 const ROTA = '/admin/financeiro/rh';
 
@@ -447,7 +448,7 @@ export async function montarLoteSalariosAction(payload: {
           const fim = new Date(ano, (mes - 1) + (parcelas - 1), 1);
           return `${fim.getFullYear()}-${String(fim.getMonth() + 1).padStart(2, '0')}`;
         };
-        const brl = (v: number) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        const brl = formatarMoeda;
         const [{ data: descs }, { data: bonus }] = await Promise.all([
           db.from('folha_descontos').select('funcionario_nome, descricao, tipo, parcelas, mes_inicio, mes_fim, valor_parcela').in('funcionario_nome', semFechamento),
           db.from('folha_bonus').select('funcionario_nome, descricao, recorrencia, mes_referencia, mes_fim, valor').in('funcionario_nome', semFechamento),

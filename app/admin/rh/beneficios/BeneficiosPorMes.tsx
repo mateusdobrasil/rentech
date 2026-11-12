@@ -11,8 +11,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { beneficiosPorMesAction } from '../actions/actions-beneficios';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 import RegistrarMesPago from './RegistrarMesPago';
+import { formatarMoeda } from '../../../lib/formatadores';
 
-const BRL = (v: number) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const BRL = formatarMoeda;
 const mesAtualIso = () => { const h = new Date(); return `${h.getFullYear()}-${String(h.getMonth() + 1).padStart(2, '0')}`; };
 const semAcento = (s: string) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
 const ehFlash = (meio: string) => semAcento(meio).includes('FLASH');

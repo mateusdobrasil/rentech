@@ -23,6 +23,7 @@ import { normalizarBoleto, formatarLinhaDigitavel } from '../../../lib/boletoMul
 import { executarConsultaVeiculo, vincularNics, enviarAvisoCondutor, atualizarPrazosSenatran, sincronizarPagamentoOps } from '../../../lib/multasCore';
 import { lerNotificacaoMulta, leituraConfigurada, custoLeituraUsd } from '../../../lib/leituraNotificacaoMulta';
 import { extrairTextoNativoPdf } from '../../../lib/textract';
+import { formatarMoeda } from '../../../lib/formatadores';
 
 const ROTA = '/admin/operacional/multas';
 // "Criar OP" abre /admin/op/nova?multaIds=... — quem está na tela da OP
@@ -116,7 +117,7 @@ const calcularMesFim = (mesInicio: string, parcelas: number): string => {
   return `${dataFim.getFullYear()}-${String(dataFim.getMonth() + 1).padStart(2, '0')}`;
 };
 
-const fmtBRL = (v: number) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const fmtBRL = formatarMoeda;
 
 // ---------------------------------------------------------------------------
 // Painel (veículos + débitos + últimas consultas)

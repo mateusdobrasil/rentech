@@ -10,6 +10,7 @@
 import { PDFDocument, StandardFonts, rgb, PDFFont } from 'pdf-lib';
 import fs from 'fs';
 import path from 'path';
+import { formatarDataBR } from './formatadores';
 
 let logoBytesCache: Buffer | null = null;
 function lerLogoBytes(): Buffer {
@@ -45,7 +46,7 @@ export interface GerarRescisaoPdfParams {
 }
 
 const BRL = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const dataBR = (iso: string | null | undefined) => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
+const dataBR = (iso: string | null | undefined) => formatarDataBR(iso);
 
 // ---- valor por extenso (pt-BR) — mesma lógica de gerarHoleritePdf.ts ----
 const U = ['', 'UM', 'DOIS', 'TRÊS', 'QUATRO', 'CINCO', 'SEIS', 'SETE', 'OITO', 'NOVE'];

@@ -23,13 +23,17 @@ const ROTA = '/admin/parametros/permissoes';
 // ---------------------------------------------------------------------------
 export async function atualizarAcessoUsuarioAction(payload: {
   perfilId: string; permissao: string; ativo: boolean; usuarioNome: string;
+  // Colaborador (ficha do RH) a que o usuário pertence — o celular da ficha é
+  // usado no "Esqueci minha senha" por WhatsApp. undefined = não mexe;
+  // null = desvincula. (.sql/Pendentes/perfis_usuarios_funcionario.sql)
+  funcionarioId?: string | null;
 }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
   try {
-    const { data: atual } = await db.from('perfis_usuarios').select('nome, permissao, ativo').eq('id', payload.perfilId).maybeSingle();
+    const { data: atual } = await db.from('perfis_usuarios').select('nome, permissao, ativo, funcionario_id').eq('id', payload.perfilId).maybeSingle();
     if (!atual) return { ok: false, erro: 'Usuário não encontrado.' };
 
     const permissao = (payload.permissao || '').trim();
@@ -44,13 +48,27 @@ export async function atualizarAcessoUsuarioAction(payload: {
       return { ok: false, erro: 'Você não pode bloquear a sua própria conta.' };
     }
 
+    // Vínculo com o colaborador (ficha do RH): a ficha precisa existir e não
+    // pode já pertencer a outro usuário.
+    const mudarVinculo = payload.funcionarioId !== undefined && (payload.funcionarioId || null) !== (atual.funcionario_id || null);
+    let nomeColaborador: string | null = null;
+    if (mudarVinculo && payload.funcionarioId) {
+      const { data: ficha } = await db.from('folha_funcionarios').select('nome_completo').eq('id', payload.funcionarioId).maybeSingle();
+      if (!ficha) return { ok: false, erro: 'Colaborador não encontrado. Recarregue a página.' };
+      const { data: outro } = await db.from('perfis_usuarios').select('nome').eq('funcionario_id', payload.funcionarioId).neq('id', payload.perfilId).maybeSingle();
+      if (outro) return { ok: false, erro: `${ficha.nome_completo} já está vinculado ao usuário ${outro.nome}.` };
+      nomeColaborador = ficha.nome_completo;
+    }
+
     const { error } = await db.from('perfis_usuarios')
-      .update({ permissao, ativo: !!payload.ativo }).eq('id', payload.perfilId);
+      .update({ permissao, ativo: !!payload.ativo, ...(mudarVinculo ? { funcionario_id: payload.funcionarioId || null } : {}) })
+      .eq('id', payload.perfilId);
     if (error) throw new Error(error.message);
 
     const acoes: string[] = [];
     if (atual.permissao !== permissao) acoes.push(`PERMISSÃO: ${atual.permissao} → ${permissao}`);
     if (atual.ativo !== !!payload.ativo) acoes.push(payload.ativo ? 'CONTA REATIVADA' : 'CONTA BLOQUEADA');
+    if (mudarVinculo) acoes.push(nomeColaborador ? `COLABORADOR VINCULADO: ${nomeColaborador}` : 'COLABORADOR DESVINCULADO');
     if (acoes.length) {
       await registrarLogAuditoria({
         usuario_nome: payload.usuarioNome || acesso.perfil.nome,

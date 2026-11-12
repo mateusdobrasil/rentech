@@ -17,6 +17,7 @@
 import { createHmac, randomInt, timingSafeEqual } from 'crypto';
 import { supabaseAdmin } from '../lib/supabase';
 import { enviarEmailSistema, mascararEmail } from '../lib/emailSistema';
+import { enviarCodigoAcessoWhatsApp } from '../lib/codigoWhatsapp';
 import { registrarLogAuditoria } from '../actions';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
@@ -41,22 +42,38 @@ const normalizarEmail = (email: string) => String(email || '').trim().toLowerCas
 
 // Conta da equipe pelo e-mail. Só perfis ativos; contas do Portal do
 // Funcionário (e-mail sintético) não têm perfil e ficam de fora sozinhas.
-async function contaPorEmail(email: string): Promise<{ id: string; nome: string; email: string } | null> {
+async function contaPorEmail(email: string): Promise<{ id: string; nome: string; email: string; funcionarioId: string | null } | null> {
   const alvo = normalizarEmail(email);
   if (!alvo || !alvo.includes('@')) return null;
-  const { data } = await supabaseAdmin().from('perfis_usuarios').select('id, nome, email, ativo').eq('ativo', true);
+  const { data } = await supabaseAdmin().from('perfis_usuarios').select('id, nome, email, ativo, funcionario_id').eq('ativo', true);
   const perfil = (data || []).find(p => normalizarEmail(p.email) === alvo);
-  return perfil ? { id: perfil.id, nome: perfil.nome || alvo, email: alvo } : null;
+  return perfil ? { id: perfil.id, nome: perfil.nome || alvo, email: alvo, funcionarioId: perfil.funcionario_id || null } : null;
 }
 
-export async function solicitarCodigoSenhaAction(payload: { email: string }): Promise<Resultado> {
+// Canal WhatsApp: celular da ficha do colaborador vinculado ao usuário
+// (Permissões → Colaboradores). Mesma resposta genérica — não revela se a conta
+// existe nem se tem celular.
+const MSG_GENERICA_WHATSAPP = 'Se este e-mail tiver acesso ao sistema e um celular vinculado, enviamos o código pelo WhatsApp. Não chegou? Volte e escolha receber por e-mail.';
+const TEXTO_WHATSAPP = 'Seu código para redefinir a senha do Sistema Rentech é {{codigo}}. Válido por 10 minutos. Não compartilhe este código — se não foi você que pediu, avise o Administrador.';
+
+export async function solicitarCodigoSenhaAction(payload: { email: string; canal?: 'EMAIL' | 'WHATSAPP' }): Promise<Resultado> {
   const email = normalizarEmail(payload.email);
   if (!email.includes('@')) return { ok: false, erro: 'Digite o e-mail do seu login.' };
+  const porWhatsapp = payload.canal === 'WHATSAPP';
+  const msgGenerica = porWhatsapp ? MSG_GENERICA_WHATSAPP : MSG_GENERICA;
 
   const db = supabaseAdmin();
   try {
     const conta = await contaPorEmail(email);
-    if (!conta) return { ok: true, info: { mensagem: MSG_GENERICA } };
+    if (!conta) return { ok: true, info: { mensagem: msgGenerica } };
+
+    let destinoWhatsapp: { celular: string; empresaId: number | null } | null = null;
+    if (porWhatsapp) {
+      if (!conta.funcionarioId) return { ok: true, info: { mensagem: msgGenerica } };
+      const { data: ficha } = await db.from('folha_funcionarios').select('celular, empresa_id').eq('id', conta.funcionarioId).maybeSingle();
+      if (!ficha?.celular) return { ok: true, info: { mensagem: msgGenerica } };
+      destinoWhatsapp = { celular: ficha.celular, empresaId: ficha.empresa_id ?? null };
+    }
 
     const desde = new Date(Date.now() - 15 * 60000).toISOString();
     const { data: recentes, error: erroLeitura } = await db.from(TABELA)
@@ -83,6 +100,13 @@ export async function solicitarCodigoSenhaAction(payload: { email: string }): Pr
     });
     if (error) throw new Error(error.message);
 
+    if (destinoWhatsapp) {
+      const envio = await enviarCodigoAcessoWhatsApp(destinoWhatsapp.celular, codigo, destinoWhatsapp.empresaId, TEXTO_WHATSAPP);
+      if (!envio.ok) throw new Error(envio.erro || 'falha no envio pelo WhatsApp');
+      registrarLogAuditoria({ usuario_nome: conta.nome, acao: 'SENHA: CÓDIGO DE REDEFINIÇÃO ENVIADO POR WHATSAPP', setor: 'ACESSO', equipamento_nome: mascararEmail(conta.email) });
+      return { ok: true, info: { mensagem: msgGenerica } };
+    }
+
     await enviarEmailSistema(conta.email, `Redefinir senha — código ${codigo}`,
       `Olá, ${conta.nome}.\n\n` +
       `Seu código para redefinir a senha do Sistema Rentech é: ${codigo}\n\n` +
@@ -90,7 +114,7 @@ export async function solicitarCodigoSenhaAction(payload: { email: string }): Pr
       `Se não foi você que pediu, ignore este e-mail — sua senha continua a mesma — e avise o Administrador.`);
 
     registrarLogAuditoria({ usuario_nome: conta.nome, acao: 'SENHA: CÓDIGO DE REDEFINIÇÃO ENVIADO POR E-MAIL', setor: 'ACESSO', equipamento_nome: mascararEmail(conta.email) });
-    return { ok: true, info: { mensagem: MSG_GENERICA } };
+    return { ok: true, info: { mensagem: msgGenerica } };
   } catch (e: any) {
     console.error('[Esqueci minha senha] Falha ao enviar código:', e.message);
     return { ok: false, erro: 'Não foi possível enviar o código agora. Tente de novo em alguns minutos.' };

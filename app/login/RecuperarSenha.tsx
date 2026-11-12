@@ -22,11 +22,13 @@ export default function RecuperarSenha({ emailInicial, aoVoltar }: { emailInicia
   const [erro, setErro] = useState('');
   const [aviso, setAviso] = useState('');
   const [carregando, setCarregando] = useState(false);
+  // Canal do código: e-mail do login, ou WhatsApp do colaborador vinculado ao usuário
+  const [canal, setCanal] = useState<'EMAIL' | 'WHATSAPP'>('EMAIL');
 
   const pedirCodigo = async (e?: React.FormEvent) => {
     e?.preventDefault();
     setErro(''); setCarregando(true);
-    const res = await solicitarCodigoSenhaAction({ email });
+    const res = await solicitarCodigoSenhaAction({ email, canal });
     setCarregando(false);
     if (!res.ok) { setErro(res.erro || 'Não foi possível enviar o código.'); return; }
     setAviso(res.info.mensagem);
@@ -59,10 +61,22 @@ export default function RecuperarSenha({ emailInicial, aoVoltar }: { emailInicia
 
       {etapa === 'email' && (
         <form onSubmit={pedirCodigo} className="space-y-5">
-          <p className="text-xs text-[#999999] text-center">Digite o e-mail do seu login. Vamos mandar um código de 6 números para ele.</p>
+          <p className="text-xs text-[#999999] text-center">Digite o e-mail do seu login e escolha onde receber o código de 6 números.</p>
           <div>
             <label className={ROTULO}>E-mail Corporativo</label>
             <input type="email" required autoFocus className={CAMPO} placeholder="seu.nome@rentech.com.br" value={email} onChange={e => setEmail(e.target.value)} />
+          </div>
+          <div>
+            <label className={ROTULO}>Receber o código por</label>
+            <div className="grid grid-cols-2 gap-2">
+              {([['EMAIL', '📧 E-mail'], ['WHATSAPP', '💬 WhatsApp']] as const).map(([valor, rotulo]) => (
+                <button key={valor} type="button" onClick={() => setCanal(valor)}
+                  className={`py-3 rounded-xl text-xs font-black uppercase tracking-widest border transition-all ${canal === valor ? 'bg-[#284B8C] border-[#336699] text-white' : 'bg-black/40 border-[#284B8C]/50 text-[#999999] hover:text-white'}`}>
+                  {rotulo}
+                </button>
+              ))}
+            </div>
+            {canal === 'WHATSAPP' && <p className="text-[10px] text-[#999999] mt-2 pl-1">Vai para o celular cadastrado na sua ficha de colaborador.</p>}
           </div>
           {caixaErro}
           <button type="submit" disabled={carregando || !email.includes('@')} className={BOTAO}>
@@ -80,7 +94,7 @@ export default function RecuperarSenha({ emailInicial, aoVoltar }: { emailInicia
             </div>
           )}
           <div>
-            <label className={ROTULO}>Código recebido no e-mail</label>
+            <label className={ROTULO}>Código recebido {canal === 'WHATSAPP' ? 'no WhatsApp' : 'no e-mail'}</label>
             <input
               type="text" inputMode="numeric" autoComplete="one-time-code" required autoFocus maxLength={6}
               className={`${CAMPO} text-center text-xl font-black tracking-[0.5em]`} placeholder="000000"

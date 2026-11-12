@@ -11,6 +11,13 @@ import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
+
+// (11) 9••••-1234 — mostra só o fim do celular da ficha
+const mascararCelular = (cel: string | null | undefined) => {
+  const d = String(cel || '').replace(/\D/g, '').replace(/^55(?=\d{10,11}$)/, '');
+  if (d.length < 8) return cel || '';
+  return `(${d.slice(0, 2)}) ${d.length === 11 ? '9' : ''}••••-${d.slice(-4)}`;
+};
 import { resetarMfaUsuarioAction } from '../../actions-mfa';
 import {
   atualizarAcessoUsuarioAction, salvarPaginaPermissaoAction, removerPaginaPermissaoAction,
@@ -38,7 +45,12 @@ interface UsuarioAuth {
   permissao: NivelPermissao;
   ativo: boolean;
   ultimo_acesso?: string;
+  // Colaborador (ficha do RH) a que o usuário pertence — celular da ficha
+  // recebe o código do "Esqueci minha senha" por WhatsApp
+  funcionario_id?: string | null;
 }
+
+interface FichaColaborador { id: string; nome_completo: string; celular: string | null; ativo: boolean; }
 
 interface PaginaPermissao {
   id?: number;
@@ -87,6 +99,9 @@ export default function GestaoPermissoes() {
   // Estados da aba de Usuários
   const [usuarios, setUsuarios] = useState<UsuarioAuth[]>([]);
   const [modalEdicao, setModalEdicao] = useState<{ open: boolean; user: UsuarioAuth | null }>({ open: false, user: null });
+  // Fichas do RH pra vincular usuário ↔ colaborador
+  const [fichas, setFichas] = useState<FichaColaborador[]>([]);
+  const fichaPorId = useMemo(() => Object.fromEntries(fichas.map(fc => [fc.id, fc])), [fichas]);
 
   // Estados do modal de registro de novo usuário
   const [modalNovoUsuario, setModalNovoUsuario] = useState(false);
@@ -127,6 +142,8 @@ export default function GestaoPermissoes() {
       carregarSetores();
       carregarAcessosPortal();
       carregarEmpresasEVinculos();
+      supabase.from('folha_funcionarios').select('id, nome_completo, celular, ativo').order('nome_completo')
+        .then(({ data }) => setFichas((data || []) as FichaColaborador[]));
     }
   }, [authLoading, acessoNegado]);
 
@@ -188,6 +205,7 @@ export default function GestaoPermissoes() {
       // Gravação e log de auditoria no servidor (./actions.ts)
       const res = await atualizarAcessoUsuarioAction({
         perfilId: modalEdicao.user.id, permissao: modalEdicao.user.permissao, ativo: modalEdicao.user.ativo, usuarioNome: usuarioAtual,
+        funcionarioId: modalEdicao.user.funcionario_id ?? null,
       }, accessToken);
       if (!res.ok) throw new Error(res.erro);
 
@@ -626,6 +644,13 @@ export default function GestaoPermissoes() {
                           <td className="p-4">
                             <strong className="block text-[#0C1D4D] font-black uppercase tracking-tight">{user.nome}</strong>
                             <span className="text-xs text-[#64748B] font-bold">{user.email}</span>
+                            {user.funcionario_id && fichaPorId[user.funcionario_id] ? (
+                              <span className="block text-[10px] font-bold text-emerald-700 uppercase mt-1">
+                                🔗 {fichaPorId[user.funcionario_id].nome_completo}{fichaPorId[user.funcionario_id].celular ? ` · 💬 ${mascararCelular(fichaPorId[user.funcionario_id].celular)}` : ' · sem celular na ficha'}
+                              </span>
+                            ) : (
+                              <span className="block text-[10px] font-bold text-[#94A3B8] uppercase mt-1">Sem colaborador vinculado</span>
+                            )}
                           </td>
                           <td className="p-4">
                             <span className={`px-3 py-1 border rounded-full text-[10px] font-black tracking-widest ${getBadgeColor(user.permissao)}`}>
@@ -1253,6 +1278,28 @@ export default function GestaoPermissoes() {
                   <p className="text-[10px] text-[#94A3B8] font-bold uppercase mt-1 leading-tight">Sem nenhuma marcada, o usuário não verá funcionários de nenhuma empresa nas telas restritas.</p>
                 </div>
               )}
+
+              <div>
+                <label className="block text-[10px] font-black text-[#64748B] uppercase tracking-widest mb-2">Colaborador vinculado (ficha do RH)</label>
+                <select
+                  className="w-full p-3 bg-white border-2 border-[#CBD5E1] rounded-xl text-sm font-bold text-[#0A2A4A] outline-none focus:border-[#336699] shadow-sm transition-all cursor-pointer"
+                  value={modalEdicao.user.funcionario_id || ''}
+                  onChange={(e) => setModalEdicao({ ...modalEdicao, user: { ...modalEdicao.user!, funcionario_id: e.target.value || null } })}
+                >
+                  <option value="">— Nenhum —</option>
+                  {fichas
+                    .filter(fc => fc.ativo || fc.id === modalEdicao.user!.funcionario_id)
+                    .filter(fc => fc.id === modalEdicao.user!.funcionario_id || !usuarios.some(u => u.id !== modalEdicao.user!.id && u.funcionario_id === fc.id))
+                    .map(fc => <option key={fc.id} value={fc.id}>{fc.nome_completo}{fc.celular ? '' : ' (sem celular)'}</option>)}
+                </select>
+                {(() => {
+                  const fc = modalEdicao.user.funcionario_id ? fichaPorId[modalEdicao.user.funcionario_id] : null;
+                  if (!fc) return <p className="text-[10px] text-[#94A3B8] font-bold uppercase mt-2 leading-tight">Sem vínculo, o "Esqueci minha senha" deste usuário só funciona por e-mail.</p>;
+                  return fc.celular
+                    ? <p className="text-[10px] text-emerald-700 font-bold uppercase mt-2 leading-tight">💬 O código do "Esqueci minha senha" por WhatsApp vai para {mascararCelular(fc.celular)} (celular da ficha).</p>
+                    : <p className="text-[10px] text-amber-600 font-bold uppercase mt-2 leading-tight">⚠ A ficha deste colaborador não tem celular — cadastre na Ficha do Funcionário pra liberar o WhatsApp.</p>;
+                })()}
+              </div>
 
               <div className="flex items-center justify-between bg-gray-50 p-4 border border-gray-200 rounded-xl">
                 <div>

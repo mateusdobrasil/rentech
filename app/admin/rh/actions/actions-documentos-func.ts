@@ -371,17 +371,29 @@ export async function painelDocumentosAction(accessToken: string): Promise<Resul
     const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
     const em30 = new Date(hoje); em30.setDate(em30.getDate() + 30);
 
-    // Contagem e vencimentos por funcionário
+    // Validade que vale por funcionário+categoria = a MAIS RECENTE. Documento
+    // renovado (ex.: ASO novo enviado e o antigo mantido no histórico) não pode
+    // continuar contando como vencido — antes cada documento vencido contava.
+    const validadeVigente: Record<string, string> = {};
+    (docs || []).forEach(d => {
+      if (!d.data_validade) return;
+      const k = `${d.funcionario_nome}|${d.categoria_id}`;
+      if (!validadeVigente[k] || d.data_validade > validadeVigente[k]) validadeVigente[k] = d.data_validade;
+    });
+
+    // Contagem e vencimentos por funcionário (vencimento: uma vez por categoria)
     const porFunc: Record<string, { total: number; vencidos: number; vencendo: number; categorias: Set<number> }> = {};
+    const jaAvaliada = new Set<string>();
     (docs || []).forEach(d => {
       (porFunc[d.funcionario_nome] ||= { total: 0, vencidos: 0, vencendo: 0, categorias: new Set() });
       porFunc[d.funcionario_nome].total++;
       porFunc[d.funcionario_nome].categorias.add(d.categoria_id);
-      if (d.data_validade) {
-        const val = new Date(d.data_validade + 'T00:00:00');
-        if (val < hoje) porFunc[d.funcionario_nome].vencidos++;
-        else if (val <= em30) porFunc[d.funcionario_nome].vencendo++;
-      }
+      const k = `${d.funcionario_nome}|${d.categoria_id}`;
+      if (!validadeVigente[k] || jaAvaliada.has(k)) return;
+      jaAvaliada.add(k);
+      const val = new Date(validadeVigente[k] + 'T00:00:00');
+      if (val < hoje) porFunc[d.funcionario_nome].vencidos++;
+      else if (val <= em30) porFunc[d.funcionario_nome].vencendo++;
     });
 
     const linhas = (funcs || []).map(f => {

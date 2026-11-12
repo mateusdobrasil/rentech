@@ -43,7 +43,7 @@ function corPorCategoria(nome: string, listaOrdenada: string[]): string {
 
 const COR_MOTIVO: Record<string, string> = { 'ADMISSAO': '#16A34A', 'DEMISSAO': '#DC2626', 'ALTERACAO_CARGO': '#336699' };
 const LABEL_MOTIVO: Record<string, string> = { 'ADMISSAO': 'Admissão', 'DEMISSAO': 'Desligamento', 'ALTERACAO_CARGO': 'Alteração de Cargo' };
-const COR_STATUS_ASSINATURA: Record<string, string> = { 'ENVIADO': '#D97706', 'VISUALIZADO': '#336699', 'ASSINADO': '#16A34A', 'REJEITADO': '#DC2626' };
+const COR_STATUS_ASSINATURA: Record<string, string> = { 'ENVIADO': '#D97706', 'VISUALIZADO': '#336699', 'ASSINADO': '#16A34A', 'REJEITADO': '#DC2626', 'CANCELADO': '#94A3B8' };
 
 // ============================================================================
 // INTERFACES
@@ -59,9 +59,9 @@ interface LinhaRelatorio {
 
 interface FuncionarioResumo { nome_completo: string; cargo: string; ativo: boolean; data_admissao: string | null; data_desligamento: string | null; empresa_id?: number | null; }
 interface Movimentacao { funcionario_nome: string; motivo: 'ADMISSAO' | 'DEMISSAO' | 'ALTERACAO_CARGO'; cargo: string | null; data_movimentacao: string; }
-interface LinhaDocumentos { nome: string; cargo: string; totalDocs: number; vencidos: number; vencendo: number; semDocumentos: boolean; }
+interface LinhaDocumentos { nome: string; cargo: string; empresaId?: number | null; totalDocs: number; vencidos: number; vencendo: number; semDocumentos: boolean; }
 interface PainelDocumentos { linhas: LinhaDocumentos[]; totais: { funcionarios: number; semDocumentos: number; totalDocs: number; vencidos: number; vencendo: number } }
-interface Assinatura { funcionario_nome: string; mes_referencia: string; status: 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO'; titulo_avulso?: string | null; }
+interface Assinatura { funcionario_nome: string; mes_referencia: string; status: 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO' | 'CANCELADO'; titulo_avulso?: string | null; empresa_id?: number | null; }
 
 // ============================================================================
 // CARTÃO DE INDICADOR
@@ -417,9 +417,36 @@ export default function RelatoriosRH() {
     todosFuncionarios.filter(f => daEmpresaEscolhida(f.empresa_id)),
     [todosFuncionarios, filtroEmpresa]);
   const ativos = useMemo(() => todosFuncionariosEscopo.filter(f => f.ativo), [todosFuncionariosEscopo]);
+  // Eventos do quadro. Admissão e desligamento vêm das DATAS DA FICHA
+  // (data_admissao / data_desligamento), que o RH sempre preenche — antes
+  // vinham só de folha_movimentacoes, que quase ninguém lança à mão (só a
+  // homologação da rescisão grava DEMISSAO sozinha): em 11/2026 o relatório
+  // mostrava 0 admissões em 12 meses quando a ficha tinha 30, e 4 de 8
+  // desligamentos. As movimentações continuam valendo para alteração de cargo
+  // e, como reserva, para admissão/desligamento de quem não tem a data na ficha.
   const movimentacoesEscopo = useMemo(() => {
+    const eventos: Movimentacao[] = [];
+    const comAdmissaoNaFicha = new Set<string>();
+    const comDesligamentoNaFicha = new Set<string>();
+    todosFuncionariosEscopo.forEach(f => {
+      if (f.data_admissao) {
+        comAdmissaoNaFicha.add(f.nome_completo);
+        eventos.push({ funcionario_nome: f.nome_completo, motivo: 'ADMISSAO', cargo: f.cargo || null, data_movimentacao: f.data_admissao.slice(0, 10) });
+      }
+      if (f.data_desligamento) {
+        comDesligamentoNaFicha.add(f.nome_completo);
+        eventos.push({ funcionario_nome: f.nome_completo, motivo: 'DEMISSAO', cargo: f.cargo || null, data_movimentacao: f.data_desligamento.slice(0, 10) });
+      }
+    });
     const nomesEscopo = new Set(todosFuncionariosEscopo.map(f => f.nome_completo));
-    return movimentacoes.filter(m => nomesEscopo.has(m.funcionario_nome));
+    movimentacoes.forEach(m => {
+      if (!nomesEscopo.has(m.funcionario_nome)) return;
+      if (m.motivo === 'ADMISSAO' && comAdmissaoNaFicha.has(m.funcionario_nome)) return;
+      if (m.motivo === 'DEMISSAO' && comDesligamentoNaFicha.has(m.funcionario_nome)) return;
+      eventos.push(m);
+    });
+    // Mais recente primeiro (a lista "Movimentações Recentes" pega os 30 primeiros)
+    return eventos.sort((a, b) => (b.data_movimentacao || '').localeCompare(a.data_movimentacao || ''));
   }, [movimentacoes, todosFuncionariosEscopo]);
 
   const cargosOrdenados = useMemo(() => Array.from(new Set(ativos.map(f => f.cargo || 'SEM CARGO'))).sort(), [ativos]);
@@ -454,7 +481,11 @@ export default function RelatoriosRH() {
   const kpisQuadro = useMemo(() => {
     const hoje = new Date();
     const ha12Meses = new Date(hoje.getFullYear(), hoje.getMonth() - 12, hoje.getDate());
-    const mov12 = movimentacoesEscopo.filter(m => new Date(`${m.data_movimentacao}T00:00:00`) >= ha12Meses);
+    // Janela: últimos 12 meses até hoje (desligamento já agendado pra frente não conta ainda)
+    const mov12 = movimentacoesEscopo.filter(m => {
+      const d = new Date(`${m.data_movimentacao}T00:00:00`);
+      return d >= ha12Meses && d <= hoje;
+    });
     const admissoes12 = mov12.filter(m => m.motivo === 'ADMISSAO').length;
     const desligamentos12 = mov12.filter(m => m.motivo === 'DEMISSAO').length;
     const quadroAtual = ativos.length;
@@ -475,27 +506,41 @@ export default function RelatoriosRH() {
   // ============================================================================
   // AGREGAÇÕES — COMPLIANCE (Documentos & Assinaturas)
   // ============================================================================
-  const documentosCriticos = useMemo(() => [...documentosPanel.linhas]
+  // Filtro de Empresa do topo também vale aqui (antes era ignorado nesta aba)
+  const documentosEscopo = useMemo(() => documentosPanel.linhas.filter(l => daEmpresaEscolhida(l.empresaId)), [documentosPanel, filtroEmpresa]);
+  const totaisDocumentos = useMemo(() => ({
+    funcionarios: documentosEscopo.length,
+    semDocumentos: documentosEscopo.filter(l => l.semDocumentos).length,
+    vencidos: documentosEscopo.reduce((s, l) => s + l.vencidos, 0),
+    vencendo: documentosEscopo.reduce((s, l) => s + l.vencendo, 0),
+  }), [documentosEscopo]);
+  const documentosCriticos = useMemo(() => [...documentosEscopo]
     .filter(l => l.vencidos + l.vencendo > 0)
-    .sort((a, b) => (b.vencidos + b.vencendo) - (a.vencidos + a.vencendo)), [documentosPanel]);
+    .sort((a, b) => (b.vencidos + b.vencendo) - (a.vencidos + a.vencendo)), [documentosEscopo]);
 
   const documentosTopGrafico = useMemo(() => documentosCriticos.slice(0, 8)
     .map(l => ({ label: l.nome, valor: l.vencidos + l.vencendo, cor: l.vencidos > 0 ? '#DC2626' : '#D97706' })), [documentosCriticos]);
 
+  // Assinaturas da empresa escolhida. CANCELADO (envio desfeito pelo RH) sai
+  // das contas: antes entrava no total "enviados" sem cair em nenhum card e
+  // baixava o % de assinados (09/2026: 36 de 39 = 92%, quando eram 36 de 36).
+  const assinaturasEscopo = useMemo(() => assinaturasMes.filter(a => daEmpresaEscolhida(a.empresa_id)), [assinaturasMes, filtroEmpresa]);
+  const assinaturasValidas = useMemo(() => assinaturasEscopo.filter(a => a.status !== 'CANCELADO'), [assinaturasEscopo]);
   const assinaturasPorStatus = useMemo(() => {
     const contagem: Record<string, number> = { 'ENVIADO': 0, 'VISUALIZADO': 0, 'ASSINADO': 0, 'REJEITADO': 0 };
-    assinaturasMes.forEach(a => { contagem[a.status] = (contagem[a.status] || 0) + 1; });
+    assinaturasValidas.forEach(a => { contagem[a.status] = (contagem[a.status] || 0) + 1; });
     return Object.entries(contagem).filter(([, v]) => v > 0)
       .map(([status, valor]) => ({ label: status.charAt(0) + status.slice(1).toLowerCase(), valor, cor: COR_STATUS_ASSINATURA[status] || '#94A3B8' }));
-  }, [assinaturasMes]);
+  }, [assinaturasValidas]);
 
   const kpisAssinaturas = useMemo(() => {
-    const total = assinaturasMes.length;
-    const assinadas = assinaturasMes.filter(a => a.status === 'ASSINADO').length;
-    const pendentes = assinaturasMes.filter(a => a.status === 'ENVIADO' || a.status === 'VISUALIZADO').length;
-    const rejeitadas = assinaturasMes.filter(a => a.status === 'REJEITADO').length;
-    return { total, assinadas, pendentes, rejeitadas, pct: total > 0 ? (assinadas / total) * 100 : 0 };
-  }, [assinaturasMes]);
+    const total = assinaturasValidas.length;
+    const assinadas = assinaturasValidas.filter(a => a.status === 'ASSINADO').length;
+    const pendentes = assinaturasValidas.filter(a => a.status === 'ENVIADO' || a.status === 'VISUALIZADO').length;
+    const rejeitadas = assinaturasValidas.filter(a => a.status === 'REJEITADO').length;
+    const canceladas = assinaturasEscopo.length - total;
+    return { total, assinadas, pendentes, rejeitadas, canceladas, pct: total > 0 ? (assinadas / total) * 100 : 0 };
+  }, [assinaturasValidas, assinaturasEscopo]);
 
   if (authLoading) {
     return (
@@ -849,10 +894,10 @@ export default function RelatoriosRH() {
               <>
                 <h3 className="text-xs font-black text-[#64748B] uppercase tracking-widest mb-3">📁 Documentos Cadastrais</h3>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6 print-break">
-                  <CardKPI titulo="Colaboradores" valor={String(documentosPanel.totais.funcionarios)} cor="#0C1D4D" />
-                  <CardKPI titulo="Sem Nenhum Documento" valor={String(documentosPanel.totais.semDocumentos)} cor="#DC2626" />
-                  <CardKPI titulo="Documentos Vencidos" valor={String(documentosPanel.totais.vencidos)} cor="#DC2626" />
-                  <CardKPI titulo="Vencendo em 30 Dias" valor={String(documentosPanel.totais.vencendo)} cor="#D97706" />
+                  <CardKPI titulo="Colaboradores" valor={String(totaisDocumentos.funcionarios)} cor="#0C1D4D" />
+                  <CardKPI titulo="Sem Nenhum Documento" valor={String(totaisDocumentos.semDocumentos)} cor="#DC2626" />
+                  <CardKPI titulo="Documentos Vencidos" valor={String(totaisDocumentos.vencidos)} cor="#DC2626" />
+                  <CardKPI titulo="Vencendo em 30 Dias" valor={String(totaisDocumentos.vencendo)} cor="#D97706" />
                 </div>
 
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
@@ -900,7 +945,7 @@ export default function RelatoriosRH() {
 
                 <h3 className="text-xs font-black text-[#64748B] uppercase tracking-widest mb-3">✍️ Assinaturas do Mês</h3>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6 print-break">
-                  <CardKPI titulo="Documentos Enviados" valor={String(kpisAssinaturas.total)} cor="#0C1D4D" />
+                  <CardKPI titulo="Documentos Enviados" valor={String(kpisAssinaturas.total)} cor="#0C1D4D" sub={kpisAssinaturas.canceladas > 0 ? `+ ${kpisAssinaturas.canceladas} cancelado(s), fora da conta` : undefined} />
                   <CardKPI titulo="Assinados" valor={String(kpisAssinaturas.assinadas)} cor="#16A34A" sub={`${kpisAssinaturas.pct.toFixed(0)}% do total`} />
                   <CardKPI titulo="Pendentes" valor={String(kpisAssinaturas.pendentes)} cor="#D97706" sub="Enviado ou visualizado" />
                   <CardKPI titulo="Rejeitados" valor={String(kpisAssinaturas.rejeitadas)} cor="#DC2626" />
@@ -920,9 +965,9 @@ export default function RelatoriosRH() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#E2E8F0]">
-                        {assinaturasMes.length === 0 ? (
+                        {assinaturasEscopo.length === 0 ? (
                           <tr><td colSpan={3} className="text-center py-12 text-[#94A3B8] font-bold">Nenhuma assinatura enviada neste mês.</td></tr>
-                        ) : [...assinaturasMes].sort((a, b) => a.funcionario_nome.localeCompare(b.funcionario_nome)).map((a, i) => (
+                        ) : [...assinaturasEscopo].sort((a, b) => a.funcionario_nome.localeCompare(b.funcionario_nome)).map((a, i) => (
                           <tr key={i} className="hover:bg-[#F8FAFC] transition-colors">
                             <td className="p-3 font-black text-[#0C1D4D]">{a.funcionario_nome}</td>
                             <td className="p-3 text-[#475569]">{a.titulo_avulso || 'Holerite'}</td>

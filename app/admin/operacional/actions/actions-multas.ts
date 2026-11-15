@@ -20,7 +20,7 @@ import { validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } fr
 import { registrarLogAuditoria } from '../../../actions';
 import { provedorConfigurado, validadeCertificadoA1, prefeituraSpConfigurada, consultarBoletosPrefeituraSP, consultarPenalidadesDerSP } from '../../../lib/consultaDebitosVeiculares';
 import { normalizarBoleto, formatarLinhaDigitavel } from '../../../lib/boletoMulta';
-import { executarConsultaVeiculo, vincularNics, enviarAvisoCondutor, atualizarPrazosSenatran, sincronizarPagamentoOps } from '../../../lib/multasCore';
+import { executarConsultaVeiculo, vincularNics, enviarAvisoCondutor, atualizarPrazosSenatran, sincronizarPagamentoOps, atualizarPedagios } from '../../../lib/multasCore';
 import { lerNotificacaoMulta, leituraConfigurada, custoLeituraUsd } from '../../../lib/leituraNotificacaoMulta';
 import { extrairTextoNativoPdf } from '../../../lib/textract';
 import { formatarMoeda } from '../../../lib/formatadores';
@@ -69,6 +69,14 @@ export interface DebitoMulta {
   prazo_defesa: string | null; recurso_status: 'PROTOCOLADO' | 'DEFERIDO' | 'INDEFERIDO' | null; recurso_protocolo: string | null;
   recurso_atualizado_em: string | null; recurso_atualizado_por: string | null;
   op: { id: string; numero_op: number | null; status: string | null; pago_em: string | null } | null;
+}
+
+export interface PedagioFreeFlow {
+  id: string; empresa_id: number | null; veiculo_id: string | null; placa: string; chave_passagem: string;
+  datahora: string | null; portico: string | null; concessionaria: string | null; valor: number | null;
+  data_limite_pagamento: string | null; situacao_origem: string | null; status: 'ABERTO' | 'PAGO';
+  baixa_automatica: boolean; pago_em: string | null; pago_por: string | null;
+  primeira_consulta_em: string; ultima_consulta_em: string;
 }
 
 export interface ConsultaMulta {
@@ -194,10 +202,22 @@ export async function carregarPainelMultasAction(accessToken: string): Promise<R
     }
     const debitos: DebitoMulta[] = debitosBase.map(d => ({ ...d, valor: Number(d.valor) || 0, op: opPorDebito.get(d.id) || null }));
 
+    // Pedágios Free Flow — tolerante: sem a tabela (SQL não rodado) a tela
+    // de Multas continua funcionando e só a aba Pedágios avisa.
+    let pedagios: PedagioFreeFlow[] = [];
+    let pedagiosDisponivel = true;
+    {
+      const { data: pd, error: pe } = await filtrarEmpresa(db.from('frota_pedagios')
+        .select('id, empresa_id, veiculo_id, placa, chave_passagem, datahora, portico, concessionaria, valor, data_limite_pagamento, situacao_origem, status, baixa_automatica, pago_em, pago_por, primeira_consulta_em, ultima_consulta_em')
+        .order('data_limite_pagamento', { ascending: true, nullsFirst: false }).limit(500), auth.empresasPermitidas);
+      if (pe) pedagiosDisponivel = false;
+      else pedagios = ((pd || []) as unknown as PedagioFreeFlow[]).map(p => ({ ...p, valor: p.valor == null ? null : Number(p.valor) }));
+    }
+
     const empresas = ((empresasRes.data || []) as { id: number; nome: string }[])
       .filter(e => !auth.empresasPermitidas || auth.empresasPermitidas.includes(e.id));
 
-    return { ok: true, info: { veiculos, debitos, consultas, empresas, provedorConfigurado: provedorConfigurado(), certificado, leituraConfigurada: leituraConfigurada(), prefeituraSpConfigurada: prefeituraSpConfigurada() } };
+    return { ok: true, info: { veiculos, debitos, consultas, empresas, provedorConfigurado: provedorConfigurado(), certificado, leituraConfigurada: leituraConfigurada(), prefeituraSpConfigurada: prefeituraSpConfigurada(), pedagios, pedagiosDisponivel } };
   } catch (e) {
     return { ok: false, erro: e instanceof Error ? e.message : String(e) };
   }
@@ -1040,4 +1060,34 @@ export async function salvarRecursoAction(params: { debitoId: string; status: 'P
     equipamento_id: d.id, equipamento_nome: `AIT ${d.auto_infracao || 'S/N'}${params.protocolo ? ` — protocolo ${params.protocolo}` : ''}${cancelarPorRecurso ? ' — débito cancelado' : ''}`,
   });
   return { ok: true, info: { cancelado: cancelarPorRecurso, reaberto: !!reabrir } };
+}
+
+// ---------------------------------------------------------------------------
+// Pedágios Free Flow (aba Pedágios)
+// ---------------------------------------------------------------------------
+export async function consultarPedagiosAction(accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const r = await atualizarPedagios(supabaseAdmin(), auth.perfil.nome.toUpperCase());
+  return r.ok ? { ok: true, info: r } : { ok: false, erro: r.erro };
+}
+
+export async function marcarPedagioPagoAction(params: { id: string; desfazer?: boolean }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const { data: p } = await db.from('frota_pedagios').select('id, empresa_id, placa, valor').eq('id', params.id).maybeSingle();
+  if (!p) return { ok: false, erro: 'Passagem não encontrada.' };
+  if (!empresaPermitida(auth.empresasPermitidas, p.empresa_id)) return { ok: false, erro: 'Você não tem acesso a esta passagem.' };
+  const usuario = auth.perfil.nome.toUpperCase();
+  const agora = new Date().toISOString();
+  const { error } = await db.from('frota_pedagios').update(params.desfazer
+    ? { status: 'ABERTO', baixa_automatica: false, pago_em: null, pago_por: null, updated_at: agora }
+    : { status: 'PAGO', baixa_automatica: false, pago_em: agora, pago_por: usuario, updated_at: agora }).eq('id', params.id);
+  if (error) return { ok: false, erro: error.message };
+  registrarLogAuditoria({
+    usuario_nome: usuario, acao: params.desfazer ? 'REABRIU PEDÁGIO FREE FLOW' : 'MARCOU PEDÁGIO FREE FLOW COMO PAGO', setor: 'OPERACIONAL',
+    equipamento_id: p.id, equipamento_nome: `${p.placa} — ${p.valor != null ? fmtBRL(Number(p.valor)) : 'valor em processamento'}`,
+  });
+  return { ok: true };
 }

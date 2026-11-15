@@ -24,7 +24,8 @@ import {
   salvarDebitoManualAction, excluirDebitoManualAction, avisarCondutorAction,
   lerNotificacaoMultaAction, anexarNotificacaoAction, marcarIndicacaoCondutorAction,
   salvarBoletoAction, buscarBoletoAction, buscarPrazosSenatranAction, dadosIndicacaoCondutorAction, salvarRecursoAction,
-  type DebitoMulta, type VeiculoMultas, type ConsultaMulta, type TipoDebitoMulta, type StatusDebito,
+  type DebitoMulta, type VeiculoMultas, type ConsultaMulta, type TipoDebitoMulta, type StatusDebito, type PedagioFreeFlow,
+  consultarPedagiosAction, marcarPedagioPagoAction,
 } from '../actions/actions-multas';
 import { formatarMoeda } from '../../../lib/formatadores';
 
@@ -130,11 +131,13 @@ export default function MultasDebitosPage() {
   const [provedorOk, setProvedorOk] = useState(true);
   const [leituraOk, setLeituraOk] = useState(false);
   const [prefeituraOk, setPrefeituraOk] = useState(false);
+  const [pedagios, setPedagios] = useState<PedagioFreeFlow[]>([]);
+  const [pedagiosDisponivel, setPedagiosDisponivel] = useState(true);
   const [lendoNotificacao, setLendoNotificacao] = useState(false);
   const [leitura, setLeitura] = useState<LeituraNotificacao | null>(null);
   const [certificado, setCertificado] = useState<Certificado | null>(null);
 
-  const [aba, setAba] = useState<'debitos' | 'veiculos' | 'relatorios' | 'consultas'>('debitos');
+  const [aba, setAba] = useState<'debitos' | 'veiculos' | 'pedagios' | 'relatorios' | 'consultas'>('debitos');
   const [filtroEmpresa, setFiltroEmpresa] = useState('TODAS');
   const [filtroStatus, setFiltroStatus] = useState<'ABERTOS' | 'PAGO' | 'CANCELADO' | 'TODOS'>('ABERTOS');
   const [filtroTipo, setFiltroTipo] = useState<'TODOS' | TipoDebitoMulta | 'NIC' | 'PRAZO'>('TODOS');
@@ -164,6 +167,8 @@ export default function MultasDebitosPage() {
     setCertificado(res.info.certificado || null);
     setLeituraOk(!!res.info.leituraConfigurada);
     setPrefeituraOk(!!res.info.prefeituraSpConfigurada);
+    setPedagios(res.info.pedagios || []);
+    setPedagiosDisponivel(res.info.pedagiosDisponivel !== false);
     setCarregando(false);
   }, [accessToken]);
 
@@ -491,6 +496,16 @@ export default function MultasDebitosPage() {
               : <>O certificado digital A1 de <strong>{certificado.titular}</strong> vence em <strong>{fmtData(certificado.validoAte)}</strong> ({certificado.diasRestantes === 0 ? 'hoje' : `${certificado.diasRestantes} dia(s)`}). Sem ele a consulta automática de multas para — renove e atualize no servidor.</>}
           </div>
         )}
+        {(() => {
+          const urgentes = pedagios.filter(p => p.status === 'ABERTO' && p.data_limite_pagamento && diasAte(p.data_limite_pagamento) <= 3);
+          if (!urgentes.length) return null;
+          const total = urgentes.reduce((s2, p) => s2 + (p.valor || 0), 0);
+          return (
+            <button onClick={() => setAba('pedagios')} className="w-full text-left mb-4 rounded-xl p-3 text-xs font-medium border bg-orange-50 border-orange-300 text-orange-800 hover:bg-orange-100">
+              🛣️ <strong>{urgentes.length} pedágio(s) Free Flow para pagar em até 3 dias</strong> ({fmtBRL(total)}). Não pago no prazo vira multa de evasão + possível multa por não identificação. Clique para ver.
+            </button>
+          );
+        })()}
         {prazosUrgentes.length > 0 && (
           <button onClick={() => { setAba('debitos'); setFiltroTipo('PRAZO'); setFiltroStatus('ABERTOS'); }}
             className="w-full text-left mb-4 rounded-xl p-3 text-xs font-medium border bg-red-50 border-red-300 text-red-700 hover:bg-red-100">
@@ -521,7 +536,7 @@ export default function MultasDebitosPage() {
 
         {/* Abas + ações */}
         <div className="flex flex-wrap items-center gap-2 mb-4">
-          {([['debitos', '📋 Débitos'], ['veiculos', '🚚 Veículos'], ['relatorios', '📊 Relatórios'], ['consultas', '🔎 Consultas']] as const).map(([k, l]) => (
+          {([['debitos', '📋 Débitos'], ['veiculos', '🚚 Veículos'], ['pedagios', '🛣️ Pedágios'], ['relatorios', '📊 Relatórios'], ['consultas', '🔎 Consultas']] as const).map(([k, l]) => (
             <button key={k} onClick={() => setAba(k)}
               className={`px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider border transition-colors ${aba === k ? 'bg-[#0C1D4D] text-white border-[#0C1D4D]' : 'bg-white text-[#0C1D4D] border-[#E2E8F0] hover:border-[#336699]'}`}>
               {l}
@@ -724,6 +739,15 @@ export default function MultasDebitosPage() {
             })}
             {veiculosEscopo.length === 0 && <div className="bg-white rounded-2xl border border-[#E2E8F0] p-10 text-center text-sm text-gray-400 col-span-full">Nenhum veículo cadastrado no Controle de Frota.</div>}
           </div>
+        ) : aba === 'pedagios' ? (
+          <AbaPedagios
+            pedagios={filtroEmpresa === 'TODAS' ? pedagios : pedagios.filter(p => String(p.empresa_id) === filtroEmpresa)}
+            disponivel={pedagiosDisponivel}
+            provedorOk={provedorOk}
+            veiculoPorId={veiculoPorId}
+            accessToken={accessToken}
+            onAlterado={carregar}
+          />
         ) : aba === 'relatorios' ? (
           <Relatorios debitos={debitosEscopo} veiculoPorId={veiculoPorId} empresaNome={empresaNome} />
         ) : (
@@ -921,8 +945,141 @@ const fmtUSD = (v: number | null | undefined) => `US$ ${Number(v || 0).toLocaleS
 const ROTULO_SERVICO: Record<string, string> = {
   'detran/sp/debitos': 'Detran-SP', 'senatran/infracoes': 'Senatran lista', 'senatran/download-infracao': 'Senatran detalhe',
   'der/sp/penalidades': 'DER boleto', 'pref/sp/sao-paulo/multas-guias': 'Prefeitura boleto',
+  'senatran/pedagio/listagem': 'Pedágios Free Flow',
 };
 const rotuloServico = (c: ConsultaMulta) => c.provedor === 'ANTHROPIC' ? 'Leitura IA' : (ROTULO_SERVICO[c.servico || ''] || c.servico || 'Detran-SP');
+
+// ============================================================================
+// Aba Pedágios: passagens Free Flow em aberto (SENATRAN). Pagamento é no
+// site/app da concessionária; aqui só controla prazo e "Paguei".
+// ============================================================================
+function AbaPedagios({ pedagios, disponivel, provedorOk, veiculoPorId, accessToken, onAlterado }: {
+  pedagios: PedagioFreeFlow[]; disponivel: boolean; provedorOk: boolean; veiculoPorId: Map<string, VeiculoMultas>;
+  accessToken: string; onAlterado: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [consultando, setConsultando] = useState(false);
+  const [filtro, setFiltro] = useState<'ABERTO' | 'PAGO' | 'TODOS'>('ABERTO');
+  const [salvandoId, setSalvandoId] = useState<string | null>(null);
+  const trava = useRef(false);
+
+  if (!disponivel) {
+    return <div className="bg-amber-50 border border-amber-300 text-amber-800 rounded-2xl p-6 text-sm">⚠️ Controle de pedágios ainda não instalado no banco — falta rodar <code className="font-mono">.sql/Pendentes/operacional_pedagios_free_flow.sql</code>.</div>;
+  }
+
+  const abertos = pedagios.filter(p => p.status === 'ABERTO');
+  const vencendo = abertos.filter(p => p.data_limite_pagamento && diasAte(p.data_limite_pagamento) >= 0 && diasAte(p.data_limite_pagamento) <= 3);
+  const vencidos = abertos.filter(p => p.data_limite_pagamento && diasAte(p.data_limite_pagamento) < 0);
+  const lista = pedagios.filter(p => filtro === 'TODOS' || p.status === filtro);
+  const soma = (l: PedagioFreeFlow[]) => l.reduce((s2, p) => s2 + (p.valor || 0), 0);
+
+  const consultar = async () => {
+    if (trava.current) return;
+    trava.current = true;
+    try {
+      const ok = await confirm({
+        title: 'Consultar pedágios Free Flow',
+        message: 'Buscar na SENATRAN as passagens de pedágio eletrônico em aberto de toda a frota (últimos 45 dias)? Custa ~R$ 0,32 por página de resultado. A consulta automática já roda segunda e quinta.',
+        confirmLabel: 'Consultar',
+      });
+      if (!ok) return;
+      setConsultando(true);
+      const res = await consultarPedagiosAction(accessToken);
+      setConsultando(false);
+      if (!res.ok) { toast(res.erro || 'Falha na consulta.', 'error'); return; }
+      const i = res.info;
+      toast(`${i.encontrados} passagem(ns) em aberto · ${i.novos} nova(s) · ${i.baixados} paga(s) · custo ~R$ ${Number(i.preco || 0).toFixed(2).replace('.', ',')}`, 'success');
+      if (i.aviso) toast(i.aviso, 'info');
+      await onAlterado();
+    } finally {
+      trava.current = false;
+      setConsultando(false);
+    }
+  };
+
+  const marcar = async (p: PedagioFreeFlow, desfazer: boolean) => {
+    if (!desfazer && !(await confirm({ message: `Confirmar que o pedágio de ${p.placa} (${p.valor != null ? fmtBRL(p.valor) : 'valor em processamento'}) já foi pago na concessionária?`, confirmLabel: 'Paguei' }))) return;
+    setSalvandoId(p.id);
+    const res = await marcarPedagioPagoAction({ id: p.id, desfazer }, accessToken);
+    setSalvandoId(null);
+    if (!res.ok) { toast(res.erro || 'Falha.', 'error'); return; }
+    toast(desfazer ? 'Pedágio reaberto.' : 'Pedágio marcado como pago.', 'success');
+    await onAlterado();
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Kpi titulo="Em aberto" valor={fmtBRL(soma(abertos))} sub={`${abertos.length} passagem(ns)`} />
+        <Kpi titulo="Pagar em até 3 dias" valor={String(vencendo.length)} sub={fmtBRL(soma(vencendo))} destaque={vencendo.length > 0} />
+        <Kpi titulo="Prazo vencido" valor={String(vencidos.length)} sub="risco de multa de evasão" destaque={vencidos.length > 0} />
+        <Kpi titulo="Pagos" valor={String(pedagios.filter(p => p.status === 'PAGO').length)} sub="nos registros" />
+      </div>
+
+      <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-3 flex flex-wrap items-center gap-2">
+        {(['ABERTO', 'PAGO', 'TODOS'] as const).map(k => (
+          <button key={k} onClick={() => setFiltro(k)} className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase border ${filtro === k ? 'bg-[#0C1D4D] text-white border-[#0C1D4D]' : 'bg-white text-[#0C1D4D] border-[#E2E8F0]'}`}>
+            {k === 'ABERTO' ? 'Em aberto' : k === 'PAGO' ? 'Pagos' : 'Todos'}
+          </button>
+        ))}
+        <span className="flex-1" />
+        <p className="text-[10px] text-gray-500">Pague no site/app da concessionária (ou pela CNH do Brasil) e marque “Paguei”.</p>
+        <button onClick={consultar} disabled={!provedorOk || consultando}
+          className="px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider bg-[#0C1D4D] text-white hover:bg-[#284B8C] disabled:opacity-50">
+          {consultando ? 'Consultando...' : '🔄 Consultar pedágios (Senatran)'}
+        </button>
+      </div>
+
+      {lista.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-[#E2E8F0] p-10 text-center text-sm text-gray-400">
+          {filtro === 'ABERTO' ? '✅ Nenhum pedágio Free Flow em aberto.' : 'Nenhum registro.'}
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm overflow-x-auto">
+          <table className="w-full text-xs min-w-[860px]">
+            <thead>
+              <tr className="bg-[#F8FAFC] text-[10px] uppercase tracking-wider text-gray-500 text-left">
+                <th className="p-3">Veículo</th><th className="p-3">Passagem</th><th className="p-3">Pórtico / concessionária</th>
+                <th className="p-3 text-right">Valor</th><th className="p-3">Pagar até</th><th className="p-3">Situação</th><th className="p-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {lista.map(p => {
+                const v = p.veiculo_id ? veiculoPorId.get(p.veiculo_id) : undefined;
+                const dias = p.data_limite_pagamento ? diasAte(p.data_limite_pagamento) : null;
+                const corPrazo = p.status !== 'ABERTO' || dias === null ? 'text-gray-500' : dias < 0 ? 'text-red-600 font-black' : dias <= 3 ? 'text-orange-600 font-black' : 'text-[#0C1D4D]';
+                return (
+                  <tr key={p.id} className="border-t border-[#F1F5F9]">
+                    <td className="p-3 whitespace-nowrap"><div className="font-bold text-[#0C1D4D]">{v?.apelido || '—'}</div><div className="text-[10px] font-mono text-gray-400">{p.placa}</div></td>
+                    <td className="p-3 whitespace-nowrap">{fmtDataHora(p.datahora)}</td>
+                    <td className="p-3 max-w-[260px]"><div className="truncate" title={p.portico || ''}>{p.portico || '—'}</div><div className="text-[10px] text-gray-400 truncate">{p.concessionaria || ''}</div></td>
+                    <td className="p-3 text-right font-black whitespace-nowrap">{p.valor != null ? fmtBRL(p.valor) : <span className="text-gray-400 font-medium">em processamento</span>}</td>
+                    <td className={`p-3 whitespace-nowrap ${corPrazo}`}>
+                      {p.data_limite_pagamento ? fmtData(p.data_limite_pagamento) : '—'}
+                      {p.status === 'ABERTO' && dias !== null && <div className="text-[10px]">{dias < 0 ? `vencido há ${-dias} dia(s)` : dias === 0 ? 'vence hoje' : `em ${dias} dia(s)`}</div>}
+                    </td>
+                    <td className="p-3 whitespace-nowrap">
+                      {p.status === 'PAGO'
+                        ? <><span className="inline-block px-2 py-0.5 rounded-full border text-[10px] font-black uppercase bg-green-100 text-green-700 border-green-300">Pago</span><div className="text-[10px] text-gray-400 mt-0.5">{p.pago_por}</div></>
+                        : <span className="text-[10px] font-bold text-gray-500">{p.situacao_origem || 'Pendente'}</span>}
+                    </td>
+                    <td className="p-3 whitespace-nowrap text-right">
+                      {p.status === 'ABERTO'
+                        ? <button onClick={() => marcar(p, false)} disabled={salvandoId === p.id} className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">✔ Paguei</button>
+                        : !p.baixa_automatica && <button onClick={() => marcar(p, true)} disabled={salvandoId === p.id} className="text-[10px] font-black uppercase text-gray-500 underline">Reabrir</button>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="text-[10px] text-gray-400">Passagens Free Flow consultadas na SENATRAN (segunda e quinta automaticamente). Quando a passagem some da lista de pendentes, o sistema marca como paga.</p>
+    </div>
+  );
+}
 
 // ============================================================================
 // Resumo de custos do mês (aba Consultas): o que se gastou consultando e

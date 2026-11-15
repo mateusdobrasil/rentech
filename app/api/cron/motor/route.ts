@@ -5,7 +5,7 @@ import { notificarPush } from '../../../lib/push';
 import { montarContextoFrotaVencida } from '../../../lib/frota';
 import { montarContextoDocumentosVencidos } from '../../../lib/documentos';
 import { montarContextoAniversariantesSemana } from '../../../lib/aniversarios';
-import { montarContextoPrazoIndicacao } from '../../../lib/multasCore';
+import { montarContextoPrazoIndicacao, montarContextoPedagiosAPagar } from '../../../lib/multasCore';
 
 // Automações cujo disparo depende de um contexto calculado em código (ex: uma
 // lista dinâmica), em vez de só {{primeiro_nome}}/{{nome_completo}}. Casadas
@@ -31,6 +31,8 @@ const FONTES_DADOS: Record<string, (empresaId: number | null) => Promise<Record<
   // Multas com prazo de indicação do condutor vencendo em até 7 dias
   // (Operacional → Multas e Débitos). Card "multas-prazo-indicacao".
   MULTAS_PRAZO_INDICACAO: async (empresaId) => montarContextoPrazoIndicacao(empresaId),
+  // Pedágios Free Flow em aberto com prazo de pagamento em até 3 dias. Card "pedagios-a-pagar".
+  PEDAGIOS_A_PAGAR: async (empresaId) => montarContextoPedagiosAPagar(empresaId),
   ANIVERSARIANTES_SEMANA: async (empresaId) => {
     const resultado = await montarContextoAniversariantesSemana(empresaId);
     if (!resultado) return null;

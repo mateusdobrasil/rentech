@@ -54,6 +54,12 @@ const modulosFinanceiro = [
     descricao: 'Contas a pagar da locadora sincronizadas direto do PrimeStart (P2S) — em aberto, vencidas e quitadas.',
     icone: '💳', link: '/admin/financeiro/contas-pagar',
     cor: 'bg-rose-50 border-rose-200 text-rose-700', hover: 'hover:border-rose-500'
+  },
+  {
+    titulo: 'Contas a Receber',
+    descricao: 'Títulos a receber sincronizados do PrimeStart (P2S) — a vencer, inadimplência por empresa e recebidos.',
+    icone: '🧾', link: '/admin/financeiro/contas-receber',
+    cor: 'bg-teal-50 border-teal-200 text-teal-700', hover: 'hover:border-teal-500'
   }
 ];
 
@@ -62,6 +68,7 @@ interface PainelFinanceiro {
   hoje: string;
   ops: { pendentes: ValorQtd; vencidas: ValorQtd; vencendo7d: ValorQtd; aguardandoBanco: ValorQtd } | null;
   contasPagar: { vencidas: ValorQtd; vencendo7d: ValorQtd } | null;
+  contasReceber?: { vencidas: ValorQtd; vencendo7d: ValorQtd } | null;
 }
 
 const BRL = formatarMoeda;
@@ -118,6 +125,13 @@ export default function FinanceiroHub() {
             cartoes.push(
               { chave: 'cp-vencidas', titulo: 'Contas a Pagar Vencidas', icone: '💳', valor: valorTxt(c?.vencidas), sub: qtdTxt(c?.vencidas), destaque: (c?.vencidas.qtd ?? 0) > 0, link: '/admin/financeiro/contas-pagar' },
               { chave: 'cp-7d', titulo: 'Contas a Vencer (7 dias)', icone: '🗓️', valor: valorTxt(c?.vencendo7d), sub: qtdTxt(c?.vencendo7d), destaque: false, link: '/admin/financeiro/contas-pagar' },
+            );
+          }
+          if (linksAutorizados.has('/admin/financeiro/contas-receber') && (painelLoading || painel?.contasReceber)) {
+            const r = painel?.contasReceber ?? undefined;
+            cartoes.push(
+              { chave: 'cr-vencidas', titulo: 'A Receber Vencido (até 1 ano)', icone: '🧾', valor: valorTxt(r?.vencidas), sub: qtdTxt(r?.vencidas), destaque: (r?.vencidas.qtd ?? 0) > 0, link: '/admin/financeiro/contas-receber' },
+              { chave: 'cr-7d', titulo: 'A Receber (7 dias)', icone: '📥', valor: valorTxt(r?.vencendo7d), sub: qtdTxt(r?.vencendo7d), destaque: false, link: '/admin/financeiro/contas-receber' },
             );
           }
 

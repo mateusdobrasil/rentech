@@ -13,6 +13,14 @@ import { VERSAO_APP } from '../lib/versaoApp';
 // sincronia com o que a própria página de destino já exige para entrar.
 const MODULOS_SISTEMA = [
   {
+    titulo: 'Diretor (IA)',
+    descricao: 'Relatório diário de cada empresa: recebimentos, pagamentos, locações, expedição, frota, RH e o que pede atenção.',
+    icone: '🧭',
+    link: '/admin/diretoria',
+    cor: 'border-[#0C1D4D]/50 hover:border-[#0C1D4D]',
+    bgIcon: 'bg-slate-100 text-[#0C1D4D]'
+  },
+  {
     titulo: 'Ordens de Pagamentos',
     descricao: 'Solicite novas Ordens de Pagamento, acompanhe as suas e gerencie assinaturas de contratos.',
     icone: '📋',

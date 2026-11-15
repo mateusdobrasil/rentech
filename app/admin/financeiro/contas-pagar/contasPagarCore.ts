@@ -24,6 +24,8 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { consultarObjetos, buscarObjeto, criterio, p2sParaData, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
 import { registrarSincronizacao } from '../../../lib/syncLog';
+import { carregarEmpresasCadastro } from '../../../lib/empresa';
+import { resolverCentrosP2s, empresaIdDoCentroP2s } from '../../../lib/empresaP2s';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -61,6 +63,27 @@ export function paraDataISO(serial: unknown): string | null {
   return data ? data.toISOString().slice(0, 10) : null;
 }
 
+// Data de quitação de uma conta (a pagar ou a receber) do P2S. Com
+// proxy=true a API NÃO devolve o campo DataQuitacao (só a consulta completa
+// por oid traz) — o que vem é ListaDatasPagamentos, texto "dd/mm/aaaa" (uma
+// data por pagamento). Descoberto em 2026-11-15: das 2.896 contas a pagar
+// quitadas sincronizadas, só 2 tinham data_quitacao. Usa DataQuitacao quando
+// existir e, senão, a ÚLTIMA data da lista (a que fechou o título).
+export function dataQuitacaoISO(o: ObjetoP2s): string | null {
+  const direta = paraDataISO(o.DataQuitacao);
+  if (direta) return direta;
+  const datas = [...String(o.ListaDatasPagamentos || '').matchAll(/(\d{2})\/(\d{2})\/(\d{4})/g)]
+    .map(m => `${m[3]}-${m[2]}-${m[1]}`)
+    .sort();
+  return datas.length ? datas[datas.length - 1] : null;
+}
+
+// PostgREST quando a coluna ainda não existe no banco (SQL não rodado):
+// "Could not find the 'empresa_id' column of '...' in the schema cache".
+export function erroColunaInexistente(error: { code?: string; message?: string } | null, coluna: string): boolean {
+  return !!error && (error.code === 'PGRST204' || /schema cache/i.test(error.message || '')) && (error.message || '').includes(coluna);
+}
+
 export function refOuNull(v: unknown): string | undefined {
   const s = v ? String(v) : '';
   return s && s !== 'null' ? s : undefined;
@@ -92,7 +115,9 @@ export interface SincronizarContasPagarOpcoes {
 // uma 3ª consulta nos mesmos moldes.
 export async function sincronizarContasPagarCore(opcoes: SincronizarContasPagarOpcoes = {}): Promise<Resultado> {
   const ambiente = opcoes.ambiente || 'PRODUCAO';
-  const diasRetroativos = opcoes.diasRetroativos ?? 90; // ~3 meses
+  // ~13 meses de quitadas (era 90 dias até 2026-11-15): o relatório mensal do
+  // Diretor compara com o mesmo mês do ano anterior. A tela pagina no servidor.
+  const diasRetroativos = opcoes.diasRetroativos ?? 400;
   const iniciadoEm = new Date();
 
   try {
@@ -134,12 +159,19 @@ export async function sincronizarContasPagarCore(opcoes: SincronizarContasPagarO
     const mapaNomes = await resolverNomes(ambiente, objectlist.flatMap(o => [
       refOuNull(o.Entidade), refOuNull(o.FormaPagamento), refOuNull(o.ContaFinanceira),
     ]));
+    const centros = await resolverCentrosP2s(ambiente, objectlist.map(o => refOuNull(o.Centro)));
+    const db = supabaseAdmin();
+    const empresas = await carregarEmpresasCadastro(db);
 
     const registros = objectlist.map(o => {
       const entidadeOid = refOuNull(o.Entidade);
       const formaPagamentoOid = refOuNull(o.FormaPagamento);
       const contaFinanceiraOid = refOuNull(o.ContaFinanceira);
+      const centroOid = refOuNull(o.Centro);
       return {
+        // Empresa pelo CNPJ do "Centro" do P2S (ver app/lib/empresaP2s.ts) — o
+        // campo `centro` abaixo é outra coisa: o centro FINANCEIRO ("03 - RH").
+        empresa_id: empresaIdDoCentroP2s(centroOid ? centros.get(centroOid) : undefined, empresas),
         p2s_oid: o.oid,
         descricao: textoOuNull(o.Descricao),
         centro: textoOuNull(o.DescricaoCentroFinanceiro),
@@ -154,18 +186,29 @@ export async function sincronizarContasPagarCore(opcoes: SincronizarContasPagarO
         data_vencimento: paraDataISO(o.DataVencimento),
         data_emissao: paraDataISO(o.DataEmissaoPagamentoRecebimento) || paraDataISO(o.DataCompetencia),
         quitado: String(o.FlagQuitado) === 'true',
-        data_quitacao: paraDataISO(o.DataQuitacao),
+        data_quitacao: dataQuitacaoISO(o),
         observacoes: textoOuNull(o.Observacoes),
         updated_at: new Date().toISOString(),
       };
     });
 
-    const db = supabaseAdmin();
     const TAMANHO_LOTE = 500;
     let processados = 0;
+    // empresa_id entrou por .sql/Pendentes/diretoria_fase1.sql — se o código
+    // subir antes do SQL, grava sem a coluna em vez de derrubar o sync.
+    let semEmpresa = false;
+    const tirarEmpresa = (linhas: typeof registros) => linhas.map(l => {
+      const copia: Partial<typeof l> = { ...l };
+      delete copia.empresa_id;
+      return copia;
+    });
     for (let i = 0; i < registros.length; i += TAMANHO_LOTE) {
       const lote = registros.slice(i, i + TAMANHO_LOTE);
-      const { error } = await db.from('financeiro_contas_pagar').upsert(lote, { onConflict: 'p2s_oid' });
+      let { error } = await db.from('financeiro_contas_pagar').upsert(semEmpresa ? tirarEmpresa(lote) : lote, { onConflict: 'p2s_oid' });
+      if (error && !semEmpresa && erroColunaInexistente(error, 'empresa_id')) {
+        semEmpresa = true;
+        ({ error } = await db.from('financeiro_contas_pagar').upsert(tirarEmpresa(lote), { onConflict: 'p2s_oid' }));
+      }
       if (error) throw new Error(error.message);
       processados += lote.length;
     }

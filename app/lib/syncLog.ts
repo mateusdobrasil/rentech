@@ -12,7 +12,7 @@ import { dataParaP2s, type AmbienteP2s } from './p2s';
 // integracoes_sync_log.integracao — não o nome da tabela, que passou a ser
 // financeiro_contas_pagar. Mantida como está pra não quebrar a continuidade
 // do histórico de sincronizações já registrado.
-export type IntegracaoSync = 'produtos' | 'parceiros' | 'colaboradores' | 'fichas_reserva' | 'eventos_feiras' | 'contas_pagar';
+export type IntegracaoSync = 'produtos' | 'parceiros' | 'colaboradores' | 'fichas_reserva' | 'eventos_feiras' | 'contas_pagar' | 'contas_receber';
 export type TipoSync = 'completa' | 'incremental';
 
 // Última execução BEM-SUCEDIDA — o cursor_ate dela vira o cursor_desde da

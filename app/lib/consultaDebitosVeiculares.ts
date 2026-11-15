@@ -101,7 +101,8 @@ function loginGovBr(): { par: 'CERT'; cert: string; pass: string } | { par: 'CPF
 // PKCS#12 público, então sobe um servidor TLS efêmero em 127.0.0.1 com o
 // .pfx e lê o certificado do lado do cliente (getPeerCertificate) — sem
 // dependência nova. Cache de 1h por instância (o .pfx só muda com deploy).
-export interface ValidadeCertificado { titular: string; validoAte: string; diasRestantes: number }
+// cnpj: do titular do e-CNPJ ("RAZAO SOCIAL:22618891000187"), null se não for e-CNPJ.
+export interface ValidadeCertificado { titular: string; cnpj: string | null; validoAte: string; diasRestantes: number }
 let cacheValidade: { em: number; chave: string; valor: ValidadeCertificado | null } | null = null;
 
 export async function validadeCertificadoA1(): Promise<ValidadeCertificado | null> {
@@ -127,7 +128,8 @@ export async function validadeCertificadoA1(): Promise<ValidadeCertificado | nul
           if (!cert?.valid_to) return encerrar(null);
           const fim = new Date(cert.valid_to);
           const cn = (Array.isArray(cert.subject?.CN) ? cert.subject.CN[0] : cert.subject?.CN) || '';
-          encerrar({ titular: String(cn).split(':')[0], validoAte: fim.toISOString(), diasRestantes: Math.floor((fim.getTime() - Date.now()) / 86400000) });
+          const cnpjTitular = (String(cn).split(':')[1] || '').replace(/\D/g, '');
+          encerrar({ titular: String(cn).split(':')[0], cnpj: cnpjTitular.length === 14 ? cnpjTitular : null, validoAte: fim.toISOString(), diasRestantes: Math.floor((fim.getTime() - Date.now()) / 86400000) });
         });
         socket.on('error', () => { clearTimeout(timer); encerrar(null); });
       });
@@ -649,4 +651,66 @@ export async function baixarInfracaoSenatran(params: { chave: string; placa: str
       site_receipt: texto(d.site_receipt),
     },
   };
+}
+
+// ===========================================================================
+// SENATRAN – Pedágio Eletrônico (Free Flow) – Listagem
+// Passagens EM ABERTO da empresa (cnpj) no período (padrão da fonte: último
+// mês). Paginada; cada página é cobrada (~R$ 0,32). Não paga nada — o
+// pagamento é no site/app da concessionária.
+// ===========================================================================
+export interface PassagemPedagio {
+  chave: string; placa: string; datahora: string | null; portico: string | null; concessionaria: string | null;
+  valor: number | null; data_limite_pagamento: string | null; situacao: string | null;
+}
+
+// "02/10/2026 10:00:00" (horário de Brasília) → ISO
+function dataHoraBrParaIso(v: unknown): string | null {
+  const m = String(v ?? '').match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m || Number(m[3]) < 1900) return null;
+  return new Date(`${m[3]}-${m[2]}-${m[1]}T${m[4]}:${m[5]}:${m[6] || '00'}-03:00`).toISOString();
+}
+
+export async function consultarPedagiosSenatran(params: { cnpj: string; dataInicio: string; dataFim: string; maxPaginas?: number }): Promise<{ ok: boolean; erro?: string; passagens: PassagemPedagio[]; paginas: number; totalRegistros: number; preco: number; respostas: unknown[]; codigo: number | null }> {
+  const servico = 'senatran/pedagio/listagem';
+  const login = camposLoginGovBr();
+  if (!login) return { ok: false, erro: 'Falta o login GOV.BR (certificado A1) no servidor.', passagens: [], paginas: 0, totalRegistros: 0, preco: 0, respostas: [], codigo: null };
+  const maxPaginas = params.maxPaginas ?? 10;
+  const passagens: PassagemPedagio[] = [];
+  const respostas: unknown[] = [];
+  let preco = 0, paginas = 0, totalRegistros = 0, totalPaginas = 1, codigo: number | null = null;
+
+  for (let pagina = 1; pagina <= Math.min(totalPaginas, maxPaginas); pagina++) {
+    const r = await chamarInfosimples(servico, {
+      cnpj: soDigitosLocal(params.cnpj), pagina: String(pagina), data_inicio: params.dataInicio, data_fim: params.dataFim, ...login,
+    });
+    preco += r.preco || 0;
+    codigo = r.codigo;
+    respostas.push(r.resposta);
+    if (!r.ok) {
+      // Sem passagem no período a fonte pode responder "não encontrado" — trata como lista vazia.
+      if (pagina === 1 && r.codigo === 612) return { ok: true, passagens: [], paginas: 1, totalRegistros: 0, preco, respostas, codigo };
+      return { ok: false, erro: r.mensagem, passagens, paginas, totalRegistros, preco, respostas, codigo };
+    }
+    paginas++;
+    const d = r.dados[0] || {};
+    totalPaginas = Number(d.total_paginas) || 1;
+    totalRegistros = Number(d.total_registros) || 0;
+    (Array.isArray(d.passagens) ? (d.passagens as Registro[]) : []).forEach(p => {
+      const chave = texto(p.chave_passagem);
+      if (!chave) return;
+      passagens.push({
+        chave,
+        placa: String(p.placa ?? '').toUpperCase().replace(/[^A-Z0-9]/g, ''),
+        datahora: dataHoraBrParaIso(p.datahora),
+        portico: texto(p.portico_entrada),
+        concessionaria: texto(p.concessionaria),
+        valor: p.normalizado_valor_cobrado != null ? valorNumerico(p.normalizado_valor_cobrado) : (p.valor_cobrado != null ? valorNumerico(p.valor_cobrado) : null),
+        data_limite_pagamento: dataBrParaIso(p.data_limite_pagamento),
+        situacao: texto(p.situacao),
+      });
+    });
+  }
+  const incompleto = totalPaginas > maxPaginas;
+  return { ok: true, erro: incompleto ? `Há ${totalPaginas} páginas; foram lidas só ${maxPaginas}.` : undefined, passagens, paginas, totalRegistros, preco: Math.round(preco * 100) / 100, respostas, codigo };
 }

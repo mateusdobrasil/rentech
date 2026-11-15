@@ -37,9 +37,27 @@ interface Empresa {
   razao_social: string | null;
   cnpj: string | null;
   ativo: boolean;
+  // Entrou por .sql/Pendentes/empresas_fonte_recebimentos.sql — ausente
+  // enquanto o SQL não roda (a tela esconde o campo nesse caso).
+  fonte_recebimentos?: 'P2S' | 'EXTERNA';
+  // CNPJs extras de "Centros" do PrimeStart que são desta empresa (além do
+  // CNPJ do cadastro) — .sql/Pendentes/empresas_cnpjs_p2s.sql, lido pelos
+  // syncs via app/lib/empresaP2s.ts. Ausente enquanto o SQL não roda.
+  cnpjs_p2s?: string[];
 }
 
-const empresaFormPadrao = { nome: '', razao_social: '', cnpj: '', ativo: true };
+// De onde vêm os recebimentos da empresa — lido pelo Relatório do Diretor
+// (app/lib/diretoria/indicadoresDiarios.ts).
+const FONTES_RECEBIMENTOS = [
+  { valor: 'P2S', rotulo: 'PrimeStart (P2S)', ajuda: 'Recebido, a receber e inadimplência saem do contas a receber do P2S.' },
+  { valor: 'EXTERNA', rotulo: 'Outra fonte (não integrada)', ajuda: 'O Relatório do Diretor ignora o contas a receber do P2S desta empresa.' },
+] as const;
+
+const empresaFormPadrao: { nome: string; razao_social: string; cnpj: string; ativo: boolean; fonte_recebimentos: 'P2S' | 'EXTERNA'; cnpjs_p2s: string } =
+  { nome: '', razao_social: '', cnpj: '', ativo: true, fonte_recebimentos: 'P2S', cnpjs_p2s: '' };
+
+// "34.075.821/0001-09, 10.353.694/0001-02" → ['34075821000109', '10353694000102'] (só CNPJs completos)
+const listaCnpjs = (texto: string) => [...new Set(texto.split(/[,;\n]+/).map(c => somenteDigitos(c)).filter(c => c.length === 14))];
 
 export default function EmpresasPage() {
   const router = useRouter();
@@ -89,8 +107,11 @@ export default function EmpresasPage() {
     setTimeout(() => setFeedback({ show: false, msg: '', type: 'success' }), 3000);
   };
 
+  const colunaFonteExiste = empresas.some(e => e.fonte_recebimentos !== undefined);
+  const colunaCnpjsP2sExiste = empresas.some(e => e.cnpjs_p2s !== undefined);
+
   const prepararEdicao = (e: Empresa) => {
-    setForm({ nome: e.nome, razao_social: e.razao_social || '', cnpj: mascararCnpjDigitando(e.cnpj || ''), ativo: e.ativo });
+    setForm({ nome: e.nome, razao_social: e.razao_social || '', cnpj: mascararCnpjDigitando(e.cnpj || ''), ativo: e.ativo, fonte_recebimentos: e.fonte_recebimentos === 'EXTERNA' ? 'EXTERNA' : 'P2S', cnpjs_p2s: (e.cnpjs_p2s || []).map(formatarCnpj).join(', ') });
     setEditandoId(e.id);
   };
 
@@ -109,6 +130,8 @@ export default function EmpresasPage() {
         razao_social: form.razao_social.trim() || null,
         cnpj: somenteDigitos(form.cnpj) || null,
         ativo: form.ativo,
+        ...(colunaFonteExiste ? { fonte_recebimentos: form.fonte_recebimentos } : {}),
+        ...(colunaCnpjsP2sExiste ? { cnpjs_p2s: listaCnpjs(form.cnpjs_p2s) } : {}),
       };
 
       let error;
@@ -243,6 +266,23 @@ export default function EmpresasPage() {
               <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">CNPJ</label>
               <input type="text" inputMode="numeric" placeholder="00.000.000/0000-00" maxLength={18} value={form.cnpj} onChange={e => setForm({ ...form, cnpj: mascararCnpjDigitando(e.target.value) })} className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699]" />
             </div>
+            {colunaCnpjsP2sExiste && (
+              <div>
+                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Outros CNPJs no PrimeStart (P2S)</label>
+                <textarea rows={2} placeholder="Ex: 34.075.821/0001-09" value={form.cnpjs_p2s} onChange={e => setForm({ ...form, cnpjs_p2s: e.target.value })}
+                  className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699] resize-none" />
+                <p className="text-[10px] text-gray-400 mt-1">Centros do P2S que também são desta empresa, além do CNPJ acima. Separe por vírgula. Títulos e fichas desses CNPJs entram nesta empresa.</p>
+              </div>
+            )}
+            {colunaFonteExiste && (
+              <div>
+                <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Fonte dos recebimentos</label>
+                <select value={form.fonte_recebimentos} onChange={e => setForm({ ...form, fonte_recebimentos: e.target.value as 'P2S' | 'EXTERNA' })} className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699]">
+                  {FONTES_RECEBIMENTOS.map(f => <option key={f.valor} value={f.valor}>{f.rotulo}</option>)}
+                </select>
+                <p className="text-[10px] text-gray-400 mt-1">{FONTES_RECEBIMENTOS.find(f => f.valor === form.fonte_recebimentos)?.ajuda}</p>
+              </div>
+            )}
             <label className="flex items-center gap-2 font-bold text-xs text-[#0C1D4D] cursor-pointer select-none">
               <input type="checkbox" checked={form.ativo} onChange={e => setForm({ ...form, ativo: e.target.checked })} className="w-4 h-4 accent-[#336699]" />
               Empresa ativa
@@ -296,6 +336,9 @@ export default function EmpresasPage() {
                       <td className="p-4">
                         <strong className="block text-[#0C1D4D] font-black uppercase tracking-tight">{e.nome}</strong>
                         <span className="text-xs text-[#64748B] font-bold">{e.razao_social || '—'}</span>
+                        {e.fonte_recebimentos === 'EXTERNA' && (
+                          <span className="block mt-1 text-[9px] font-black uppercase text-amber-700">Recebimentos: outra fonte</span>
+                        )}
                       </td>
                       <td className="p-4 text-xs text-gray-600 font-mono">{formatarCnpj(e.cnpj || '') || '—'}</td>
                       <td className="p-4 text-center text-xs font-bold text-gray-600">{funcionariosPorEmpresa[e.id] || 0}</td>

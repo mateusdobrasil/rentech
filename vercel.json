@@ -19,6 +19,30 @@
     {
       "path": "/api/cron/multas-prazos",
       "schedule": "*/20 11-12 * * 1"
+    },
+    {
+      "path": "/api/cron/pedagios",
+      "schedule": "0 13 * * 1,4"
+    },
+    {
+      "path": "/api/cron/sync-p2s?rodada=diretoria",
+      "schedule": "30 12 * * *"
+    },
+    {
+      "path": "/api/cron/diretoria",
+      "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron/diretoria-semanal",
+      "schedule": "0 11 * * 1"
+    },
+    {
+      "path": "/api/cron/diretoria-alertas",
+      "schedule": "0 15,21 * * *"
+    },
+    {
+      "path": "/api/cron/diretoria-mensal",
+      "schedule": "0 11 1 * *"
     }
   ]
 }

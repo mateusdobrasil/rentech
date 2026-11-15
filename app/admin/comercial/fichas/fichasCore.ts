@@ -23,6 +23,8 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { consultarObjetos, buscarObjeto, criterio, p2sParaData, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
 import { obterCursorIncremental, registrarSincronizacao, calcularProximoCursor, cursorParaSerialP2s } from '../../../lib/syncLog';
+import { resolverCentrosP2s, empresaIdDoCentroP2s } from '../../../lib/empresaP2s';
+import type { LinhaEmpresa } from '../../../lib/empresa';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -94,19 +96,9 @@ export interface SincronizarFichasReservaOpcoes {
   diasRetroativos?: number;
 }
 
-// Cada ficha pertence a um "Centro" no P2S (um por CNPJ do grupo) — o nome já
-// resolvido (mapaNomes) é comparado, nos dois sentidos, com o nome cadastrado
-// da empresa. Sem correspondência, fica null (tratado como "de todas" no
-// resto do sistema) — nunca assume uma empresa que não bateu por nome.
-function empresaIdPorCentro(nomeCentro: string | null, empresas: { id: number; nome: string }[]): number | null {
-  if (!nomeCentro) return null;
-  const upperCentro = nomeCentro.toUpperCase();
-  const match = empresas.find(e => {
-    const upperNome = e.nome.toUpperCase();
-    return upperCentro.includes(upperNome) || upperNome.includes(upperCentro);
-  });
-  return match?.id ?? null;
-}
+// Cada ficha pertence a um "Centro" no P2S (um por CNPJ do grupo). A empresa
+// sai do CNPJ desse centro (app/lib/empresaP2s.ts) — até 2026-11-15 saía só
+// do nome, e o centro "ELITE" (CNPJ da nossa Alfa Light) ficava sem empresa.
 
 // Puxa as Fichas de Reserva de Locação emitidas nos últimos N dias direto do
 // PrimeStart e grava (upsert por "numero") na mesma tabela fichas_reserva
@@ -146,21 +138,24 @@ export async function sincronizarFichasReservaCore(opcoes: SincronizarFichasRese
     const oidsItensEstoque = resultado.objectlist.flatMap(o =>
       (Array.isArray(o.Itens) ? o.Itens : []).map((item: any) => refOuNull(item?.ItemEstoque))
     );
-    const [mapaNomes, { data: empresasData }] = await Promise.all([
+    const [mapaNomes, centros, { data: empresasData }] = await Promise.all([
       resolverNomes(ambiente, [
-        ...resultado.objectlist.flatMap(o => [refOuNull(o.Parceiro), refOuNull(o.Evento), refOuNull(o.VendedorRep), refOuNull(o.Centro)]),
+        ...resultado.objectlist.flatMap(o => [refOuNull(o.Parceiro), refOuNull(o.Evento), refOuNull(o.VendedorRep)]),
         ...oidsItensEstoque,
       ]),
-      db.from('empresas').select('id, nome').eq('ativo', true),
+      resolverCentrosP2s(ambiente, resultado.objectlist.map(o => refOuNull(o.Centro))),
+      // '*' de propósito: cnpjs_p2s entra por SQL e não pode quebrar o sync antes dele.
+      db.from('empresas').select('*').eq('ativo', true),
     ]);
-    const empresas = empresasData || [];
+    const empresas = (empresasData || []) as LinhaEmpresa[];
 
     const registros = resultado.objectlist.map(o => {
       const parceiroOid = refOuNull(o.Parceiro);
       const eventoOid = refOuNull(o.Evento);
       const vendedorOid = refOuNull(o.VendedorRep);
       const centroOid = refOuNull(o.Centro);
-      const nomeCentro = centroOid ? (mapaNomes.get(centroOid) || null) : null;
+      const centro = centroOid ? centros.get(centroOid) : undefined;
+      const nomeCentro = centro?.nome ?? null;
       return {
         numero: String(o.Numero || o.oid),
         status: String(o.Status || '') || null,
@@ -176,7 +171,7 @@ export async function sincronizarFichasReservaCore(opcoes: SincronizarFichasRese
         valor_itens: Number(o.ValorTotalItens) || null,
         vendedor: vendedorOid ? (mapaNomes.get(vendedorOid) || null) : null,
         centro: nomeCentro,
-        empresa_id: empresaIdPorCentro(nomeCentro, empresas),
+        empresa_id: empresaIdDoCentroP2s(centro, empresas),
         observacoes: String(o.Observacoes || '') || null,
         status_faturamento: String(o.StatusUltimoFaturamento || '') || null,
         faturamento_suspenso: String(o.FaturamentoSuspenso) === 'true',

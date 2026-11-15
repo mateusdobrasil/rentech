@@ -4,7 +4,7 @@
 // (/admin/operacional/multas via actions-multas.ts). Sem "use server" de
 // propósito: quem chama é responsável por validar acesso/empresa antes.
 import { supabaseAdmin } from './supabase';
-import { consultarDebitosVeiculo, consultarInfracoesSenatran, baixarInfracaoSenatran, type DebitoConsultado } from './consultaDebitosVeiculares';
+import { consultarDebitosVeiculo, consultarInfracoesSenatran, baixarInfracaoSenatran, consultarPedagiosSenatran, validadeCertificadoA1, type DebitoConsultado } from './consultaDebitosVeiculares';
 import { resolverProvedor, enviarComJanela, type TemplateMeta } from './whatsapp';
 import { registrarLogAuditoria } from '../actions';
 import { formatarMoeda, formatarDataBR } from './formatadores';
@@ -470,4 +470,123 @@ export async function sincronizarPagamentoOps(db: Db): Promise<number> {
     if (!error) atualizadas += alvo.length;
   }
   return atualizadas;
+}
+
+// ---------------------------------------------------------------------------
+// Pedágios Free Flow (SENATRAN) — aba "Pedágios" em /admin/operacional/multas
+// Consulta por CNPJ (o do certificado A1 — e-CNPJ da empresa), frota inteira
+// numa chamada. A fonte só lista passagens EM ABERTO: o que estava aberto
+// aqui, dentro do período consultado, e sumiu da lista foi pago.
+// ---------------------------------------------------------------------------
+const DIAS_PEDAGIO = 45; // prazo de pagamento do Free Flow é ~30 dias; folga pra pegar atrasadas
+
+export interface ResultadoPedagios { ok: boolean; erro?: string; encontrados: number; novos: number; baixados: number; preco: number; aviso?: string }
+
+const pedagiosEmAndamento = { ativo: false };
+
+export async function atualizarPedagios(db: Db, usuario: string): Promise<ResultadoPedagios> {
+  const vazio = { encontrados: 0, novos: 0, baixados: 0, preco: 0 };
+  if (pedagiosEmAndamento.ativo) return { ...vazio, ok: false, erro: 'Já existe uma consulta de pedágios em andamento.' };
+  pedagiosEmAndamento.ativo = true;
+  try {
+    const cert = await validadeCertificadoA1();
+    if (!cert?.cnpj) return { ...vazio, ok: false, erro: 'Consulta de pedágios precisa do certificado A1 (e-CNPJ) da empresa configurado no servidor.' };
+    if (cert.diasRestantes < 0) return { ...vazio, ok: false, erro: `O certificado A1 de ${cert.titular} venceu — renove para consultar os pedágios.` };
+
+    const { data: empresas } = await db.from('empresas').select('id, cnpj');
+    const empresa = ((empresas || []) as { id: number; cnpj: string | null }[]).find(e => (e.cnpj || '').replace(/\D/g, '') === cert.cnpj);
+    const empresaId = empresa?.id ?? null;
+
+    const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    const inicio = new Date(new Date(`${hoje}T12:00:00`).getTime() - DIAS_PEDAGIO * 86400000).toISOString().slice(0, 10);
+    const r = await consultarPedagiosSenatran({ cnpj: cert.cnpj, dataInicio: inicio, dataFim: hoje });
+
+    const registrar = async (ok: boolean, mensagem: string, encontrados: number, novos: number, baixados: number) => {
+      await db.from('frota_multas_consultas').insert([{
+        empresa_id: empresaId, veiculo_id: null, provedor: 'INFOSIMPLES', servico: 'senatran/pedagio/listagem',
+        status: ok ? 'OK' : 'ERRO', codigo: r.codigo, mensagem: mensagem.slice(0, 2000), encontrados, novos, baixados,
+        preco: r.preco, resposta: r.respostas[0] ?? null, consultado_por: usuario,
+      }]);
+    };
+
+    if (!r.ok) {
+      await registrar(false, r.erro || 'Falha na consulta', 0, 0, 0);
+      return { ...vazio, ok: false, erro: r.erro, preco: r.preco };
+    }
+
+    const { data: veics } = await db.from('frota_veiculos').select('id, placa, empresa_id');
+    const veiculoPorPlaca = new Map(((veics || []) as { id: string; placa: string | null; empresa_id: number | null }[])
+      .filter(v => v.placa).map(v => [v.placa!.toUpperCase().replace(/[^A-Z0-9]/g, ''), v]));
+
+    let q = db.from('frota_pedagios').select('id, chave_passagem, status, baixa_automatica, datahora');
+    if (empresaId) q = q.eq('empresa_id', empresaId);
+    const { data: existentesData } = await q;
+    type Ex = { id: string; chave_passagem: string; status: string; baixa_automatica: boolean; datahora: string | null };
+    const existentes = new Map(((existentesData || []) as Ex[]).map(e => [e.chave_passagem, e]));
+
+    const agora = new Date().toISOString();
+    const vistas = new Set<string>();
+    let novos = 0;
+    for (const p of r.passagens) {
+      vistas.add(p.chave);
+      const v = veiculoPorPlaca.get(p.placa);
+      const campos = {
+        empresa_id: empresaId ?? v?.empresa_id ?? null, veiculo_id: v?.id ?? null, placa: p.placa,
+        datahora: p.datahora, portico: p.portico, concessionaria: p.concessionaria, valor: p.valor,
+        data_limite_pagamento: p.data_limite_pagamento, situacao_origem: p.situacao, ultima_consulta_em: agora, updated_at: agora,
+      };
+      const atual = existentes.get(p.chave);
+      if (atual) {
+        // Voltou a aparecer depois de baixa automática → em aberto de novo.
+        // "Paguei" marcado à mão é respeitado (o pagamento pode levar dias pra refletir).
+        const reabrir = atual.status === 'PAGO' && atual.baixa_automatica;
+        await db.from('frota_pedagios').update({
+          ...campos, ...(reabrir ? { status: 'ABERTO', baixa_automatica: false, pago_em: null, pago_por: null } : {}),
+        }).eq('id', atual.id);
+      } else {
+        const { error } = await db.from('frota_pedagios').insert([{ ...campos, chave_passagem: p.chave, status: 'ABERTO', primeira_consulta_em: agora }]);
+        if (!error) novos++;
+      }
+    }
+
+    // Baixa: só se a listagem veio completa e só passagens dentro do período consultado.
+    let baixados = 0;
+    if (!r.erro) {
+      const inicioMs = new Date(`${inicio}T00:00:00-03:00`).getTime();
+      const sumiram = ((existentesData || []) as Ex[]).filter(e =>
+        e.status === 'ABERTO' && !vistas.has(e.chave_passagem) && e.datahora && new Date(e.datahora).getTime() >= inicioMs);
+      if (sumiram.length) {
+        const { error } = await db.from('frota_pedagios').update({
+          status: 'PAGO', baixa_automatica: true, pago_em: agora, pago_por: 'SENATRAN (saiu dos pendentes)', updated_at: agora,
+        }).in('id', sumiram.map(e => e.id));
+        if (!error) baixados = sumiram.length;
+      }
+    }
+
+    await registrar(true, `${r.passagens.length} passagem(ns) em aberto; ${novos} nova(s); ${baixados} paga(s)${r.erro ? ` — ${r.erro}` : ''}`, r.passagens.length, novos, baixados);
+    registrarLogAuditoria({
+      usuario_nome: usuario, acao: 'CONSULTOU PEDÁGIOS FREE FLOW (SENATRAN)', setor: 'OPERACIONAL',
+      equipamento_nome: `${r.passagens.length} em aberto, ${novos} nova(s), ${baixados} paga(s)`,
+    });
+    return { ok: true, encontrados: r.passagens.length, novos, baixados, preco: r.preco, aviso: r.erro };
+  } finally {
+    pedagiosEmAndamento.ativo = false;
+  }
+}
+
+// Fonte de dados PEDAGIOS_A_PAGAR (motor de automações): passagens em aberto
+// com prazo de pagamento entre hoje e daqui a 3 dias. Lê da tabela — sem custo.
+export async function montarContextoPedagiosAPagar(empresaId: number | null): Promise<{ lista: string; quantidade: number } | null> {
+  const db = supabaseAdmin();
+  const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  const limite = new Date(new Date(`${hoje}T12:00:00`).getTime() + 3 * 86400000).toISOString().slice(0, 10);
+  let q = db.from('frota_pedagios').select('placa, concessionaria, portico, valor, data_limite_pagamento, datahora')
+    .eq('status', 'ABERTO').gte('data_limite_pagamento', hoje).lte('data_limite_pagamento', limite)
+    .order('data_limite_pagamento', { ascending: true });
+  if (empresaId) q = q.or(`empresa_id.is.null,empresa_id.eq.${empresaId}`);
+  const { data } = await q;
+  const linhas = (data || []) as { placa: string; concessionaria: string | null; portico: string | null; valor: number | null; data_limite_pagamento: string; datahora: string | null }[];
+  if (!linhas.length) return null;
+  const lista = linhas.map(p => `• ${p.placa} — ${p.concessionaria || 'concessionária'} (${p.portico || 'pórtico'}) — ${p.valor != null ? fmtBRL(Number(p.valor)) : 'valor em processamento'} — pagar até ${fmtDataBR(p.data_limite_pagamento)}`).join('\n');
+  return { lista, quantidade: linhas.length };
 }

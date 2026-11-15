@@ -9,6 +9,12 @@ import { sincronizarParceirosCore, sincronizarColaboradoresCore } from '../../..
 import { sincronizarFichasReservaCore } from '../../../admin/comercial/fichas/fichasCore';
 import { sincronizarEventosFeirasCore } from '../../../admin/comercial/eventos-feiras/eventosCore';
 import { sincronizarContasPagarCore } from '../../../admin/financeiro/contas-pagar/contasPagarCore';
+import { sincronizarContasReceberCore } from '../../../admin/financeiro/contas-receber/contasReceberCore';
+
+// 7 integrações em sequência contra o servidor on-premise da P2S — contas a
+// pagar sozinho já leva ~1 min. Roda também às 9h30 (BR), meia hora antes do
+// Relatório do Diretor (app/api/cron/diretoria), pra ele ler dado fresco.
+export const maxDuration = 300;
 
 // Chave do card "Sincronização PrimeStart (P2S)" em /admin/parametros/agendamentos
 // (ver sql/sync_p2s_automacao.sql) — esse card não dispara mensagem nenhuma
@@ -18,12 +24,12 @@ import { sincronizarContasPagarCore } from '../../../admin/financeiro/contas-pag
 const CHAVE_CARD_CONTROLE = 'sync-p2s';
 
 // Rotina duas vezes ao dia (ver vercel.json, agendada para 14h/20h UTC =
-// 11h/17h BR) que roda as 6 sincronizações com o PrimeStart já usadas nos
+// 11h/17h BR) que roda as 7 sincronizações com o PrimeStart já usadas nos
 // botões "Sincronizar agora" de cada tela. Cada uma roda isolada em seu
-// próprio try/catch — uma integração falhando não impede as outras 5 de
+// próprio try/catch — uma integração falhando não impede as outras 6 de
 // rodar. Sequencial (não Promise.all) de propósito, mesmo estilo já usado
 // nos syncs individuais, pra não sobrecarregar o servidor on-premise da P2S
-// com uma rajada de 6 sincronizações simultâneas.
+// com uma rajada de 7 sincronizações simultâneas.
 export async function GET(request: Request) {
   const authHeader = request.headers.get('authorization');
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -49,6 +55,7 @@ export async function GET(request: Request) {
     { nome: 'fichas_reserva', fn: () => sincronizarFichasReservaCore() },
     { nome: 'eventos_feiras', fn: () => sincronizarEventosFeirasCore() },
     { nome: 'contas_pagar', fn: () => sincronizarContasPagarCore() },
+    { nome: 'contas_receber', fn: () => sincronizarContasReceberCore() },
   ];
 
   const resultados: Record<string, any> = {};

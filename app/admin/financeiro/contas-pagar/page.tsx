@@ -175,7 +175,7 @@ export default function ContasPagarPage() {
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
             <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Sincronizar via API</h2>
             <p className="text-xs text-[#64748B] mb-4">
-              Puxa direto do PrimeStart (produção) as contas a pagar já quitadas dos últimos 3 meses (sem limite pra frente) e as em aberto com vencimento a partir de hoje. Contas em aberto já vencidas (antes de hoje) não são trazidas. Sem tela de upload manual — essa integração é só via API.
+              Puxa direto do PrimeStart (produção) as contas a pagar já quitadas com vencimento nos últimos ~13 meses (sem limite pra frente) e as em aberto com vencimento a partir de hoje. Contas em aberto já vencidas (antes de hoje) não são trazidas. Sem tela de upload manual — essa integração é só via API.
             </p>
             <button
               onClick={sincronizarViaApi}

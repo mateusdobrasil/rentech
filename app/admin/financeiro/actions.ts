@@ -302,9 +302,10 @@ export async function painelFinanceiroAction(accessToken: string): Promise<Resul
 
   const db = supabaseAdmin();
   try {
-    const [acessoOps, acessoContas] = await Promise.all([
+    const [acessoOps, acessoContas, acessoReceber] = await Promise.all([
       validarAcesso(accessToken, '/admin/financeiro/ops'),
       validarAcesso(accessToken, '/admin/financeiro/contas-pagar'),
+      validarAcesso(accessToken, '/admin/financeiro/contas-receber'),
     ]);
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     const hoje = hojeIsoBrasilia();
@@ -347,7 +348,25 @@ export async function painelFinanceiroAction(accessToken: string): Promise<Resul
       }
     }
 
-    return { ok: true, info: { hoje, ops, contasPagar } };
+    // Contas a receber (P2S) — vencido até 1 ano (acima disso é baixa
+    // pendente, fica na tela própria) e a vencer em 7 dias, nas empresas do usuário.
+    let contasReceber: { vencidas: ValorQtd; vencendo7d: ValorQtd } | null = null;
+    if (acessoReceber.ok) {
+      const umAno = somarDias(hoje, -365);
+      const linhas = await buscarTodas<any>((de, ate) => {
+        let q = db.from('financeiro_contas_receber').select('valor_final, data_vencimento, empresa_id')
+          .eq('quitado', false).gte('data_vencimento', umAno).lte('data_vencimento', em7Dias).range(de, ate);
+        if (empresasPermitidas) q = q.in('empresa_id', empresasPermitidas.length ? empresasPermitidas : [0]);
+        return q;
+      });
+      contasReceber = { vencidas: vazio(), vencendo7d: vazio() };
+      for (const c of linhas) {
+        const venc = String(c.data_vencimento).slice(0, 10);
+        somar(venc < hoje ? contasReceber.vencidas : contasReceber.vencendo7d, c.valor_final);
+      }
+    }
+
+    return { ok: true, info: { hoje, ops, contasPagar, contasReceber } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

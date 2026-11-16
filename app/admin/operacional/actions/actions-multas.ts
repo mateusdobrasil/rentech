@@ -16,7 +16,7 @@
 // empresa é o obterEmpresasPermitidas/empresaPermitida explícito em cada
 // action, como no resto do sistema.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
+import { validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida, possuiAcessoRota } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
 import { provedorConfigurado, validadeCertificadoA1, prefeituraSpConfigurada, consultarBoletosPrefeituraSP, consultarPenalidadesDerSP } from '../../../lib/consultaDebitosVeiculares';
 import { normalizarBoleto, formatarLinhaDigitavel } from '../../../lib/boletoMulta';
@@ -26,6 +26,8 @@ import { extrairTextoNativoPdf } from '../../../lib/textract';
 import { formatarMoeda } from '../../../lib/formatadores';
 
 const ROTA = '/admin/operacional/multas';
+// Quem acessa o controle vê também os veículos restritos (exibir_em_multas = false).
+const ROTA_CONTROLE = '/admin/operacional/multas/controle';
 // "Criar OP" abre /admin/op/nova?multaIds=... — quem está na tela da OP
 // precisa conseguir carregar os dados do débito (regra: acesso à página
 // libera os botões dela).
@@ -40,6 +42,7 @@ export interface VeiculoMultas {
   id: string; apelido: string; placa: string; renavam: string | null; tipo: string | null;
   empresa_id: number | null; propriedade: string | null; status: string | null; exibir_na_frota: boolean | null;
   ultima_consulta: { consultado_em: string; status: 'OK' | 'ERRO'; mensagem: string | null; consultado_por: string | null } | null;
+  restrito: boolean; // exibir_em_multas = false (só aparece pra quem acessa o controle)
   // Da última consulta OK (dados que o Detran já devolve junto dos débitos).
   situacao: {
     consultado_em: string; restricao_administrativa: string | null; restricao_financeira: string | null;
@@ -94,16 +97,30 @@ const COLUNAS_DEBITO = 'id, empresa_id, veiculo_id, tipo, origem, fonte, descric
 async function autorizar(accessToken: string, rotas: string[] = [ROTA]) {
   const acesso = await validarAcessoAlgumaRota(accessToken, rotas);
   if (!acesso.ok) return { ok: false as const, erro: acesso.message };
-  const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
-  return { ok: true as const, perfil: acesso.perfil, empresasPermitidas };
+  const [empresasPermitidas, privilegiado] = await Promise.all([
+    obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada),
+    possuiAcessoRota(acesso.perfil.permissaoNormalizada, ROTA_CONTROLE),
+  ]);
+  return { ok: true as const, perfil: acesso.perfil, empresasPermitidas, privilegiado };
 }
 
+// Veículos restritos (frota_veiculos.exibir_em_multas = false — ex.: carros da
+// diretoria): só quem acessa a rota de controle vê o veículo e tudo dele.
+// Leitura tolerante: sem a coluna (SQL ainda não rodado) ninguém é restrito.
+async function idsVeiculosRestritos(db: ReturnType<typeof supabaseAdmin>): Promise<Set<string>> {
+  const { data, error } = await db.from('frota_veiculos').select('id').eq('exibir_em_multas', false);
+  if (error || !data) return new Set();
+  return new Set((data as { id: string }[]).map(v => v.id));
+}
+const MSG_RESTRITO = 'Este veículo é restrito — só quem tem acesso ao controle de Multas pode ver.';
+
 // Carrega o débito e confere a empresa — barra IDOR (id de outra empresa).
-async function carregarDebitoAutorizado(db: ReturnType<typeof supabaseAdmin>, id: string, empresasPermitidas: number[] | null) {
+async function carregarDebitoAutorizado(db: ReturnType<typeof supabaseAdmin>, id: string, empresasPermitidas: number[] | null, privilegiado = false) {
   const { data, error } = await db.from('frota_multas_debitos').select(COLUNAS_DEBITO).eq('id', id).maybeSingle();
   if (error) return { ok: false as const, erro: error.message };
   if (!data) return { ok: false as const, erro: 'Débito não encontrado.' };
   if (!empresaPermitida(empresasPermitidas, data.empresa_id)) return { ok: false as const, erro: 'Você não tem acesso a este débito.' };
+  if (!privilegiado && (await idsVeiculosRestritos(db)).has((data as { veiculo_id: string }).veiculo_id)) return { ok: false as const, erro: MSG_RESTRITO };
   return { ok: true as const, debito: data as unknown as Omit<DebitoMulta, 'op'> };
 }
 
@@ -161,7 +178,9 @@ export async function carregarPainelMultasAction(accessToken: string): Promise<R
     if (debitosRes.error) throw new Error(debitosRes.error.message);
     if (consultasRes.error) throw new Error(consultasRes.error.message);
 
-    const consultas = (consultasRes.data || []) as ConsultaMulta[];
+    const restritos = await idsVeiculosRestritos(db);
+    const visivel = (veiculoId: string | null | undefined) => auth.privilegiado || !veiculoId || !restritos.has(veiculoId);
+    const consultas = ((consultasRes.data || []) as ConsultaMulta[]).filter(c => visivel(c.veiculo_id));
     const ultimaPorVeiculo = new Map<string, ConsultaMulta>();
     // "Última consulta" do card = a do Detran (o log tem também Senatran, boleto e leituras por IA).
     consultas.filter(c => c.servico === 'detran/sp/debitos')
@@ -172,18 +191,19 @@ export async function carregarPainelMultasAction(accessToken: string): Promise<R
       .forEach(s => { if (!situacaoPorVeiculo.has(s.veiculo_id)) situacaoPorVeiculo.set(s.veiculo_id, s); });
 
     const veiculos: VeiculoMultas[] = (veiculosRes.data || [])
-      .filter((v: any) => v.status !== 'INATIVO')
+      .filter((v: any) => v.status !== 'INATIVO' && visivel(v.id))
       .map((v: any) => {
         const u = ultimaPorVeiculo.get(v.id);
         return {
           ...v,
+          restrito: restritos.has(v.id),
           ultima_consulta: u ? { consultado_em: u.consultado_em, status: u.status, mensagem: u.mensagem, consultado_por: u.consultado_por } : null,
           situacao: situacaoPorVeiculo.get(v.id) || null,
         };
       });
 
     // OP vinculada (a mais recente não reprovada; se só houver reprovada, mostra ela)
-    const debitosBase = (debitosRes.data || []) as unknown as Omit<DebitoMulta, 'op'>[];
+    const debitosBase = ((debitosRes.data || []) as unknown as Omit<DebitoMulta, 'op'>[]).filter(d => visivel(d.veiculo_id));
     const ids = debitosBase.map(d => d.id);
     const opPorDebito = new Map<string, DebitoMulta['op']>();
     if (ids.length) {
@@ -211,13 +231,13 @@ export async function carregarPainelMultasAction(accessToken: string): Promise<R
         .select('id, empresa_id, veiculo_id, placa, chave_passagem, datahora, portico, concessionaria, valor, data_limite_pagamento, situacao_origem, status, baixa_automatica, pago_em, pago_por, primeira_consulta_em, ultima_consulta_em')
         .order('data_limite_pagamento', { ascending: true, nullsFirst: false }).limit(500), auth.empresasPermitidas);
       if (pe) pedagiosDisponivel = false;
-      else pedagios = ((pd || []) as unknown as PedagioFreeFlow[]).map(p => ({ ...p, valor: p.valor == null ? null : Number(p.valor) }));
+      else pedagios = ((pd || []) as unknown as PedagioFreeFlow[]).filter(p => visivel(p.veiculo_id)).map(p => ({ ...p, valor: p.valor == null ? null : Number(p.valor) }));
     }
 
     const empresas = ((empresasRes.data || []) as { id: number; nome: string }[])
       .filter(e => !auth.empresasPermitidas || auth.empresasPermitidas.includes(e.id));
 
-    return { ok: true, info: { veiculos, debitos, consultas, empresas, provedorConfigurado: provedorConfigurado(), certificado, leituraConfigurada: leituraConfigurada(), prefeituraSpConfigurada: prefeituraSpConfigurada(), pedagios, pedagiosDisponivel } };
+    return { ok: true, info: { veiculos, debitos, consultas, empresas, provedorConfigurado: provedorConfigurado(), certificado, leituraConfigurada: leituraConfigurada(), prefeituraSpConfigurada: prefeituraSpConfigurada(), pedagios, pedagiosDisponivel, privilegiado: auth.privilegiado } };
   } catch (e) {
     return { ok: false, erro: e instanceof Error ? e.message : String(e) };
   }
@@ -236,6 +256,7 @@ export async function consultarDebitosVeiculoAction(params: { veiculoId: string 
     .select('id, apelido, placa, renavam, empresa_id, propriedade').eq('id', params.veiculoId).maybeSingle();
   if (!veiculo) return { ok: false, erro: 'Veículo não encontrado.' };
   if (!empresaPermitida(auth.empresasPermitidas, veiculo.empresa_id)) return { ok: false, erro: 'Você não tem acesso a este veículo.' };
+  if (!auth.privilegiado && (await idsVeiculosRestritos(db)).has(veiculo.id)) return { ok: false, erro: MSG_RESTRITO };
 
   const r = await executarConsultaVeiculo(db, veiculo, usuario);
   if (!r.ok) return { ok: false, erro: r.erro };
@@ -250,7 +271,7 @@ export async function sugerirCondutorAction(params: { debitoId: string }, access
   if (!auth.ok) return { ok: false, erro: auth.erro };
   const db = supabaseAdmin();
 
-  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas, auth.privilegiado);
   if (!r.ok) return { ok: false, erro: r.erro };
   const d = r.debito;
 
@@ -324,7 +345,7 @@ export async function definirCondutorAction(params: { debitoId: string; condutor
   const db = supabaseAdmin();
   const usuario = auth.perfil.nome.toUpperCase();
 
-  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas, auth.privilegiado);
   if (!r.ok) return { ok: false, erro: r.erro };
   if (r.debito.tipo !== 'MULTA') return { ok: false, erro: 'Condutor só se aplica a multa.' };
   if (r.debito.desconto_lancado_em) return { ok: false, erro: 'O desconto em folha já foi lançado para este condutor — ajuste/exclua o desconto no Holerite antes de trocar o condutor.' };
@@ -361,7 +382,7 @@ export async function lancarDescontoFolhaAction(params: { debitoId: string; parc
   const db = supabaseAdmin();
   const usuario = auth.perfil.nome.toUpperCase();
 
-  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas, auth.privilegiado);
   if (!r.ok) return { ok: false, erro: r.erro };
   const d = r.debito;
 
@@ -414,7 +435,7 @@ export async function avisarCondutorAction(params: { debitoId: string }, accessT
   const auth = await autorizar(accessToken);
   if (!auth.ok) return { ok: false, erro: auth.erro };
   const db = supabaseAdmin();
-  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas, auth.privilegiado);
   if (!r.ok) return { ok: false, erro: r.erro };
   const res = await enviarAvisoCondutor(db, params.debitoId, auth.perfil.nome.toUpperCase());
   return res.ok ? { ok: true } : { ok: false, erro: res.erro };
@@ -430,7 +451,7 @@ export async function atualizarStatusDebitoAction(params: { debitoId: string; st
   const usuario = auth.perfil.nome.toUpperCase();
 
   if (!['ABERTO', 'PAGO', 'CANCELADO'].includes(params.status)) return { ok: false, erro: 'Status inválido.' };
-  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas, auth.privilegiado);
   if (!r.ok) return { ok: false, erro: r.erro };
 
   const agora = new Date().toISOString();
@@ -455,7 +476,7 @@ export async function salvarObservacaoDebitoAction(params: { debitoId: string; o
   const auth = await autorizar(accessToken);
   if (!auth.ok) return { ok: false, erro: auth.erro };
   const db = supabaseAdmin();
-  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas, auth.privilegiado);
   if (!r.ok) return { ok: false, erro: r.erro };
   const { error } = await db.from('frota_multas_debitos')
     .update({ observacao: params.observacao.trim() || null, updated_at: new Date().toISOString() }).eq('id', params.debitoId);
@@ -485,6 +506,7 @@ export async function salvarDebitoManualAction(params: {
   const { data: veiculo } = await db.from('frota_veiculos').select('id, empresa_id, apelido, placa').eq('id', params.veiculoId).maybeSingle();
   if (!veiculo) return { ok: false, erro: 'Veículo não encontrado.' };
   if (!empresaPermitida(auth.empresasPermitidas, veiculo.empresa_id)) return { ok: false, erro: 'Você não tem acesso a este veículo.' };
+  if (!auth.privilegiado && (await idsVeiculosRestritos(db)).has(veiculo.id)) return { ok: false, erro: MSG_RESTRITO };
 
   const auto = params.autoInfracao?.trim().toUpperCase() || null;
   const campos = {
@@ -503,7 +525,7 @@ export async function salvarDebitoManualAction(params: {
   };
 
   if (params.id) {
-    const r = await carregarDebitoAutorizado(db, params.id, auth.empresasPermitidas);
+    const r = await carregarDebitoAutorizado(db, params.id, auth.empresasPermitidas, auth.privilegiado);
     if (!r.ok) return { ok: false, erro: r.erro };
     if (r.debito.origem !== 'MANUAL') return { ok: false, erro: 'Só lançamentos manuais podem ser editados (os da consulta são atualizados pelo Detran).' };
     const { error } = await db.from('frota_multas_debitos').update(campos).eq('id', params.id);
@@ -532,7 +554,7 @@ export async function excluirDebitoManualAction(params: { debitoId: string }, ac
   const auth = await autorizar(accessToken);
   if (!auth.ok) return { ok: false, erro: auth.erro };
   const db = supabaseAdmin();
-  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas, auth.privilegiado);
   if (!r.ok) return { ok: false, erro: r.erro };
   if (r.debito.origem !== 'MANUAL') return { ok: false, erro: 'Débito da consulta não pode ser excluído — use "Cancelar".' };
   if (r.debito.desconto_lancado_em) return { ok: false, erro: 'Já tem desconto lançado em folha — use "Cancelar" e ajuste o desconto no Holerite.' };
@@ -566,7 +588,7 @@ export async function obterDadosPagamentoMultaAction(params: { ids: string[] }, 
 
   const debitos: Omit<DebitoMulta, 'op'>[] = [];
   for (const id of ids) {
-    const r = await carregarDebitoAutorizado(db, id, auth.empresasPermitidas);
+    const r = await carregarDebitoAutorizado(db, id, auth.empresasPermitidas, auth.privilegiado);
     if (!r.ok) return { ok: false, erro: r.erro };
     if (r.debito.status !== 'ABERTO') {
       return { ok: false, erro: `Este débito está ${r.debito.status === 'PAGO' ? 'pago' : 'cancelado'} (${r.debito.auto_infracao || r.debito.descricao || r.debito.tipo}) — não dá pra gerar OP.` };
@@ -671,11 +693,12 @@ export async function lerNotificacaoMultaAction(params: { caminho: string }, acc
   let veiculoId: string | null = null;
   let veiculoDescricao: string | null = null;
   let empresaVeiculo: number | null = null;
+  const restritosLeitura = await idsVeiculosRestritos(db);
   const placaLida = normPlaca(d.placa);
   if (placaLida) {
     const { data: veics } = await db.from('frota_veiculos').select('id, apelido, placa, empresa_id');
     const v = ((veics || []) as { id: string; apelido: string; placa: string; empresa_id: number | null }[])
-      .find(x => normPlaca(x.placa) === placaLida && empresaPermitida(auth.empresasPermitidas, x.empresa_id));
+      .find(x => normPlaca(x.placa) === placaLida && empresaPermitida(auth.empresasPermitidas, x.empresa_id) && (auth.privilegiado || !restritosLeitura.has(x.id)));
     if (v) { veiculoId = v.id; veiculoDescricao = `${v.apelido} (${v.placa})`; empresaVeiculo = v.empresa_id; }
   }
   await registrarLeituraIa(db, { veiculoId, empresaId: empresaVeiculo, modelo: leitura.modelo, entrada: leitura.tokensEntrada, saida: leitura.tokensSaida, usuario: auth.perfil.nome.toUpperCase(), referencia: `escaneamento AIT ${d.auto_infracao || '?'}` });
@@ -685,8 +708,8 @@ export async function lerNotificacaoMultaAction(params: { caminho: string }, acc
   const auto = (d.auto_infracao || '').toUpperCase().replace(/\s/g, '');
   if (auto) {
     const { data: dup } = await db.from('frota_multas_debitos')
-      .select('id, tipo, valor, prazo_indicacao_condutor, empresa_id').eq('auto_infracao', auto).limit(1).maybeSingle();
-    if (dup && empresaPermitida(auth.empresasPermitidas, dup.empresa_id)) {
+      .select('id, tipo, valor, prazo_indicacao_condutor, empresa_id, veiculo_id').eq('auto_infracao', auto).limit(1).maybeSingle();
+    if (dup && empresaPermitida(auth.empresasPermitidas, dup.empresa_id) && (auth.privilegiado || !restritosLeitura.has(dup.veiculo_id))) {
       duplicado = { id: dup.id, tipo: dup.tipo, valor: Number(dup.valor), prazo_indicacao_condutor: dup.prazo_indicacao_condutor };
     }
   }
@@ -715,7 +738,7 @@ export async function anexarNotificacaoAction(params: { debitoId: string; notifi
   const auth = await autorizar(accessToken);
   if (!auth.ok) return { ok: false, erro: auth.erro };
   const db = supabaseAdmin();
-  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas, auth.privilegiado);
   if (!r.ok) return { ok: false, erro: r.erro };
   const { error } = await db.from('frota_multas_debitos').update({
     ...(params.notificacaoUrl ? { notificacao_url: params.notificacaoUrl } : {}),
@@ -738,7 +761,7 @@ export async function marcarIndicacaoCondutorAction(params: { debitoId: string; 
   const auth = await autorizar(accessToken);
   if (!auth.ok) return { ok: false, erro: auth.erro };
   const db = supabaseAdmin();
-  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas, auth.privilegiado);
   if (!r.ok) return { ok: false, erro: r.erro };
   if (!params.desfazer && !r.debito.condutor_nome) return { ok: false, erro: 'Defina o condutor antes de marcar a indicação como feita.' };
   const usuario = auth.perfil.nome.toUpperCase();
@@ -790,7 +813,7 @@ export async function salvarBoletoAction(params: { debitoId: string; linhaOuCodi
   const auth = await autorizar(accessToken);
   if (!auth.ok) return { ok: false, erro: auth.erro };
   const db = supabaseAdmin();
-  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas, auth.privilegiado);
   if (!r.ok) return { ok: false, erro: r.erro };
 
   if (!params.linhaOuCodigo?.trim()) {
@@ -821,7 +844,7 @@ export async function buscarBoletoAction(params: { debitoId: string }, accessTok
   const db = supabaseAdmin();
   const usuario = auth.perfil.nome.toUpperCase();
 
-  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas, auth.privilegiado);
   if (!r.ok) return { ok: false, erro: r.erro };
   const alvo = r.debito;
   if (alvo.tipo !== 'MULTA') return { ok: false, erro: 'Busca de boleto só para multa.' };
@@ -946,6 +969,7 @@ export async function buscarPrazosSenatranAction(params: { veiculoId: string }, 
     .select('id, apelido, placa, renavam, empresa_id, propriedade').eq('id', params.veiculoId).maybeSingle();
   if (!veiculo) return { ok: false, erro: 'Veículo não encontrado.' };
   if (!empresaPermitida(auth.empresasPermitidas, veiculo.empresa_id)) return { ok: false, erro: 'Você não tem acesso a este veículo.' };
+  if (!auth.privilegiado && (await idsVeiculosRestritos(db)).has(veiculo.id)) return { ok: false, erro: MSG_RESTRITO };
   const r = await atualizarPrazosSenatran(db, veiculo, auth.perfil.nome.toUpperCase());
   if (!r.ok) return { ok: false, erro: r.erro };
   return { ok: true, info: r };
@@ -960,7 +984,7 @@ export async function dadosIndicacaoCondutorAction(params: { debitoId: string },
   const auth = await autorizar(accessToken);
   if (!auth.ok) return { ok: false, erro: auth.erro };
   const db = supabaseAdmin();
-  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas, auth.privilegiado);
   if (!r.ok) return { ok: false, erro: r.erro };
   const d = r.debito;
   if (d.tipo !== 'MULTA') return { ok: false, erro: 'Indicação de condutor só se aplica a multa.' };
@@ -1033,7 +1057,7 @@ export async function salvarRecursoAction(params: { debitoId: string; status: 'P
   if (!auth.ok) return { ok: false, erro: auth.erro };
   const db = supabaseAdmin();
   const usuario = auth.perfil.nome.toUpperCase();
-  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas);
+  const r = await carregarDebitoAutorizado(db, params.debitoId, auth.empresasPermitidas, auth.privilegiado);
   if (!r.ok) return { ok: false, erro: r.erro };
   const d = r.debito;
   if (d.tipo !== 'MULTA') return { ok: false, erro: 'Recurso só se aplica a multa.' };
@@ -1076,9 +1100,10 @@ export async function marcarPedagioPagoAction(params: { id: string; desfazer?: b
   const auth = await autorizar(accessToken);
   if (!auth.ok) return { ok: false, erro: auth.erro };
   const db = supabaseAdmin();
-  const { data: p } = await db.from('frota_pedagios').select('id, empresa_id, placa, valor').eq('id', params.id).maybeSingle();
+  const { data: p } = await db.from('frota_pedagios').select('id, empresa_id, placa, valor, veiculo_id').eq('id', params.id).maybeSingle();
   if (!p) return { ok: false, erro: 'Passagem não encontrada.' };
   if (!empresaPermitida(auth.empresasPermitidas, p.empresa_id)) return { ok: false, erro: 'Você não tem acesso a esta passagem.' };
+  if (!auth.privilegiado && p.veiculo_id && (await idsVeiculosRestritos(db)).has(p.veiculo_id)) return { ok: false, erro: MSG_RESTRITO };
   const usuario = auth.perfil.nome.toUpperCase();
   const agora = new Date().toISOString();
   const { error } = await db.from('frota_pedagios').update(params.desfazer
@@ -1088,6 +1113,65 @@ export async function marcarPedagioPagoAction(params: { id: string; desfazer?: b
   registrarLogAuditoria({
     usuario_nome: usuario, acao: params.desfazer ? 'REABRIU PEDÁGIO FREE FLOW' : 'MARCOU PEDÁGIO FREE FLOW COMO PAGO', setor: 'OPERACIONAL',
     equipamento_id: p.id, equipamento_nome: `${p.placa} — ${p.valor != null ? fmtBRL(Number(p.valor)) : 'valor em processamento'}`,
+  });
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Página de controle (/admin/operacional/multas/controle): quais veículos
+// aparecem na tela de Multas para a equipe. Só quem acessa a rota de controle.
+// ---------------------------------------------------------------------------
+export interface VeiculoControleMultas {
+  id: string; apelido: string; placa: string | null; tipo: string | null; empresa_id: number | null;
+  propriedade: string | null; status: string | null; exibir_na_frota: boolean | null; exibir_em_multas: boolean;
+  multas_abertas: number; valor_aberto: number; pedagios_abertos: number;
+}
+
+export async function listarVeiculosControleMultasAction(accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken, [ROTA_CONTROLE]);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const { data: veics, error } = await filtrarEmpresa(db.from('frota_veiculos')
+    .select('id, apelido, placa, tipo, empresa_id, propriedade, status, exibir_na_frota, exibir_em_multas').order('apelido'), auth.empresasPermitidas);
+  if (error) {
+    return { ok: false, erro: /exibir_em_multas/.test(error.message) ? 'Falta rodar .sql/Pendentes/operacional_multas_controle_veiculos.sql (coluna exibir_em_multas).' : error.message };
+  }
+  const ids = ((veics || []) as { id: string }[]).map(v => v.id);
+  const [{ data: multas }, pedRes] = await Promise.all([
+    ids.length ? db.from('frota_multas_debitos').select('veiculo_id, valor').eq('status', 'ABERTO').in('veiculo_id', ids) : Promise.resolve({ data: [] }),
+    ids.length ? db.from('frota_pedagios').select('veiculo_id').eq('status', 'ABERTO').in('veiculo_id', ids) : Promise.resolve({ data: [], error: null }),
+  ]);
+  const porVeiculo = new Map<string, { qtd: number; valor: number }>();
+  ((multas || []) as { veiculo_id: string; valor: number }[]).forEach(m => {
+    const a = porVeiculo.get(m.veiculo_id) || { qtd: 0, valor: 0 }; a.qtd++; a.valor += Number(m.valor) || 0; porVeiculo.set(m.veiculo_id, a);
+  });
+  const pedPorVeiculo = new Map<string, number>();
+  (((pedRes as { data: unknown }).data || []) as { veiculo_id: string | null }[]).forEach(p => { if (p.veiculo_id) pedPorVeiculo.set(p.veiculo_id, (pedPorVeiculo.get(p.veiculo_id) || 0) + 1); });
+
+  const veiculos: VeiculoControleMultas[] = ((veics || []) as Omit<VeiculoControleMultas, 'multas_abertas' | 'valor_aberto' | 'pedagios_abertos'>[]).map(v => ({
+    ...v,
+    exibir_em_multas: v.exibir_em_multas !== false,
+    multas_abertas: porVeiculo.get(v.id)?.qtd || 0,
+    valor_aberto: porVeiculo.get(v.id)?.valor || 0,
+    pedagios_abertos: pedPorVeiculo.get(v.id) || 0,
+  }));
+  const { data: empresas } = await db.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+  return { ok: true, info: { veiculos, empresas: empresas || [] } };
+}
+
+export async function salvarVisibilidadeMultasAction(params: { veiculoId: string; exibir: boolean }, accessToken: string): Promise<Resultado> {
+  const auth = await autorizar(accessToken, [ROTA_CONTROLE]);
+  if (!auth.ok) return { ok: false, erro: auth.erro };
+  const db = supabaseAdmin();
+  const { data: v } = await db.from('frota_veiculos').select('id, apelido, placa, empresa_id').eq('id', params.veiculoId).maybeSingle();
+  if (!v) return { ok: false, erro: 'Veículo não encontrado.' };
+  if (!empresaPermitida(auth.empresasPermitidas, v.empresa_id)) return { ok: false, erro: 'Você não tem acesso a este veículo.' };
+  const { error } = await db.from('frota_veiculos').update({ exibir_em_multas: params.exibir }).eq('id', v.id);
+  if (error) return { ok: false, erro: error.message };
+  registrarLogAuditoria({
+    usuario_nome: auth.perfil.nome.toUpperCase(),
+    acao: params.exibir ? 'LIBEROU VEÍCULO NA TELA DE MULTAS' : 'RESTRINGIU VEÍCULO NA TELA DE MULTAS',
+    setor: 'OPERACIONAL', equipamento_id: v.id, equipamento_nome: `${v.apelido} (${v.placa || 's/ placa'})`,
   });
   return { ok: true };
 }

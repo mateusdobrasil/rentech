@@ -14,6 +14,15 @@ type Db = ReturnType<typeof supabaseAdmin>;
 export const CHAVE_AVISO_CONDUTOR = 'multa-aviso-condutor';
 const TEMPLATE_AVISO_CONDUTOR_PADRAO = 'multa_aviso_condutor';
 
+// Veículos restritos na tela de Multas (exibir_em_multas = false — ex.: carros
+// da diretoria): ficam fora dos avisos automáticos pra equipe. Tolerante:
+// sem a coluna, ninguém é restrito.
+export async function idsVeiculosRestritosMultas(db: Db): Promise<Set<string>> {
+  const { data, error } = await db.from('frota_veiculos').select('id').eq('exibir_em_multas', false);
+  if (error || !data) return new Set();
+  return new Set((data as { id: string }[]).map(v => v.id));
+}
+
 const fmtBRL = formatarMoeda;
 const fmtDataBR = (d: string | null | undefined) => formatarDataBR(d, '');
 
@@ -432,13 +441,15 @@ export async function montarContextoPrazoIndicacao(empresaId: number | null): Pr
   const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
   const limite = new Date(new Date(`${hoje}T12:00:00`).getTime() + 7 * 86400000).toISOString().slice(0, 10);
   let q = db.from('frota_multas_debitos')
-    .select('auto_infracao, prazo_indicacao_condutor, condutor_nome, empresa_id, veiculo:frota_veiculos(apelido, placa)')
+    .select('auto_infracao, prazo_indicacao_condutor, condutor_nome, empresa_id, veiculo_id, veiculo:frota_veiculos(apelido, placa)')
     .eq('tipo', 'MULTA').eq('status', 'ABERTO').is('condutor_indicado_em', null)
     .gte('prazo_indicacao_condutor', hoje).lte('prazo_indicacao_condutor', limite)
     .order('prazo_indicacao_condutor', { ascending: true });
   if (empresaId) q = q.or(`empresa_id.is.null,empresa_id.eq.${empresaId}`);
   const { data } = await q;
-  const linhas = ((data || []) as unknown as { auto_infracao: string | null; prazo_indicacao_condutor: string; condutor_nome: string | null; veiculo: { apelido: string; placa: string } | null }[]);
+  const restritos = await idsVeiculosRestritosMultas(db);
+  const linhas = ((data || []) as unknown as { auto_infracao: string | null; prazo_indicacao_condutor: string; condutor_nome: string | null; veiculo_id: string; veiculo: { apelido: string; placa: string } | null }[])
+    .filter(m => !restritos.has(m.veiculo_id));
   if (linhas.length === 0) return null;
   const lista = linhas.map(m => {
     const dias = Math.round((new Date(`${m.prazo_indicacao_condutor}T12:00:00`).getTime() - new Date(`${hoje}T12:00:00`).getTime()) / 86400000);
@@ -580,12 +591,14 @@ export async function montarContextoPedagiosAPagar(empresaId: number | null): Pr
   const db = supabaseAdmin();
   const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
   const limite = new Date(new Date(`${hoje}T12:00:00`).getTime() + 3 * 86400000).toISOString().slice(0, 10);
-  let q = db.from('frota_pedagios').select('placa, concessionaria, portico, valor, data_limite_pagamento, datahora')
+  let q = db.from('frota_pedagios').select('placa, concessionaria, portico, valor, data_limite_pagamento, datahora, veiculo_id')
     .eq('status', 'ABERTO').gte('data_limite_pagamento', hoje).lte('data_limite_pagamento', limite)
     .order('data_limite_pagamento', { ascending: true });
   if (empresaId) q = q.or(`empresa_id.is.null,empresa_id.eq.${empresaId}`);
   const { data } = await q;
-  const linhas = (data || []) as { placa: string; concessionaria: string | null; portico: string | null; valor: number | null; data_limite_pagamento: string; datahora: string | null }[];
+  const restritos = await idsVeiculosRestritosMultas(db);
+  const linhas = ((data || []) as { placa: string; concessionaria: string | null; portico: string | null; valor: number | null; data_limite_pagamento: string; datahora: string | null; veiculo_id: string | null }[])
+    .filter(p => !p.veiculo_id || !restritos.has(p.veiculo_id));
   if (!linhas.length) return null;
   const lista = linhas.map(p => `• ${p.placa} — ${p.concessionaria || 'concessionária'} (${p.portico || 'pórtico'}) — ${p.valor != null ? fmtBRL(Number(p.valor)) : 'valor em processamento'} — pagar até ${fmtDataBR(p.data_limite_pagamento)}`).join('\n');
   return { lista, quantidade: linhas.length };

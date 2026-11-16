@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
-import { atualizarPrazosSenatran, type VeiculoConsulta } from '../../../lib/multasCore';
+import { atualizarPrazosSenatran, idsVeiculosRestritosMultas, type VeiculoConsulta } from '../../../lib/multasCore';
 import { provedorConfigurado, validadeCertificadoA1 } from '../../../lib/consultaDebitosVeiculares';
 import { notificarPush } from '../../../lib/push';
 
@@ -44,11 +44,12 @@ export async function GET(request: Request) {
 
   const resumo: { veiculo: string; ok: boolean; novas: number; prazos: number; erro?: string }[] = [];
   let novasTotal = 0;
+  const restritos = await idsVeiculosRestritosMultas(db);
   for (const v of pendentes) {
     if (Date.now() - inicio > ORCAMENTO_MS) break;
     const r = await atualizarPrazosSenatran(db, v, 'CONSULTA AUTOMÁTICA');
     resumo.push({ veiculo: `${v.apelido} (${v.placa})`, ok: r.ok, novas: r.novas, prazos: r.prazos, erro: r.erro });
-    novasTotal += r.novas;
+    if (!restritos.has(v.id)) novasTotal += r.novas; // restrito fica fora do push da equipe
   }
 
   if (novasTotal > 0) {

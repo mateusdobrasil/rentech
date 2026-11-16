@@ -133,6 +133,8 @@ export default function MultasDebitosPage() {
   const [prefeituraOk, setPrefeituraOk] = useState(false);
   const [pedagios, setPedagios] = useState<PedagioFreeFlow[]>([]);
   const [pedagiosDisponivel, setPedagiosDisponivel] = useState(true);
+  // Acessa /admin/operacional/multas/controle: vê veículos restritos e o botão Gerenciar.
+  const [privilegiado, setPrivilegiado] = useState(false);
   const [lendoNotificacao, setLendoNotificacao] = useState(false);
   const [leitura, setLeitura] = useState<LeituraNotificacao | null>(null);
   const [certificado, setCertificado] = useState<Certificado | null>(null);
@@ -169,6 +171,7 @@ export default function MultasDebitosPage() {
     setPrefeituraOk(!!res.info.prefeituraSpConfigurada);
     setPedagios(res.info.pedagios || []);
     setPedagiosDisponivel(res.info.pedagiosDisponivel !== false);
+    setPrivilegiado(!!res.info.privilegiado);
     setCarregando(false);
   }, [accessToken]);
 
@@ -483,9 +486,16 @@ export default function MultasDebitosPage() {
         <p className="text-rose-800 font-medium text-sm">
           🚨 <strong>Multas e Débitos</strong>. Consulta no Detran-SP, condutor, desconto em folha e pagamento.
         </p>
-        <button onClick={() => router.push('/admin/operacional')} className="shrink-0 text-[10px] md:text-xs font-black bg-white hover:bg-rose-50 border border-rose-200 text-rose-800 px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
-          ⬅ VOLTAR
-        </button>
+        <div className="shrink-0 flex gap-2">
+          {privilegiado && (
+            <button onClick={() => router.push('/admin/operacional/multas/controle')} className="text-[10px] md:text-xs font-black bg-[#336699] hover:bg-[#284B8C] text-white px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
+              ⚙️ Gerenciar
+            </button>
+          )}
+          <button onClick={() => router.push('/admin/operacional')} className="text-[10px] md:text-xs font-black bg-white hover:bg-rose-50 border border-rose-200 text-rose-800 px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
+            ⬅ VOLTAR
+          </button>
+        </div>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 md:px-8 mt-6">
@@ -619,7 +629,7 @@ export default function MultasDebitosPage() {
                           </td>
                           <td className="p-3 whitespace-nowrap font-bold">{ICONE_TIPO[d.tipo]} {LABEL_TIPO[d.tipo]}</td>
                           <td className="p-3 whitespace-nowrap">
-                            <div className="font-bold text-[#0C1D4D]">{v?.apelido || '—'}</div>
+                            <div className="font-bold text-[#0C1D4D]">{v?.apelido || '—'}{v?.restrito && <span title="Veículo restrito — só quem acessa o controle vê" className="ml-1 text-[9px] font-black text-amber-700">🔒</span>}</div>
                             <div className="text-[10px] text-gray-400 font-mono">{v?.placa}</div>
                           </td>
                           <td className="p-3 max-w-[260px]">
@@ -677,7 +687,7 @@ export default function MultasDebitosPage() {
                 <div key={v.id} className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-4 flex flex-col gap-2">
                   <div className="flex justify-between items-start gap-2">
                     <div>
-                      <p className="font-black text-[#0C1D4D] uppercase">{v.apelido}</p>
+                      <p className="font-black text-[#0C1D4D] uppercase">{v.apelido}{v.restrito && <span title="Restrito — não aparece para a equipe" className="ml-1.5 text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 align-middle">🔒 Restrito</span>}</p>
                       <p className="text-xs font-mono text-gray-500">{v.placa || 'sem placa'} · Renavam {v.renavam || '—'}</p>
                     </div>
                     <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${corSeloEmpresa(v.empresa_id)}`}>{v.empresa_id === null ? '🌐 Todas' : empresaNome(v.empresa_id)}</span>

@@ -6,7 +6,8 @@
 // agrega, num só round-trip, números que hoje só apareciam depois de entrar
 // em cada módulo.
 import { supabaseAdmin } from '../../../lib/supabase';
-import { validarAcesso, obterEmpresasPermitidas } from '../../../lib/serverAuth';
+import { validarAcesso, obterEmpresasPermitidas, possuiAcessoRota } from '../../../lib/serverAuth';
+import { idsVeiculosRestritosMultas } from '../../../lib/multasCore';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -44,11 +45,15 @@ export async function painelOperacionalAction(accessToken: string): Promise<Resu
       // Multas e Débitos (/admin/operacional/multas). Se a tabela ainda não
       // existir (SQL não rodado), o Supabase devolve erro em vez de lançar —
       // o cartão só fica zerado, sem derrubar o painel.
-      filtroEmpresa(db.from('frota_multas_debitos').select('valor, data_vencimento').eq('status', 'ABERTO')),
+      filtroEmpresa(db.from('frota_multas_debitos').select('valor, data_vencimento, veiculo_id').eq('status', 'ABERTO')),
     ]);
 
     const hojeIso = hoje.toLocaleDateString('en-CA');
-    const multasAbertas = (multasRes.data || []) as { valor: number; data_vencimento: string | null }[];
+    // Veículo restrito em Multas (exibir_em_multas = false) só conta pra quem acessa o controle.
+    const verRestritos = await possuiAcessoRota(acesso.perfil.permissaoNormalizada, '/admin/operacional/multas/controle');
+    const restritosMultas = verRestritos ? new Set<string>() : await idsVeiculosRestritosMultas(db);
+    const multasAbertas = ((multasRes.data || []) as { valor: number; data_vencimento: string | null; veiculo_id: string }[])
+      .filter(m => !restritosMultas.has(m.veiculo_id));
     const multasDebitosAbertos = multasAbertas.length;
     const multasDebitosValor = multasAbertas.reduce((s, m) => s + (Number(m.valor) || 0), 0);
     const multasDebitosVencidos = multasAbertas.filter(m => m.data_vencimento && m.data_vencimento < hojeIso).length;

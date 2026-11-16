@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
-import { executarConsultaVeiculo, sincronizarPagamentoOps, type VeiculoConsulta } from '../../../lib/multasCore';
+import { executarConsultaVeiculo, sincronizarPagamentoOps, idsVeiculosRestritosMultas, type VeiculoConsulta } from '../../../lib/multasCore';
 import { provedorConfigurado, validadeCertificadoA1 } from '../../../lib/consultaDebitosVeiculares';
 import { dispararAutomacoesPorEventoWhatsApp } from '../../../lib/automacoes';
 import { notificarPush } from '../../../lib/push';
@@ -69,10 +69,13 @@ export async function GET(request: Request) {
   const novosParaAviso: string[] = [];
   let valorNovos = 0;
 
+  // Veículo restrito (diretoria) é consultado normalmente, mas fica fora do aviso pra equipe.
+  const restritos = await idsVeiculosRestritosMultas(db);
   for (const v of pendentes) {
     if (Date.now() - inicio > ORCAMENTO_MS) break;
     const r = await executarConsultaVeiculo(db, v, 'CONSULTA AUTOMÁTICA');
     resumo.push({ veiculo: `${v.apelido} (${v.placa})`, ok: r.ok, novos: r.novos, erro: r.erro });
+    if (restritos.has(v.id)) continue;
     r.novosItens.forEach(n => {
       valorNovos += n.valor;
       novosParaAviso.push(`• ${v.apelido} (${v.placa}): ${n.tipo === 'MULTA' ? `multa ${n.auto_infracao || ''}` : n.descricao || n.tipo} — ${fmtBRL(n.valor)}`);

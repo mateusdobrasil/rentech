@@ -36,6 +36,12 @@ const modulosParametros = [
     cor: 'border-emerald-500/50 hover:border-emerald-500', bgIcon: 'bg-emerald-50 text-emerald-600'
   },
   {
+    titulo: 'Histórico do P2S',
+    descricao: 'Importação de todo o histórico de locações e financeiro do PrimeStart, mês a mês, com o progresso.',
+    icone: '🗄️', link: '/admin/parametros/historico-p2s',
+    cor: 'border-orange-500/50 hover:border-orange-500', bgIcon: 'bg-orange-50 text-orange-600'
+  },
+  {
     titulo: 'Cadastro de Empresas',
     descricao: 'Empresas do Grupo Rentech (CNPJs) usadas para vincular funcionários e restringir acesso.',
     icone: '🏢', link: '/admin/parametros/empresas',

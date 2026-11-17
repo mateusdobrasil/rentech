@@ -113,49 +113,12 @@ export interface SincronizarContasPagarOpcoes {
 // Consequência: "Vencidas" (em aberto com vencimento no passado) continua
 // sem dado aqui de propósito — se precisar disso no futuro, é só adicionar
 // uma 3ª consulta nos mesmos moldes.
-export async function sincronizarContasPagarCore(opcoes: SincronizarContasPagarOpcoes = {}): Promise<Resultado> {
-  const ambiente = opcoes.ambiente || 'PRODUCAO';
-  // ~13 meses de quitadas (era 90 dias até 2026-11-15): o relatório mensal do
-  // Diretor compara com o mesmo mês do ano anterior. A tela pagina no servidor.
-  const diasRetroativos = opcoes.diasRetroativos ?? 400;
-  const iniciadoEm = new Date();
-
-  try {
-    const hojeSerial = Math.floor((Date.now() - Date.UTC(1899, 11, 30)) / 86_400_000);
-    const desde = hojeSerial - diasRetroativos;
-
-    // TCustomContaPagar não tem campo de "última alteração" (testado em
-    // produção, 2026-08-17 — nenhum DataUltimaAlteracaoCadastro nem
-    // equivalente nessa classe) — mesma limitação de TCustomEvento. Sem
-    // isso, não dá pra fazer sincronização incremental de verdade: sempre
-    // busca a janela rolante de N dias por vencimento + quitadas, sem
-    // cursor. A execução ainda é registrada no log (ver app/lib/syncLog.ts),
-    // só sem o ganho de performance que as outras integrações têm.
-    const criteriosQuitadas = [
-      criterio('DataVencimento', 'ge', 'dbl', desde),
-      criterio('FlagQuitado', 'eq', 'bool', true),
-    ];
-    const criteriosAbertasFuturas = [
-      criterio('DataVencimento', 'ge', 'dbl', hojeSerial),
-      criterio('FlagQuitado', 'eq', 'bool', false),
-    ];
-
-    const [resultadoQuitadas, resultadoAbertas] = await Promise.all([
-      consultarObjetos(ambiente, 'TCustomContaPagar', criteriosQuitadas, { order: 'DataVencimento', proxy: true }),
-      consultarObjetos(ambiente, 'TCustomContaPagar', criteriosAbertasFuturas, { order: 'DataVencimento', proxy: true }),
-    ]);
-    const objectlist = [...resultadoQuitadas.objectlist, ...resultadoAbertas.objectlist];
-    const totalEncontradas = resultadoQuitadas.count + resultadoAbertas.count;
-
-    if (objectlist.length === 0) {
-      await registrarSincronizacao({
-        integracao: 'contas_pagar', ambiente, tipo: 'completa',
-        cursorDesde: null, cursorAte: null,
-        encontrados: 0, processados: 0, status: 'sucesso', iniciadoEm,
-      });
-      return { ok: true, info: { processados: 0, totalEncontradas: 0 } };
-    }
-
+/**
+ * Conversão TCustomContaPagar → financeiro_contas_pagar + gravação (upsert por
+ * p2s_oid). Usada pelo sync diário e pela carga histórica (app/lib/historicoP2s.ts).
+ */
+export async function gravarContasPagarP2s(ambiente: AmbienteP2s, objectlist: ObjetoP2s[]): Promise<number> {
+  if (!objectlist.length) return 0;
     const mapaNomes = await resolverNomes(ambiente, objectlist.flatMap(o => [
       refOuNull(o.Entidade), refOuNull(o.FormaPagamento), refOuNull(o.ContaFinanceira),
     ]));
@@ -212,6 +175,53 @@ export async function sincronizarContasPagarCore(opcoes: SincronizarContasPagarO
       if (error) throw new Error(error.message);
       processados += lote.length;
     }
+  return processados;
+}
+
+export async function sincronizarContasPagarCore(opcoes: SincronizarContasPagarOpcoes = {}): Promise<Resultado> {
+  const ambiente = opcoes.ambiente || 'PRODUCAO';
+  // ~13 meses de quitadas (era 90 dias até 2026-11-15): o relatório mensal do
+  // Diretor compara com o mesmo mês do ano anterior. A tela pagina no servidor.
+  const diasRetroativos = opcoes.diasRetroativos ?? 400;
+  const iniciadoEm = new Date();
+
+  try {
+    const hojeSerial = Math.floor((Date.now() - Date.UTC(1899, 11, 30)) / 86_400_000);
+    const desde = hojeSerial - diasRetroativos;
+
+    // TCustomContaPagar não tem campo de "última alteração" (testado em
+    // produção, 2026-08-17 — nenhum DataUltimaAlteracaoCadastro nem
+    // equivalente nessa classe) — mesma limitação de TCustomEvento. Sem
+    // isso, não dá pra fazer sincronização incremental de verdade: sempre
+    // busca a janela rolante de N dias por vencimento + quitadas, sem
+    // cursor. A execução ainda é registrada no log (ver app/lib/syncLog.ts),
+    // só sem o ganho de performance que as outras integrações têm.
+    const criteriosQuitadas = [
+      criterio('DataVencimento', 'ge', 'dbl', desde),
+      criterio('FlagQuitado', 'eq', 'bool', true),
+    ];
+    const criteriosAbertasFuturas = [
+      criterio('DataVencimento', 'ge', 'dbl', hojeSerial),
+      criterio('FlagQuitado', 'eq', 'bool', false),
+    ];
+
+    const [resultadoQuitadas, resultadoAbertas] = await Promise.all([
+      consultarObjetos(ambiente, 'TCustomContaPagar', criteriosQuitadas, { order: 'DataVencimento', proxy: true }),
+      consultarObjetos(ambiente, 'TCustomContaPagar', criteriosAbertasFuturas, { order: 'DataVencimento', proxy: true }),
+    ]);
+    const objectlist = [...resultadoQuitadas.objectlist, ...resultadoAbertas.objectlist];
+    const totalEncontradas = resultadoQuitadas.count + resultadoAbertas.count;
+
+    if (objectlist.length === 0) {
+      await registrarSincronizacao({
+        integracao: 'contas_pagar', ambiente, tipo: 'completa',
+        cursorDesde: null, cursorAte: null,
+        encontrados: 0, processados: 0, status: 'sucesso', iniciadoEm,
+      });
+      return { ok: true, info: { processados: 0, totalEncontradas: 0 } };
+    }
+
+    const processados = await gravarContasPagarP2s(ambiente, objectlist);
 
     await registrarSincronizacao({
       integracao: 'contas_pagar', ambiente, tipo: 'completa',

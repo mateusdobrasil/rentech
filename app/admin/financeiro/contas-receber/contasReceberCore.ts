@@ -55,30 +55,12 @@ async function nomesClientes(ambiente: AmbienteP2s, db: ReturnType<typeof supaba
   return mapa;
 }
 
-export async function sincronizarContasReceberCore(opcoes: SincronizarContasReceberOpcoes = {}): Promise<Resultado> {
-  const ambiente = opcoes.ambiente || 'PRODUCAO';
-  const diasRetroativos = opcoes.diasRetroativosQuitadas ?? 400;
-  const iniciadoEm = new Date();
-
-  try {
-    const hojeSerial = Math.floor((Date.now() - Date.UTC(1899, 11, 30)) / 86_400_000);
-
-    // A API só faz AND entre critérios (ver app/lib/p2s.ts) — duas consultas.
-    // `DataVencimento ge 1` nas abertas tira os registros com data corrompida
-    // (seriais negativos) vistos no Contas a Pagar.
-    const [quitadas, abertas] = await Promise.all([
-      consultarObjetos(ambiente, 'TCustomContaReceber', [
-        criterio('DataVencimento', 'ge', 'dbl', hojeSerial - diasRetroativos),
-        criterio('FlagQuitado', 'eq', 'bool', true),
-      ], { order: 'DataVencimento', proxy: true }),
-      consultarObjetos(ambiente, 'TCustomContaReceber', [
-        criterio('DataVencimento', 'ge', 'dbl', 1),
-        criterio('FlagQuitado', 'eq', 'bool', false),
-      ], { order: 'DataVencimento', proxy: true }),
-    ]);
-    const objectlist = [...quitadas.objectlist, ...abertas.objectlist];
-
-    const db = supabaseAdmin();
+/**
+ * Conversão TCustomContaReceber → linha de financeiro_contas_receber (nomes de
+ * cliente/forma/conta e empresa resolvidos em lote). Usada pelo sync diário e
+ * pela carga histórica (app/lib/historicoP2s.ts).
+ */
+export async function prepararMontagemContasReceber(ambiente: AmbienteP2s, db: ReturnType<typeof supabaseAdmin>, objectlist: ObjetoP2s[]) {
     const empresas = await carregarEmpresasCadastro(db);
     const mapaNomes = await resolverNomes(ambiente, objectlist.flatMap(o => [
       refOuNull(o.FormaPagamento), refOuNull(o.ContaFinanceira),
@@ -124,15 +106,54 @@ export async function sincronizarContasReceberCore(opcoes: SincronizarContasRece
         updated_at: new Date().toISOString(),
       };
     };
+  return montar;
+}
 
-    const registros = objectlist.map(montar);
-    let processados = 0;
-    for (let i = 0; i < registros.length; i += 500) {
-      const lote = registros.slice(i, i + 500);
-      const { error } = await db.from('financeiro_contas_receber').upsert(lote, { onConflict: 'p2s_oid' });
-      if (error) throw new Error(error.message);
-      processados += lote.length;
-    }
+export async function gravarRegistrosContasReceber(db: ReturnType<typeof supabaseAdmin>, registros: Record<string, unknown>[]): Promise<number> {
+  let processados = 0;
+  for (let i = 0; i < registros.length; i += 500) {
+    const lote = registros.slice(i, i + 500);
+    const { error } = await db.from('financeiro_contas_receber').upsert(lote, { onConflict: 'p2s_oid' });
+    if (error) throw new Error(error.message);
+    processados += lote.length;
+  }
+  return processados;
+}
+
+/** Carga histórica: grava um lote de objetos do P2S já consultados. */
+export async function gravarContasReceberP2s(ambiente: AmbienteP2s, objectlist: ObjetoP2s[]): Promise<number> {
+  if (!objectlist.length) return 0;
+  const db = supabaseAdmin();
+  const montar = await prepararMontagemContasReceber(ambiente, db, objectlist);
+  return gravarRegistrosContasReceber(db, objectlist.map(montar));
+}
+
+export async function sincronizarContasReceberCore(opcoes: SincronizarContasReceberOpcoes = {}): Promise<Resultado> {
+  const ambiente = opcoes.ambiente || 'PRODUCAO';
+  const diasRetroativos = opcoes.diasRetroativosQuitadas ?? 400;
+  const iniciadoEm = new Date();
+
+  try {
+    const hojeSerial = Math.floor((Date.now() - Date.UTC(1899, 11, 30)) / 86_400_000);
+
+    // A API só faz AND entre critérios (ver app/lib/p2s.ts) — duas consultas.
+    // `DataVencimento ge 1` nas abertas tira os registros com data corrompida
+    // (seriais negativos) vistos no Contas a Pagar.
+    const [quitadas, abertas] = await Promise.all([
+      consultarObjetos(ambiente, 'TCustomContaReceber', [
+        criterio('DataVencimento', 'ge', 'dbl', hojeSerial - diasRetroativos),
+        criterio('FlagQuitado', 'eq', 'bool', true),
+      ], { order: 'DataVencimento', proxy: true }),
+      consultarObjetos(ambiente, 'TCustomContaReceber', [
+        criterio('DataVencimento', 'ge', 'dbl', 1),
+        criterio('FlagQuitado', 'eq', 'bool', false),
+      ], { order: 'DataVencimento', proxy: true }),
+    ]);
+    const objectlist = [...quitadas.objectlist, ...abertas.objectlist];
+
+    const db = supabaseAdmin();
+    const montar = await prepararMontagemContasReceber(ambiente, db, objectlist);
+    const processados = await gravarRegistrosContasReceber(db, objectlist.map(montar));
 
     // Abertos daqui que não vieram nesta rodada → reconsulta pelo oid.
     const { data: orfaos } = await db

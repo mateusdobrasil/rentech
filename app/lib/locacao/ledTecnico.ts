@@ -13,6 +13,29 @@ export interface EspecLed {
   peso_kg_gabinete?: number | null;
   consumo_w_gabinete?: number | null;
   descricao_tecnica?: string | null;
+  /** true = sem cadastro: gabinete 50×50 cm e resolução pelo pitch do nome */
+  padrao?: boolean;
+}
+
+/** Painel modular vendido por m² ("METROS DE PAINEL DE LED P3 RETO"; subcategoria "PAINEL DE LED"). */
+export function ehPainelLed(p: { nome_item?: string | null; categoria_nome?: string | null; sub_categoria_nome?: string | null } | null | undefined): boolean {
+  if (!p) return false;
+  const nome = (p.nome_item || '').toUpperCase();
+  return /PAINEL DE LED/i.test(p.sub_categoria_nome || '') || /^METROS? DE PAINEL/.test(nome) || (/PAINEL DE LED/i.test(p.categoria_nome || '') && /PAINEL DE LED/.test(nome));
+}
+
+/** Ficha técnica padrão quando o painel não tem cadastro: gabinete 50×50 cm, resolução = 500 mm ÷ pitch (P2.6 → 192 px). */
+export function especPadraoLed(nome?: string | null): EspecLed {
+  const m = /\bP\s?(\d+(?:[.,]\d+)?)/i.exec(nome || '');
+  const pitch = m ? Number(m[1].replace(',', '.')) : 0;
+  const res = pitch > 0 ? Math.round(500 / pitch) : 192;
+  return { pitch_mm: pitch || null, gabinete_largura_cm: 50, gabinete_altura_cm: 50, resolucao_largura_px: res, resolucao_altura_px: res, peso_kg_gabinete: null, consumo_w_gabinete: null, descricao_tecnica: null, padrao: true };
+}
+
+/** Cadastro do produto, ou o padrão se for painel de LED sem cadastro; null se não é painel. */
+export function especDoProduto(cadastro: EspecLed | null | undefined, produto: { nome_item?: string | null; categoria_nome?: string | null; sub_categoria_nome?: string | null } | null | undefined): EspecLed | null {
+  if (cadastro) return cadastro;
+  return ehPainelLed(produto) ? especPadraoLed(produto?.nome_item) : null;
 }
 
 export interface MontagemLed {

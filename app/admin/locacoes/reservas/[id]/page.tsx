@@ -74,6 +74,10 @@ const ROTA = '/admin/locacoes/reservas';
 const EDITAVEIS: StatusFicha[] = ['ORCAMENTO', 'ENVIADO', 'APROVADO', 'RESERVADA'];
 const ROTULO_TIPO: Record<TipoItem, string> = { EQUIPAMENTO: 'Equipamento', KIT: 'Kit', SERVICO: 'Serviço', FRETE: 'Frete', OUTRO: 'Outro' };
 
+// Equipamento/kit (e item do P2S ligado a produto) → Equipamentos; serviço, frete e "outro" livre → Serviços / Extras
+const secaoItem = (i: { tipo: TipoItem; produto_id: number | null }): 'EQUIP' | 'SERV' =>
+  i.tipo === 'EQUIPAMENTO' || i.tipo === 'KIT' || (i.tipo === 'OUTRO' && !!i.produto_id) ? 'EQUIP' : 'SERV';
+
 let seqChave = 0;
 const novaChave = () => `i${Date.now().toString(36)}${(seqChave++).toString(36)}`;
 
@@ -102,6 +106,24 @@ const cabecalhoVazio = (empresaId: number, vendedor: string, vendedorId: number 
   local_entrega: '', endereco_estande: '', data_saida: '', data_montagem: '', data_inicio: '', data_fim: '', data_desmontagem: '', data_retorno: '',
   dias_cobrados: '', validade_orcamento: somarDiasISO(hojeISO(), validadeDias), condicao_pagamento: '', forma_pagamento: '', observacoes: '', observacoes_internas: '', desconto: '',
 });
+
+// Grid de gabinetes do painel de LED (prévia na ficha; a proposta desenha o mesmo).
+function GradeLed({ colunas, linhas }: { colunas: number; linhas: number }) {
+  const maxW = 220, maxH = 90;
+  const lado = Math.max(2, Math.min(maxW / colunas, maxH / linhas));
+  const w = colunas * lado, h = linhas * lado;
+  return (
+    <div className="flex-shrink-0">
+      <svg width={w + 22} height={h + 16} className="block">
+        <rect x={1} y={1} width={w} height={h} fill="#EEF5FF" stroke="#336699" strokeWidth={1.5} />
+        {colunas <= 80 && Array.from({ length: colunas - 1 }, (_, c) => <line key={`c${c}`} x1={1 + (c + 1) * lado} y1={1} x2={1 + (c + 1) * lado} y2={1 + h} stroke="#B8CCE4" strokeWidth={0.6} />)}
+        {linhas <= 60 && Array.from({ length: linhas - 1 }, (_, l) => <line key={`l${l}`} x1={1} y1={1 + (l + 1) * lado} x2={1 + w} y2={1 + (l + 1) * lado} stroke="#B8CCE4" strokeWidth={0.6} />)}
+        <text x={1 + w / 2} y={h + 13} fontSize={9} textAnchor="middle" fill="#64748B">{colunas}</text>
+        <text x={w + 6} y={1 + h / 2 + 3} fontSize={9} fill="#64748B">{linhas}</text>
+      </svg>
+    </div>
+  );
+}
 
 export default function EditorFichaPage() {
   const router = useRouter();
@@ -312,10 +334,15 @@ export default function EditorFichaPage() {
   };
 
   const removerItem = (chave: string) => { setItens(prev => prev.filter(i => i.chave !== chave)); setAlterado(true); setDisp(null); };
+  // move dentro da própria seção (Equipamentos ou Serviços / Extras)
   const moverItem = (chave: string, dir: -1 | 1) => {
     setItens(prev => {
-      const idx = prev.findIndex(i => i.chave === chave); const alvo = idx + dir;
-      if (idx < 0 || alvo < 0 || alvo >= prev.length) return prev;
+      const idx = prev.findIndex(i => i.chave === chave);
+      if (idx < 0) return prev;
+      const sec = secaoItem(prev[idx]);
+      let alvo = idx + dir;
+      while (alvo >= 0 && alvo < prev.length && secaoItem(prev[alvo]) !== sec) alvo += dir;
+      if (alvo < 0 || alvo >= prev.length) return prev;
       const c = [...prev]; [c[idx], c[alvo]] = [c[alvo], c[idx]]; return c;
     });
     setAlterado(true);
@@ -356,7 +383,7 @@ export default function EditorFichaPage() {
     const desc = lerValor(cab.desconto);
     if (Number.isNaN(desc)) return 'Desconto geral inválido.';
     const itensOut = [];
-    for (const i of itens) {
+    for (const i of [...itens.filter(x => secaoItem(x) === 'EQUIP'), ...itens.filter(x => secaoItem(x) === 'SERV')]) {
       const q = lerValor(i.quantidade), vu = lerValor(i.valor_unitario), d = lerValor(i.desconto);
       if (q === null || Number.isNaN(q) || q <= 0) return `Quantidade inválida em "${i.descricao || ROTULO_TIPO[i.tipo]}".`;
       if (Number.isNaN(vu) || Number.isNaN(d)) return `Valor inválido em "${i.descricao || ROTULO_TIPO[i.tipo]}".`;
@@ -519,6 +546,113 @@ export default function EditorFichaPage() {
   const labelCls = 'block text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1';
   const cardCls = 'bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-4 md:p-6';
   const btn = 'px-4 py-2 rounded-lg font-bold uppercase text-[10px] tracking-wider disabled:opacity-40';
+
+  // itens divididos em Equipamentos e Serviços / Extras
+  const itensEquip = itens.filter(i => secaoItem(i) === 'EQUIP');
+  const itensServ = itens.filter(i => secaoItem(i) === 'SERV');
+  const linhaItem = (i: ItemUI, idx: number, total: number) => {
+    const equip = ehEquip(i.tipo);
+    const linhaDisp = i.produto_id ? faltaPorProduto.get(i.produto_id) : undefined;
+    const res = i.id ? alocPorItem.get(i.id) : undefined;
+    return (
+        <tr key={i.chave} className="border-b border-[#F1F5F9] align-top">
+          <td className="p-2 whitespace-nowrap">
+            {editavel && (
+              <span className="flex flex-col text-gray-300">
+                <button onClick={() => moverItem(i.chave, -1)} disabled={idx === 0} className="hover:text-gray-600 disabled:opacity-30 leading-none">▲</button>
+                <button onClick={() => moverItem(i.chave, 1)} disabled={idx === total - 1} className="hover:text-gray-600 disabled:opacity-30 leading-none">▼</button>
+              </span>
+            )}
+          </td>
+          <td className="p-2 min-w-[260px]">
+            <div className="flex items-center gap-2 mb-1">
+              <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase ${equip ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>{ROTULO_TIPO[i.tipo]}</span>
+              {i.controle === 'INDIVIDUAL' && <span className="text-[8px] font-black px-1.5 py-0.5 rounded uppercase bg-slate-100 text-slate-600">patrimônio</span>}
+              {i.produto_codigo && <span className="text-[10px] text-gray-400">{i.produto_codigo}{i.unidade ? ` · ${i.unidade}` : ''}</span>}
+            </div>
+            {equip ? (
+              <p className="font-bold text-[#0C1D4D]">{i.descricao}</p>
+            ) : (
+              <input value={i.descricao} onChange={e => mudarItem(i.chave, { descricao: e.target.value })} disabled={!editavel} placeholder="Descrição"
+                className="w-full border border-[#E2E8F0] rounded px-2 py-1 font-bold text-[#0C1D4D] disabled:bg-transparent disabled:border-transparent" />
+            )}
+            {equip && i.origem && !i.preco_manual && <p className="text-[10px] text-gray-400 mt-0.5">{descreverOrigem(i.origem)}</p>}
+            {equip && i.preco_manual && <p className="text-[10px] text-amber-600 font-bold mt-0.5">preço manual{i.origem ? ` · tabela: ${descreverOrigem(i.origem)}` : ''}</p>}
+            {equip && i.semPreco && !i.preco_manual && <p className="text-[10px] text-red-500 font-bold mt-0.5">⚠ {i.semPreco} — informe o valor</p>}
+            {linhaDisp && (
+              <p className={`text-[10px] font-bold mt-0.5 ${linhaDisp.falta > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                {linhaDisp.falta > 0 ? `✖ faltam ${mostrarQtd(linhaDisp.falta)} (disponível ${mostrarQtd(linhaDisp.disponivel)} de ${mostrarQtd(linhaDisp.capacidade)})` : `✔ disponível (${mostrarQtd(linhaDisp.disponivel)} livres)`}
+              </p>
+            )}
+            {res && <p className="text-[10px] text-emerald-700 mt-0.5">Reservado: {res.pecas.length ? res.pecas.join(', ') : mostrarQtd(res.qtd)}</p>}
+            {i.led && (() => {
+              const m = calcularLed(i.led, lerValor(i.led_largura) || 0, lerValor(i.led_altura) || 0);
+              return (
+                <div className="mt-1.5 bg-blue-50/60 border border-blue-100 rounded-lg p-2">
+                  <div className="flex items-center gap-1 text-[10px] font-bold text-[#0C1D4D]">
+                    Painel:
+                    <input value={i.led_largura} onChange={e => mudarMedidaLed(i, { led_largura: e.target.value })} disabled={!editavel} placeholder="larg." inputMode="decimal" className="w-14 border border-[#CBD5E1] rounded px-1.5 py-0.5 text-right disabled:bg-transparent" />
+                    m ×
+                    <input value={i.led_altura} onChange={e => mudarMedidaLed(i, { led_altura: e.target.value })} disabled={!editavel} placeholder="alt." inputMode="decimal" className="w-14 border border-[#CBD5E1] rounded px-1.5 py-0.5 text-right disabled:bg-transparent" />
+                    m
+                  </div>
+                  {m ? (
+                    <div className="flex flex-col md:flex-row gap-3 mt-1.5 items-start">
+                      <GradeLed colunas={m.colunas} linhas={m.linhas} />
+                      <div>
+                        <p className="text-[10px] text-blue-800">{resumoLed(m)}</p>
+                        {i.led.padrao && <p className="text-[10px] text-amber-700 mt-1">Ficha técnica padrão (gabinete 50 × 50 cm{i.led.pitch_mm ? `, P${String(i.led.pitch_mm).replace('.', ',')}` : ''}). Cadastre o painel em Estoque → Equipamentos para peso, consumo e medidas exatas.</p>}
+                      </div>
+                    </div>
+                  ) : <p className="text-[10px] text-gray-400 mt-1">Informe largura × altura: o sistema monta o grid de gabinetes, a quantidade vira os m² e a proposta traz a ficha técnica.</p>}
+                </div>
+              );
+            })()}
+          </td>
+          <td className="p-1"><input value={i.quantidade} onChange={e => mudarItem(i.chave, { quantidade: e.target.value })} disabled={!editavel} inputMode="decimal" className="w-full border border-[#E2E8F0] rounded px-2 py-1 text-right disabled:bg-transparent disabled:border-transparent" /></td>
+          <td className="p-1">
+            {equip ? (
+              <input value={i.dias} onChange={e => mudarItem(i.chave, { dias: e.target.value.replace(/\D/g, '') }, true)} disabled={!editavel} placeholder={String(diasCobrados)}
+                className="w-full border border-[#E2E8F0] rounded px-2 py-1 text-right disabled:bg-transparent disabled:border-transparent" />
+            ) : <span className="block text-right text-gray-300 px-2 py-1">—</span>}
+          </td>
+          <td className="p-1">
+            <div className="flex items-center gap-1">
+              <input value={i.valor_unitario} onChange={e => mudarItem(i.chave, { valor_unitario: e.target.value, preco_manual: true })} disabled={!editavel} inputMode="decimal"
+                className={`w-full border rounded px-2 py-1 text-right disabled:bg-transparent disabled:border-transparent ${i.preco_manual && equip ? 'border-amber-300 bg-amber-50' : 'border-[#E2E8F0]'}`} />
+              {equip && i.preco_manual && editavel && (
+                <button onClick={() => mudarItem(i.chave, { preco_manual: false }, true)} title="Voltar ao preço da tabela" className="text-[#336699] font-bold text-sm">↺</button>
+              )}
+            </div>
+          </td>
+          <td className="p-1"><input value={i.desconto} onChange={e => mudarItem(i.chave, { desconto: e.target.value })} disabled={!editavel} inputMode="decimal" placeholder="—" className="w-full border border-[#E2E8F0] rounded px-2 py-1 text-right disabled:bg-transparent disabled:border-transparent" /></td>
+          <td className="p-2 text-right font-black text-[#0C1D4D] whitespace-nowrap">{formatarMoeda(totalItem(i))}</td>
+          <td className="p-2">{editavel && <button onClick={() => removerItem(i.chave)} title="Remover" className="text-gray-300 hover:text-red-500 text-lg leading-none">×</button>}</td>
+        </tr>
+    );
+  };
+  const tabelaItens = (lista: ItemUI[], vazio: string) => (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-left text-[10px] font-black text-gray-500 uppercase tracking-wider border-b border-[#E2E8F0]">
+            <th className="p-2 w-14"></th>
+            <th className="p-2">Item</th>
+            <th className="p-2 text-right w-20">Qtd</th>
+            <th className="p-2 text-right w-16">Dias</th>
+            <th className="p-2 text-right w-32">Valor unit.<span className="block text-[8px] normal-case text-gray-400">período todo</span></th>
+            <th className="p-2 text-right w-24">Desconto</th>
+            <th className="p-2 text-right w-28">Total</th>
+            <th className="p-2 w-8"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {lista.length === 0 && <tr><td colSpan={8} className="p-4 text-center text-gray-400">{vazio}</td></tr>}
+          {lista.map((i, idx) => linhaItem(i, idx, lista.length))}
+        </tbody>
+      </table>
+    </div>
+  );
 
   const botoesStatus: { acao: AcaoStatus; rotulo: string; cls: string }[] = [];
   if (!ehNova && !doP2s && acesso) {
@@ -739,108 +873,29 @@ export default function EditorFichaPage() {
               </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-left text-[10px] font-black text-gray-500 uppercase tracking-wider border-b border-[#E2E8F0]">
-                    <th className="p-2 w-14"></th>
-                    <th className="p-2">Item</th>
-                    <th className="p-2 text-right w-20">Qtd</th>
-                    <th className="p-2 text-right w-16">Dias</th>
-                    <th className="p-2 text-right w-32">Valor unit.<span className="block text-[8px] normal-case text-gray-400">período todo</span></th>
-                    <th className="p-2 text-right w-24">Desconto</th>
-                    <th className="p-2 text-right w-28">Total</th>
-                    <th className="p-2 w-8"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {itens.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-gray-400">Nenhum item ainda — busque um equipamento abaixo.</td></tr>}
-                  {itens.map((i, idx) => {
-                    const equip = ehEquip(i.tipo);
-                    const linhaDisp = i.produto_id ? faltaPorProduto.get(i.produto_id) : undefined;
-                    const res = i.id ? alocPorItem.get(i.id) : undefined;
-                    return (
-                      <tr key={i.chave} className="border-b border-[#F1F5F9] align-top">
-                        <td className="p-2 whitespace-nowrap">
-                          {editavel && (
-                            <span className="flex flex-col text-gray-300">
-                              <button onClick={() => moverItem(i.chave, -1)} disabled={idx === 0} className="hover:text-gray-600 disabled:opacity-30 leading-none">▲</button>
-                              <button onClick={() => moverItem(i.chave, 1)} disabled={idx === itens.length - 1} className="hover:text-gray-600 disabled:opacity-30 leading-none">▼</button>
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-2 min-w-[260px]">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase ${equip ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>{ROTULO_TIPO[i.tipo]}</span>
-                            {i.controle === 'INDIVIDUAL' && <span className="text-[8px] font-black px-1.5 py-0.5 rounded uppercase bg-slate-100 text-slate-600">patrimônio</span>}
-                            {i.produto_codigo && <span className="text-[10px] text-gray-400">{i.produto_codigo}{i.unidade ? ` · ${i.unidade}` : ''}</span>}
-                          </div>
-                          {equip ? (
-                            <p className="font-bold text-[#0C1D4D]">{i.descricao}</p>
-                          ) : (
-                            <input value={i.descricao} onChange={e => mudarItem(i.chave, { descricao: e.target.value })} disabled={!editavel} placeholder="Descrição"
-                              className="w-full border border-[#E2E8F0] rounded px-2 py-1 font-bold text-[#0C1D4D] disabled:bg-transparent disabled:border-transparent" />
-                          )}
-                          {equip && i.origem && !i.preco_manual && <p className="text-[10px] text-gray-400 mt-0.5">{descreverOrigem(i.origem)}</p>}
-                          {equip && i.preco_manual && <p className="text-[10px] text-amber-600 font-bold mt-0.5">preço manual{i.origem ? ` · tabela: ${descreverOrigem(i.origem)}` : ''}</p>}
-                          {equip && i.semPreco && !i.preco_manual && <p className="text-[10px] text-red-500 font-bold mt-0.5">⚠ {i.semPreco} — informe o valor</p>}
-                          {linhaDisp && (
-                            <p className={`text-[10px] font-bold mt-0.5 ${linhaDisp.falta > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                              {linhaDisp.falta > 0 ? `✖ faltam ${mostrarQtd(linhaDisp.falta)} (disponível ${mostrarQtd(linhaDisp.disponivel)} de ${mostrarQtd(linhaDisp.capacidade)})` : `✔ disponível (${mostrarQtd(linhaDisp.disponivel)} livres)`}
-                            </p>
-                          )}
-                          {res && <p className="text-[10px] text-emerald-700 mt-0.5">Reservado: {res.pecas.length ? res.pecas.join(', ') : mostrarQtd(res.qtd)}</p>}
-                          {i.led && (() => {
-                            const m = calcularLed(i.led, lerValor(i.led_largura) || 0, lerValor(i.led_altura) || 0);
-                            return (
-                              <div className="mt-1.5 bg-blue-50/60 border border-blue-100 rounded-lg p-2">
-                                <div className="flex items-center gap-1 text-[10px] font-bold text-[#0C1D4D]">
-                                  Painel:
-                                  <input value={i.led_largura} onChange={e => mudarMedidaLed(i, { led_largura: e.target.value })} disabled={!editavel} placeholder="larg." inputMode="decimal" className="w-14 border border-[#CBD5E1] rounded px-1.5 py-0.5 text-right disabled:bg-transparent" />
-                                  m ×
-                                  <input value={i.led_altura} onChange={e => mudarMedidaLed(i, { led_altura: e.target.value })} disabled={!editavel} placeholder="alt." inputMode="decimal" className="w-14 border border-[#CBD5E1] rounded px-1.5 py-0.5 text-right disabled:bg-transparent" />
-                                  m
-                                </div>
-                                {m ? <p className="text-[10px] text-blue-800 mt-1">{resumoLed(m)}</p>
-                                  : <p className="text-[10px] text-gray-400 mt-1">Informe largura × altura: a quantidade vira os m² com gabinetes inteiros e a proposta traz a ficha técnica.</p>}
-                              </div>
-                            );
-                          })()}
-                        </td>
-                        <td className="p-1"><input value={i.quantidade} onChange={e => mudarItem(i.chave, { quantidade: e.target.value })} disabled={!editavel} inputMode="decimal" className="w-full border border-[#E2E8F0] rounded px-2 py-1 text-right disabled:bg-transparent disabled:border-transparent" /></td>
-                        <td className="p-1">
-                          {equip ? (
-                            <input value={i.dias} onChange={e => mudarItem(i.chave, { dias: e.target.value.replace(/\D/g, '') }, true)} disabled={!editavel} placeholder={String(diasCobrados)}
-                              className="w-full border border-[#E2E8F0] rounded px-2 py-1 text-right disabled:bg-transparent disabled:border-transparent" />
-                          ) : <span className="block text-right text-gray-300 px-2 py-1">—</span>}
-                        </td>
-                        <td className="p-1">
-                          <div className="flex items-center gap-1">
-                            <input value={i.valor_unitario} onChange={e => mudarItem(i.chave, { valor_unitario: e.target.value, preco_manual: true })} disabled={!editavel} inputMode="decimal"
-                              className={`w-full border rounded px-2 py-1 text-right disabled:bg-transparent disabled:border-transparent ${i.preco_manual && equip ? 'border-amber-300 bg-amber-50' : 'border-[#E2E8F0]'}`} />
-                            {equip && i.preco_manual && editavel && (
-                              <button onClick={() => mudarItem(i.chave, { preco_manual: false }, true)} title="Voltar ao preço da tabela" className="text-[#336699] font-bold text-sm">↺</button>
-                            )}
-                          </div>
-                        </td>
-                        <td className="p-1"><input value={i.desconto} onChange={e => mudarItem(i.chave, { desconto: e.target.value })} disabled={!editavel} inputMode="decimal" placeholder="—" className="w-full border border-[#E2E8F0] rounded px-2 py-1 text-right disabled:bg-transparent disabled:border-transparent" /></td>
-                        <td className="p-2 text-right font-black text-[#0C1D4D] whitespace-nowrap">{formatarMoeda(totalItem(i))}</td>
-                        <td className="p-2">{editavel && <button onClick={() => removerItem(i.chave)} title="Remover" className="text-gray-300 hover:text-red-500 text-lg leading-none">×</button>}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            {/* EQUIPAMENTOS */}
+            <div className="flex justify-between items-center bg-[#0C1D4D] text-white rounded-lg px-3 py-2 mb-1">
+              <span className="text-[11px] font-black uppercase tracking-wider">Equipamentos{itensEquip.length ? ` · ${itensEquip.length}` : ''}</span>
+              <span className="text-xs font-black">{formatarMoeda(totEquip)}</span>
             </div>
-
+            {tabelaItens(itensEquip, 'Nenhum equipamento ainda — busque abaixo.')}
             {editavel && (
-              <div className="mt-4 grid md:grid-cols-[1fr_auto] gap-2 items-start">
+              <div className="mt-2">
                 <CampoBusca placeholder="+ Adicionar equipamento ou kit: buscar por nome, código ou categoria..." buscar={buscarProdutos} onEscolher={adicionarProduto} />
-                <div className="flex gap-2">
-                  <button onClick={() => adicionarLivre('SERVICO')} className={`${btn} bg-white border border-[#CBD5E1] text-[#0C1D4D] py-2.5`}>+ Serviço</button>
-                  <button onClick={() => adicionarLivre('FRETE')} className={`${btn} bg-white border border-[#CBD5E1] text-[#0C1D4D] py-2.5`}>+ Frete</button>
-                  <button onClick={() => adicionarLivre('OUTRO')} className={`${btn} bg-white border border-[#CBD5E1] text-[#0C1D4D] py-2.5`}>+ Outro</button>
-                </div>
+              </div>
+            )}
+
+            {/* SERVIÇOS / EXTRAS */}
+            <div className="flex justify-between items-center bg-amber-600 text-white rounded-lg px-3 py-2 mb-1 mt-6">
+              <span className="text-[11px] font-black uppercase tracking-wider">Serviços / Extras{itensServ.length ? ` · ${itensServ.length}` : ''}</span>
+              <span className="text-xs font-black">{formatarMoeda(totServ)}</span>
+            </div>
+            {tabelaItens(itensServ, 'Nenhum serviço ou extra (montagem, operação, frete...).')}
+            {editavel && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button onClick={() => adicionarLivre('SERVICO')} className={`${btn} bg-white border border-amber-300 text-amber-800`}>+ Serviço</button>
+                <button onClick={() => adicionarLivre('FRETE')} className={`${btn} bg-white border border-amber-300 text-amber-800`}>+ Frete</button>
+                <button onClick={() => adicionarLivre('OUTRO')} className={`${btn} bg-white border border-amber-300 text-amber-800`}>+ Outro</button>
               </div>
             )}
 

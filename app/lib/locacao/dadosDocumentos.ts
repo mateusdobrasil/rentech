@@ -8,7 +8,8 @@ import { diasInclusivos, hojeISO } from './datas';
 import { numeroFichaPorId } from './fichaNumero';
 import { sugerirParcelas } from '../financeiro/parcelas';
 import { formatarDocumento, nomeCategoria } from './pdfBase';
-import { calcularLed, type EspecLed } from './ledTecnico';
+import { calcularLed, especDoProduto, type EspecLed } from './ledTecnico';
+import { contatoVendedor } from './contatoVendedor';
 import { PROPOSTA_EXTRAS_PADRAO, PROPOSTA_TERMO_PADRAO, CONTRATO_CLAUSULAS_PADRAO, ROTULO_FORMA_PAGAMENTO } from './textosPadrao';
 import { GRUPO_SERVICOS, type DadosPropostaPdf } from './gerarPropostaPdf';
 import type { DadosContratoPdf } from './gerarContratoPdf';
@@ -24,8 +25,8 @@ async function carregarContexto(db: Db, fichaId: number) {
     db.from('empresas').select('*').eq('id', f.empresa_id).single(),
     db.from('parceiros').select('nome_exibicao, nome_completo, cnpj, cpf, inscricao_estadual, endereco1, numero1, complemento1, bairro1, cidade1, estado1, cep1, telefone1, email1').eq('id', f.parceiro_id).maybeSingle(),
     f.evento_id ? db.from('eventos_feiras').select('nome, local').eq('id', f.evento_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
-    db.from('locacao_fichas_reserva_itens').select('*, produto:produtos(codigo_formatado, unidade, categoria_nome)').eq('ficha_id', fichaId).order('ordem'),
-    f.vendedor_id ? db.from('colaboradores').select('nome_exibicao, nome_completo, email1').eq('id', f.vendedor_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    db.from('locacao_fichas_reserva_itens').select('*, produto:produtos(nome_item, codigo_formatado, unidade, categoria_nome, sub_categoria_nome)').eq('ficha_id', fichaId).order('ordem'),
+    contatoVendedor(db, f.vendedor_id, f.vendedor_nome),
     db.from('financeiro_titulos_receber').select('valor, vencimento, status').eq('ficha_id', fichaId).neq('status', 'CANCELADO').order('vencimento'),
   ]);
   for (const r of [rEmp, rCli, rEv, rItens] as any[]) if (r.error) throw r.error;
@@ -53,7 +54,7 @@ async function carregarContexto(db: Db, fichaId: number) {
     for (const r of (data || []) as any[]) led.set(r.produto_id, r as EspecLed);
   }
 
-  const emp: any = rEmp.data, cli: any = rCli.data, ev: any = rEv.data, vend: any = rVend.data;
+  const emp: any = rEmp.data, cli: any = rCli.data, ev: any = rEv.data, vend = rVend;
   const nomeEmp = `${emp?.nome_curto || ''} ${emp?.nome || ''}`.toUpperCase();
   return { f, emp, cli, ev, vend, itens, composicao, led, titulos: (rTit.data || []) as any[], logo: (/ALFA/.test(nomeEmp) ? 'ALFALIGHT' : 'RENTECH') as 'ALFALIGHT' | 'RENTECH' };
 }
@@ -97,9 +98,10 @@ export async function montarDadosProposta(db: Db, fichaId: number, mostrarValore
       montagem: f.data_montagem, desmontagem: f.data_desmontagem, saida: f.data_saida, retorno: f.data_retorno,
     },
     modalidade: MODALIDADE_ROTULO[f.modalidade] || f.modalidade,
-    vendedor: f.vendedor_nome ? { nome: vend ? (vend.nome_exibicao || vend.nome_completo) : f.vendedor_nome, telefone: emp?.telefone || null, email: vend?.email1 || null } : null,
+    // contato da vendedora: Ficha do Funcionário (nossa base), nunca o telefone do P2S
+    vendedor: vend?.nome ? { nome: vend.nome, telefone: vend.celular, email: vend.email } : null,
     itens: itens.map(i => {
-      const espec = i.produto_id ? led.get(i.produto_id) : undefined;
+      const espec = i.produto_id ? especDoProduto(led.get(i.produto_id), i.produto) : null;
       const montagem = espec && n(i.led_largura_m) > 0 && n(i.led_altura_m) > 0 ? calcularLed(espec, n(i.led_largura_m), n(i.led_altura_m)) : null;
       const cat = i.produto?.categoria_nome ? nomeCategoria(i.produto.categoria_nome) : '';
       return {

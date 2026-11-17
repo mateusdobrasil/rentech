@@ -23,7 +23,9 @@ interface FichaLista {
 }
 interface EmpresaOpcao { id: number; nome: string }
 
+// "Todas" é o padrão: a ficha não some da lista quando muda de status (pedido do usuário 2026-11-17).
 const GRUPOS: { chave: string; rotulo: string; status: StatusFicha[] }[] = [
+  { chave: 'todas', rotulo: 'Todas as fichas', status: ['ORCAMENTO', 'ENVIADO', 'APROVADO', 'RESERVADA', 'EM_LOCACAO', 'FINALIZADA', 'PERDIDO', 'CANCELADA'] },
   { chave: 'abertos', rotulo: 'Orçamentos abertos', status: ['ORCAMENTO', 'ENVIADO', 'APROVADO'] },
   { chave: 'reservadas', rotulo: 'Reservadas', status: ['RESERVADA'] },
   { chave: 'locacao', rotulo: 'Em locação', status: ['EM_LOCACAO'] },
@@ -40,7 +42,9 @@ export default function ReservasPage() {
   const [empresas, setEmpresas] = useState<EmpresaOpcao[]>([]);
   const [fichas, setFichas] = useState<FichaLista[]>([]);
   const [carregando, setCarregando] = useState(true);
-  const [grupo, setGrupo] = useState('abertos');
+  const [grupo, setGrupo] = useState('todas');
+  const POR_VEZ = 300;
+  const [mostrando, setMostrando] = useState(POR_VEZ);
   const [filtroEmpresa, setFiltroEmpresa] = useState<number | null>(null);
   const [busca, setBusca] = useState('');
   const [de, setDe] = useState('');
@@ -96,8 +100,10 @@ export default function ReservasPage() {
   const hoje = hojeISO();
   const daEmpresa = fichas.filter(f => filtroEmpresa === null || f.empresa_id === filtroEmpresa);
   const statusDoGrupo = GRUPOS.find(g => g.chave === grupo)?.status || [];
+  // com texto na busca, procura em TODAS as situações (a ficha some do grupo quando muda de status)
+  const buscando = busca.trim().length > 0;
   const visiveis = daEmpresa.filter(f => {
-    if (!statusDoGrupo.includes(f.status)) return false;
+    if (!buscando && !statusDoGrupo.includes(f.status)) return false;
     if (origem && f.origem !== origem) return false;
     if (de && f.data_fim < de) return false;
     if (ate && f.data_inicio > ate) return false;
@@ -118,12 +124,12 @@ export default function ReservasPage() {
 
       <div className="flex-1 overflow-y-auto p-4 md:p-8">
         <div className="max-w-7xl mx-auto space-y-6">
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             {GRUPOS.map(g => {
               const doGrupo = daEmpresa.filter(f => g.status.includes(f.status));
               const soma = doGrupo.reduce((s, f) => s + Number(f.valor_total || 0), 0);
               return (
-                <button key={g.chave} onClick={() => setGrupo(g.chave)}
+                <button key={g.chave} onClick={() => { setGrupo(g.chave); setMostrando(POR_VEZ); }}
                   className={`text-left bg-white p-4 rounded-2xl border shadow-sm hover:shadow-md transition-all min-w-0 ${grupo === g.chave ? 'border-[#336699] ring-1 ring-[#336699]' : 'border-[#E2E8F0]'}`}>
                   <p className="text-2xl font-black text-[#0C1D4D]">{carregando ? '—' : doGrupo.length}</p>
                   <p className="text-[9px] font-black text-gray-500 uppercase tracking-wider mt-1">{g.rotulo}</p>
@@ -168,7 +174,7 @@ export default function ReservasPage() {
 
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-4 md:p-6">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
-              <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">{GRUPOS.find(g => g.chave === grupo)?.rotulo}</h2>
+              <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">{buscando ? 'Busca em todas as situações' : GRUPOS.find(g => g.chave === grupo)?.rotulo}</h2>
               {acesso?.podeCriar && <button onClick={() => router.push('/admin/locacoes/reservas/nova')}
                 className="bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-5 py-2.5 rounded-lg font-bold uppercase text-xs tracking-wider">+ Novo orçamento</button>}
             </div>
@@ -214,7 +220,7 @@ export default function ReservasPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {visiveis.map(f => {
+                    {visiveis.slice(0, mostrando).map(f => {
                       const vencido = (f.status === 'ORCAMENTO' || f.status === 'ENVIADO') && f.validade_orcamento && f.validade_orcamento < hoje;
                       return (
                         <tr key={f.id} onClick={() => router.push(`/admin/locacoes/reservas/${f.id}`)} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC] cursor-pointer">
@@ -238,7 +244,14 @@ export default function ReservasPage() {
                     })}
                   </tbody>
                 </table>
-                <p className="text-[10px] text-gray-400 mt-3">{visiveis.length} ficha(s) · {formatarMoeda(somaVisiveis)}</p>
+                {visiveis.length > mostrando && (
+                  <div className="text-center mt-3">
+                    <button onClick={() => setMostrando(n => n + POR_VEZ)} className="px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider border border-[#CBD5E1] text-[#0C1D4D] hover:bg-[#F8FAFC]">
+                      Mostrar mais ({visiveis.length - mostrando} restantes)
+                    </button>
+                  </div>
+                )}
+                <p className="text-[10px] text-gray-400 mt-3">{visiveis.length} ficha(s){visiveis.length > mostrando ? ` · mostrando ${mostrando}` : ''} · {formatarMoeda(somaVisiveis)}</p>
               </div>
             )}
           </div>

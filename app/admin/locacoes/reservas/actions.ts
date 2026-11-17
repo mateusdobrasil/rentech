@@ -26,6 +26,7 @@ import {
 import { calcularDescontoPct, descontoPendente } from '../../../lib/locacao/descontoFicha';
 import { BUCKET_PROPOSTAS } from './propostaCore';
 import { FORMAS_PAGAMENTO } from '../../../lib/locacao/textosPadrao';
+import { especDoProduto } from '../../../lib/locacao/ledTecnico';
 import { regrasVendedores } from '../../../lib/comercial/comissoes';
 import type { RegraComissao } from '../../../lib/comercial/regraComissao';
 
@@ -180,7 +181,7 @@ export async function carregarFichaAction(id: number, accessToken: string): Prom
 
     const [rItens, rParc, rEv, rHist, rAloc, vendedores, donos] = await Promise.all([
       db.from('locacao_fichas_reserva_itens')
-        .select('*, produto:produtos(nome_item, codigo_formatado, unidade, controle_locacao)').eq('ficha_id', id).order('ordem'),
+        .select('*, produto:produtos(nome_item, codigo_formatado, unidade, controle_locacao, categoria_nome, sub_categoria_nome)').eq('ficha_id', id).order('ordem'),
       db.from('parceiros').select('id, nome_exibicao, nome_completo, cidade1, estado1').eq('id', f.parceiro_id).maybeSingle(),
       f.evento_id ? db.from('eventos_feiras').select('id, nome, data_inicial, data_final, local').eq('id', f.evento_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
       db.from('locacao_fichas_reserva_historico').select('*').eq('ficha_id', id).order('criado_em', { ascending: false }).limit(100),
@@ -210,7 +211,8 @@ export async function carregarFichaAction(id: number, accessToken: string): Prom
           ...i, produto: undefined,
           produto_nome: i.produto?.nome_item || null, produto_codigo: i.produto?.codigo_formatado || null,
           produto_unidade: i.produto?.unidade || null, produto_controle: i.produto?.controle_locacao || null,
-          led_espec: i.produto_id ? leds.get(i.produto_id) || null : null,
+          // painel de LED: cadastro do produto ou padrão (gabinete 50×50, resolução pelo pitch)
+          led_espec: i.produto_id ? especDoProduto(leds.get(i.produto_id), i.produto) : null,
         })),
         cliente: p ? { id: p.id, nome: p.nome_exibicao || p.nome_completo, detalhe: [p.cidade1, p.estado1].filter(Boolean).join('/') } : null,
         evento: ev ? { id: ev.id, nome: ev.nome, detalhe: [ev.data_inicial?.split('-').reverse().join('/'), ev.local].filter(Boolean).join(' · '), extra: ev } : null,
@@ -261,7 +263,7 @@ export async function buscarProdutosFichaAction(texto: string, accessToken: stri
     const { data: kits } = ids.length ? await supabaseAdmin().from('locacao_kit_itens').select('kit_produto_id').in('kit_produto_id', ids) : { data: [] };
     const setKits = new Set((kits || []).map((k: any) => k.kit_produto_id));
     const leds = await especLed(ids);
-    return { ok: true, info: prods.map((p: any) => ({ ...p, eh_kit: setKits.has(p.id), led: leds.get(p.id) || null })) };
+    return { ok: true, info: prods.map((p: any) => ({ ...p, eh_kit: setKits.has(p.id), led: especDoProduto(leds.get(p.id), p) })) };
   } catch (e: any) { return { ok: false, erro: e.message }; }
 }
 

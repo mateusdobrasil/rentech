@@ -14,6 +14,7 @@ import { montarDadosContrato } from '../../../lib/locacao/dadosDocumentos';
 import { numeroFichaPorId } from '../../../lib/locacao/fichaNumero';
 import { acessoLocacao, podeVerCliente, MSG_FICHA_FORA_CARTEIRA } from '../../../lib/locacao/acessoFichas';
 import { BUCKET_PROPOSTAS } from './propostaCore';
+import { contatoVendedor } from '../../../lib/locacao/contatoVendedor';
 import { atualizarContratoPelaAutentique, type SignatarioContrato } from './contratoCore';
 import { ROTULO_PAPEL, PELA_LOCADORA, MAX_ASSINANTES, type PapelAssinante } from '../../../lib/locacao/assinantesContrato';
 
@@ -56,13 +57,13 @@ export async function listarContratosAction(fichaId: number, accessToken: string
   if ('erro' in ctx) return { ok: false, erro: ctx.erro };
   const db = supabaseAdmin();
   try {
-    const [{ data, error }, { data: emp }, { data: vend }] = await Promise.all([
+    const [{ data, error }, { data: emp }, vend] = await Promise.all([
       db.from('locacao_contratos').select('id, versao, status, sandbox, signatarios, valor_total, conteudo_versao, pdf_original_path, pdf_assinado_path, enviado_por, enviado_em, assinado_em, rejeitado_em, motivo_cancelamento')
         .eq('ficha_id', fichaId).order('versao', { ascending: false }),
       db.from('empresas').select('*').eq('id', ctx.ficha.empresa_id).maybeSingle(),
-      ctx.ficha.vendedor_id ? db.from('colaboradores').select('nome_exibicao, nome_completo, email1, telefone1').eq('id', ctx.ficha.vendedor_id).maybeSingle() : Promise.resolve({ data: null }),
+      contatoVendedor(db, ctx.ficha.vendedor_id, ctx.ficha.vendedor_nome),
     ]);
-    const v: any = vend;
+    const v = vend;
     if (error) throw error;
     const e: any = emp || {};
     return {
@@ -70,7 +71,8 @@ export async function listarContratosAction(fichaId: number, accessToken: string
       info: {
         contratos: data || [], conteudoAtual: ctx.ficha.conteudo_alterado_em,
         representante: { nome: e.contrato_representante_nome || '', email: e.contrato_representante_email || '', celular: e.contrato_representante_celular || '' },
-        vendedor: { nome: v ? (v.nome_exibicao || v.nome_completo || '') : (ctx.ficha.vendedor_nome || ''), email: v?.email1 || '', celular: '' },
+        // Ficha do Funcionário (nossa base de colaboradores)
+        vendedor: { nome: v?.nome || '', email: v?.email || '', celular: v?.celular || '' },
         // o que falta no cadastro da empresa para o contrato sair completo
         pendenciasEmpresa: [!e.endereco && 'endereço', !e.cnpj && 'CNPJ', !e.inscricao_estadual && 'inscrição estadual'].filter(Boolean),
       },

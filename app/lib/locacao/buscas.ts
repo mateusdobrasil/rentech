@@ -45,7 +45,7 @@ export async function buscarProdutosLocaveis(db: Db, texto: string) {
   const t = limpar(texto);
   if (t.length < 2) return [];
   const { data, error } = await db.from('produtos')
-    .select('id, nome_item, codigo_formatado, unidade, categoria_nome, controle_locacao')
+    .select('id, nome_item, codigo_formatado, unidade, categoria_nome, sub_categoria_nome, controle_locacao')
     .eq('habilitado_para_locacao', true).eq('flag_em_desuso', false)
     .or(`nome_item.ilike.%${t}%,codigo_formatado.ilike.%${t}%,categoria_nome.ilike.%${t}%`)
     .order('nome_item').limit(40);

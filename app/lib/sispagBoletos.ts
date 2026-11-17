@@ -253,7 +253,9 @@ export function gerarArquivoSispagBoletos(params: {
         );
         registrosLote += 2;
       } else {
-        // Segmento O: código de barras (44 dígitos) no campo X(48), alinhado à esquerda.
+        // Segmento O: código de barras (44 dígitos) no campo X(48), alinhado à
+        // esquerda — o Anexo B do manual v086 (fev/2024) põe os 44 dígitos nas
+        // posições 018–061; 062–065 ficam em branco.
         linhas.push(
           '341' + codLote + '3' + seq + 'O' + '000' + padR(p.boleto.codigo, 48) + padR(nomeFav, 30) + venc +
           'REA' + padL('', 15) + padL(valorPag, 15) + dataPag + padL('', 15) + padR('', 3) + padL('', 9) + padR('', 3) +

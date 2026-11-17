@@ -60,6 +60,12 @@ const modulosFinanceiro = [
     descricao: 'Títulos a receber sincronizados do PrimeStart (P2S) — a vencer, inadimplência por empresa e recebidos.',
     icone: '🧾', link: '/admin/financeiro/contas-receber',
     cor: 'bg-teal-50 border-teal-200 text-teal-700', hover: 'hover:border-teal-500'
+  },
+  {
+    titulo: 'Títulos a Receber (Locação)',
+    descricao: 'Títulos das fichas de reserva (parcelas), das avarias cobradas e avulsos — baixa, vencidos e recebido no mês. Ensaio enquanto o P2S for oficial.',
+    icone: '💵', link: '/admin/financeiro/titulos-receber',
+    cor: 'bg-emerald-50 border-emerald-200 text-emerald-700', hover: 'hover:border-emerald-500'
   }
 ];
 

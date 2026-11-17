@@ -110,6 +110,7 @@ export default function Navbar() {
     { href: '/downloads', label: 'Downloads' },
     { href: '/rotacionar-video', label: 'Rotacionar Vídeo' },
     { href: '/portal/login', label: 'Portal do Funcionário' },
+    { href: '/cliente', label: 'Portal do Cliente' },
   ];
 
   const socialmedia = [

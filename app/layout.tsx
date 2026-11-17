@@ -30,7 +30,7 @@ export const metadata = {
 //    A flag é marcada em localStorage por app/mobile-bridge/page.tsx, no
 //    mesmo navegador/origem da WebView, antes de qualquer página do site
 //    carregar.
-const ROTAS_COM_HEADER_ALFALIGHT = ['/', '/freelance', '/login', '/admin', '/portal'];
+const ROTAS_COM_HEADER_ALFALIGHT = ['/', '/freelance', '/login', '/admin', '/portal', '/cliente'];
 const HIDE_NAVBAR_SCRIPT = `
   try {
     if (location.hostname === 'portal.alfalight.com.br') {

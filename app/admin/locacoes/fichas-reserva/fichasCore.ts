@@ -1,4 +1,4 @@
-// app/admin/comercial/fichas/fichasCore.ts
+// app/admin/locacoes/fichas-reserva/fichasCore.ts
 // Lógica de negócio do sync de Fichas de Reserva, SEM "use server" —
 // importada tanto por actions.ts (que expõe a versão protegida por
 // accessToken pra UI) quanto por app/api/cron/sync-p2s/route.ts (rotina

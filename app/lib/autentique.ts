@@ -16,7 +16,7 @@ function getToken(): string {
 export interface CriarDocumentoParams {
   nomeDocumento: string;      // ex: "Holerite 06/2026 — João da Silva"
   signatarioNome: string;
-  signatarioCpf: string;      // exigido na validação
+  signatarioCpf?: string;     // trava a assinatura a este CPF (RH/OP). Omitido = sem trava (ex.: proposta para cliente PJ)
   signatarioCelular?: string; // formato E.164, ex: +5511990000000 (envio via WhatsApp)
   signatarioEmail?: string;   // alternativa ao celular
   pdfBuffer: Uint8Array;      // conteúdo do PDF do holerite (Buffer é um Uint8Array)
@@ -39,10 +39,8 @@ export async function autentiqueCriarDocumento(p: CriarDocumentoParams): Promise
   // Monta o signatário. Prioriza WhatsApp se houver celular; senão e-mail.
   // A validação por CPF vai em configs.cpf (garante que só aquele CPF assina) —
   // NÃO em security_verifications, que é para biometria/documento com foto.
-  const signer: any = {
-    action: 'SIGN',
-    configs: { cpf: p.signatarioCpf }
-  };
+  const signer: any = { action: 'SIGN' };
+  if (p.signatarioCpf) signer.configs = { cpf: p.signatarioCpf };
   if (p.signatarioCelular) {
     signer.phone = p.signatarioCelular;
     signer.delivery_method = 'DELIVERY_METHOD_WHATSAPP';

@@ -6,7 +6,8 @@ import { supabaseAdmin } from '../../../lib/supabase';
 // exigem accessToken de admin. Mesmo padrão de app/api/cron/consignado/route.ts.
 import { sincronizarProdutosCore } from '../../../admin/estoque/produtos/produtosCore';
 import { sincronizarParceirosCore, sincronizarColaboradoresCore } from '../../../admin/comercial/parceiros/parceirosCore';
-import { sincronizarFichasReservaCore } from '../../../admin/comercial/fichas/fichasCore';
+import { sincronizarFichasReservaCore } from '../../../admin/locacoes/fichas-reserva/fichasCore';
+import { importarFichasP2sCore } from '../../../lib/locacao/importarFichasP2s';
 import { sincronizarEventosFeirasCore } from '../../../admin/comercial/eventos-feiras/eventosCore';
 import { sincronizarContasPagarCore } from '../../../admin/financeiro/contas-pagar/contasPagarCore';
 import { sincronizarContasReceberCore } from '../../../admin/financeiro/contas-receber/contasReceberCore';
@@ -53,6 +54,9 @@ export async function GET(request: Request) {
     { nome: 'parceiros', fn: () => sincronizarParceirosCore() },
     { nome: 'colaboradores', fn: () => sincronizarColaboradoresCore() },
     { nome: 'fichas_reserva', fn: () => sincronizarFichasReservaCore() },
+    // Fichas do P2S → locacao_fichas_reserva (somente leitura) + agenda de
+    // disponibilidade. Depois de parceiros/produtos, que ela usa pelo p2s_oid.
+    { nome: 'locacao_fichas_p2s', fn: () => importarFichasP2sCore(db) },
     { nome: 'eventos_feiras', fn: () => sincronizarEventosFeirasCore() },
     { nome: 'contas_pagar', fn: () => sincronizarContasPagarCore() },
     { nome: 'contas_receber', fn: () => sincronizarContasReceberCore() },

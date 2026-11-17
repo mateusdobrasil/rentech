@@ -28,6 +28,24 @@ const modulosEstoque = [
     cor: 'bg-amber-50 border-amber-200 text-amber-700', hover: 'hover:border-amber-500'
   },
   {
+    titulo: 'Equipamentos de Locação',
+    descricao: 'Controle por patrimônio ou quantidade, saldos por empresa, patrimônios com etiqueta QR, kits e carga de saldos do P2S.',
+    icone: '🎛️', link: '/admin/estoque/equipamentos',
+    cor: 'bg-violet-50 border-violet-200 text-violet-700', hover: 'hover:border-violet-500'
+  },
+  {
+    titulo: 'Avarias e Manutenção',
+    descricao: 'OS de manutenção (interna ou fornecedor) com custo e prazo, avarias com fotos e cobrança do cliente.',
+    icone: '🔧', link: '/admin/estoque/manutencao',
+    cor: 'bg-orange-50 border-orange-200 text-orange-700', hover: 'hover:border-orange-500'
+  },
+  {
+    titulo: 'Inventário',
+    descricao: 'Contagem geral ou parcial do estoque (quantidade e QR por patrimônio), divergências em valor e ajuste dos saldos.',
+    icone: '🧮', link: '/admin/estoque/inventario',
+    cor: 'bg-sky-50 border-sky-200 text-sky-700', hover: 'hover:border-sky-500'
+  },
+  {
     titulo: 'Expedição',
     descricao: 'Saída e retorno de equipamentos por evento, vinculado às fichas de reserva.',
     icone: '✅', link: '/admin/estoque/expedicao',

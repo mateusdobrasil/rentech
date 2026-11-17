@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { finalizarAssinaturaOP } from '../../../admin/op/assinaturaOpCore';
+import { processarEventoProposta } from '../../../admin/locacoes/reservas/propostaCore';
 
 type Extraido = {
   docId: string | null;
@@ -148,7 +149,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, status, origem: 'OP' });
     }
 
-    // Nenhuma das duas tabelas tem esse docId — não há o que atualizar.
+    // 3) Proposta de locação (locacao_propostas, 2026-11-16) — assinou:
+    // arquiva o PDF, aprova a ficha e tenta reservar (propostaCore.ts).
+    try {
+      const tratado = await processarEventoProposta(db, dados.docId, {
+        status, visualizadoEm: dados.visualizadoEm, assinadoEm: dados.assinadoEm, rejeitadoEm: dados.rejeitadoEm, trilha,
+      });
+      if (tratado) return NextResponse.json({ ok: true, status, origem: 'PROPOSTA_LOCACAO' });
+    } catch (e: any) {
+      console.error('Webhook Autentique — falha ao processar proposta de locação:', e.message);
+      return NextResponse.json({ ok: false, erro: e.message }, { status: 200 });
+    }
+
+    // Nenhum fluxo tem esse docId — não há o que atualizar.
     return NextResponse.json({ ok: false, motivo: 'docId não encontrado em nenhum fluxo de assinatura' }, { status: 200 });
   } catch (e: any) {
     console.error('Webhook Autentique — erro:', e.message);

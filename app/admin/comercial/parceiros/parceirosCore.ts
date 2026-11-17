@@ -150,6 +150,97 @@ function mapearEnderecos(lista: unknown): EnderecoEnxuto[] | null {
   }));
 }
 
+// Converte TCustomParceiro → linha de parceiros e grava (upsert por p2s_oid).
+// Usada pelo sync completo/incremental e por sincronizarParceirosPorOidsCore.
+export async function gravarParceirosP2s(ambiente: AmbienteP2s, objetos: ObjetoP2s[]): Promise<number> {
+  const refsGrupo = objetos.map(o => refOuTexto(o.GrupoParceiro) || undefined);
+  const mapaNomes = await resolverNomes(ambiente, refsGrupo);
+
+  const registros = objetos.map(o => {
+    const grupoOid = refOuTexto(o.GrupoParceiro);
+
+    return {
+      p2s_oid: o.oid,
+      codigo_parceiro: numOuNull(o.CodigoParceiro),
+      nome_completo: textoOuNull(o.NomeCompleto),
+      nome_exibicao: textoOuNull(o.NomeExibicao),
+      natureza: textoOuNull(o.Natureza),
+      cpf: documentoOuNull(o.CPF),
+      cnpj: documentoOuNull(o.CNPJ),
+      inscricao_estadual: textoOuNull(o.InscricaoEstadual),
+      inscricao_municipal: textoOuNull(o.InscricaoMunicipal),
+
+      flag_cliente: boolP2s(o.FlagCliente),
+      flag_fornecedor: boolP2s(o.FlagFornecedor),
+      flag_transportadora: boolP2s(o.FlagTransportadora),
+      flag_vendedor_rep: boolP2s(o.FlagVendedorRep),
+      flag_intermediador: boolP2s(o.FlagIntermediador),
+      status_parceiro: textoOuNull(o.StatusParceiro),
+
+      grupo_parceiro: grupoOid,
+      grupo_parceiro_nome: grupoOid ? (mapaNomes.get(grupoOid) || null) : null,
+
+      endereco1: textoOuNull(o.Endereco1), numero1: textoOuNull(o.Numero1), complemento1: textoOuNull(o.Complemento1),
+      bairro1: textoOuNull(o.Bairro1), cidade1: textoOuNull(o.Cidade1), estado1: textoOuNull(o.Estado1),
+      cep1: textoOuNull(o.CEP1), pais1: textoOuNull(o.Pais1),
+      endereco2: textoOuNull(o.Endereco2), numero2: textoOuNull(o.Numero2), complemento2: textoOuNull(o.Complemento2),
+      bairro2: textoOuNull(o.Bairro2), cidade2: textoOuNull(o.Cidade2), estado2: textoOuNull(o.Estado2),
+      cep2: textoOuNull(o.CEP2), pais2: textoOuNull(o.Pais2),
+      endereco3: textoOuNull(o.Endereco3), numero3: textoOuNull(o.Numero3), complemento3: textoOuNull(o.Complemento3),
+      bairro3: textoOuNull(o.Bairro3), cidade3: textoOuNull(o.Cidade3), estado3: textoOuNull(o.Estado3),
+      cep3: textoOuNull(o.CEP3), pais3: textoOuNull(o.Pais3),
+
+      telefone1: textoOuNull(o.Telefone1), telefone2: textoOuNull(o.Telefone2),
+      telefone3: textoOuNull(o.Telefone3), telefone4: textoOuNull(o.Telefone4),
+      email1: textoOuNull(o.EMail1), email2: textoOuNull(o.EMail2), site: textoOuNull(o.Site),
+
+      pct_comissao_locacao: numOuNull(o.PctComissaoLocacao),
+      pct_comissao_produtos: numOuNull(o.PctComissaoProdutos),
+      pct_comissao_servicos: numOuNull(o.PctComissaoServicos),
+      pct_desconto_padrao: numOuNull(o.PctDescontoPadrao),
+      valor_maximo_a_receber_em_aberto: numOuNull(o.ValorMaximoAReceberEmAberto),
+      valor_maximo_por_locacao: numOuNull(o.ValorMaximoPorLocacao),
+
+      data_cadastro: paraDataISO(o.DataCadastro),
+      data_ultima_alteracao_cadastro: paraDataISO(o.DataUltimaAlteracaoCadastro),
+      login_cadastro: textoOuNull(o.LoginCadastro),
+      observacoes: textoOuNull(o.Observacoes),
+      motivo_bloqueio: textoOuNull(o.MotivoBloqueio),
+      como_conheceu: textoOuNull(o.ComoConheceu),
+
+      contatos: mapearContatos(o.Contatos),
+      enderecos: mapearEnderecos(o.Enderecos),
+
+      updated_at: new Date().toISOString(),
+    };
+  });
+
+  const db = supabaseAdmin();
+  const TAMANHO_LOTE = 250;
+  let processados = 0;
+  for (let i = 0; i < registros.length; i += TAMANHO_LOTE) {
+    const lote = registros.slice(i, i + TAMANHO_LOTE);
+    const { error } = await db.from('parceiros').upsert(lote, { onConflict: 'p2s_oid' });
+    if (error) throw new Error(error.message);
+    processados += lote.length;
+  }
+  return processados;
+}
+
+// Busca no P2S parceiros específicos (por oid) e grava — usado pela importação
+// de fichas (app/lib/locacao/importarFichasP2s.ts) para clientes que a carga
+// completa deixou de fora (achado em 2026-11-16: 88 de 199 clientes das
+// fichas recentes faltavam, com códigos dentro da faixa já sincronizada).
+export async function sincronizarParceirosPorOidsCore(oids: string[], ambiente: AmbienteP2s = 'PRODUCAO'): Promise<number> {
+  const unicos = [...new Set(oids.filter(o => o && o !== 'null'))];
+  const objetos: ObjetoP2s[] = [];
+  for (let i = 0; i < unicos.length; i += 8) {
+    const lote = await Promise.all(unicos.slice(i, i + 8).map(oid => buscarObjeto(ambiente, oid).catch(() => null)));
+    for (const o of lote) if (o) objetos.push(o);
+  }
+  return objetos.length ? gravarParceirosP2s(ambiente, objetos) : 0;
+}
+
 export interface SincronizarParceirosOpcoes {
   ambiente?: AmbienteP2s;
 }
@@ -209,77 +300,7 @@ export async function sincronizarParceirosCore(opcoes: SincronizarParceirosOpcoe
       return { ok: true, info: { processados: 0, totalEncontradas: 0 } };
     }
 
-    const refsGrupo = todosObjetos.map(o => refOuTexto(o.GrupoParceiro) || undefined);
-    const mapaNomes = await resolverNomes(ambiente, refsGrupo);
-
-    const registros = todosObjetos.map(o => {
-      const grupoOid = refOuTexto(o.GrupoParceiro);
-
-      return {
-        p2s_oid: o.oid,
-        codigo_parceiro: numOuNull(o.CodigoParceiro),
-        nome_completo: textoOuNull(o.NomeCompleto),
-        nome_exibicao: textoOuNull(o.NomeExibicao),
-        natureza: textoOuNull(o.Natureza),
-        cpf: documentoOuNull(o.CPF),
-        cnpj: documentoOuNull(o.CNPJ),
-        inscricao_estadual: textoOuNull(o.InscricaoEstadual),
-        inscricao_municipal: textoOuNull(o.InscricaoMunicipal),
-
-        flag_cliente: boolP2s(o.FlagCliente),
-        flag_fornecedor: boolP2s(o.FlagFornecedor),
-        flag_transportadora: boolP2s(o.FlagTransportadora),
-        flag_vendedor_rep: boolP2s(o.FlagVendedorRep),
-        flag_intermediador: boolP2s(o.FlagIntermediador),
-        status_parceiro: textoOuNull(o.StatusParceiro),
-
-        grupo_parceiro: grupoOid,
-        grupo_parceiro_nome: grupoOid ? (mapaNomes.get(grupoOid) || null) : null,
-
-        endereco1: textoOuNull(o.Endereco1), numero1: textoOuNull(o.Numero1), complemento1: textoOuNull(o.Complemento1),
-        bairro1: textoOuNull(o.Bairro1), cidade1: textoOuNull(o.Cidade1), estado1: textoOuNull(o.Estado1),
-        cep1: textoOuNull(o.CEP1), pais1: textoOuNull(o.Pais1),
-        endereco2: textoOuNull(o.Endereco2), numero2: textoOuNull(o.Numero2), complemento2: textoOuNull(o.Complemento2),
-        bairro2: textoOuNull(o.Bairro2), cidade2: textoOuNull(o.Cidade2), estado2: textoOuNull(o.Estado2),
-        cep2: textoOuNull(o.CEP2), pais2: textoOuNull(o.Pais2),
-        endereco3: textoOuNull(o.Endereco3), numero3: textoOuNull(o.Numero3), complemento3: textoOuNull(o.Complemento3),
-        bairro3: textoOuNull(o.Bairro3), cidade3: textoOuNull(o.Cidade3), estado3: textoOuNull(o.Estado3),
-        cep3: textoOuNull(o.CEP3), pais3: textoOuNull(o.Pais3),
-
-        telefone1: textoOuNull(o.Telefone1), telefone2: textoOuNull(o.Telefone2),
-        telefone3: textoOuNull(o.Telefone3), telefone4: textoOuNull(o.Telefone4),
-        email1: textoOuNull(o.EMail1), email2: textoOuNull(o.EMail2), site: textoOuNull(o.Site),
-
-        pct_comissao_locacao: numOuNull(o.PctComissaoLocacao),
-        pct_comissao_produtos: numOuNull(o.PctComissaoProdutos),
-        pct_comissao_servicos: numOuNull(o.PctComissaoServicos),
-        pct_desconto_padrao: numOuNull(o.PctDescontoPadrao),
-        valor_maximo_a_receber_em_aberto: numOuNull(o.ValorMaximoAReceberEmAberto),
-        valor_maximo_por_locacao: numOuNull(o.ValorMaximoPorLocacao),
-
-        data_cadastro: paraDataISO(o.DataCadastro),
-        data_ultima_alteracao_cadastro: paraDataISO(o.DataUltimaAlteracaoCadastro),
-        login_cadastro: textoOuNull(o.LoginCadastro),
-        observacoes: textoOuNull(o.Observacoes),
-        motivo_bloqueio: textoOuNull(o.MotivoBloqueio),
-        como_conheceu: textoOuNull(o.ComoConheceu),
-
-        contatos: mapearContatos(o.Contatos),
-        enderecos: mapearEnderecos(o.Enderecos),
-
-        updated_at: new Date().toISOString(),
-      };
-    });
-
-    const db = supabaseAdmin();
-    const TAMANHO_LOTE = 250;
-    let processados = 0;
-    for (let i = 0; i < registros.length; i += TAMANHO_LOTE) {
-      const lote = registros.slice(i, i + TAMANHO_LOTE);
-      const { error } = await db.from('parceiros').upsert(lote, { onConflict: 'p2s_oid' });
-      if (error) throw new Error(error.message);
-      processados += lote.length;
-    }
+    const processados = await gravarParceirosP2s(ambiente, todosObjetos);
 
     await registrarSincronizacao({
       integracao: 'parceiros', ambiente, tipo: cursorData ? 'incremental' : 'completa',

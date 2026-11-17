@@ -46,11 +46,19 @@ const MODULOS_SISTEMA = [
   },
   {
     titulo: 'Comercial',
-    descricao: 'Documentos da empresa e da frota, fichas de reserva e cadastro de eventos/feiras.',
+    descricao: 'Documentos da empresa e da frota, parceiros e cadastro de eventos/feiras.',
     icone: '🤝',
     link: '/admin/comercial',
     cor: 'border-slate-500/50 hover:border-slate-500',
     bgIcon: 'bg-slate-50 text-slate-600'
+  },
+  {
+    titulo: 'Locações',
+    descricao: 'Fichas de reserva e de locação: orçamentos, reservas, disponibilidade de equipamentos e tabelas de preço.',
+    icone: '🎛️',
+    link: '/admin/locacoes',
+    cor: 'border-violet-500/50 hover:border-violet-500',
+    bgIcon: 'bg-violet-50 text-violet-600'
   },
   {
     titulo: 'Operacional',

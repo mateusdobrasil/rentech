@@ -5,7 +5,9 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria, sincronizarEstoqueEmLocacao } from '../../../actions';
 import { finalizarFichasLocacaoPorEventoAction } from './actions';
-import { sincronizarFichasReservaP2sAction } from '../../comercial/fichas/actions';
+import { itensFichasDoEventoAction } from './actions-fichas';
+import ConferenciaQR from './ConferenciaQR';
+import { sincronizarFichasReservaP2sAction } from '../../locacoes/fichas-reserva/actions';
 import { sincronizarEventosFeirasP2sAction } from '../../comercial/eventos-feiras/actions';
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
@@ -113,6 +115,9 @@ interface ChecklistItem {
   // de uma OS somada na mesma linha ("1234, 5678"). null para itens do
   // modelo padrão ou adicionados manualmente.
   os_numero: string | null;
+  // Produto (catálogo P2S) — vem do "Importar das fichas" (locacao_fichas_reserva);
+  // é por ele que a conferência por QR acha a linha da peça lida.
+  produto_id?: number | null;
 }
 
 interface ModeloItem {
@@ -136,6 +141,7 @@ interface ItemImportadoOS {
   categoriaId: string; // '' = sem categoria, cai em DIVERSOS
   selecionado: boolean;
   jaExiste: boolean;
+  produto_id?: number | null;
 }
 
 // Mesmo material somado entre várias OS's do evento (modo "Consolidado") —
@@ -207,7 +213,7 @@ const formatarDataBR = (iso: string | null | undefined): string => {
 // A coluna "itens" de fichas_reserva é texto livre — não tem estrutura
 // garantida. Quebra em linhas e, se não houver quebra de linha, tenta
 // separar por ponto-e-vírgula (formato usado pelo sync via API, ver
-// resumoItens() em app/admin/comercial/fichas/fichasCore.ts, que sempre
+// resumoItens() em app/admin/locacoes/fichas-reserva/fichasCore.ts, que sempre
 // junta os itens com "; "). NÃO separa por vírgula: a observação de um item
 // pode ter vírgula decimal (ex: "3,0 X 50 = 1,5" numa medida de painel de
 // LED) — separar por vírgula também picava esse número em itens fantasmas
@@ -222,7 +228,7 @@ const dividirItensTexto = (texto: string): string[] => {
 // a quantidade, o restante da linha é a descrição do item. Dois formatos
 // convivem na mesma coluna: "2 Mesa Redonda" (upload manual antigo) e
 // "10x METROS DE PAINEL..." (sync via API do PrimeStart, ver resumoItens()
-// em app/admin/comercial/fichas/fichasCore.ts, que sempre grava "Nx descricao")
+// em app/admin/locacoes/fichas-reserva/fichasCore.ts, que sempre grava "Nx descricao")
 // — o "x"/"X" opcional entre o número e a descrição cobre os dois. Sem número
 // no início, a linha inteira vira descrição e a quantidade fica em branco
 // para o usuário revisar.
@@ -378,6 +384,8 @@ export default function ChecklistCargaRetorno() {
 
   // Modal: Importar Itens das OS's (fichas_reserva.itens do evento do checklist)
   const [modalImportarOS, setModalImportarOS] = useState(false);
+  // Conferência peça a peça por QR (ConferenciaQR.tsx)
+  const [modalQR, setModalQR] = useState(false);
   const [importandoOS, setImportandoOS] = useState(false);
   const [itensImportadosOS, setItensImportadosOS] = useState<ItemImportadoOS[]>([]);
   const [modoConsolidadoOS, setModoConsolidadoOS] = useState(false);
@@ -586,7 +594,7 @@ export default function ChecklistCargaRetorno() {
   // Sincroniza Fichas de Reserva e Eventos/Feiras num clique só — são as duas
   // fontes que alimentam esta tela (evento do checklist e "Importar das
   // OS's"), reaproveita as mesmas Server Actions das telas de origem
-  // (app/admin/comercial/fichas e app/admin/comercial/eventos-feiras).
+  // (app/admin/locacoes/fichas-reserva e app/admin/comercial/eventos-feiras).
   // Sequencial, não em paralelo, pra não sobrecarregar o servidor
   // on-premise da P2S com duas sincronizações simultâneas.
   const sincronizarFichasEEventos = async () => {
@@ -1117,6 +1125,42 @@ export default function ChecklistCargaRetorno() {
     setItensImportadosOS([]);
     setModoConsolidadoOS(false);
 
+    // 1) Fonte preferida (2026-11-17): fichas ESTRUTURADAS do evento
+    // (locacao_fichas_reserva — importadas do P2S + criadas no sistema), só as
+    // confirmadas, com produto e quantidade exatos. O texto livre de
+    // fichas_reserva (abaixo) fica de reserva para fichas fora da janela.
+    const estruturadas = await itensFichasDoEventoAction({ evento_nome: evento, evento_p2s_oid: checklistAtual.evento_p2s_oid }, accessToken);
+    if (estruturadas.ok && estruturadas.info.linhas.length > 0) {
+      const chavesExist = new Set<string>();
+      itens.forEach(i => {
+        const desc = i.descricao.trim().toUpperCase();
+        (i.os_numero || '').split(',').map(s => s.trim()).filter(Boolean).forEach(os => chavesExist.add(`${desc}::${os}`));
+      });
+      const linhasEstr: ItemImportadoOS[] = (estruturadas.info.linhas as any[]).map((l, idx) => {
+        const descricaoUpper = up(l.descricao);
+        const categoriaAprendida = categoriaAprendidaPorDescricao[descricaoUpper];
+        const chave = `${descricaoUpper}::${l.ficha_numero}`;
+        return {
+          key: `${l.ficha_numero}-${l.ordem ?? idx}`,
+          ficha_numero: l.ficha_numero,
+          ficha_cliente: l.ficha_cliente || '',
+          descricao: descricaoUpper,
+          qtd: String(l.qtd || ''),
+          categoriaId: categoriaAprendida && categorias.some(c => c.id === categoriaAprendida) ? categoriaAprendida : '',
+          selecionado: !chavesExist.has(chave),
+          jaExiste: chavesExist.has(chave),
+          produto_id: l.produto_id ?? null,
+        };
+      });
+      setImportandoOS(false);
+      setItensImportadosOS(linhasEstr);
+      if (estruturadas.info.fichasNaoConfirmadas > 0) {
+        setDialog({ open: true, type: 'error', title: 'Atenção — fichas não aprovadas', msg: `${estruturadas.info.fichasNaoConfirmadas} ficha(s) deste evento ainda estão em orçamento/enviadas e não entraram na lista.` });
+      }
+      return;
+    }
+
+    // 2) Reserva: texto livre do espelho antigo (fichas_reserva.itens)
     const { data, error } = await supabase
       .from('fichas_reserva')
       .select('numero, cliente, itens')
@@ -1261,8 +1305,8 @@ export default function ChecklistCargaRetorno() {
   // no modo Individual, um item por linha de OS selecionada.
   const confirmarImportarOS = () => {
     const selecionados = modoConsolidadoOS
-      ? itensConsolidadosOS.filter(c => c.selecionado).map(c => ({ descricao: c.descricao, qtd: c.qtdSomada, categoriaId: c.categoriaId, osNumero: c.osNumeros.join(', ') }))
-      : itensImportadosOS.filter(i => i.selecionado && i.descricao.trim()).map(i => ({ descricao: i.descricao.trim(), qtd: i.qtd, categoriaId: i.categoriaId, osNumero: i.ficha_numero }));
+      ? itensConsolidadosOS.filter(c => c.selecionado).map(c => ({ descricao: c.descricao, qtd: c.qtdSomada, categoriaId: c.categoriaId, osNumero: c.osNumeros.join(', '), produtoId: itensImportadosOS.find(i => i.descricao.trim().toUpperCase() === c.descricao && i.produto_id)?.produto_id ?? null }))
+      : itensImportadosOS.filter(i => i.selecionado && i.descricao.trim()).map(i => ({ descricao: i.descricao.trim(), qtd: i.qtd, categoriaId: i.categoriaId, osNumero: i.ficha_numero, produtoId: i.produto_id ?? null }));
 
     if (selecionados.length === 0) { setModalImportarOS(false); return; }
 
@@ -1279,6 +1323,7 @@ export default function ChecklistCargaRetorno() {
         qtd_prevista: i.qtd,
         saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null, extra: false,
         os_numero: i.osNumero || null,
+        produto_id: i.produtoId,
       };
     });
 
@@ -1406,6 +1451,7 @@ export default function ChecklistCargaRetorno() {
         equipamento_id: i.equipamento_id, descricao: i.descricao, qtd_prevista: i.qtd_prevista || null,
         saida_ok: i.saida_ok, saida_qtd: i.saida_qtd, retorno_ok: i.retorno_ok, retorno_qtd: i.retorno_qtd, extra: i.extra,
         os_numero: i.os_numero || null,
+        produto_id: i.produto_id ?? null,
       }));
       const { error } = await supabase.from('checklist_itens').upsert(payload, { onConflict: 'id' });
       if (error) {
@@ -1421,6 +1467,7 @@ export default function ChecklistCargaRetorno() {
         equipamento_id: i.equipamento_id, descricao: i.descricao, qtd_prevista: i.qtd_prevista || null,
         saida_ok: i.saida_ok, saida_qtd: i.saida_qtd, retorno_ok: i.retorno_ok, retorno_qtd: i.retorno_qtd, extra: i.extra,
         os_numero: i.os_numero || null,
+        produto_id: i.produto_id ?? null,
       }));
       const { error } = await supabase.from('checklist_itens').insert(payload);
       if (error) {
@@ -2103,6 +2150,9 @@ export default function ChecklistCargaRetorno() {
                     <button onClick={abrirImportarOS} className="bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] font-black uppercase tracking-widest text-xs px-3 md:px-5 py-2.5 rounded-xl shadow-sm border border-[#CBD5E1] transition-colors">
                       📦 Importar das OS&apos;s
                     </button>
+                    <button onClick={() => setModalQR(true)} title="Ler as etiquetas QR dos patrimônios na saída e no retorno" className="bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] font-black uppercase tracking-widest text-xs px-3 md:px-5 py-2.5 rounded-xl shadow-sm border border-[#CBD5E1] transition-colors">
+                      📷 Conferir por QR
+                    </button>
                     <button onClick={unificarItensDuplicados} title="Junta itens repetidos (mesma seção e mesmo item) somando as quantidades" className="bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] font-black uppercase tracking-widest text-xs px-3 md:px-5 py-2.5 rounded-xl shadow-sm border border-[#CBD5E1] transition-colors">
                       🧩 Unificar Duplicados
                     </button>
@@ -2525,6 +2575,23 @@ export default function ChecklistCargaRetorno() {
       {/* ============================================================================ */}
       {/* MODAL: IMPORTAR ITENS DAS OS's */}
       {/* ============================================================================ */}
+      {modalQR && checklistAtual.id && (
+        <ConferenciaQR
+          checklistId={String(checklistAtual.id)}
+          accessToken={accessToken}
+          itens={itens.filter(i => !ehItemNovo(i.id)).map(i => ({ id: i.id, descricao: i.descricao, qtd_prevista: i.qtd_prevista, saida_qtd: i.saida_qtd, retorno_qtd: i.retorno_qtd }))}
+          itensNaoSalvos={itens.some(i => ehItemNovo(i.id))}
+          onContagem={(itemId, tipo, contagem) => setItens(prev => prev.map(i => {
+            if (i.id !== itemId) return i;
+            const previsto = parseInt(i.qtd_prevista, 10);
+            if (tipo === 'SAIDA') return { ...i, saida_qtd: contagem || null, saida_ok: contagem > 0 && (Number.isNaN(previsto) || contagem >= previsto) };
+            return { ...i, retorno_qtd: contagem || null, retorno_ok: contagem > 0 && contagem >= (i.saida_qtd ?? (Number.isNaN(previsto) ? contagem : previsto)) };
+          }))}
+          onSalvar={salvarChecklist}
+          onFechar={() => setModalQR(false)}
+        />
+      )}
+
       {modalImportarOS && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">

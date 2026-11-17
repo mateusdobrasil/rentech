@@ -1,0 +1,806 @@
+"use client";
+
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useRouter, useParams } from 'next/navigation';
+import { Analytics } from "@vercel/analytics/next";
+import {
+  contextoNovaFichaAction, carregarFichaAction, salvarFichaAction, mudarStatusFichaAction, duplicarFichaAction,
+  precificarFichaAction, verificarDisponibilidadeFichaAction,
+  buscarClientesFichaAction, buscarEventosFichaAction, buscarProdutosFichaAction,
+  type StatusFicha, type TipoItem, type AcaoStatus, type DadosFicha,
+} from '../actions';
+import type { Modalidade, OrigemPreco } from '../../../../lib/locacao/precificacao';
+import type { LinhaDisponibilidade } from '../../../../lib/locacao/disponibilidade';
+import { usePageAccess } from '../../../../components/hooks/usePageAccess';
+import { HubErro } from '../../../../components/ui/HubStates';
+import CampoBusca, { type OpcaoBusca } from '../../../../components/ui/CampoBusca';
+import { useToast, useConfirm, usePrompt } from '../../../../components/ui/NotificationProvider';
+import { corSeloEmpresa } from '../../../../lib/coresEmpresa';
+import { formatarMoeda, formatarDataBR } from '../../../../lib/formatadores';
+import { diasInclusivos, dataValida } from '../../../../lib/locacao/datas';
+import { STATUS_FICHA, MODALIDADES, numeroFicha } from '../statusFicha';
+import PainelProposta from './PainelProposta';
+import PainelTitulos from './PainelTitulos';
+
+// Editor da Ficha de Reserva própria (orçamento → reserva), 2026-11-16.
+// /admin/locacoes/reservas/nova cria; /admin/locacoes/reservas/<id> edita.
+// Permissão: a mesma linha de /admin/locacoes/reservas.
+
+interface EmpresaOpcao { id: number; nome: string }
+interface ItemUI {
+  chave: string;
+  id: number | null;
+  tipo: TipoItem;
+  produto_id: number | null;
+  produto_codigo: string | null;
+  unidade: string | null;
+  controle: string | null;
+  descricao: string;
+  quantidade: string;
+  dias: string;            // vazio = acompanha os dias da ficha
+  valor_unitario: string;
+  desconto: string;
+  origem: OrigemPreco | null;
+  preco_manual: boolean;
+  semPreco: string | null; // motivo quando a tabela não precifica
+  observacoes: string;
+}
+interface Cabecalho {
+  empresa_id: number;
+  modalidade: Modalidade;
+  contato_nome: string; contato_telefone: string; contato_email: string;
+  vendedor_nome: string;
+  local_entrega: string; endereco_estande: string;
+  data_saida: string; data_montagem: string; data_inicio: string; data_fim: string; data_desmontagem: string; data_retorno: string;
+  dias_cobrados: string;
+  validade_orcamento: string;
+  condicao_pagamento: string;
+  observacoes: string; observacoes_internas: string;
+  desconto: string;
+}
+
+const ROTA = '/admin/locacoes/reservas';
+const EDITAVEIS: StatusFicha[] = ['ORCAMENTO', 'ENVIADO', 'APROVADO', 'RESERVADA'];
+const ROTULO_TIPO: Record<TipoItem, string> = { EQUIPAMENTO: 'Equipamento', KIT: 'Kit', SERVICO: 'Serviço', FRETE: 'Frete', OUTRO: 'Outro' };
+
+let seqChave = 0;
+const novaChave = () => `i${Date.now().toString(36)}${(seqChave++).toString(36)}`;
+
+function lerValor(s: string): number | null {
+  const t = (s || '').replace(/\s|R\$/g, '');
+  if (!t) return null;
+  const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t);
+  return Number.isFinite(n) ? n : NaN;
+}
+const mostrar = (n: number | null | undefined, casas = 2) =>
+  n === null || n === undefined ? '' : n.toLocaleString('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas });
+const mostrarQtd = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+const somarDiasISO = (iso: string, d: number) => { const x = new Date(`${iso}T12:00:00Z`); x.setUTCDate(x.getUTCDate() + d); return x.toISOString().slice(0, 10); };
+const hojeISO = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+
+function descreverOrigem(o: OrigemPreco | null): string {
+  if (!o) return '';
+  const tab = `${o.tabela_nome}`;
+  if (o.modalidade === 'MENSAL') return `${tab}: ${o.meses} mês(es) × ${formatarMoeda(o.valor_mensal || 0)}`;
+  let s = `${tab}: ${o.faixa_dias} × ${formatarMoeda(o.valor_diaria_faixa || 0)}`;
+  if (o.dias_extra) s += ` + ${o.dias_extra} × ${formatarMoeda(o.valor_diaria_extra || 0)}${o.extra_pela_faixa ? ' (diária da faixa)' : ''}`;
+  return s;
+}
+
+const cabecalhoVazio = (empresaId: number, vendedor: string): Cabecalho => ({
+  empresa_id: empresaId, modalidade: 'DIARIA', contato_nome: '', contato_telefone: '', contato_email: '', vendedor_nome: vendedor,
+  local_entrega: '', endereco_estande: '', data_saida: '', data_montagem: '', data_inicio: '', data_fim: '', data_desmontagem: '', data_retorno: '',
+  dias_cobrados: '', validade_orcamento: somarDiasISO(hojeISO(), 15), condicao_pagamento: '', observacoes: '', observacoes_internas: '', desconto: '',
+});
+
+export default function EditorFichaPage() {
+  const router = useRouter();
+  const params = useParams();
+  const idParam = String(params?.id || '');
+  const ehNova = idParam === 'nova';
+  const fichaIdUrl = ehNova ? null : Number(idParam);
+
+  const toast = useToast();
+  const confirmar = useConfirm();
+  const pedir = usePrompt();
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ rota: ROTA });
+
+  const [carregando, setCarregando] = useState(true);
+  const [empresas, setEmpresas] = useState<EmpresaOpcao[]>([]);
+  const [status, setStatus] = useState<StatusFicha>('ORCAMENTO');
+  const [fichaInfo, setFichaInfo] = useState<any>(null);
+  const [cab, setCab] = useState<Cabecalho>(cabecalhoVazio(0, ''));
+  const [cliente, setCliente] = useState<OpcaoBusca | null>(null);
+  const [evento, setEvento] = useState<OpcaoBusca | null>(null);
+  const [itens, setItens] = useState<ItemUI[]>([]);
+  const [historico, setHistorico] = useState<any[]>([]);
+  const [alocacoes, setAlocacoes] = useState<any[]>([]);
+  const [tabelas, setTabelas] = useState<{ id: number; nome: string; tipo: string }[]>([]);
+  const [disp, setDisp] = useState<{ linhas: LinhaDisponibilidade[]; temFalta: boolean } | null>(null);
+  const [verificando, setVerificando] = useState(false);
+  const [precificando, setPrecificando] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [alterado, setAlterado] = useState(false);
+  const [diasManual, setDiasManual] = useState(false);
+
+  const doP2s = fichaInfo?.origem === 'P2S';
+  const editavel = EDITAVEIS.includes(status) && !doP2s;
+  const diasEvento = dataValida(cab.data_inicio) && dataValida(cab.data_fim) && cab.data_fim >= cab.data_inicio ? diasInclusivos(cab.data_inicio, cab.data_fim) : null;
+  const diasCobrados = Math.max(1, Number(cab.dias_cobrados) || diasEvento || 1);
+
+  // ---------------- carregar ----------------
+  const aplicarFicha = (info: any) => {
+    const f = info.ficha;
+    setEmpresas(info.empresas);
+    setFichaInfo(f);
+    setStatus(f.status);
+    setCab({
+      empresa_id: f.empresa_id, modalidade: f.modalidade,
+      contato_nome: f.contato_nome || '', contato_telefone: f.contato_telefone || '', contato_email: f.contato_email || '',
+      vendedor_nome: f.vendedor_nome || '', local_entrega: f.local_entrega || '', endereco_estande: f.endereco_estande || '',
+      data_saida: f.data_saida || '', data_montagem: f.data_montagem || '', data_inicio: f.data_inicio || '', data_fim: f.data_fim || '',
+      data_desmontagem: f.data_desmontagem || '', data_retorno: f.data_retorno || '',
+      dias_cobrados: f.dias_cobrados ? String(f.dias_cobrados) : '',
+      validade_orcamento: f.validade_orcamento || '', condicao_pagamento: f.condicao_pagamento || '',
+      observacoes: f.observacoes || '', observacoes_internas: f.observacoes_internas || '',
+      desconto: Number(f.desconto_valor) ? mostrar(Number(f.desconto_valor)) : '',
+    });
+    setDiasManual(Boolean(f.dias_cobrados && f.data_inicio && f.data_fim && f.dias_cobrados !== diasInclusivos(f.data_inicio, f.data_fim)));
+    setCliente(info.cliente);
+    setEvento(info.evento);
+    setItens((info.itens || []).map((i: any) => ({
+      chave: novaChave(), id: i.id, tipo: i.tipo, produto_id: i.produto_id, produto_codigo: i.produto_codigo, unidade: i.produto_unidade,
+      controle: i.produto_controle, descricao: i.descricao, quantidade: mostrarQtd(Number(i.quantidade)),
+      dias: i.dias && Number(i.dias) !== (f.dias_cobrados || 0) ? String(i.dias) : '',
+      valor_unitario: mostrar(Number(i.valor_unitario)), desconto: Number(i.desconto_valor) ? mostrar(Number(i.desconto_valor)) : '',
+      origem: i.origem_preco || null, preco_manual: !!i.preco_manual, semPreco: null, observacoes: i.observacoes || '',
+    })));
+    setHistorico(info.historico || []);
+    setAlocacoes(info.alocacoes || []);
+    setAlterado(false);
+  };
+
+  const carregar = async () => {
+    setCarregando(true);
+    if (ehNova) {
+      const r = await contextoNovaFichaAction(accessToken);
+      if (!r.ok) { toast(r.erro || 'Erro.', 'error'); setCarregando(false); return; }
+      setEmpresas(r.info.empresas);
+      setCab(cabecalhoVazio(r.info.empresas[0]?.id || 0, r.info.usuario || ''));
+    } else {
+      const r = await carregarFichaAction(fichaIdUrl!, accessToken);
+      if (!r.ok) { toast(r.erro || 'Erro ao carregar a ficha.', 'error'); setCarregando(false); return; }
+      aplicarFicha(r.info);
+    }
+    setCarregando(false);
+  };
+
+  useEffect(() => {
+    if (!authLoading && !acessoNegado && !erro && accessToken) carregar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, acessoNegado, erro, accessToken, idParam]);
+
+  // aviso ao sair com alteração não salva
+  useEffect(() => {
+    if (!alterado) return;
+    const h = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [alterado]);
+
+  const mudarCab = (parcial: Partial<Cabecalho>) => { setCab(c => ({ ...c, ...parcial })); setAlterado(true); };
+
+  // dias cobrados acompanham o evento até o usuário mexer
+  useEffect(() => {
+    if (!diasManual && diasEvento) setCab(c => (c.dias_cobrados === String(diasEvento) ? c : { ...c, dias_cobrados: String(diasEvento) }));
+  }, [diasEvento, diasManual]);
+
+  // ---------------- buscas ----------------
+  const buscarClientes = useCallback(async (t: string) => { const r = await buscarClientesFichaAction(t, accessToken); return r.ok ? r.info : []; }, [accessToken]);
+  const buscarEventos = useCallback(async (t: string) => { const r = await buscarEventosFichaAction(t, accessToken); return r.ok ? r.info : []; }, [accessToken]);
+  const buscarProdutos = useCallback(async (t: string) => {
+    const r = await buscarProdutosFichaAction(t, accessToken);
+    return r.ok ? (r.info as any[]).map(p => ({
+      id: p.id, nome: p.nome_item,
+      detalhe: [p.codigo_formatado, p.unidade, p.categoria_nome, p.eh_kit ? 'KIT' : null, p.controle_locacao === 'INDIVIDUAL' ? 'por patrimônio' : null].filter(Boolean).join(' · '),
+      extra: p,
+    })) : [];
+  }, [accessToken]);
+
+  // ---------------- preço ----------------
+  const diasDoItem = (i: ItemUI) => Math.max(1, Number(i.dias) || diasCobrados);
+
+  const precificar = async (alvo: ItemUI[], silencioso = false) => {
+    const elegiveis = alvo.filter(i => i.produto_id && (i.tipo === 'EQUIPAMENTO' || i.tipo === 'KIT') && !i.preco_manual);
+    if (!elegiveis.length) return;
+    if (!dataValida(cab.data_inicio)) { if (!silencioso) toast('Informe o início do evento para calcular o preço.', 'info'); return; }
+    setPrecificando(true);
+    const r = await precificarFichaAction({
+      empresa_id: cab.empresa_id, parceiro_id: cliente ? Number(cliente.id) : null, evento_id: evento ? String(evento.id) : null,
+      data_inicio: cab.data_inicio, modalidade: cab.modalidade,
+      itens: elegiveis.map(i => ({ chave: i.chave, produto_id: i.produto_id!, dias: diasDoItem(i) })),
+    }, accessToken);
+    setPrecificando(false);
+    if (!r.ok) { if (!silencioso) toast(r.erro || 'Erro ao calcular preço.', 'error'); return; }
+    setTabelas(r.info.tabelas);
+    const precos = r.info.precos as Record<string, { valor_unitario: number | null; origem: OrigemPreco | null; motivo?: string }>;
+    setItens(prev => prev.map(i => {
+      const p = precos[i.chave];
+      if (!p || i.preco_manual) return i;
+      return { ...i, valor_unitario: p.valor_unitario === null ? i.valor_unitario : mostrar(p.valor_unitario), origem: p.origem, semPreco: p.valor_unitario === null ? (p.motivo || 'Sem preço na tabela') : null };
+    }));
+    setAlterado(true);
+  };
+
+  // Reprecifica automaticamente quando muda o que afeta o preço
+  const chavePreco = `${cab.empresa_id}|${cliente?.id || ''}|${evento?.id || ''}|${cab.data_inicio}|${cab.modalidade}|${diasCobrados}`;
+  const ultimaChavePreco = useRef<string | null>(null);
+  useEffect(() => {
+    if (carregando || !editavel) return;
+    if (ultimaChavePreco.current === null) { ultimaChavePreco.current = chavePreco; return; }
+    if (ultimaChavePreco.current === chavePreco) return;
+    ultimaChavePreco.current = chavePreco;
+    const t = setTimeout(() => { precificar(itens, true); }, 500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chavePreco, carregando]);
+
+  // ---------------- itens ----------------
+  const adicionarProduto = (o: OpcaoBusca) => {
+    const p = o.extra as any;
+    const novo: ItemUI = {
+      chave: novaChave(), id: null, tipo: p.eh_kit ? 'KIT' : 'EQUIPAMENTO', produto_id: p.id, produto_codigo: p.codigo_formatado, unidade: p.unidade,
+      controle: p.controle_locacao, descricao: p.nome_item, quantidade: '1', dias: '', valor_unitario: '', desconto: '',
+      origem: null, preco_manual: false, semPreco: null, observacoes: '',
+    };
+    setItens(prev => [...prev, novo]);
+    setAlterado(true);
+    setDisp(null);
+    precificar([novo], true);
+  };
+
+  const adicionarLivre = (tipo: TipoItem) => {
+    setItens(prev => [...prev, {
+      chave: novaChave(), id: null, tipo, produto_id: null, produto_codigo: null, unidade: null, controle: null,
+      descricao: tipo === 'FRETE' ? 'Frete' : tipo === 'SERVICO' ? 'Montagem e operação técnica' : '', quantidade: '1', dias: '',
+      valor_unitario: '', desconto: '', origem: null, preco_manual: true, semPreco: null, observacoes: '',
+    }]);
+    setAlterado(true);
+  };
+
+  const mudarItem = (chave: string, parcial: Partial<ItemUI>, reprecificar = false) => {
+    const atual = itens.find(i => i.chave === chave);
+    setItens(prev => prev.map(i => (i.chave === chave ? { ...i, ...parcial } : i)));
+    setAlterado(true);
+    if ('quantidade' in parcial || 'dias' in parcial) setDisp(null);
+    if (reprecificar && atual) precificar([{ ...atual, ...parcial }], true);
+  };
+
+  const removerItem = (chave: string) => { setItens(prev => prev.filter(i => i.chave !== chave)); setAlterado(true); setDisp(null); };
+  const moverItem = (chave: string, dir: -1 | 1) => {
+    setItens(prev => {
+      const idx = prev.findIndex(i => i.chave === chave); const alvo = idx + dir;
+      if (idx < 0 || alvo < 0 || alvo >= prev.length) return prev;
+      const c = [...prev]; [c[idx], c[alvo]] = [c[alvo], c[idx]]; return c;
+    });
+    setAlterado(true);
+  };
+
+  // ---------------- totais ----------------
+  const totalItem = (i: ItemUI) => {
+    const q = lerValor(i.quantidade) || 0, vu = lerValor(i.valor_unitario) || 0, d = lerValor(i.desconto) || 0;
+    return [q, vu, d].some(Number.isNaN) ? 0 : Math.round((q * vu - d) * 100) / 100;
+  };
+  const ehEquip = (t: TipoItem) => t === 'EQUIPAMENTO' || t === 'KIT';
+  const totEquip = itens.filter(i => ehEquip(i.tipo)).reduce((s, i) => s + totalItem(i), 0);
+  const totServ = itens.filter(i => !ehEquip(i.tipo)).reduce((s, i) => s + totalItem(i), 0);
+  const descontoGeral = lerValor(cab.desconto) || 0;
+  const totalGeral = totEquip + totServ - (Number.isNaN(descontoGeral) ? 0 : descontoGeral);
+
+  // ---------------- disponibilidade ----------------
+  const datasAtuais = () => ({
+    data_saida: cab.data_saida || null, data_montagem: cab.data_montagem || null, data_inicio: cab.data_inicio, data_fim: cab.data_fim,
+    data_desmontagem: cab.data_desmontagem || null, data_retorno: cab.data_retorno || null,
+  });
+
+  const verificar = async () => {
+    const demanda = itens.filter(i => ehEquip(i.tipo) && i.produto_id).map(i => ({ produto_id: i.produto_id!, quantidade: lerValor(i.quantidade) || 0 }));
+    if (!demanda.length) return toast('Adicione equipamentos para verificar.', 'info');
+    setVerificando(true);
+    const r = await verificarDisponibilidadeFichaAction({ ficha_id: fichaIdUrl, empresa_id: cab.empresa_id, datas: datasAtuais(), itens: demanda }, accessToken);
+    setVerificando(false);
+    if (!r.ok) return toast(r.erro || 'Erro ao verificar.', 'error');
+    setDisp(r.info);
+    toast(r.info.temFalta ? 'Há falta de equipamento no período.' : 'Tudo disponível no período.', r.info.temFalta ? 'error' : 'success');
+  };
+
+  // ---------------- salvar ----------------
+  const montarDados = (): DadosFicha | string => {
+    if (!cliente) return 'Escolha o cliente.';
+    if (!dataValida(cab.data_inicio) || !dataValida(cab.data_fim)) return 'Informe o início e o fim do evento.';
+    const desc = lerValor(cab.desconto);
+    if (Number.isNaN(desc)) return 'Desconto geral inválido.';
+    const itensOut = [];
+    for (const i of itens) {
+      const q = lerValor(i.quantidade), vu = lerValor(i.valor_unitario), d = lerValor(i.desconto);
+      if (q === null || Number.isNaN(q) || q <= 0) return `Quantidade inválida em "${i.descricao || ROTULO_TIPO[i.tipo]}".`;
+      if (Number.isNaN(vu) || Number.isNaN(d)) return `Valor inválido em "${i.descricao || ROTULO_TIPO[i.tipo]}".`;
+      if (!i.descricao.trim()) return 'Há item sem descrição.';
+      itensOut.push({
+        id: i.id, tipo: i.tipo, produto_id: i.produto_id, descricao: i.descricao, quantidade: q, dias: ehEquip(i.tipo) ? diasDoItem(i) : (Number(i.dias) || null),
+        valor_unitario: vu || 0, desconto_valor: d || 0, origem_preco: i.preco_manual ? (i.origem ? { ...i.origem, sugerido: true } : null) : i.origem,
+        preco_manual: i.preco_manual, observacoes: i.observacoes || null,
+      });
+    }
+    return {
+      id: fichaIdUrl, empresa_id: cab.empresa_id, modalidade: cab.modalidade, parceiro_id: Number(cliente.id),
+      contato_nome: cab.contato_nome, contato_telefone: cab.contato_telefone, contato_email: cab.contato_email,
+      evento_id: evento ? String(evento.id) : null, tabela_preco_id: tabelas[0]?.id || fichaInfo?.tabela_preco_id || null,
+      vendedor_nome: cab.vendedor_nome, local_entrega: cab.local_entrega, endereco_estande: cab.endereco_estande,
+      ...datasAtuais(), dias_cobrados: diasCobrados, validade_orcamento: cab.validade_orcamento || null,
+      condicao_pagamento: cab.condicao_pagamento, observacoes: cab.observacoes, observacoes_internas: cab.observacoes_internas,
+      desconto_valor: desc || 0, itens: itensOut,
+    };
+  };
+
+  const salvar = async (): Promise<number | null> => {
+    const dados = montarDados();
+    if (typeof dados === 'string') { toast(dados, 'error'); return null; }
+    setSalvando(true);
+    const r = await salvarFichaAction(dados, accessToken);
+    setSalvando(false);
+    if (!r.ok) {
+      toast(r.erro || 'Erro ao salvar.', 'error');
+      if (r.info?.faltas) setDisp({ linhas: r.info.faltas, temFalta: true });
+      return null;
+    }
+    toast(ehNova ? 'Orçamento criado.' : 'Ficha salva.', 'success');
+    if (r.info.aviso) toast(r.info.aviso, 'error');
+    setAlterado(false);
+    if (ehNova) { router.replace(`${ROTA}/${r.info.id}`); return r.info.id; }
+    const rec = await carregarFichaAction(r.info.id, accessToken);
+    if (rec.ok) aplicarFicha(rec.info);
+    return r.info.id;
+  };
+
+  // ---------------- status ----------------
+  const executar = async (acao: AcaoStatus) => {
+    if (!fichaIdUrl) return;
+    let motivo: string | null = null;
+    if (acao === 'PERDER' || acao === 'CANCELAR') {
+      motivo = await pedir({ title: acao === 'PERDER' ? 'Orçamento perdido' : 'Cancelar ficha', message: acao === 'PERDER' ? 'Por que o orçamento foi perdido? (preço, prazo, falta de equipamento, cliente desistiu…)' : 'Motivo do cancelamento:', placeholder: 'Motivo' });
+      if (motivo === null) return;
+      if (!motivo.trim()) return toast('Informe o motivo.', 'error');
+    } else if (acao === 'RESERVAR') {
+      if (!(await confirmar({ title: 'Aprovar e reservar', confirmLabel: 'Reservar', message: 'O cliente aprovou? Os equipamentos serão reservados para o período (incluindo dias de preparo e retorno). Se faltar algo, nada é reservado e a lista de faltas aparece.' }))) return;
+    } else if (acao === 'DESFAZER_RESERVA') {
+      if (!(await confirmar({ title: 'Desfazer reserva', danger: true, confirmLabel: 'Desfazer', message: 'Os equipamentos voltam a ficar livres e a ficha volta para "Enviado".' }))) return;
+    }
+    if (alterado) {
+      const ok = await confirmar({ title: 'Salvar antes', confirmLabel: 'Salvar e continuar', message: 'Há alterações não salvas. Salvar a ficha antes de continuar?' });
+      if (!ok) return;
+      const id = await salvar();
+      if (!id) return;
+    }
+    setSalvando(true);
+    const r = await mudarStatusFichaAction(fichaIdUrl, acao, motivo, accessToken);
+    setSalvando(false);
+    if (!r.ok) {
+      toast(r.erro || 'Erro.', 'error');
+      if (r.info?.faltas?.length) setDisp({ linhas: r.info.faltas, temFalta: true });
+      return;
+    }
+    toast(`Ficha: ${STATUS_FICHA[r.info.status as StatusFicha]?.rotulo || r.info.status}.`, 'success');
+    const rec = await carregarFichaAction(fichaIdUrl, accessToken);
+    if (rec.ok) aplicarFicha(rec.info);
+  };
+
+  const duplicar = async () => {
+    if (!fichaIdUrl) return;
+    if (!(await confirmar({ title: 'Duplicar ficha', confirmLabel: 'Duplicar', message: 'Cria um orçamento novo com os mesmos dados e itens (sem reserva).' }))) return;
+    const r = await duplicarFichaAction(fichaIdUrl, accessToken);
+    if (!r.ok) return toast(r.erro || 'Erro ao duplicar.', 'error');
+    toast('Orçamento duplicado.', 'success');
+    router.push(`${ROTA}/${r.info.id}`);
+  };
+
+  const voltar = async () => {
+    if (alterado && !(await confirmar({ title: 'Sair sem salvar', danger: true, confirmLabel: 'Sair', message: 'Há alterações não salvas. Sair mesmo assim?' }))) return;
+    router.push(ROTA);
+  };
+
+  // reservas por item (peças)
+  const alocPorItem = useMemo(() => {
+    const m = new Map<number, { qtd: number; pecas: string[] }>();
+    for (const a of alocacoes) {
+      if (!a.ficha_item_id) continue;
+      const x = m.get(a.ficha_item_id) || { qtd: 0, pecas: [] };
+      x.qtd += Number(a.quantidade) || 0;
+      if (a.patrimonio) x.pecas.push(a.patrimonio);
+      m.set(a.ficha_item_id, x);
+    }
+    return m;
+  }, [alocacoes]);
+  const faltaPorProduto = useMemo(() => new Map((disp?.linhas || []).map(l => [l.produto_id, l])), [disp]);
+
+  // ============================================================================
+  if (authLoading || (carregando && !acessoNegado && !erro)) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center pt-16">
+        <div className="w-10 h-10 border-4 border-[#E2E8F0] border-t-[#336699] rounded-full animate-spin shadow-sm"></div>
+      </div>
+    );
+  }
+  if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
+  if (acessoNegado) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200">
+          <div className="text-5xl mb-4">⛔</div>
+          <h2 className="text-xl font-black text-red-600 uppercase tracking-wider mb-2">Acesso Restrito</h2>
+          <p className="text-sm text-gray-500 mb-6">Você não possui permissão para acessar Orçamentos e Reservas.</p>
+          <button onClick={() => router.push('/admin/locacoes')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider">Voltar ao Hub</button>
+        </div>
+      </div>
+    );
+  }
+  if (!ehNova && !fichaInfo) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full">
+          <p className="text-sm text-gray-500 mb-6">Ficha não encontrada ou sem acesso.</p>
+          <button onClick={() => router.push(ROTA)} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full">Voltar</button>
+        </div>
+      </div>
+    );
+  }
+
+  const inputCls = 'w-full border border-[#CBD5E1] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#336699] disabled:bg-[#F8FAFC] disabled:text-gray-500';
+  const labelCls = 'block text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1';
+  const cardCls = 'bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-4 md:p-6';
+  const btn = 'px-4 py-2 rounded-lg font-bold uppercase text-[10px] tracking-wider disabled:opacity-40';
+
+  const botoesStatus: { acao: AcaoStatus; rotulo: string; cls: string }[] = [];
+  if (!ehNova && !doP2s) {
+    if (status === 'ORCAMENTO') botoesStatus.push({ acao: 'ENVIAR', rotulo: 'Marcar como enviado', cls: 'bg-white border border-[#336699] text-[#336699]' });
+    if (['ORCAMENTO', 'ENVIADO', 'APROVADO'].includes(status)) botoesStatus.push({ acao: 'RESERVAR', rotulo: '✔ Aprovar e reservar', cls: 'bg-emerald-600 hover:bg-emerald-700 text-white' });
+    if (['ENVIADO', 'APROVADO'].includes(status)) botoesStatus.push({ acao: 'VOLTAR_ORCAMENTO', rotulo: 'Voltar a orçamento', cls: 'bg-white border border-[#CBD5E1] text-gray-600' });
+    if (status === 'RESERVADA') botoesStatus.push({ acao: 'DESFAZER_RESERVA', rotulo: 'Desfazer reserva', cls: 'bg-white border border-amber-300 text-amber-700' });
+    if (['ORCAMENTO', 'ENVIADO', 'APROVADO'].includes(status)) botoesStatus.push({ acao: 'PERDER', rotulo: 'Perdido', cls: 'bg-white border border-red-200 text-red-600' });
+    if (EDITAVEIS.includes(status)) botoesStatus.push({ acao: 'CANCELAR', rotulo: 'Cancelar', cls: 'bg-white border border-red-200 text-red-600' });
+    if (['PERDIDO', 'CANCELADA'].includes(status)) botoesStatus.push({ acao: 'REABRIR', rotulo: 'Reabrir', cls: 'bg-white border border-[#336699] text-[#336699]' });
+  }
+
+  return (
+    <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-16">
+      <Analytics />
+      <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex-shrink-0 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 shadow-sm">
+        <p className="text-[#0369A1] font-medium text-sm">📝 <strong>Olá, {usuarioAtual}</strong>. {ehNova ? 'Novo orçamento de locação.' : 'Ficha de reserva.'}</p>
+        <button onClick={voltar} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">⬅ VOLTAR À LISTA</button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 md:p-8">
+        <div className="max-w-7xl mx-auto space-y-6">
+
+          {/* ---------- topo ---------- */}
+          <div className={cardCls}>
+            <div className="flex flex-col lg:flex-row justify-between items-start gap-4">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="text-2xl font-black text-[#0C1D4D] uppercase tracking-tight">{ehNova ? 'Novo orçamento' : doP2s ? `P2S ${fichaInfo.p2s_numero}` : numeroFicha(fichaIdUrl!)}</h1>
+                  {doP2s && <span className="text-[10px] font-black px-2.5 py-1 rounded-full uppercase bg-orange-100 text-orange-700">importada do P2S · {fichaInfo.p2s_status}</span>}
+                  <span className={`text-[10px] font-black px-2.5 py-1 rounded-full uppercase ${STATUS_FICHA[status]?.cls}`}>{STATUS_FICHA[status]?.rotulo}</span>
+                  {alterado && <span className="text-[10px] font-black px-2.5 py-1 rounded-full uppercase bg-amber-100 text-amber-700">não salvo</span>}
+                </div>
+                {fichaInfo?.motivo_perda && <p className="text-xs text-red-600 mt-1">Motivo: {fichaInfo.motivo_perda}</p>}
+                {fichaInfo?.aprovado_em && <p className="text-xs text-gray-500 mt-1">Aprovado em {new Date(fichaInfo.aprovado_em).toLocaleString('pt-BR')} por {fichaInfo.aprovado_por}</p>}
+                {doP2s && <p className="text-xs text-orange-700 mt-1">Ficha do PrimeStart, importada só para leitura (o P2S segue oficial). Alterações são feitas lá e chegam na próxima importação{fichaInfo?.p2s_sincronizado_em ? ` — última: ${new Date(fichaInfo.p2s_sincronizado_em).toLocaleString('pt-BR')}` : ''}. Use Duplicar para simular uma cópia aqui.</p>}
+                {!editavel && !doP2s && <p className="text-xs text-gray-500 mt-1">Ficha {STATUS_FICHA[status]?.rotulo.toLowerCase()} — só leitura{['PERDIDO', 'CANCELADA'].includes(status) ? ' (use Reabrir para editar)' : ''}.</p>}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {botoesStatus.map(b => (
+                  <button key={b.acao} onClick={() => executar(b.acao)} disabled={salvando} className={`${btn} ${b.cls}`}>{b.rotulo}</button>
+                ))}
+                {!ehNova && <button onClick={duplicar} disabled={salvando} className={`${btn} bg-white border border-[#CBD5E1] text-gray-600`}>Duplicar</button>}
+                {editavel && (
+                  <button onClick={salvar} disabled={salvando || (!alterado && !ehNova)} className={`${btn} bg-[#0C1D4D] hover:bg-[#284B8C] text-white`}>
+                    {salvando ? 'Salvando...' : ehNova ? 'Criar orçamento' : 'Salvar'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid lg:grid-cols-3 gap-6">
+            {/* ---------- cliente / evento ---------- */}
+            <div className={`${cardCls} lg:col-span-2 space-y-4`}>
+              <h2 className="text-sm font-black text-[#0C1D4D] uppercase tracking-wider">Cliente e evento</h2>
+              <div className="grid md:grid-cols-2 gap-4">
+                <div>
+                  <label className={labelCls}>Cliente *</label>
+                  <CampoBusca placeholder="Buscar cliente..." buscar={buscarClientes} valor={cliente} desabilitado={!editavel}
+                    onEscolher={o => {
+                      setCliente(o); setAlterado(true);
+                      const ex = (o.extra || {}) as any;
+                      setCab(c => ({ ...c, contato_telefone: c.contato_telefone || ex.telefone || '', contato_email: c.contato_email || ex.email || '' }));
+                    }}
+                    onLimpar={() => { setCliente(null); setAlterado(true); }} />
+                </div>
+                <div>
+                  <label className={labelCls}>Evento / Feira</label>
+                  <CampoBusca placeholder="Buscar evento (opcional)..." buscar={buscarEventos} valor={evento} desabilitado={!editavel}
+                    onEscolher={o => {
+                      setEvento(o); setAlterado(true);
+                      const ex = (o.extra || {}) as any;
+                      setCab(c => ({
+                        ...c, data_inicio: c.data_inicio || ex.data_inicial || '', data_fim: c.data_fim || ex.data_final || ex.data_inicial || '',
+                        local_entrega: c.local_entrega || ex.local || '',
+                      }));
+                    }}
+                    onLimpar={() => { setEvento(null); setAlterado(true); }} />
+                </div>
+                <div><label className={labelCls}>Contato</label><input value={cab.contato_nome} onChange={e => mudarCab({ contato_nome: e.target.value })} disabled={!editavel} className={inputCls} /></div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div><label className={labelCls}>Telefone</label><input value={cab.contato_telefone} onChange={e => mudarCab({ contato_telefone: e.target.value })} disabled={!editavel} className={inputCls} /></div>
+                  <div><label className={labelCls}>E-mail</label><input value={cab.contato_email} onChange={e => mudarCab({ contato_email: e.target.value })} disabled={!editavel} className={inputCls} /></div>
+                </div>
+                <div><label className={labelCls}>Local de entrega</label><input value={cab.local_entrega} onChange={e => mudarCab({ local_entrega: e.target.value })} disabled={!editavel} className={inputCls} /></div>
+                <div><label className={labelCls}>Estande / endereço</label><input value={cab.endereco_estande} onChange={e => mudarCab({ endereco_estande: e.target.value })} disabled={!editavel} className={inputCls} /></div>
+              </div>
+            </div>
+
+            {/* ---------- comercial ---------- */}
+            <div className={`${cardCls} space-y-4`}>
+              <h2 className="text-sm font-black text-[#0C1D4D] uppercase tracking-wider">Comercial</h2>
+              {empresas.length > 1 ? (
+                <div>
+                  <label className={labelCls}>Empresa</label>
+                  <select value={cab.empresa_id} onChange={e => mudarCab({ empresa_id: Number(e.target.value) })} disabled={!editavel || status === 'RESERVADA'} className={inputCls}>
+                    {empresas.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                  </select>
+                </div>
+              ) : (
+                <span className={`inline-block text-[10px] font-black px-2.5 py-1 rounded-full uppercase ${corSeloEmpresa(cab.empresa_id)}`}>{empresas[0]?.nome}</span>
+              )}
+              <div>
+                <label className={labelCls}>Modalidade</label>
+                <select value={cab.modalidade} onChange={e => mudarCab({ modalidade: e.target.value as Modalidade })} disabled={!editavel} className={inputCls}>
+                  {MODALIDADES.map(m => <option key={m.v} value={m.v}>{m.rotulo}</option>)}
+                </select>
+                <p className="text-[10px] text-gray-400 mt-1">{MODALIDADES.find(m => m.v === cab.modalidade)?.desc}</p>
+              </div>
+              <div><label className={labelCls}>Vendedor</label><input value={cab.vendedor_nome} onChange={e => mudarCab({ vendedor_nome: e.target.value })} disabled={!editavel} className={inputCls} /></div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><label className={labelCls}>Validade</label><input type="date" value={cab.validade_orcamento} onChange={e => mudarCab({ validade_orcamento: e.target.value })} disabled={!editavel} className={inputCls} /></div>
+                <div><label className={labelCls}>Pagamento</label><input value={cab.condicao_pagamento} onChange={e => mudarCab({ condicao_pagamento: e.target.value })} placeholder="Ex.: 50% + 50%" disabled={!editavel} className={inputCls} /></div>
+              </div>
+            </div>
+          </div>
+
+          {/* ---------- datas ---------- */}
+          <div className={cardCls}>
+            <h2 className="text-sm font-black text-[#0C1D4D] uppercase tracking-wider mb-4">Datas</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 items-end">
+              {([
+                ['data_saida', 'Saída'], ['data_montagem', 'Montagem'], ['data_inicio', 'Início do evento *'], ['data_fim', 'Fim do evento *'],
+                ['data_desmontagem', 'Desmontagem'], ['data_retorno', 'Retorno'],
+              ] as [keyof Cabecalho, string][]).map(([k, rot]) => (
+                <div key={k}>
+                  <label className={labelCls}>{rot}</label>
+                  <input type="date" value={cab[k] as string} onChange={e => mudarCab({ [k]: e.target.value } as Partial<Cabecalho>)} disabled={!editavel} className={inputCls} />
+                </div>
+              ))}
+              <div>
+                <label className={labelCls}>Dias cobrados</label>
+                <div className="flex items-center gap-1">
+                  <input value={cab.dias_cobrados} onChange={e => { setDiasManual(true); mudarCab({ dias_cobrados: e.target.value.replace(/\D/g, '') }); }} disabled={!editavel} className={inputCls} />
+                  {diasManual && diasEvento && editavel && (
+                    <button onClick={() => { setDiasManual(false); mudarCab({ dias_cobrados: String(diasEvento) }); }} title={`Voltar para ${diasEvento} dias do evento`} className="text-xs text-[#336699] font-bold px-1">↺</button>
+                  )}
+                </div>
+              </div>
+            </div>
+            <p className="text-[10px] text-gray-400 mt-3">
+              {diasEvento ? `Evento de ${diasEvento} dia(s).` : 'Informe início e fim do evento.'} O preço conta os dias cobrados; saída/montagem e desmontagem/retorno (mais os dias de preparo/retorno de cada equipamento) só prendem a agenda.
+            </p>
+          </div>
+
+          {/* ---------- itens ---------- */}
+          <div className={cardCls}>
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
+              <div>
+                <h2 className="text-sm font-black text-[#0C1D4D] uppercase tracking-wider">Itens</h2>
+                {tabelas.length > 0 && <p className="text-[10px] text-gray-500 mt-0.5">Tabelas aplicadas (prioridade): {tabelas.map(t => t.nome).join(' → ')}</p>}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={() => precificar(itens)} disabled={!editavel || precificando || !itens.some(i => ehEquip(i.tipo))} className={`${btn} bg-white border border-[#CBD5E1] text-[#0C1D4D]`}>{precificando ? 'Calculando...' : '↻ Recalcular preços'}</button>
+                <button onClick={verificar} disabled={verificando || !itens.some(i => ehEquip(i.tipo))} className={`${btn} bg-white border border-[#336699] text-[#336699]`}>{verificando ? 'Verificando...' : '🔎 Verificar disponibilidade'}</button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-[10px] font-black text-gray-500 uppercase tracking-wider border-b border-[#E2E8F0]">
+                    <th className="p-2 w-14"></th>
+                    <th className="p-2">Item</th>
+                    <th className="p-2 text-right w-20">Qtd</th>
+                    <th className="p-2 text-right w-16">Dias</th>
+                    <th className="p-2 text-right w-32">Valor unit.<span className="block text-[8px] normal-case text-gray-400">período todo</span></th>
+                    <th className="p-2 text-right w-24">Desconto</th>
+                    <th className="p-2 text-right w-28">Total</th>
+                    <th className="p-2 w-8"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {itens.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-gray-400">Nenhum item ainda — busque um equipamento abaixo.</td></tr>}
+                  {itens.map((i, idx) => {
+                    const equip = ehEquip(i.tipo);
+                    const linhaDisp = i.produto_id ? faltaPorProduto.get(i.produto_id) : undefined;
+                    const res = i.id ? alocPorItem.get(i.id) : undefined;
+                    return (
+                      <tr key={i.chave} className="border-b border-[#F1F5F9] align-top">
+                        <td className="p-2 whitespace-nowrap">
+                          {editavel && (
+                            <span className="flex flex-col text-gray-300">
+                              <button onClick={() => moverItem(i.chave, -1)} disabled={idx === 0} className="hover:text-gray-600 disabled:opacity-30 leading-none">▲</button>
+                              <button onClick={() => moverItem(i.chave, 1)} disabled={idx === itens.length - 1} className="hover:text-gray-600 disabled:opacity-30 leading-none">▼</button>
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-2 min-w-[260px]">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase ${equip ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>{ROTULO_TIPO[i.tipo]}</span>
+                            {i.controle === 'INDIVIDUAL' && <span className="text-[8px] font-black px-1.5 py-0.5 rounded uppercase bg-slate-100 text-slate-600">patrimônio</span>}
+                            {i.produto_codigo && <span className="text-[10px] text-gray-400">{i.produto_codigo}{i.unidade ? ` · ${i.unidade}` : ''}</span>}
+                          </div>
+                          {equip ? (
+                            <p className="font-bold text-[#0C1D4D]">{i.descricao}</p>
+                          ) : (
+                            <input value={i.descricao} onChange={e => mudarItem(i.chave, { descricao: e.target.value })} disabled={!editavel} placeholder="Descrição"
+                              className="w-full border border-[#E2E8F0] rounded px-2 py-1 font-bold text-[#0C1D4D] disabled:bg-transparent disabled:border-transparent" />
+                          )}
+                          {equip && i.origem && !i.preco_manual && <p className="text-[10px] text-gray-400 mt-0.5">{descreverOrigem(i.origem)}</p>}
+                          {equip && i.preco_manual && <p className="text-[10px] text-amber-600 font-bold mt-0.5">preço manual{i.origem ? ` · tabela: ${descreverOrigem(i.origem)}` : ''}</p>}
+                          {equip && i.semPreco && !i.preco_manual && <p className="text-[10px] text-red-500 font-bold mt-0.5">⚠ {i.semPreco} — informe o valor</p>}
+                          {linhaDisp && (
+                            <p className={`text-[10px] font-bold mt-0.5 ${linhaDisp.falta > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                              {linhaDisp.falta > 0 ? `✖ faltam ${mostrarQtd(linhaDisp.falta)} (disponível ${mostrarQtd(linhaDisp.disponivel)} de ${mostrarQtd(linhaDisp.capacidade)})` : `✔ disponível (${mostrarQtd(linhaDisp.disponivel)} livres)`}
+                            </p>
+                          )}
+                          {res && <p className="text-[10px] text-emerald-700 mt-0.5">Reservado: {res.pecas.length ? res.pecas.join(', ') : mostrarQtd(res.qtd)}</p>}
+                        </td>
+                        <td className="p-1"><input value={i.quantidade} onChange={e => mudarItem(i.chave, { quantidade: e.target.value })} disabled={!editavel} inputMode="decimal" className="w-full border border-[#E2E8F0] rounded px-2 py-1 text-right disabled:bg-transparent disabled:border-transparent" /></td>
+                        <td className="p-1">
+                          {equip ? (
+                            <input value={i.dias} onChange={e => mudarItem(i.chave, { dias: e.target.value.replace(/\D/g, '') }, true)} disabled={!editavel} placeholder={String(diasCobrados)}
+                              className="w-full border border-[#E2E8F0] rounded px-2 py-1 text-right disabled:bg-transparent disabled:border-transparent" />
+                          ) : <span className="block text-right text-gray-300 px-2 py-1">—</span>}
+                        </td>
+                        <td className="p-1">
+                          <div className="flex items-center gap-1">
+                            <input value={i.valor_unitario} onChange={e => mudarItem(i.chave, { valor_unitario: e.target.value, preco_manual: true })} disabled={!editavel} inputMode="decimal"
+                              className={`w-full border rounded px-2 py-1 text-right disabled:bg-transparent disabled:border-transparent ${i.preco_manual && equip ? 'border-amber-300 bg-amber-50' : 'border-[#E2E8F0]'}`} />
+                            {equip && i.preco_manual && editavel && (
+                              <button onClick={() => mudarItem(i.chave, { preco_manual: false }, true)} title="Voltar ao preço da tabela" className="text-[#336699] font-bold text-sm">↺</button>
+                            )}
+                          </div>
+                        </td>
+                        <td className="p-1"><input value={i.desconto} onChange={e => mudarItem(i.chave, { desconto: e.target.value })} disabled={!editavel} inputMode="decimal" placeholder="—" className="w-full border border-[#E2E8F0] rounded px-2 py-1 text-right disabled:bg-transparent disabled:border-transparent" /></td>
+                        <td className="p-2 text-right font-black text-[#0C1D4D] whitespace-nowrap">{formatarMoeda(totalItem(i))}</td>
+                        <td className="p-2">{editavel && <button onClick={() => removerItem(i.chave)} title="Remover" className="text-gray-300 hover:text-red-500 text-lg leading-none">×</button>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {editavel && (
+              <div className="mt-4 grid md:grid-cols-[1fr_auto] gap-2 items-start">
+                <CampoBusca placeholder="+ Adicionar equipamento ou kit: buscar por nome, código ou categoria..." buscar={buscarProdutos} onEscolher={adicionarProduto} />
+                <div className="flex gap-2">
+                  <button onClick={() => adicionarLivre('SERVICO')} className={`${btn} bg-white border border-[#CBD5E1] text-[#0C1D4D] py-2.5`}>+ Serviço</button>
+                  <button onClick={() => adicionarLivre('FRETE')} className={`${btn} bg-white border border-[#CBD5E1] text-[#0C1D4D] py-2.5`}>+ Frete</button>
+                  <button onClick={() => adicionarLivre('OUTRO')} className={`${btn} bg-white border border-[#CBD5E1] text-[#0C1D4D] py-2.5`}>+ Outro</button>
+                </div>
+              </div>
+            )}
+
+            <div className="mt-6 flex justify-end">
+              <div className="w-full md:w-80 space-y-1 text-sm">
+                <div className="flex justify-between"><span className="text-gray-500">Equipamentos</span><span className="font-bold">{formatarMoeda(totEquip)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Serviços / frete</span><span className="font-bold">{formatarMoeda(totServ)}</span></div>
+                <div className="flex justify-between items-center gap-3">
+                  <span className="text-gray-500">Desconto geral</span>
+                  <input value={cab.desconto} onChange={e => mudarCab({ desconto: e.target.value })} disabled={!editavel} inputMode="decimal" placeholder="0,00"
+                    className="w-28 border border-[#E2E8F0] rounded px-2 py-1 text-right disabled:bg-transparent disabled:border-transparent" />
+                </div>
+                <div className="flex justify-between border-t border-[#E2E8F0] pt-2 mt-2"><span className="font-black uppercase text-[#0C1D4D]">Total</span><span className="font-black text-xl text-[#0C1D4D]">{formatarMoeda(totalGeral)}</span></div>
+              </div>
+            </div>
+          </div>
+
+          {/* ---------- disponibilidade ---------- */}
+          {disp && (
+            <div className={`${cardCls} ${disp.temFalta ? 'border-red-200' : 'border-emerald-200'}`}>
+              <div className="flex justify-between items-center mb-3">
+                <h2 className={`text-sm font-black uppercase tracking-wider ${disp.temFalta ? 'text-red-600' : 'text-emerald-700'}`}>{disp.temFalta ? '✖ Falta equipamento' : '✔ Tudo disponível'}</h2>
+                <button onClick={() => setDisp(null)} className="text-xs text-gray-400 font-bold">fechar</button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-left text-[10px] font-black text-gray-500 uppercase tracking-wider border-b border-[#E2E8F0]">
+                      <th className="p-2">Equipamento</th><th className="p-2">Período na agenda</th><th className="p-2 text-right">Precisa</th>
+                      <th className="p-2 text-right">Estoque</th><th className="p-2 text-right">Já reservado</th><th className="p-2 text-right">Livre</th><th className="p-2 text-right">Falta</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {disp.linhas.map(l => (
+                      <tr key={l.produto_id} className={`border-b border-[#F1F5F9] ${l.falta > 0 ? 'bg-red-50/60' : ''}`}>
+                        <td className="p-2">
+                          <p className="font-bold text-[#0C1D4D]">{l.nome}</p>
+                          <p className="text-[10px] text-gray-400">{[l.codigo, l.controle === 'INDIVIDUAL' ? 'por patrimônio' : 'por quantidade', l.viaKits.length ? `via kit: ${l.viaKits.join(', ')}` : null].filter(Boolean).join(' · ')}</p>
+                        </td>
+                        <td className="p-2 whitespace-nowrap">{formatarDataBR(l.periodo.inicio)} a {formatarDataBR(l.periodo.fim)}</td>
+                        <td className="p-2 text-right font-bold">{mostrarQtd(l.demanda)}</td>
+                        <td className="p-2 text-right">{mostrarQtd(l.capacidade)}</td>
+                        <td className="p-2 text-right">{mostrarQtd(l.ocupado)}</td>
+                        <td className="p-2 text-right font-bold">{mostrarQtd(l.disponivel)}</td>
+                        <td className={`p-2 text-right font-black ${l.falta > 0 ? 'text-red-600' : 'text-gray-300'}`}>{l.falta > 0 ? mostrarQtd(l.falta) : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[10px] text-gray-400 mt-3">"Já reservado" é o pico diário de outras fichas reservadas no mesmo período. Estoque: patrimônios ativos (itens por patrimônio) ou saldo menos manutenção (itens por quantidade) — ver Estoque → Equipamentos de Locação.</p>
+            </div>
+          )}
+
+          {/* ---------- proposta (PDF + Autentique) ---------- */}
+          {!ehNova && fichaIdUrl && !doP2s && (
+            <PainelProposta
+              fichaId={fichaIdUrl} accessToken={accessToken} status={status} alterado={alterado}
+              contatoNome={cab.contato_nome} contatoTelefone={cab.contato_telefone} contatoEmail={cab.contato_email}
+              clienteNome={cliente?.nome || ''}
+              onMudou={async () => { const rec = await carregarFichaAction(fichaIdUrl, accessToken); if (rec.ok) aplicarFicha(rec.info); }}
+            />
+          )}
+
+          {/* ---------- faturamento (títulos a receber) ---------- */}
+          {!ehNova && fichaIdUrl && !doP2s && (
+            <PainelTitulos fichaId={fichaIdUrl} accessToken={accessToken} statusFicha={status} alterado={alterado} condicao={cab.condicao_pagamento} />
+          )}
+
+          {/* ---------- observações ---------- */}
+          <div className="grid md:grid-cols-2 gap-6">
+            <div className={cardCls}>
+              <label className={labelCls}>Observações para o cliente</label>
+              <textarea value={cab.observacoes} onChange={e => mudarCab({ observacoes: e.target.value })} disabled={!editavel} rows={4} className={inputCls} placeholder="Aparecem na proposta." />
+            </div>
+            <div className={cardCls}>
+              <label className={labelCls}>Observações internas</label>
+              <textarea value={cab.observacoes_internas} onChange={e => mudarCab({ observacoes_internas: e.target.value })} disabled={!editavel} rows={4} className={inputCls} placeholder="Só a equipe vê." />
+            </div>
+          </div>
+
+          {/* ---------- histórico ---------- */}
+          {historico.length > 0 && (
+            <div className={cardCls}>
+              <h2 className="text-sm font-black text-[#0C1D4D] uppercase tracking-wider mb-3">Histórico</h2>
+              <ul className="space-y-2">
+                {historico.map(h => (
+                  <li key={h.id} className="text-xs flex gap-3">
+                    <span className="text-gray-400 whitespace-nowrap">{new Date(h.criado_em).toLocaleString('pt-BR')}</span>
+                    <span><strong className="text-[#0C1D4D]">{h.usuario}</strong> — {h.detalhe || h.acao}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

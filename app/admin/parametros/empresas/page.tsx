@@ -44,6 +44,13 @@ interface Empresa {
   // CNPJ do cadastro) — .sql/Pendentes/empresas_cnpjs_p2s.sql, lido pelos
   // syncs via app/lib/empresaP2s.ts. Ausente enquanto o SQL não roda.
   cnpjs_p2s?: string[];
+  // Cabeçalho e condições gerais da Proposta de Locação —
+  // .sql/Pendentes/locacao_propostas.sql. Ausentes enquanto o SQL não roda.
+  endereco?: string | null;
+  telefone?: string | null;
+  email_contato?: string | null;
+  site?: string | null;
+  proposta_condicoes?: string | null;
 }
 
 // De onde vêm os recebimentos da empresa — lido pelo Relatório do Diretor
@@ -53,8 +60,8 @@ const FONTES_RECEBIMENTOS = [
   { valor: 'EXTERNA', rotulo: 'Outra fonte (não integrada)', ajuda: 'O Relatório do Diretor ignora o contas a receber do P2S desta empresa.' },
 ] as const;
 
-const empresaFormPadrao: { nome: string; razao_social: string; cnpj: string; ativo: boolean; fonte_recebimentos: 'P2S' | 'EXTERNA'; cnpjs_p2s: string } =
-  { nome: '', razao_social: '', cnpj: '', ativo: true, fonte_recebimentos: 'P2S', cnpjs_p2s: '' };
+const empresaFormPadrao: { nome: string; razao_social: string; cnpj: string; ativo: boolean; fonte_recebimentos: 'P2S' | 'EXTERNA'; cnpjs_p2s: string; endereco: string; telefone: string; email_contato: string; site: string; proposta_condicoes: string } =
+  { nome: '', razao_social: '', cnpj: '', ativo: true, fonte_recebimentos: 'P2S', cnpjs_p2s: '', endereco: '', telefone: '', email_contato: '', site: '', proposta_condicoes: '' };
 
 // "34.075.821/0001-09, 10.353.694/0001-02" → ['34075821000109', '10353694000102'] (só CNPJs completos)
 const listaCnpjs = (texto: string) => [...new Set(texto.split(/[,;\n]+/).map(c => somenteDigitos(c)).filter(c => c.length === 14))];
@@ -109,9 +116,10 @@ export default function EmpresasPage() {
 
   const colunaFonteExiste = empresas.some(e => e.fonte_recebimentos !== undefined);
   const colunaCnpjsP2sExiste = empresas.some(e => e.cnpjs_p2s !== undefined);
+  const colunasPropostaExistem = empresas.some(e => e.proposta_condicoes !== undefined);
 
   const prepararEdicao = (e: Empresa) => {
-    setForm({ nome: e.nome, razao_social: e.razao_social || '', cnpj: mascararCnpjDigitando(e.cnpj || ''), ativo: e.ativo, fonte_recebimentos: e.fonte_recebimentos === 'EXTERNA' ? 'EXTERNA' : 'P2S', cnpjs_p2s: (e.cnpjs_p2s || []).map(formatarCnpj).join(', ') });
+    setForm({ nome: e.nome, razao_social: e.razao_social || '', cnpj: mascararCnpjDigitando(e.cnpj || ''), ativo: e.ativo, fonte_recebimentos: e.fonte_recebimentos === 'EXTERNA' ? 'EXTERNA' : 'P2S', cnpjs_p2s: (e.cnpjs_p2s || []).map(formatarCnpj).join(', '), endereco: e.endereco || '', telefone: e.telefone || '', email_contato: e.email_contato || '', site: e.site || '', proposta_condicoes: e.proposta_condicoes || '' });
     setEditandoId(e.id);
   };
 
@@ -132,6 +140,10 @@ export default function EmpresasPage() {
         ativo: form.ativo,
         ...(colunaFonteExiste ? { fonte_recebimentos: form.fonte_recebimentos } : {}),
         ...(colunaCnpjsP2sExiste ? { cnpjs_p2s: listaCnpjs(form.cnpjs_p2s) } : {}),
+        ...(colunasPropostaExistem ? {
+          endereco: form.endereco.trim() || null, telefone: form.telefone.trim() || null, email_contato: form.email_contato.trim() || null,
+          site: form.site.trim() || null, proposta_condicoes: form.proposta_condicoes.trim() || null,
+        } : {}),
       };
 
       let error;
@@ -281,6 +293,35 @@ export default function EmpresasPage() {
                   {FONTES_RECEBIMENTOS.map(f => <option key={f.valor} value={f.valor}>{f.rotulo}</option>)}
                 </select>
                 <p className="text-[10px] text-gray-400 mt-1">{FONTES_RECEBIMENTOS.find(f => f.valor === form.fonte_recebimentos)?.ajuda}</p>
+              </div>
+            )}
+            {colunasPropostaExistem && (
+              <div className="space-y-3 border-t border-gray-100 pt-3">
+                <p className="text-[10px] font-black text-[#336699] uppercase">Proposta de locação (cabeçalho do PDF)</p>
+                <div>
+                  <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Endereço</label>
+                  <input type="text" placeholder="Rua, nº - Bairro - Cidade/UF - CEP" value={form.endereco} onChange={e => setForm({ ...form, endereco: e.target.value })} className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699]" />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Telefone</label>
+                    <input type="text" value={form.telefone} onChange={e => setForm({ ...form, telefone: e.target.value })} className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699]" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">E-mail</label>
+                    <input type="text" value={form.email_contato} onChange={e => setForm({ ...form, email_contato: e.target.value })} className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699]" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Site</label>
+                  <input type="text" value={form.site} onChange={e => setForm({ ...form, site: e.target.value })} className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699]" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Condições gerais da proposta</label>
+                  <textarea rows={6} placeholder="Em branco = texto padrão (validade, guarda dos equipamentos, avarias pelo valor de indenização, diárias por atraso...)" value={form.proposta_condicoes} onChange={e => setForm({ ...form, proposta_condicoes: e.target.value })}
+                    className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699]" />
+                  <p className="text-[10px] text-gray-400 mt-1">Aparece no fim de toda proposta desta empresa. Uma cláusula por linha.</p>
+                </div>
               </div>
             )}
             <label className="flex items-center gap-2 font-bold text-xs text-[#0C1D4D] cursor-pointer select-none">

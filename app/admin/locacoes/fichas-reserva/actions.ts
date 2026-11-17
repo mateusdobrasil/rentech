@@ -1,6 +1,6 @@
 'use server';
 
-// app/admin/comercial/fichas/actions.ts
+// app/admin/locacoes/fichas-reserva/actions.ts
 // Wrapper fino: só checa permissão e delega pra fichasCore.ts, que tem a
 // lógica de sync de verdade (e é reaproveitada também por
 // app/api/cron/sync-p2s/route.ts, que roda sem sessão de usuário — ver
@@ -11,7 +11,7 @@ import { sincronizarFichasReservaCore, type SincronizarFichasReservaOpcoes } fro
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
-const ROTA = '/admin/comercial/fichas';
+const ROTA = '/admin/locacoes/fichas-reserva';
 
 // O botão "Sincronizar Fichas/Eventos" de /admin/estoque/expedicao também
 // chama esta action — quem tem acesso à Expedição precisa conseguir usar o

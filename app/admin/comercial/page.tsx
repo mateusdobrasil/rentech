@@ -23,12 +23,8 @@ const modulosComercial = [
     icone: '🚚', link: '/admin/comercial/frota',
     cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
   },
-  {
-    titulo: 'Fichas de Reserva',
-    descricao: 'Importação e consulta das fichas de reserva vinculadas aos eventos e feiras.',
-    icone: '📋', link: '/admin/comercial/fichas',
-    cor: 'bg-emerald-50 border-emerald-200 text-emerald-700', hover: 'hover:border-emerald-500'
-  },
+  // Fichas de Reserva mudou para o hub Locações (/admin/locacoes/fichas-reserva)
+  // em 2026-11-16 — ver .sql/Pendentes/locacao_fase1.sql.
   {
     titulo: 'Eventos/Feiras',
     descricao: 'Cadastro de eventos e feiras com local padrão, usado para localizar o calendário operacional.',

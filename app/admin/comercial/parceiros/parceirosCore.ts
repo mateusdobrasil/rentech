@@ -39,10 +39,13 @@ import { obterCursorIncremental, registrarSincronizacao, calcularProximoCursor, 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
 // Janela de paginação por CodigoParceiro e proteção contra loop infinito
-// (500 janelas de 200 códigos = até 100.000 códigos consultados).
+// (500 janelas de 200 códigos = até 100.000 códigos consultados). Os códigos
+// do P2S têm um buraco de ~20.600 (de 1.372 pula para 22.000) — com 5 janelas
+// vazias a carga completa parava no buraco; 250 (50.000 códigos) atravessa.
+// Janela vazia custa ~0,1 s.
 const JANELA = 200;
 const MAX_JANELAS = 500;
-const JANELAS_VAZIAS_PARA_PARAR = 5;
+const JANELAS_VAZIAS_PARA_PARAR = 250;
 
 function nomeExibicao(obj: ObjetoP2s | null): string | null {
   if (!obj) return null;

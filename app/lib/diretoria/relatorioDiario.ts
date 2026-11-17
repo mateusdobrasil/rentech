@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { supabaseAdmin } from '../supabase';
 import { calcularIndicadoresDiarios, somarDias, type IndicadoresDiarios } from './indicadoresDiarios';
 import { escreverComIA, custoUsd, SituacaoSchema, PontoAtencaoSchema, SecaoSchema, PendenciaSchema, CONTEXTO_DADOS, REGRAS_ESCRITA, type PendenciaDiretoria } from './ia';
-import { avisarPeloCard, baseUrlSistema, dataBR } from './whatsappDiretoria';
+import { enviarPeloCard, montarEmailRelatorio, baseUrlSistema, dataBR } from './envioDiretoria';
 
 type DB = ReturnType<typeof supabaseAdmin>;
 
@@ -22,7 +22,6 @@ export const CHAVE_CARD_DIRETORIA = 'diretoria-relatorio-diario';
 export const RelatorioDiarioSchema = z.object({
   situacao: SituacaoSchema,
   manchete: z.string().describe('Uma frase só (até ~180 caracteres), sem quebra de linha: o resumo do dia que o dono leria se lesse só isto.'),
-  destaques_whatsapp: z.string().describe('Até 3 destaques curtíssimos numa linha só, separados por " · " (ex.: "Recebido R$ 12.400,00 · 3 títulos venceram ontem · Caminhão fora há 4 dias"). Sem quebra de linha.'),
   pontos_de_atencao: z.array(PontoAtencaoSchema).describe('No máximo 6, do mais grave ao menos grave. Lista vazia se o dia foi normal.'),
   secoes: z.array(SecaoSchema).describe('Uma por área com movimento relevante, na ordem FINANCEIRO, COMERCIAL, EXPEDICAO, FROTA, RH. Omita a área sem nada a dizer.'),
   pendencias: z.array(PendenciaSchema).describe('Pendências que o diretor acompanha: as anteriores (ABERTA se os números de hoje mostram que continua, RESOLVIDA se sumiu) + as novas de hoje. Não repita uma RESOLVIDA de relatórios anteriores.'),
@@ -62,7 +61,7 @@ export interface ResultadoRelatorio {
   ok: boolean;
   erro?: string;
   relatorioId?: number;
-  whatsapp?: string;
+  envio?: string; // resultado do e-mail ("E-mail enviado para 1.")
 }
 
 // Pendências abertas do último relatório diário bem-sucedido antes de `ate`.
@@ -74,11 +73,11 @@ export async function pendenciasAbertasAte(db: DB, empresaId: number, ate: strin
 }
 
 // Gera (ou regera) o relatório diário de uma empresa e, se pedido, avisa por
-// WhatsApp os destinatários do card diretoria-relatorio-diario.
+// e-mail os destinatários do card diretoria-relatorio-diario.
 export async function gerarRelatorioDiario(
   db: DB,
   empresa: { id: number; nome: string },
-  opcoes: { dataReferencia?: string; geradoPor: string; enviarWhatsapp: boolean },
+  opcoes: { dataReferencia?: string; geradoPor: string; enviarEmail: boolean },
 ): Promise<ResultadoRelatorio> {
   const indicadores = await calcularIndicadoresDiarios(db, empresa, opcoes.dataReferencia);
   const D = indicadores.data_referencia;
@@ -125,18 +124,18 @@ export async function gerarRelatorioDiario(
     .upsert(linha, { onConflict: 'empresa_id,tipo,data_referencia' }).select('id').single();
   if (error) return { ok: false, erro: `Relatório não foi gravado: ${error.message}` };
 
-  let whatsapp: string | undefined;
-  if (opcoes.enviarWhatsapp && ia.ok) {
-    const envio = await avisarPeloCard(db, CHAVE_CARD_DIRETORIA, indicadores.hoje, {
-      empresa_relatorio: empresa.nome,
-      data: dataBR(D),
-      manchete: ia.conteudo.manchete,
-      destaques: ia.conteudo.destaques_whatsapp,
+  let envioTexto: string | undefined;
+  if (opcoes.enviarEmail && ia.ok) {
+    const envio = await enviarPeloCard(db, CHAVE_CARD_DIRETORIA, indicadores.hoje, montarEmailRelatorio({
+      tipoRotulo: 'Relatório diário',
+      empresa: empresa.nome,
+      periodo: `${indicadores.dia_semana_referencia}, ${dataBR(D)}`,
+      conteudo: ia.conteudo,
       link: `${baseUrlSistema()}/admin/diretoria?empresa=${empresa.id}&tipo=DIARIO&data=${D}`,
-    });
-    whatsapp = envio.texto;
+    }));
+    envioTexto = envio.texto;
     await db.from('diretoria_relatorios').update({ whatsapp_enviado_em: envio.enviados > 0 ? new Date().toISOString() : null, whatsapp_resultado: envio.texto }).eq('id', salvo.id);
   }
 
-  return ia.ok ? { ok: true, relatorioId: salvo.id, whatsapp } : { ok: false, erro: ia.erro, relatorioId: salvo.id };
+  return ia.ok ? { ok: true, relatorioId: salvo.id, envio: envioTexto } : { ok: false, erro: ia.erro, relatorioId: salvo.id };
 }

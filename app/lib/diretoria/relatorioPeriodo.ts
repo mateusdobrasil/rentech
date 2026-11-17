@@ -8,7 +8,7 @@ import { hojeISO } from './indicadoresDiarios';
 import { calcularIndicadoresPeriodo, periodosMensal, periodosAnual, mesFechado } from './indicadoresPeriodo';
 import { escreverComIA, custoUsd, SituacaoSchema, PontoAtencaoSchema, SecaoSchema, PendenciaSchema, CONTEXTO_DADOS, REGRAS_ESCRITA } from './ia';
 import { pendenciasAbertasAte, type ResultadoRelatorio } from './relatorioDiario';
-import { avisarPeloCard, baseUrlSistema } from './whatsappDiretoria';
+import { enviarPeloCard, montarEmailRelatorio, baseUrlSistema } from './envioDiretoria';
 
 type DB = ReturnType<typeof supabaseAdmin>;
 
@@ -19,7 +19,6 @@ const MESES_EXTENSO = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho
 export const RelatorioPeriodoSchema = z.object({
   situacao: SituacaoSchema,
   manchete: z.string().describe('Uma frase só (até ~180 caracteres), sem quebra de linha: como foi o período.'),
-  destaques_whatsapp: z.string().describe('Até 3 destaques curtíssimos numa linha só, separados por " · ". Sem quebra de linha.'),
   resumo: z.string().describe('4 a 6 frases: o que marcou o período, comparando com o período anterior e (no mensal) com o mesmo mês do ano anterior.'),
   metas: z.array(z.object({
     meta: z.string().describe('Nome da meta, como no JSON.'),
@@ -50,7 +49,7 @@ export async function gerarRelatorioPeriodo(
   db: DB,
   empresa: { id: number; nome: string },
   tipo: 'MENSAL' | 'ANUAL',
-  opcoes: { hoje?: string; geradoPor: string; enviarWhatsapp: boolean },
+  opcoes: { hoje?: string; geradoPor: string; enviarEmail: boolean },
 ): Promise<ResultadoRelatorio> {
   const hoje = opcoes.hoje || hojeISO();
   const { ano, mes } = mesFechado(hoje);
@@ -86,18 +85,17 @@ export async function gerarRelatorioPeriodo(
     .upsert(linha, { onConflict: 'empresa_id,tipo,data_referencia' }).select('id').single();
   if (error) return { ok: false, erro: `Relatório não foi gravado: ${error.message}` };
 
-  let whatsapp: string | undefined;
-  if (opcoes.enviarWhatsapp && ia.ok) {
-    const envio = await avisarPeloCard(db, tipo === 'MENSAL' ? CHAVE_CARD_MENSAL : CHAVE_CARD_ANUAL, hoje, {
-      tipo_relatorio: tipo === 'MENSAL' ? 'Fechamento do mês' : 'Fechamento do ano',
-      empresa_relatorio: empresa.nome,
-      data: tipo === 'MENSAL' ? `${MESES_EXTENSO[mes - 1]}/${ano}` : String(anoFechado),
-      manchete: ia.conteudo.manchete,
-      destaques: ia.conteudo.destaques_whatsapp,
+  let envioTexto: string | undefined;
+  if (opcoes.enviarEmail && ia.ok) {
+    const envio = await enviarPeloCard(db, tipo === 'MENSAL' ? CHAVE_CARD_MENSAL : CHAVE_CARD_ANUAL, hoje, montarEmailRelatorio({
+      tipoRotulo: tipo === 'MENSAL' ? 'Fechamento do mês' : 'Fechamento do ano',
+      empresa: empresa.nome,
+      periodo: tipo === 'MENSAL' ? `${MESES_EXTENSO[mes - 1]}/${ano}` : String(anoFechado),
+      conteudo: ia.conteudo,
       link: `${baseUrlSistema()}/admin/diretoria?empresa=${empresa.id}&tipo=${tipo}&data=${P.inicio}`,
-    });
-    whatsapp = envio.texto;
+    }));
+    envioTexto = envio.texto;
     await db.from('diretoria_relatorios').update({ whatsapp_enviado_em: envio.enviados > 0 ? new Date().toISOString() : null, whatsapp_resultado: envio.texto }).eq('id', salvo.id);
   }
-  return ia.ok ? { ok: true, relatorioId: salvo.id, whatsapp } : { ok: false, erro: ia.erro, relatorioId: salvo.id };
+  return ia.ok ? { ok: true, relatorioId: salvo.id, envio: envioTexto } : { ok: false, erro: ia.erro, relatorioId: salvo.id };
 }

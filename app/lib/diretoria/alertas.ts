@@ -24,7 +24,7 @@ import { formatarMoeda } from '../formatadores';
 import { hojeISO, somarDias, type FonteRecebimentos } from './indicadoresDiarios';
 import { carregarParametrosDiretoria, type ParametrosDiretoria } from './parametros';
 import { progressoMetasDoMes } from './metas';
-import { avisarPeloCard, baseUrlSistema } from './whatsappDiretoria';
+import { enviarPeloCard, montarEmailAlertas, baseUrlSistema } from './envioDiretoria';
 
 type DB = ReturnType<typeof supabaseAdmin>;
 
@@ -260,7 +260,7 @@ export interface ResultadoAlertasEmpresa {
   detectados: number;
   novos: number;
   enviados: number;
-  whatsapp: string | null;
+  envio: string | null;
   erros: string[];
 }
 
@@ -285,8 +285,8 @@ export async function detectarAlertas(db: DB, empresaId: number): Promise<{ dete
 }
 
 // Detecta, grava os novos (chave única) e, se pedido, envia os ainda não
-// enviados num WhatsApp só por empresa.
-export async function processarAlertas(db: DB, empresa: { id: number; nome: string }, opcoes: { enviarWhatsapp: boolean }): Promise<ResultadoAlertasEmpresa> {
+// enviados num e-mail só por empresa.
+export async function processarAlertas(db: DB, empresa: { id: number; nome: string }, opcoes: { enviarEmail: boolean }): Promise<ResultadoAlertasEmpresa> {
   const hoje = hojeISO();
   const { detectados, erros } = await detectarAlertas(db, empresa.id);
 
@@ -299,8 +299,8 @@ export async function processarAlertas(db: DB, empresa: { id: number; nome: stri
   }
 
   let enviados = 0;
-  let whatsapp: string | null = null;
-  if (opcoes.enviarWhatsapp) {
+  let envioTexto: string | null = null;
+  if (opcoes.enviarEmail) {
     // Só o que é recente: alerta que ficou sem envio (card desligado, falha)
     // por mais de 3 dias continua visível na tela, mas não vira mensagem velha.
     const { data: pendentes } = await db.from('diretoria_alertas').select('id, titulo, detalhe')
@@ -309,16 +309,12 @@ export async function processarAlertas(db: DB, empresa: { id: number; nome: stri
       .order('detectado_em');
     const lista = (pendentes || []) as { id: number; titulo: string; detalhe: string }[];
     if (lista.length) {
-      const LIMITE = 10;
-      const linhas = lista.slice(0, LIMITE).map(a => `• ${a.titulo}`);
-      if (lista.length > LIMITE) linhas.push(`• … e mais ${lista.length - LIMITE}`);
-      const envio = await avisarPeloCard(db, CHAVE_CARD_ALERTAS, hoje, {
-        empresa_relatorio: empresa.nome,
-        quantidade: lista.length,
-        lista: linhas.join('\n'),
+      const envio = await enviarPeloCard(db, CHAVE_CARD_ALERTAS, hoje, montarEmailAlertas({
+        empresa: empresa.nome,
+        alertas: lista,
         link: `${baseUrlSistema()}/admin/diretoria?empresa=${empresa.id}&tipo=ALERTAS`,
-      });
-      whatsapp = envio.texto;
+      }));
+      envioTexto = envio.texto;
       enviados = envio.enviados;
       await db.from('diretoria_alertas')
         .update({ enviado_em: envio.enviados > 0 ? new Date().toISOString() : null, envio_resultado: envio.texto })
@@ -326,5 +322,5 @@ export async function processarAlertas(db: DB, empresa: { id: number; nome: stri
     }
   }
 
-  return { empresa: empresa.nome, detectados: detectados.length, novos, enviados, whatsapp, erros };
+  return { empresa: empresa.nome, detectados: detectados.length, novos, enviados, envio: envioTexto, erros };
 }

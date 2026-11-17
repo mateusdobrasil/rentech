@@ -27,7 +27,7 @@ export async function GET(request: Request) {
   const resultados = await Promise.all(pendentes.map(async e => {
     const empresa = { id: e.id, nome: (e.nome_curto || e.nome).trim() };
     try {
-      return { empresa: empresa.nome, ...(await gerarRelatorioSemanal(db, empresa, { geradoPor: 'CRON', enviarWhatsapp: true })) };
+      return { empresa: empresa.nome, ...(await gerarRelatorioSemanal(db, empresa, { geradoPor: 'CRON', enviarEmail: true })) };
     } catch (err: any) {
       return { empresa: empresa.nome, ok: false, erro: err?.message || String(err) };
     }

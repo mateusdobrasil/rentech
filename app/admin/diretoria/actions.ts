@@ -3,7 +3,7 @@
 // app/admin/diretoria/actions.ts
 // Tela do Diretor (IA): relatórios diários e semanais por empresa, alertas
 // de exceção e os parâmetros (valores de corte) dos alertas. "Gerar agora"
-// e "Verificar agora" nunca mandam WhatsApp — envio é só das rotinas
+// e "Verificar agora" nunca mandam e-mail — envio é só das rotinas
 // agendadas. Empresa sempre resolvida no servidor (obterEmpresasPermitidas).
 import { supabaseAdmin } from '../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../lib/serverAuth';
@@ -78,7 +78,7 @@ export async function gerarRelatorioDiretoriaAgoraAction(empresaId: number, tipo
   if (!empresa) return { ok: false, erro: 'Você não tem acesso a esta empresa.' };
 
   const db = supabaseAdmin();
-  const opcoes = { geradoPor: ctx.perfil.nome, enviarWhatsapp: false };
+  const opcoes = { geradoPor: ctx.perfil.nome, enviarEmail: false };
   const r = tipo === 'SEMANAL' ? await gerarRelatorioSemanal(db, empresa, opcoes)
     : tipo === 'MENSAL' || tipo === 'ANUAL' ? await gerarRelatorioPeriodo(db, empresa, tipo, opcoes)
     : await gerarRelatorioDiario(db, empresa, opcoes);
@@ -103,14 +103,14 @@ export async function listarAlertasDiretoriaAction(empresaId: number, accessToke
   return { ok: true, info: data || [] };
 }
 
-// Roda a detecção na hora (sem WhatsApp): o que for novo aparece na lista e
+// Roda a detecção na hora (sem e-mail): o que for novo aparece na lista e
 // sai na próxima rodada agendada (12h ou 18h).
 export async function verificarAlertasAgoraAction(empresaId: number, accessToken: string): Promise<Resultado> {
   const ctx = await contexto(accessToken);
   if ('erro' in ctx) return { ok: false, erro: ctx.erro };
   const empresa = await empresaDoUsuario(empresaId, ctx.permitidas);
   if (!empresa) return { ok: false, erro: 'Você não tem acesso a esta empresa.' };
-  const r = await processarAlertas(supabaseAdmin(), empresa, { enviarWhatsapp: false });
+  const r = await processarAlertas(supabaseAdmin(), empresa, { enviarEmail: false });
   return { ok: r.erros.length === 0, erro: r.erros.join(' | ') || undefined, info: r };
 }
 

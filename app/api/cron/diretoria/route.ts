@@ -7,7 +7,7 @@ import { notificarPush } from '../../../lib/push';
 // Relatório Diário do Diretor (IA) — um por empresa ativa. Agenda
 // (vercel.json): todo dia 13h UTC = 10h em Brasília, meia hora depois da
 // rodada extra do sync com o P2S (12h30 UTC). Liga/desliga e destinatários
-// do WhatsApp: card "diretoria-relatorio-diario" em Agendamentos e Disparos.
+// do e-mail: card "diretoria-relatorio-diario" em Agendamentos e Disparos.
 // As empresas rodam em paralelo — cada relatório leva ~1–2 min na IA.
 export const maxDuration = 300;
 
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
   const resultados = await Promise.all(pendentes.map(async e => {
     const empresa = { id: e.id, nome: (e.nome_curto || e.nome).trim() };
     try {
-      return { empresa: empresa.nome, ...(await gerarRelatorioDiario(db, empresa, { dataReferencia: D, geradoPor: 'CRON', enviarWhatsapp: true })) };
+      return { empresa: empresa.nome, ...(await gerarRelatorioDiario(db, empresa, { dataReferencia: D, geradoPor: 'CRON', enviarEmail: true })) };
     } catch (err: any) {
       return { empresa: empresa.nome, ok: false, erro: err?.message || String(err) };
     }

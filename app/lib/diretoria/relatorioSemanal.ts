@@ -10,7 +10,7 @@ import { hojeISO } from './indicadoresDiarios';
 import { calcularIndicadoresSemanais } from './indicadoresSemanais';
 import { escreverComIA, custoUsd, SituacaoSchema, PontoAtencaoSchema, SecaoSchema, PendenciaSchema, CONTEXTO_DADOS, REGRAS_ESCRITA } from './ia';
 import { pendenciasAbertasAte, type ResultadoRelatorio } from './relatorioDiario';
-import { avisarPeloCard, baseUrlSistema, dataBR } from './whatsappDiretoria';
+import { enviarPeloCard, montarEmailRelatorio, baseUrlSistema, dataBR } from './envioDiretoria';
 
 type DB = ReturnType<typeof supabaseAdmin>;
 
@@ -19,7 +19,6 @@ export const CHAVE_CARD_SEMANAL = 'diretoria-relatorio-semanal';
 export const RelatorioSemanalSchema = z.object({
   situacao: SituacaoSchema,
   manchete: z.string().describe('Uma frase só (até ~180 caracteres), sem quebra de linha: como foi a semana.'),
-  destaques_whatsapp: z.string().describe('Até 3 destaques curtíssimos numa linha só, separados por " · ". Sem quebra de linha.'),
   resumo_semana: z.string().describe('3 a 5 frases: o que marcou a semana, comparando com a média das 4 semanas anteriores quando fizer diferença.'),
   tendencias: z.array(z.string()).describe('Até 5 tendências das séries semanais (subindo, caindo, fora da curva), sempre com os números das séries. Vazio se nada mudou.'),
   pontos_de_atencao: z.array(PontoAtencaoSchema).describe('No máximo 6, do mais grave ao menos grave.'),
@@ -46,7 +45,7 @@ ${CONTEXTO_DADOS}`;
 export async function gerarRelatorioSemanal(
   db: DB,
   empresa: { id: number; nome: string },
-  opcoes: { hoje?: string; geradoPor: string; enviarWhatsapp: boolean },
+  opcoes: { hoje?: string; geradoPor: string; enviarEmail: boolean },
 ): Promise<ResultadoRelatorio> {
   const hoje = opcoes.hoje || hojeISO();
   const indicadores = await calcularIndicadoresSemanais(db, empresa, hoje);
@@ -78,17 +77,17 @@ export async function gerarRelatorioSemanal(
     .upsert(linha, { onConflict: 'empresa_id,tipo,data_referencia' }).select('id').single();
   if (error) return { ok: false, erro: `Relatório não foi gravado: ${error.message}` };
 
-  let whatsapp: string | undefined;
-  if (opcoes.enviarWhatsapp && ia.ok) {
-    const envio = await avisarPeloCard(db, CHAVE_CARD_SEMANAL, hoje, {
-      empresa_relatorio: empresa.nome,
-      data: `${dataBR(inicio).slice(0, 5)} a ${dataBR(fim)}`,
-      manchete: ia.conteudo.manchete,
-      destaques: ia.conteudo.destaques_whatsapp,
+  let envioTexto: string | undefined;
+  if (opcoes.enviarEmail && ia.ok) {
+    const envio = await enviarPeloCard(db, CHAVE_CARD_SEMANAL, hoje, montarEmailRelatorio({
+      tipoRotulo: 'Relatório semanal',
+      empresa: empresa.nome,
+      periodo: `${dataBR(inicio).slice(0, 5)} a ${dataBR(fim)}`,
+      conteudo: ia.conteudo,
       link: `${baseUrlSistema()}/admin/diretoria?empresa=${empresa.id}&tipo=SEMANAL&data=${inicio}`,
-    });
-    whatsapp = envio.texto;
+    }));
+    envioTexto = envio.texto;
     await db.from('diretoria_relatorios').update({ whatsapp_enviado_em: envio.enviados > 0 ? new Date().toISOString() : null, whatsapp_resultado: envio.texto }).eq('id', salvo.id);
   }
-  return ia.ok ? { ok: true, relatorioId: salvo.id, whatsapp } : { ok: false, erro: ia.erro, relatorioId: salvo.id };
+  return ia.ok ? { ok: true, relatorioId: salvo.id, envio: envioTexto } : { ok: false, erro: ia.erro, relatorioId: salvo.id };
 }

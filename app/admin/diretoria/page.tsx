@@ -38,7 +38,7 @@ interface Relatorio {
   id: number; empresa_id: number; tipo: TipoRel; data_referencia: string; status: 'GERADO' | 'ERRO'; erro: string | null;
   indicadores: any;
   conteudo: null | {
-    situacao: Situacao; manchete: string; destaques_whatsapp: string;
+    situacao: Situacao; manchete: string; 
     pontos_de_atencao: { area: Area; gravidade: 'ALTA' | 'MEDIA' | 'BAIXA'; titulo: string; detalhe: string; acao_sugerida: string | null }[];
     secoes: { area: Area; resumo: string; itens: string[] }[];
     pendencias: Pendencia[];
@@ -159,7 +159,7 @@ export default function DiretoriaPage() {
     mostrar(preferir?.aba || aba, alvoEmpresa, rels, preferir);
   };
 
-  // ?empresa=12&tipo=SEMANAL&data=2026-11-09 — links do WhatsApp. Lido do
+  // ?empresa=12&tipo=SEMANAL&data=2026-11-09 — links dos e-mails. Lido do
   // location (sem useSearchParams, que exigiria Suspense na página inteira).
   useEffect(() => {
     if (authLoading || acessoNegado) return;
@@ -241,7 +241,7 @@ export default function DiretoriaPage() {
               onClick={gerarAgora}
               disabled={gerando || !empresaId}
               className="bg-[#0C1D4D] text-white px-5 py-3 rounded-lg font-bold uppercase text-xs tracking-wider hover:bg-[#284B8C] transition-colors disabled:opacity-50 disabled:cursor-wait shrink-0"
-              title="Calcula os números e pede à IA um relatório novo (sem enviar WhatsApp). Leva 1 a 2 minutos."
+              title="Calcula os números e pede à IA um relatório novo (sem enviar e-mail). Leva 1 a 2 minutos."
             >
               {gerando ? 'Gerando… (1–2 min)' : ehTipoRel(aba) ? `⟳ Gerar ${ROTULO_GERAR[aba]} agora` : ''}
             </button>
@@ -249,7 +249,7 @@ export default function DiretoriaPage() {
           {aba === 'ALERTAS' && (
             <button onClick={verificarAgora} disabled={verificando || !empresaId}
               className="bg-[#0C1D4D] text-white px-5 py-3 rounded-lg font-bold uppercase text-xs tracking-wider hover:bg-[#284B8C] transition-colors disabled:opacity-50 disabled:cursor-wait shrink-0"
-              title="Procura alertas novos agora. O envio por WhatsApp continua sendo às 12h e às 18h.">
+              title="Procura alertas novos agora. O envio por e-mail continua sendo às 12h e às 18h.">
               {verificando ? 'Verificando…' : '🔎 Verificar agora'}
             </button>
           )}
@@ -724,7 +724,7 @@ function DetalheRelatorio({ r, empresaNome }: { r: Relatorio; empresaNome: strin
         Gerado {r.gerado_por === 'CRON' ? 'automaticamente' : `por ${r.gerado_por}`} em {new Date(r.gerado_em).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
         {r.modelo && ` · ${r.modelo}`}
         {r.custo_usd != null && ` · US$ ${Number(r.custo_usd).toFixed(4)}`}
-        {r.whatsapp_resultado && ` · WhatsApp: ${r.whatsapp_resultado}`}
+        {r.whatsapp_resultado && ` · Envio: ${r.whatsapp_resultado}`}
       </p>
     </div>
   );

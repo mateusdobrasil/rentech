@@ -18,10 +18,10 @@ export async function GET(request: Request) {
 
   const { data: empresas } = await db.from('empresas').select('*').eq('ativo', true).order('id');
   const resultados = [];
-  // Sequencial: o envio por WhatsApp espera 1s entre mensagens (automacoes.ts).
+  // Sequencial: um e-mail por empresa, sem rajada no SMTP.
   for (const e of (empresas || []) as { id: number; nome: string; nome_curto?: string | null }[]) {
     try {
-      resultados.push(await processarAlertas(db, { id: e.id, nome: (e.nome_curto || e.nome).trim() }, { enviarWhatsapp: true }));
+      resultados.push(await processarAlertas(db, { id: e.id, nome: (e.nome_curto || e.nome).trim() }, { enviarEmail: true }));
     } catch (err: any) {
       resultados.push({ empresa: e.nome, erro: err?.message || String(err) });
     }

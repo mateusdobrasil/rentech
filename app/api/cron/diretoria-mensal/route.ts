@@ -35,7 +35,7 @@ export async function GET(request: Request) {
     .flatMap(e => tipos.filter(t => !feito(e.id, t)).map(t => ({ empresa: { id: e.id, nome: (e.nome_curto || e.nome).trim() }, tipo: t })));
   const resultados = await Promise.all(tarefas.map(async ({ empresa, tipo }) => {
     try {
-      return { empresa: empresa.nome, tipo, ...(await gerarRelatorioPeriodo(db, empresa, tipo, { hoje, geradoPor: 'CRON', enviarWhatsapp: true })) };
+      return { empresa: empresa.nome, tipo, ...(await gerarRelatorioPeriodo(db, empresa, tipo, { hoje, geradoPor: 'CRON', enviarEmail: true })) };
     } catch (err: any) {
       return { empresa: empresa.nome, tipo, ok: false, erro: err?.message || String(err) };
     }

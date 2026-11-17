@@ -12,6 +12,8 @@ export interface ModuloCard {
   cor: string;
   hover?: string;
   bgIcon?: string;
+  /** Contador opcional no canto do card (ex.: chamados com novidade). 0/undefined = sem selo. */
+  badge?: number;
 }
 
 type Variant = 'link-icon' | 'button-icon' | 'button-plain';
@@ -50,6 +52,11 @@ export default function ModuleGrid({ modulos, variant, emptyState = DEFAULT_EMPT
               className={`bg-white p-8 rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 border-2 border-transparent ${m.cor} group relative overflow-hidden`}
             >
               <div className="absolute top-0 right-0 -mt-6 -mr-6 w-32 h-32 bg-gradient-to-bl from-current to-transparent opacity-[0.03] rounded-full group-hover:scale-150 transition-transform duration-500 pointer-events-none"></div>
+              {!!m.badge && m.badge > 0 && (
+                <span className="absolute top-5 right-5 min-w-[26px] h-[26px] px-2 rounded-full bg-red-500 text-white text-xs font-black flex items-center justify-center shadow-md" title={`${m.badge} pendente(s)`}>
+                  {m.badge > 99 ? '99+' : m.badge}
+                </span>
+              )}
               <div className={`w-14 h-14 ${m.bgIcon} rounded-xl flex items-center justify-center text-3xl mb-6 shadow-sm`}>
                 {m.icone}
               </div>

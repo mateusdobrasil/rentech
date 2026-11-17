@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { contadoresSuporteAction } from './suporte/actions';
 import { Analytics } from "@vercel/analytics/next";
 import { useModuleAccess } from '../components/hooks/useModuleAccess';
 import ModuleGrid from '../components/ui/ModuleGrid';
@@ -109,6 +111,14 @@ const MODULOS_SISTEMA = [
     bgIcon: 'bg-indigo-50 text-indigo-600'
   },
   {
+    titulo: 'Suporte e Chamados',
+    descricao: 'Abra chamados para TI, Financeiro, Operacional, RH e outras áreas e acompanhe até a solução.',
+    icone: '🛟',
+    link: '/admin/suporte',
+    cor: 'border-teal-500/50 hover:border-teal-500',
+    bgIcon: 'bg-teal-50 text-teal-600'
+  },
+  {
     titulo: 'Parâmetros',
     descricao: 'Controle de acesso, conteúdo do site, integrações, agendamentos, empresas do grupo e log de auditoria.',
     icone: '⚙️',
@@ -119,7 +129,17 @@ const MODULOS_SISTEMA = [
 ];
 
 export default function HubAdministrativo() {
-  const { perfil, loading, modulosAutorizados, erro, tentarNovamente } = useModuleAccess(MODULOS_SISTEMA);
+  const { perfil, loading, modulosAutorizados, accessToken, erro, tentarNovamente } = useModuleAccess(MODULOS_SISTEMA);
+  const [badgeSuporte, setBadgeSuporte] = useState(0);
+  const temSuporte = modulosAutorizados.some(m => m.link === '/admin/suporte');
+
+  // Selo no card de Suporte: chamados com novidade + fila sem responsável.
+  useEffect(() => {
+    if (!temSuporte || !accessToken) return;
+    contadoresSuporteAction(accessToken).then(r => setBadgeSuporte(r.info?.total || 0)).catch(() => {});
+  }, [temSuporte, accessToken]);
+
+  const modulosComBadge = modulosAutorizados.map(m => (m.link === '/admin/suporte' ? { ...m, badge: badgeSuporte } : m));
 
   if (loading) return <HubLoading />;
   if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
@@ -157,7 +177,7 @@ export default function HubAdministrativo() {
 
       <div className="container mx-auto px-4 max-w-6xl">
         <ModuleGrid
-          modulos={modulosAutorizados}
+          modulos={modulosComBadge}
           variant="link-icon"
           emptyWrapsGrid={false}
           emptyState={

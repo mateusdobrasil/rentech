@@ -32,7 +32,7 @@ export default function Modal({
       onClick={onClose}
     >
       <div
-        className={`bg-white rounded-2xl shadow-2xl w-full ${maxWidthClassName} overflow-hidden flex flex-col max-h-[90vh]`}
+        className={`bg-white text-[#0C1D4D] rounded-2xl shadow-2xl w-full ${maxWidthClassName} overflow-hidden flex flex-col max-h-[90vh]`}
         onClick={e => e.stopPropagation()}
       >
         <div className="p-5 flex justify-between items-center text-white flex-shrink-0" style={{ background: headerColor }}>

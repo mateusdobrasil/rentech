@@ -54,6 +54,14 @@ export async function abrirManutencao(db: Db, d: DadosAbrirOS, usuario: string):
       .eq('patrimonio_id', p.id).in('status', STATUS_OS_ABERTOS);
     if ((count || 0) > 0) throw new Error(`${p.numero_patrimonio} já tem OS de manutenção aberta.`);
     situacaoAnterior = p.situacao;
+  } else {
+    // Quantidade: só cabe o que está fora de manutenção no saldo. Sem isso o
+    // ajuste "capava" a manutenção no total e, ao fechar a OS, subtraía a
+    // quantidade cheia — a contagem de manutenção ficava menor que a real.
+    const { data: s } = await db.from('locacao_saldos').select('quantidade_total, quantidade_manutencao')
+      .eq('empresa_id', d.empresa_id).eq('produto_id', d.produto_id).eq('local', LOCAL_PADRAO).maybeSingle();
+    const livre = n(s?.quantidade_total) - n(s?.quantidade_manutencao);
+    if (qtd > livre) throw new Error(`Só ${livre.toLocaleString('pt-BR')} unidade(s) fora de manutenção no saldo deste produto — ajuste a quantidade (ou o saldo em Equipamentos de Locação).`);
   }
 
   const { data: os, error } = await db.from('locacao_manutencoes').insert({

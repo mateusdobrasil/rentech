@@ -298,7 +298,7 @@ export async function salvarFichaAction(dados: DadosFicha, accessToken: string):
   const itens = (dados.itens || []).map((i, idx) => {
     const quantidade = num(i.quantidade), vu = arred(num(i.valor_unitario)), desc = arred(num(i.desconto_valor));
     return {
-      id: i.id || null, ordem: idx, tipo: i.tipo, produto_id: ['EQUIPAMENTO', 'KIT'].includes(i.tipo) ? (i.produto_id || null) : (i.produto_id || null),
+      id: i.id || null, ordem: idx, tipo: i.tipo, produto_id: i.produto_id || null,
       descricao: (i.descricao || '').trim(), quantidade, dias: i.dias ? Math.max(1, Math.floor(num(i.dias))) : null,
       valor_unitario: vu, desconto_valor: desc, valor_total: arred(quantidade * vu - desc),
       origem_preco: i.origem_preco ?? null, preco_manual: !!i.preco_manual, alterado_por: i.preco_manual ? ctx.perfil.nome : null,
@@ -394,10 +394,14 @@ export async function salvarFichaAction(dados: DadosFicha, accessToken: string):
     let aviso: string | null = null;
     if (statusAtual === 'RESERVADA') {
       const r = await reservarFicha(db, fichaId);
-      if (!r.ok) aviso = r.erro || 'A reserva não pôde ser refeita — confira a disponibilidade.';
+      if (!r.ok) {
+        // a troca é atômica (locacao_trocar_reserva): falhou = a reserva ANTERIOR continua valendo
+        aviso = `Itens salvos, mas a reserva não pôde ser refeita (${r.erro || (r.faltas || []).map(x => `${x.nome}: faltam ${x.falta}`).join(', ') || 'falta equipamento'}). A reserva anterior foi mantida — ajuste os itens ou tente de novo.`;
+        await historico(fichaId, ctx.perfil.nome, 'RESERVA_NAO_REFEITA', aviso);
+      }
     }
 
-    await historico(fichaId, ctx.perfil.nome, dados.id ? 'EDITOU' : 'CRIOU', `${itens.length} item(ns) · total ${formatarMoeda(total)}${statusAtual === 'RESERVADA' ? ' · reserva refeita' : ''}`);
+    await historico(fichaId, ctx.perfil.nome, dados.id ? 'EDITOU' : 'CRIOU', `${itens.length} item(ns) · total ${formatarMoeda(total)}${statusAtual === 'RESERVADA' ? (aviso ? ' · reserva NÃO refeita (anterior mantida)' : ' · reserva refeita') : ''}`);
     log(ctx.perfil.nome, dados.id ? 'EDITOU FICHA DE RESERVA' : 'CRIOU FICHA DE RESERVA', `#${fichaId} · ${formatarMoeda(total)}`);
     return { ok: true, info: { id: fichaId, aviso } };
   } catch (e: any) {

@@ -207,20 +207,11 @@ export async function reservarFicha(db: Db, fichaId: number): Promise<{ ok: bool
     }
   }
 
-  // Alocações atuais desta ficha (para preferir as mesmas peças e poder desfazer)
-  const { data: antigas, error: eA } = await db.from('locacao_alocacoes').select('id, patrimonio_id, status')
-    .eq('ficha_id', fichaId).in('status', STATUS_ATIVOS);
+  // Peças já reservadas por esta ficha têm preferência (estabilidade ao refazer)
+  const { data: antigas, error: eA } = await db.from('locacao_alocacoes').select('patrimonio_id')
+    .eq('ficha_id', fichaId).eq('status', 'RESERVADO');
   if (eA) throw eA;
-  const idsAntigas = (antigas || []).map(a => a.id);
   const patrimoniosAntigos = new Set((antigas || []).map(a => a.patrimonio_id).filter(Boolean));
-  if (idsAntigas.length) {
-    const { error } = await db.from('locacao_alocacoes').update({ status: 'CANCELADO', updated_at: new Date().toISOString() }).in('id', idsAntigas);
-    if (error) throw error;
-  }
-
-  const restaurar = async () => {
-    if (idsAntigas.length) await db.from('locacao_alocacoes').update({ status: 'RESERVADO' }).in('id', idsAntigas);
-  };
 
   try {
     const linhasNovas: any[] = [];
@@ -228,10 +219,10 @@ export async function reservarFicha(db: Db, fichaId: number): Promise<{ ok: bool
       const partes = verif.demanda.get(l.produto_id) || [];
       const periodo = daterangeInclusivo(l.periodo.inicio, l.periodo.fim);
       if (l.controle === 'QUANTIDADE') {
-        for (const p of partes) linhasNovas.push({ ficha_id: fichaId, ficha_item_id: p.ficha_item_id, empresa_id: ficha.empresa_id, produto_id: l.produto_id, quantidade: p.quantidade, periodo, status: 'RESERVADO' });
+        for (const p of partes) linhasNovas.push({ ficha_item_id: p.ficha_item_id, empresa_id: ficha.empresa_id, produto_id: l.produto_id, quantidade: p.quantidade, periodo });
         continue;
       }
-      // INDIVIDUAL: peças ATIVO livres no período
+      // INDIVIDUAL: peças ATIVO livres no período (as desta ficha contam como livres)
       const { data: pats, error: eP } = await db.from('locacao_patrimonios').select('id, numero_patrimonio')
         .eq('empresa_id', ficha.empresa_id).eq('produto_id', l.produto_id).eq('situacao', 'ATIVO');
       if (eP) throw eP;
@@ -242,21 +233,20 @@ export async function reservarFicha(db: Db, fichaId: number): Promise<{ ok: bool
       for (const p of partes) {
         for (let k = 0; k < p.quantidade; k++) {
           const peca = livres[idx++];
-          if (!peca) throw new Error(`Faltou peça livre de "${l.nome}" ao reservar.`);
-          linhasNovas.push({ ficha_id: fichaId, ficha_item_id: p.ficha_item_id, empresa_id: ficha.empresa_id, produto_id: l.produto_id, patrimonio_id: peca.id, quantidade: 1, periodo, status: 'RESERVADO' });
+          if (!peca) return { ok: false, erro: `Faltou peça livre de "${l.nome}" ao reservar.` };
+          linhasNovas.push({ ficha_item_id: p.ficha_item_id, empresa_id: ficha.empresa_id, produto_id: l.produto_id, patrimonio_id: peca.id, quantidade: 1, periodo });
         }
       }
     }
-    if (linhasNovas.length) {
-      const { error } = await db.from('locacao_alocacoes').insert(linhasNovas);   // um INSERT só: tudo ou nada
-      if (error) throw error;
-    }
-    if (idsAntigas.length) await db.from('locacao_alocacoes').delete().in('id', idsAntigas);
+    // Troca as alocações RESERVADO da ficha pelas novas numa TRANSAÇÃO só
+    // (função SQL locacao_trocar_reserva): se a trava de patrimônio (EXCLUDE)
+    // recusar alguma linha, nada muda e a reserva anterior continua valendo.
+    const { error } = await db.rpc('locacao_trocar_reserva', { p_ficha_id: fichaId, p_novas: linhasNovas });
+    if (error) throw error;
     return { ok: true };
   } catch (e: any) {
-    await restaurar();
     const msg = String(e.message || e);
-    if (msg.includes('locacao_alocacoes_patrimonio_sem_conflito')) return { ok: false, erro: 'Outra reserva pegou uma das peças agora há pouco. Tente reservar de novo.' };
+    if (msg.includes('locacao_alocacoes_patrimonio_sem_conflito')) return { ok: false, erro: 'Outra reserva pegou uma das peças agora há pouco — a reserva anterior foi mantida. Tente de novo.' };
     return { ok: false, erro: msg };
   }
 }

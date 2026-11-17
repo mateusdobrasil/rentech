@@ -16,13 +16,12 @@ import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { buscarTodasPaginas } from '../../../lib/paginacao';
 import { registrarLogAuditoria } from '../../../actions';
-import { daterangeInclusivo } from '../../../lib/locacao/datas';
+import { daterangeInclusivo, hojeISO } from '../../../lib/locacao/datas';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 const ROTA = '/admin/estoque/inventario';
 const LOCAL_PADRAO = 'PRINCIPAL';
 const n = (v: unknown) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
-const hojeISO = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 
 async function contexto(accessToken: string) {
   const acesso = await validarAcesso(accessToken, ROTA);
@@ -236,6 +235,14 @@ export async function lerPecaInventarioAction(inventarioId: number, codigo: stri
     if (!pats?.length) ({ data: pats } = await db.from('locacao_patrimonios').select(sel).eq('empresa_id', a.inv.empresa_id).eq('numero_patrimonio', lido));
     const pat: any = pats?.[0] || null;
 
+    // A mesma peça pode chegar pelo QR ("PAT-12-0001") ou digitada ("0001"):
+    // códigos diferentes, mesmo patrimônio — a duplicidade é pelo patrimônio.
+    if (pat) {
+      const { data: ja } = await db.from('estoque_inventario_pecas').select('codigo_lido, lido_por')
+        .eq('inventario_id', inventarioId).eq('patrimonio_id', pat.id).limit(1).maybeSingle();
+      if (ja) return { ok: false, erro: `${pat.numero_patrimonio} já foi contado neste inventário (lido como "${ja.codigo_lido}" por ${ja.lido_por}).`, info: { duplicada: true } };
+    }
+
     const { error } = await db.from('estoque_inventario_pecas').insert({
       inventario_id: inventarioId, codigo_lido: lido, patrimonio_id: pat?.id || null, produto_id: pat?.produto_id || null, lido_por: ctx.perfil.nome,
     });
@@ -316,7 +323,8 @@ export async function concluirInventarioAction(id: number, opcoes: { marcarExtra
       const { data: lidas } = await db.from('estoque_inventario_pecas').select('patrimonio_id').eq('inventario_id', id).not('patrimonio_id', 'is', null);
       const lidasSet = new Set((lidas || []).map((x: any) => x.patrimonio_id));
       for (const it of itens.filter(i => i.controle === 'INDIVIDUAL' && n(i.em_locacao) === 0 && i.contado !== null)) {
-        let q = db.from('locacao_patrimonios').select('id').eq('empresa_id', inv.empresa_id).eq('produto_id', it.produto_id).in('situacao', ['ATIVO', 'MANUTENCAO']);
+        // só ATIVO: peça em MANUTENCAO não lida pode estar no conserto (fornecedor)
+        let q = db.from('locacao_patrimonios').select('id').eq('empresa_id', inv.empresa_id).eq('produto_id', it.produto_id).eq('situacao', 'ATIVO');
         if (inv.local) q = q.eq('local', inv.local);
         const { data: pats } = await q;
         const naoLidos = (pats || []).map((p: any) => p.id).filter((pid: number) => !lidasSet.has(pid));

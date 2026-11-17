@@ -10,7 +10,7 @@ import Modal from '../../../components/ui/Modal';
 import { useToast } from '../../../components/ui/NotificationProvider';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 import { formatarDataBR } from '../../../lib/formatadores';
-import { somarDias } from '../../../lib/locacao/datas';
+import { somarDias, hojeISO } from '../../../lib/locacao/datas';
 import { STATUS_FICHA, numeroFicha } from '../reservas/statusFicha';
 
 // Agenda de disponibilidade (2026-11-17): uma linha por equipamento, uma
@@ -30,7 +30,6 @@ interface FichaRef {
 
 const PERIODOS = [14, 30, 60, 90];
 const SEMANA = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
-const hojeISO = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 const fmt = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 1 });
 const diaSemana = (iso: string) => new Date(`${iso}T12:00:00Z`).getUTCDay();
 

@@ -11,6 +11,7 @@ import { useToast } from '../../../components/ui/NotificationProvider';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 import { formatarMoeda, formatarDataBR } from '../../../lib/formatadores';
 import { STATUS_FICHA, numeroFicha } from './statusFicha';
+import { hojeISO } from '../../../lib/locacao/datas';
 
 // Orçamentos e Reservas — lista das Fichas de Reserva próprias (2026-11-16).
 
@@ -29,9 +30,6 @@ const GRUPOS: { chave: string; rotulo: string; status: StatusFicha[] }[] = [
   { chave: 'perdidas', rotulo: 'Perdidas / canceladas', status: ['PERDIDO', 'CANCELADA'] },
 ];
 
-function hojeISO() {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
-}
 
 export default function ReservasPage() {
   const router = useRouter();

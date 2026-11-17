@@ -74,7 +74,23 @@ export interface ResultadoImportacaoP2s {
 // opcoes.de/ate (AAAA-MM-DD): período explícito — fichas que cruzam [de, ate]
 // (DataFinal >= de E DataInicial <= ate). Usado para trazer o HISTÓRICO mês a
 // mês (tela de Indicadores); sem eles, janela padrão de diasPassados (30).
-export async function importarFichasP2sCore(db: Db, opcoes: { ambiente?: AmbienteP2s; diasPassados?: number; de?: string; ate?: string } = {}): Promise<ResultadoImportacaoP2s> {
+type OpcoesImportacao = { ambiente?: AmbienteP2s; diasPassados?: number; de?: string; ate?: string };
+
+// Trava: cron (11h/17h), botão "Importar" e o histórico mês a mês podem se
+// cruzar — duas importações juntas duplicavam as reservas na agenda. A trava
+// expira sozinha em 6 min (caso a função morra sem liberar).
+export async function importarFichasP2sCore(db: Db, opcoes: OpcoesImportacao = {}): Promise<ResultadoImportacaoP2s> {
+  const { data: pegou, error } = await db.rpc('adquirir_lock_integracao', { p_chave: 'importar_fichas_p2s', p_segundos: 360, p_por: opcoes.de ? `historico ${opcoes.de}` : 'janela' });
+  if (error) throw error;
+  if (!pegou) throw new Error('Outra importação de fichas do P2S está em andamento — tente de novo em alguns minutos.');
+  try {
+    return await importarSemTrava(db, opcoes);
+  } finally {
+    await db.rpc('liberar_lock_integracao', { p_chave: 'importar_fichas_p2s' });
+  }
+}
+
+async function importarSemTrava(db: Db, opcoes: OpcoesImportacao): Promise<ResultadoImportacaoP2s> {
   const ambiente = opcoes.ambiente || 'PRODUCAO';
   const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
   const corte = opcoes.de || somarDias(hoje, -(opcoes.diasPassados ?? 30));
@@ -162,15 +178,6 @@ export async function importarFichasP2sCore(db: Db, opcoes: { ambiente?: Ambient
   res.gravadas = idPorOid.size;
 
   // ---------------- itens + alocações (substitui tudo das fichas lidas) ----------------
-  const ids = [...idPorOid.values()];
-  for (let i = 0; i < ids.length; i += 200) {
-    const lote = ids.slice(i, i + 200);
-    const { error: eA } = await db.from('locacao_alocacoes').delete().in('ficha_id', lote);
-    if (eA) throw eA;
-    const { error: eI } = await db.from('locacao_fichas_reserva_itens').delete().in('ficha_id', lote);
-    if (eI) throw eI;
-  }
-
   const itensNovos: any[] = [];
   const alocPendentes: { ficha_id: number; ordem: number; empresa_id: number; produto_id: number; quantidade: number; periodo: string; status: string }[] = [];
   for (const [oid, fichaId] of idPorOid) {
@@ -235,23 +242,21 @@ export async function importarFichasP2sCore(db: Db, opcoes: { ambiente?: Ambient
     }
   }
 
-  const idItem = new Map<string, number>();
-  for (let i = 0; i < itensNovos.length; i += 500) {
-    const { data, error } = await db.from('locacao_fichas_reserva_itens').insert(itensNovos.slice(i, i + 500)).select('id, ficha_id, ordem');
+  // Troca itens + alocações de cada lote de fichas NUMA transação (função SQL
+  // locacao_substituir_itens_p2s): se falhar, o lote fica como estava — nunca
+  // sem reserva nem duplicado. A alocação acha o seu item por (ficha, ordem).
+  const fichaIds = [...idPorOid.values()];
+  for (let i = 0; i < fichaIds.length; i += 100) {
+    const lote = new Set(fichaIds.slice(i, i + 100));
+    const { error } = await db.rpc('locacao_substituir_itens_p2s', {
+      p_ficha_ids: [...lote],
+      p_itens: itensNovos.filter(x => lote.has(x.ficha_id)),
+      p_alocacoes: alocPendentes.filter(x => lote.has(x.ficha_id)),
+    });
     if (error) throw error;
-    for (const x of data || []) idItem.set(`${x.ficha_id}:${x.ordem}`, x.id);
   }
   res.itens = itensNovos.length;
-
-  const alocs = alocPendentes.map(a => ({
-    ficha_id: a.ficha_id, ficha_item_id: idItem.get(`${a.ficha_id}:${a.ordem}`) || null, empresa_id: a.empresa_id,
-    produto_id: a.produto_id, quantidade: a.quantidade, periodo: a.periodo, status: a.status,
-  }));
-  for (let i = 0; i < alocs.length; i += 500) {
-    const { error } = await db.from('locacao_alocacoes').insert(alocs.slice(i, i + 500));
-    if (error) throw error;
-  }
-  res.alocacoes = alocs.length;
+  res.alocacoes = alocPendentes.length;
   return res;
 }
 

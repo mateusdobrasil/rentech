@@ -14,11 +14,11 @@ import {
   sessaoAtual, criarSessao, encerrarSessao, parceirosDoEmail, ipDaRequisicao,
   hash, novoCodigo, normalizarEmail, emailValido, MOSTRAR_P2S, MOSTRAR_TITULOS,
 } from './sessao';
+import { numeroFicha } from '../lib/locacao/fichaNumero';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 const VISIVEIS = ['ENVIADO', 'APROVADO', 'RESERVADA', 'EM_LOCACAO', 'FINALIZADA'];
 const MSG_GENERICA = 'Se este e-mail estiver cadastrado como contato de um cliente, enviamos um código de acesso. Confira a caixa de entrada (e o spam).';
-const numeroFicha = (f: any) => (f.origem === 'P2S' ? `P2S ${f.p2s_numero}` : `FR-${String(f.id).padStart(5, '0')}`);
 
 // ============================================================================
 // ACESSO

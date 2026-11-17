@@ -17,7 +17,7 @@ import CampoBusca, { type OpcaoBusca } from '../../../../components/ui/CampoBusc
 import { useToast, useConfirm, usePrompt } from '../../../../components/ui/NotificationProvider';
 import { corSeloEmpresa } from '../../../../lib/coresEmpresa';
 import { formatarMoeda, formatarDataBR } from '../../../../lib/formatadores';
-import { diasInclusivos, dataValida } from '../../../../lib/locacao/datas';
+import { diasInclusivos, dataValida, hojeISO } from '../../../../lib/locacao/datas';
 import { STATUS_FICHA, MODALIDADES, numeroFicha } from '../statusFicha';
 import PainelProposta from './PainelProposta';
 import PainelTitulos from './PainelTitulos';
@@ -76,7 +76,6 @@ const mostrar = (n: number | null | undefined, casas = 2) =>
   n === null || n === undefined ? '' : n.toLocaleString('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas });
 const mostrarQtd = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
 const somarDiasISO = (iso: string, d: number) => { const x = new Date(`${iso}T12:00:00Z`); x.setUTCDate(x.getUTCDate() + d); return x.toISOString().slice(0, 10); };
-const hojeISO = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 
 function descreverOrigem(o: OrigemPreco | null): string {
   if (!o) return '';

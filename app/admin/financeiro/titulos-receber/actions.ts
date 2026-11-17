@@ -12,7 +12,8 @@ import { buscarTodasPaginas } from '../../../lib/paginacao';
 import { registrarLogAuditoria } from '../../../actions';
 import { buscarClientes } from '../../../lib/locacao/buscas';
 import { sugerirParcelas } from '../../../lib/financeiro/parcelas';
-import { dataValida } from '../../../lib/locacao/datas';
+import { dataValida, hojeISO } from '../../../lib/locacao/datas';
+import { numeroFicha } from '../../../lib/locacao/fichaNumero';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 const ROTA = '/admin/financeiro/titulos-receber';
@@ -21,8 +22,6 @@ const ROTA_AVARIAS = '/admin/estoque/manutencao';
 const FATURAVEIS = ['APROVADO', 'RESERVADA', 'EM_LOCACAO', 'FINALIZADA'];
 const arred = (v: number) => Math.round(v * 100) / 100;
 const n = (v: unknown) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
-const hojeISO = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
-const numeroFicha = (f: any) => (f ? (f.origem === 'P2S' ? `P2S ${f.p2s_numero}` : `FR-${String(f.id).padStart(5, '0')}`) : null);
 
 async function contexto(accessToken: string, rotas: string[] = [ROTA]) {
   const acesso = rotas.length === 1 ? await validarAcesso(accessToken, rotas[0]) : await validarAcessoAlgumaRota(accessToken, rotas);
@@ -59,7 +58,7 @@ export async function listarTitulosAction(accessToken: string): Promise<Resultad
       ok: true,
       info: {
         empresas,
-        titulos: data.map(t => ({ ...t, cliente: undefined, ficha: undefined, cliente_nome: t.cliente?.nome_exibicao || t.cliente?.nome_completo || '—', ficha_numero: numeroFicha(t.ficha) })),
+        titulos: data.map(t => ({ ...t, cliente: undefined, ficha: undefined, cliente_nome: t.cliente?.nome_exibicao || t.cliente?.nome_completo || '—', ficha_numero: t.ficha ? numeroFicha(t.ficha) : null })),
       },
     };
   } catch (e: any) {

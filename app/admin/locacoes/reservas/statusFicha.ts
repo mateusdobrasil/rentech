@@ -18,4 +18,4 @@ export const MODALIDADES = [
   { v: 'MENSAL', rotulo: 'Mensal', desc: 'Valor mensal da tabela × meses (cada 30 dias ou fração).' },
 ] as const;
 
-export const numeroFicha = (id: number) => `FR-${String(id).padStart(5, '0')}`;
+export { numeroFichaPorId as numeroFicha } from '../../../lib/locacao/fichaNumero';

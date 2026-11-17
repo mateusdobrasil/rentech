@@ -16,6 +16,7 @@ import CampoBusca, { type OpcaoBusca } from '../../../components/ui/CampoBusca';
 import { useToast } from '../../../components/ui/NotificationProvider';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 import { formatarMoeda, formatarDataBR } from '../../../lib/formatadores';
+import { hojeISO } from '../../../lib/locacao/datas';
 
 // Avarias e Manutenção (2026-11-17). Regras em app/lib/locacao/manutencao.ts.
 
@@ -37,7 +38,6 @@ const COBRANCA: Record<string, { r: string; cls: string }> = {
   PAGO: { r: 'Pago', cls: 'bg-emerald-100 text-emerald-700' },
 };
 const GRAV: Record<string, string> = { LEVE: 'Leve', MEDIA: 'Média', GRAVE: 'Grave', PERDA_TOTAL: 'Perda total' };
-const hojeISO = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 const qtd = (v: number) => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
 
 function Fotos({ caminhos, accessToken }: { caminhos: string[]; accessToken: string }) {

@@ -17,6 +17,8 @@ import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../
 type Resultado = { ok: boolean; erro?: string; info?: any };
 const ROTA = '/admin/estoque/expedicao';
 const CONFIRMADAS = ['APROVADO', 'RESERVADA', 'EM_LOCACAO', 'FINALIZADA'];
+// nº do P2S SEM prefixo de propósito: casa com os checklists antigos, importados do
+// texto de fichas_reserva (ver app/lib/locacao/fichaNumero.ts)
 const numeroFicha = (f: { id: number; origem: string; p2s_numero: string | null }) =>
   f.origem === 'P2S' && f.p2s_numero ? f.p2s_numero : `FR-${String(f.id).padStart(5, '0')}`;
 const normalizar = (s: string) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();

@@ -8,10 +8,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { titulosDaFichaAction, gerarTitulosFichaAction } from '../../../financeiro/titulos-receber/actions';
 import { useToast } from '../../../../components/ui/NotificationProvider';
 import { formatarMoeda, formatarDataBR } from '../../../../lib/formatadores';
-import { somarDias } from '../../../../lib/locacao/datas';
+import { somarDias, hojeISO } from '../../../../lib/locacao/datas';
 
 interface Parcela { valor: string; vencimento: string; descricao: string }
-const hojeISO = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 const lerValor = (s: string) => { const t = (s || '').replace(/\s|R\$/g, ''); if (!t) return 0; const v = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t); return Number.isFinite(v) ? v : NaN; };
 const mostrar = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 

@@ -13,6 +13,7 @@ import {
   abrirManutencao, mudarStatusManutencao, registrarAvaria,
   type DadosAbrirOS, type DadosAvaria, type StatusOS,
 } from '../../../lib/locacao/manutencao';
+import { numeroFicha } from '../../../lib/locacao/fichaNumero';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 const ROTA = '/admin/estoque/manutencao';
@@ -66,7 +67,7 @@ export async function painelManutencaoAction(accessToken: string): Promise<Resul
           ...a, produto: undefined, patrimonio: undefined, cliente: undefined, ficha: undefined, manutencao: undefined,
           produto_nome: a.produto?.nome_item, produto_codigo: a.produto?.codigo_formatado, valor_indenizacao: a.produto?.valor_indenizacao ?? null,
           patrimonio_numero: a.patrimonio?.numero_patrimonio || null, cliente_nome: nomeParc(a.cliente),
-          ficha_numero: a.ficha ? (a.ficha.origem === 'P2S' ? `P2S ${a.ficha.p2s_numero}` : `FR-${String(a.ficha.id).padStart(5, '0')}`) : null,
+          ficha_numero: a.ficha ? numeroFicha(a.ficha) : null,
           manutencao_status: a.manutencao?.status || null,
         })),
       },
@@ -83,6 +84,8 @@ export async function painelManutencaoAction(accessToken: string): Promise<Resul
 export async function buscarItemEstoqueAction(texto: string, empresaId: number, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcessoAlgumaRota(accessToken, ROTAS_FOTO);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
+  // empresaId vem do navegador — confere contra as empresas do usuário
+  if (!empresaPermitida(await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada), empresaId)) return { ok: false, erro: 'Você não tem acesso a esta empresa.' };
   const t = limpar(texto).toUpperCase();
   if (t.length < 2) return { ok: true, info: [] };
   const db = supabaseAdmin();
@@ -122,6 +125,7 @@ export async function buscarFornecedoresAction(texto: string, accessToken: strin
 export async function buscarFichasAction(texto: string, empresaId: number, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcessoAlgumaRota(accessToken, ROTAS_FOTO);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
+  if (!empresaPermitida(await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada), empresaId)) return { ok: false, erro: 'Você não tem acesso a esta empresa.' };
   const t = limpar(texto);
   if (t.length < 2) return { ok: true, info: [] };
   const db = supabaseAdmin();
@@ -134,7 +138,7 @@ export async function buscarFichasAction(texto: string, empresaId: number, acces
   return {
     ok: true,
     info: (data || []).map((f: any) => ({
-      id: f.id, nome: `${f.origem === 'P2S' ? `P2S ${f.p2s_numero}` : `FR-${String(f.id).padStart(5, '0')}`} · ${f.parceiro?.nome_exibicao || f.parceiro?.nome_completo || ''}`,
+      id: f.id, nome: `${numeroFicha(f)} · ${f.parceiro?.nome_exibicao || f.parceiro?.nome_completo || ''}`,
       detalhe: [f.evento?.nome, `${f.data_inicio?.split('-').reverse().join('/')} a ${f.data_fim?.split('-').reverse().join('/')}`].filter(Boolean).join(' · '),
       extra: { parceiro_id: f.parceiro_id },
     })),

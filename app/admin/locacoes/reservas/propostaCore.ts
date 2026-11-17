@@ -13,13 +13,14 @@ import { autentiqueConsultarDocumento } from '../../../lib/autentique';
 import { reservarFicha } from '../../../lib/locacao/disponibilidade';
 import { diasInclusivos } from '../../../lib/locacao/datas';
 import { CONDICOES_GERAIS_PADRAO, type DadosPropostaPdf } from '../../../lib/locacao/gerarPropostaPdf';
+import { numeroFichaPorId } from '../../../lib/locacao/fichaNumero';
 
 type Db = ReturnType<typeof supabaseAdmin>;
 export const BUCKET_PROPOSTAS = 'locacao-propostas';
 export type StatusProposta = 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO' | 'CANCELADO';
 
 const MODALIDADE_ROTULO: Record<string, string> = { DIARIA: 'Por diária', PERIODO: 'Período fechado', MENSAL: 'Mensal' };
-export const numeroFichaTexto = (id: number) => `FR-${String(id).padStart(5, '0')}`;
+export const numeroFichaTexto = numeroFichaPorId;
 
 const digitos = (s?: string | null) => (s || '').replace(/\D/g, '');
 function formatarDocumento(cnpj?: string | null, cpf?: string | null): string | null {
@@ -157,6 +158,11 @@ export async function processarEventoProposta(
     if (caminho) await db.from('locacao_propostas').update({ pdf_assinado_path: caminho }).eq('id', prop.id);
 
     const { data: f } = await db.from('locacao_fichas_reserva').select('id, status').eq('id', prop.ficha_id).single();
+    if (prop.sandbox) {
+      // envio de TESTE: só registra — nunca aprova nem reserva equipamento de verdade
+      await historico(db, prop.ficha_id, 'CLIENTE (Autentique)', 'PROPOSTA_ASSINADA', `Proposta v${prop.versao} de TESTE (sandbox) assinada — ficha não foi aprovada nem reservada`);
+      return true;
+    }
     await historico(db, prop.ficha_id, 'CLIENTE (Autentique)', 'PROPOSTA_ASSINADA', `Cliente assinou a proposta v${prop.versao}`);
     if (f && ['ORCAMENTO', 'ENVIADO'].includes(f.status)) {
       await db.from('locacao_fichas_reserva').update({ status: 'APROVADO', aprovado_em: ev.assinadoEm || agora, aprovado_por: `${prop.signatario_nome || 'Cliente'} (assinatura Autentique)`, updated_at: agora }).eq('id', f.id);

@@ -6,15 +6,9 @@
 // espelho do P2S (fichas_reserva) — mesmo dado que a tela de fichas mostra.
 import { supabaseAdmin } from '../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas } from '../../lib/serverAuth';
-import { hojeISO } from '../../lib/diretoria/indicadoresDiarios';
+import { hojeISO, somarDias } from '../../lib/locacao/datas';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
-
-function somarDias(iso: string, dias: number): string {
-  const d = new Date(`${iso}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + dias);
-  return d.toISOString().slice(0, 10);
-}
 
 export async function painelLocacoesAction(accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, '/admin/locacoes');

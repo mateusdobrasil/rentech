@@ -79,7 +79,8 @@ export default function ConferenciaQR({ checklistId, accessToken, itens, itensNa
     (async () => {
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        if (!videoRef.current) return;
+        // fechou enquanto a câmera abria: desliga o stream que chegou atrasado
+        if (parar || !videoRef.current) { stream.getTracks().forEach(t => t.stop()); return; }
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
         const detector = new (window as any).BarcodeDetector({ formats: ['qr_code'] });

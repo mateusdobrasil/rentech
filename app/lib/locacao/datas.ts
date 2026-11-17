@@ -51,3 +51,6 @@ export const daterangeInclusivo = (inicio: string, fim: string) => `[${inicio},$
 
 /** Meses cobrados na modalidade mensal: cada 30 dias (ou fração) = 1 mês. */
 export const mesesCobrados = (dias: number) => Math.max(1, Math.ceil(dias / 30));
+
+/** Hoje em Brasília, AAAA-MM-DD (servidor e navegador). */
+export const hojeISO = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());

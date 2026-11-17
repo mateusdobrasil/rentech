@@ -432,7 +432,7 @@ export default function InventarioPage() {
                         <p className="text-[10px] font-black text-red-600 uppercase mb-1">Patrimônios não lidos ({naoLidos.length})</p>
                         <p className="text-[10px] text-gray-400 mb-1">Se o produto tem peças em locação, parte deles pode estar com cliente.</p>
                         <ul className="max-h-60 overflow-y-auto divide-y divide-[#F1F5F9]">
-                          {naoLidos.map(e => <li key={e.id} className="py-1"><strong>{e.numero_patrimonio}</strong> · {itens.find(i => i.produto_id === e.produto_id)?.nome}{(emLocacaoPorProduto.get(e.produto_id) || 0) > 0 && <span className="text-amber-600"> · produto com peças em locação</span>}</li>)}
+                          {naoLidos.map(e => <li key={e.id} className="py-1"><strong>{e.numero_patrimonio}</strong> · {itens.find(i => i.produto_id === e.produto_id)?.nome}{e.situacao === 'MANUTENCAO' && <span className="text-blue-600"> · em manutenção (pode estar no conserto)</span>}{(emLocacaoPorProduto.get(e.produto_id) || 0) > 0 && <span className="text-amber-600"> · produto com peças em locação</span>}</li>)}
                         </ul>
                       </div>
                       <div>
@@ -495,7 +495,7 @@ export default function InventarioPage() {
         </ul>
         <label className="flex items-start gap-2 text-sm">
           <input type="checkbox" checked={marcarExtraviados} onChange={e => setMarcarExtraviados(e.target.checked)} className="mt-1" />
-          <span>Marcar como <strong>EXTRAVIADO</strong> os patrimônios não lidos de produtos sem nada em locação (os de produtos com peças em locação não são marcados — podem estar com cliente).</span>
+          <span>Marcar como <strong>EXTRAVIADO</strong> os patrimônios <strong>ativos</strong> não lidos de produtos sem nada em locação (não são marcados os de produtos com peças em locação — podem estar com cliente — nem os em manutenção — podem estar no conserto).</span>
         </label>
         <p className="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-3">Fase paralela: enquanto o P2S for oficial, "Carregar saldos do P2S" (Equipamentos de Locação) sobrescreve o local PRINCIPAL. O inventário vale de vez na virada.</p>
       </Modal>

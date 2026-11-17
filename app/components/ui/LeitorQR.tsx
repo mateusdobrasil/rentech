@@ -48,7 +48,9 @@ export default function LeitorQR({ onLer, desabilitado, placeholder }: {
     (async () => {
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        if (!videoRef.current) return;
+        // fechou (ou saiu da tela) enquanto a permissão/câmera abria: desliga o
+        // stream que chegou atrasado — a limpeza do efeito já rodou com stream null
+        if (parar || !videoRef.current) { stream.getTracks().forEach(t => t.stop()); return; }
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
         const detector = new (window as any).BarcodeDetector({ formats: ['qr_code', 'code_128', 'ean_13'] });

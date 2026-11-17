@@ -17,6 +17,7 @@ import { useToast, useConfirm, usePrompt } from '../../../components/ui/Notifica
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 import { formatarMoeda, formatarDataBR } from '../../../lib/formatadores';
 import { calcularPrecoPorFaixas, faixasIncoerentes, tabelaVigente, type FaixaPreco, type TipoTabelaPreco } from '../../../lib/locacao/preco';
+import { hojeISO } from '../../../lib/locacao/datas';
 
 // Tabelas de Preço da locação (2026-11-16). Uma tabela tem produtos; cada
 // produto tem faixas de dias (o valor é a DIÁRIA da faixa), diária extra e
@@ -58,9 +59,6 @@ function faixasDaLinha(l: { faixas: Record<string, string> }): FaixaPreco[] {
 const mostrarValor = (n: number | null | undefined) =>
   n === null || n === undefined ? '' : n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-function hojeISO() {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
-}
 
 // ============================================================================
 // PÁGINA

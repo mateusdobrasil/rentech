@@ -10,7 +10,7 @@ import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 import { formatarMoeda, formatarDataBR } from '../../../lib/formatadores';
-import { somarDias } from '../../../lib/locacao/datas';
+import { somarDias, hojeISO } from '../../../lib/locacao/datas';
 
 // Indicadores de utilização dos equipamentos (2026-11-17). Cálculo em
 // app/lib/locacao/indicadores.ts — utilização = dias-unidade locados ÷
@@ -24,7 +24,6 @@ interface Linha {
 type Visao = 'todos' | 'alta' | 'ociosos' | 'semEstoque';
 type Ordem = 'utilizacao' | 'receita' | 'retorno' | 'locacoes' | 'nome';
 
-const hojeISO = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 const pct = (v: number | null) => (v === null ? '—' : `${(v * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`);
 const PRESETS = [
   { rotulo: '30 dias', dias: 30 }, { rotulo: '90 dias', dias: 90 }, { rotulo: '6 meses', dias: 182 }, { rotulo: '12 meses', dias: 365 },

@@ -14,7 +14,7 @@ import CampoBusca, { type OpcaoBusca } from '../../../components/ui/CampoBusca';
 import { useToast, useConfirm, usePrompt } from '../../../components/ui/NotificationProvider';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 import { formatarMoeda, formatarDataBR } from '../../../lib/formatadores';
-import { somarDias } from '../../../lib/locacao/datas';
+import { somarDias, hojeISO } from '../../../lib/locacao/datas';
 
 // Títulos a Receber de locação (2026-11-17, Fase 3a). Regras em ./actions.ts.
 
@@ -27,7 +27,6 @@ interface Titulo {
 }
 type Situacao = 'abertos' | 'vencidos' | 'a_vencer' | 'pagos' | 'cancelados' | 'todos';
 const FORMAS = ['PIX', 'BOLETO', 'TRANSFERÊNCIA', 'CARTÃO', 'DINHEIRO', 'OUTRO'];
-const hojeISO = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 function lerValor(s: string): number | null {
   const t = (s || '').replace(/\s|R\$/g, '');
   if (!t) return null;

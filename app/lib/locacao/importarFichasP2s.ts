@@ -171,6 +171,7 @@ async function importarSemTrava(db: Db, opcoes: OpcoesImportacao): Promise<Resul
       observacoes: String(f.Observacoes || '').trim() || null,
       valor_equipamentos: equip, valor_servicos: serv, desconto_valor: Math.max(0, arred(equip + serv - total)), valor_total: total,
       aprovado_em: n(f.DataAprovacao) ? `${dataISO(f.DataAprovacao)}T12:00:00Z` : null,
+      data_emissao: emissao,
       criado_por: String(f.LoginCriou || '') || 'P2S',
       updated_at: agora, conteudo_alterado_em: agora,
     });

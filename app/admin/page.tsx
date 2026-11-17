@@ -61,6 +61,14 @@ const MODULOS_SISTEMA = [
     bgIcon: 'bg-violet-50 text-violet-600'
   },
   {
+    titulo: 'Relatórios',
+    descricao: 'Vendas, conversão de orçamentos, financeiro e equipamentos — por período e empresa, com Excel e PDF.',
+    icone: '📈',
+    link: '/admin/relatorios',
+    cor: 'border-sky-500/50 hover:border-sky-500',
+    bgIcon: 'bg-sky-50 text-sky-600'
+  },
+  {
     titulo: 'Operacional',
     descricao: 'Controle de frota, documentos de veículos, relatórios operacionais e registro de ponto.',
     icone: '👷‍♂️',

@@ -18,7 +18,7 @@ import { gravarGeracaoBeneficios, beneficiosGeradosParaLote } from '../../../lib
 import { marcarContaPagarQuitada } from '../../../lib/p2s';
 import { ispbPorCompe } from '../../../lib/bancosCompeIspb';
 import { formatarMoeda } from '../../../lib/formatadores';
-import { extrairBoletos, validarBoletosItem } from '../../../lib/sispagBoletos';
+import { extrairBoletos, validarBoletosItem, lerRetornoSispag, type RegistroRetornoSispag, type SituacaoRetorno } from '../../../lib/sispagBoletos';
 
 const ROTA = '/admin/financeiro/rh';
 
@@ -1513,6 +1513,220 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
 }
 
 // ============================================================================
+// BAIXA DE OP / CONTA A PAGAR PAGA NO ITAÚ — usada quando o banco confirma o
+// pagamento: pela API (consultarStatusAtualItauAction) ou pelo arquivo de
+// retorno do SISPAG (importarRetornoSispagAction). OP vira PAGO e, se tiver
+// conta no PrimeStart, quita lá também; se o PrimeStart recusar, a baixa
+// local vale assim mesmo e o motivo volta como aviso. Retorna null quando não
+// havia nada a baixar (já PAGO/REPROVADA, ou conta já quitada).
+// ============================================================================
+async function baixarOpComoPaga(db: any, opId: string, usuarioNome: string, origem: string, dataPagamento: Date):
+  Promise<{ numeroOp: number; p2sQuitado: boolean; avisoP2s: string | null } | null> {
+  const { data: op } = await db.from('op_ordens_pagamento')
+    .update({ status: 'PAGO', updated_at: new Date().toISOString() })
+    .eq('id', opId).neq('status', 'REPROVADA').neq('status', 'PAGO')
+    .select('numero_op, p2s_conta_pagar_oid').maybeSingle();
+  if (!op) return null;
+  registrarLogAuditoria({
+    usuario_nome: usuarioNome,
+    acao: `BAIXOU OP #${op.numero_op} — STATUS: PAGO (${origem})`,
+    setor: 'OP', equipamento_id: opId, equipamento_nome: `OP #${op.numero_op}`,
+  });
+  let p2sQuitado = false;
+  let avisoP2s: string | null = null;
+  if (op.p2s_conta_pagar_oid) {
+    try {
+      const baixa = await marcarContaPagarQuitada('PRODUCAO', op.p2s_conta_pagar_oid, dataPagamento);
+      if (baixa.ok) {
+        p2sQuitado = true;
+        registrarLogAuditoria({
+          usuario_nome: usuarioNome,
+          acao: `DEU BAIXA NO PRIMESTART (${op.p2s_conta_pagar_oid}) — CONTA A PAGAR DA OP #${op.numero_op} QUITADA`,
+          setor: 'OP', equipamento_id: opId, equipamento_nome: `OP #${op.numero_op}`,
+        });
+      } else {
+        avisoP2s = `OP #${op.numero_op} baixada aqui, mas o PrimeStart recusou a quitação da conta: ${baixa.motivo}`;
+      }
+    } catch (e: any) {
+      avisoP2s = `OP #${op.numero_op} baixada aqui, mas falhou ao dar baixa no PrimeStart: ${e.message}`;
+    }
+  }
+  return { numeroOp: op.numero_op, p2sQuitado, avisoP2s };
+}
+
+async function baixarContaPagarComoPaga(db: any, contaId: number, usuarioNome: string, origem: string, dataPagamento: Date):
+  Promise<{ descricao: string; p2sQuitado: boolean; avisoP2s: string | null } | null> {
+  const { data: conta } = await db.from('financeiro_contas_pagar')
+    .update({ quitado: true, data_quitacao: dataPagamento.toISOString().slice(0, 10) })
+    .eq('id', contaId).eq('quitado', false)
+    .select('descricao, p2s_oid').maybeSingle();
+  if (!conta) return null;
+  const descricao = conta.descricao || 'Conta a Pagar';
+  let p2sQuitado = false;
+  let avisoP2s: string | null = null;
+  if (conta.p2s_oid) {
+    try {
+      const baixa = await marcarContaPagarQuitada('PRODUCAO', conta.p2s_oid, dataPagamento);
+      if (baixa.ok) {
+        p2sQuitado = true;
+        registrarLogAuditoria({
+          usuario_nome: usuarioNome,
+          acao: `DEU BAIXA NO PRIMESTART (${conta.p2s_oid}) — CONTA A PAGAR QUITADA (${origem})`,
+          setor: 'FINANCEIRO / RH',
+        });
+      } else {
+        avisoP2s = `Marcada como paga aqui, mas o PrimeStart recusou a quitação: ${baixa.motivo}`;
+      }
+    } catch (e: any) {
+      avisoP2s = `Marcada como paga aqui, mas falhou ao dar baixa no PrimeStart: ${e.message}`;
+    }
+  }
+  return { descricao, p2sQuitado, avisoP2s };
+}
+
+// ============================================================================
+// IMPORTAR RETORNO DO SISPAG (arquivo) — boletos pagos por arquivo CNAB não
+// têm consulta pela API, então a confirmação vem do arquivo de retorno que o
+// Itaú devolve (Transmissão de Arquivo → Retorno). Cada pagamento é ligado à
+// OP / conta a pagar pelo "Seu Número" gravado na remessa (OP622, OP622 1,
+// CP45 — ver exportarCnabBoletos em financeiro/rh/page.tsx). Só ocorrência
+// "00" (Pagamento efetuado) dá baixa; BD (agendado) e recusas só aparecem.
+// OP com vários boletos só é baixada quando TODOS vierem "00" no arquivo.
+// Duas etapas: `aplicar: false` só monta a prévia (não grava nada); `aplicar:
+// true` relê o arquivo no servidor e dá as baixas.
+// ============================================================================
+export type LinhaRetornoSispag = {
+  seuNumero: string;
+  tipo: 'OP' | 'CP' | null;
+  numero: number | null;
+  favorecido: string;
+  valorPago: number;
+  valorEsperado: number | null;
+  dataPagamento: string | null;
+  nossoNumero: string;
+  situacao: SituacaoRetorno | 'PARCIAL';
+  descricao: string;
+  acao: 'BAIXAR' | 'BAIXADA' | 'JA_BAIXADA' | 'SEM_ACAO' | 'NAO_ENCONTRADA' | 'SEM_PERMISSAO';
+  aviso: string | null;
+};
+
+export async function importarRetornoSispagAction(payload: { conteudo: string; aplicar: boolean }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  if (String(payload.conteudo || '').length > 2_000_000) return { ok: false, erro: 'Arquivo grande demais para um retorno SISPAG.' };
+
+  const leitura = lerRetornoSispag(payload.conteudo);
+  if (!leitura.ok) return { ok: false, erro: leitura.erro };
+
+  const db = supabaseAdmin();
+  try {
+    // O arquivo tem que ser da conta que paga por aqui — CNPJ do header
+    // contra o configurado na integração do Itaú.
+    const { data: integracoes } = await db.from('parametros_integracoes').select('config').eq('parceiro', 'ITAU');
+    const cnpjs = (integracoes || []).map((i: any) => String(i.config?.cnpj || '').replace(/\D/g, '').padStart(14, '0'));
+    if (!cnpjs.includes(leitura.cnpj)) {
+      return { ok: false, erro: `O retorno é do CNPJ ${leitura.cnpj}, que não é o da conta Itaú configurada em Integrações.` };
+    }
+
+    // Agrupa as partes por OP / conta (uma OP com 3 boletos tem 3 registros).
+    const grupos = new Map<string, RegistroRetornoSispag[]>();
+    const semReferencia: RegistroRetornoSispag[] = [];
+    for (const r of leitura.registros) {
+      if (!r.referencia) { semReferencia.push(r); continue; }
+      const chave = `${r.referencia.tipo}${r.referencia.numero}`;
+      const partes = grupos.get(chave) || [];
+      // Mesmo pagamento repetido no arquivo (ex.: BD e depois 00): vale o pago.
+      const repetida = partes.findIndex(p => p.seuNumero === r.seuNumero);
+      if (repetida < 0) partes.push(r);
+      else if (r.situacao === 'PAGO') partes[repetida] = r;
+      grupos.set(chave, partes);
+    }
+
+    const numerosOp = [...grupos.values()].map(g => g[0].referencia!).filter(r => r.tipo === 'OP').map(r => r.numero);
+    const idsCp = [...grupos.values()].map(g => g[0].referencia!).filter(r => r.tipo === 'CP').map(r => r.numero);
+    const { data: ops } = numerosOp.length
+      ? await db.from('op_ordens_pagamento').select('id, numero_op, status, total_geral, empresa_id, dados_pagamento').in('numero_op', numerosOp)
+      : { data: [] as any[] };
+    const { data: contas } = idsCp.length
+      ? await db.from('financeiro_contas_pagar').select('id, descricao, fornecedor, valor, valor_pago, quitado, boleto_linha').in('id', idsCp)
+      : { data: [] as any[] };
+    const opPorNumero = new Map((ops || []).map((o: any) => [o.numero_op, o]));
+    const contaPorId = new Map((contas || []).map((c: any) => [c.id, c]));
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+
+    const linhas: LinhaRetornoSispag[] = [];
+    for (const r of semReferencia) {
+      linhas.push({
+        seuNumero: r.seuNumero, tipo: null, numero: null, favorecido: r.favorecido, valorPago: r.valorPago, valorEsperado: null,
+        dataPagamento: r.dataPagamento, nossoNumero: r.nossoNumero, situacao: r.situacao, descricao: r.descricao,
+        acao: 'NAO_ENCONTRADA', aviso: 'Seu número não é de OP nem de conta a pagar gerada por aqui — confira manualmente.',
+      });
+    }
+
+    let baixadas = 0;
+    const avisosP2s: string[] = [];
+    for (const partes of grupos.values()) {
+      const ref = partes[0].referencia!;
+      const valorPago = Math.round(partes.reduce((s, p) => s + p.valorPago, 0) * 100) / 100;
+      const nossoNumero = partes.map(p => p.nossoNumero).filter(Boolean).join(', ');
+      const dataPagamento = partes.map(p => p.dataPagamento).filter(Boolean).sort().pop() || null;
+      const descricao = partes.length > 1 ? partes.map(p => `${p.seuNumero}: ${p.descricao}`).join(' | ') : partes[0].descricao;
+      const base = { seuNumero: partes.map(p => p.seuNumero).join(', '), tipo: ref.tipo, numero: ref.numero, favorecido: partes[0].favorecido, valorPago, dataPagamento, nossoNumero, descricao };
+
+      // Quantos boletos a OP/conta tem — todos precisam vir "00" pra baixar.
+      const registro: any = ref.tipo === 'OP' ? opPorNumero.get(ref.numero) : contaPorId.get(ref.numero);
+      if (!registro) {
+        linhas.push({ ...base, valorEsperado: null, situacao: partes[0].situacao, acao: 'NAO_ENCONTRADA', aviso: `${ref.tipo === 'OP' ? 'OP' : 'Conta a pagar'} #${ref.numero} não existe no sistema.` });
+        continue;
+      }
+      if (ref.tipo === 'OP' && empresasPermitidas && !empresaPermitida(empresasPermitidas, registro.empresa_id)) {
+        linhas.push({ ...base, valorEsperado: null, situacao: partes[0].situacao, acao: 'SEM_PERMISSAO', aviso: 'OP de uma empresa que você não tem permissão para pagar.' });
+        continue;
+      }
+      const qtdBoletos = Math.max(1, extrairBoletos(ref.tipo === 'OP' ? registro.dados_pagamento : registro.boleto_linha).boletos.length);
+      const valorEsperado = ref.tipo === 'OP' ? Number(registro.total_geral || 0) : Number(registro.valor || 0) - Number(registro.valor_pago || 0);
+      const todasPagas = partes.length >= qtdBoletos && partes.every(p => p.situacao === 'PAGO');
+      const situacao: LinhaRetornoSispag['situacao'] = todasPagas ? 'PAGO'
+        : partes.some(p => p.situacao === 'PAGO') ? 'PARCIAL'
+        : partes.some(p => p.situacao === 'RECUSADO') ? 'RECUSADO' : 'AGENDADO';
+      const jaBaixada = ref.tipo === 'OP' ? registro.status === 'PAGO' : registro.quitado === true;
+      const reprovada = ref.tipo === 'OP' && registro.status === 'REPROVADA';
+      let aviso: string | null = null;
+      if (situacao === 'PARCIAL') aviso = `Só ${partes.filter(p => p.situacao === 'PAGO').length} de ${qtdBoletos} boletos vieram pagos neste arquivo — dê baixa manual quando todos forem pagos.`;
+      else if (reprovada) aviso = 'OP está REPROVADA no sistema — confira, o banco diz que pagou.';
+      else if (todasPagas && Math.abs(valorPago - valorEsperado) > 0.009) aviso = `Valor pago (R$ ${valorPago.toFixed(2).replace('.', ',')}) diferente do valor no sistema (R$ ${valorEsperado.toFixed(2).replace('.', ',')}).`;
+
+      let acao: LinhaRetornoSispag['acao'] = !todasPagas || reprovada ? 'SEM_ACAO' : jaBaixada ? 'JA_BAIXADA' : 'BAIXAR';
+      if (acao === 'BAIXAR' && payload.aplicar) {
+        const origem = `RETORNO SISPAG ARQUIVO, NOSSO NÚMERO ${nossoNumero}`;
+        const data = dataPagamento ? new Date(`${dataPagamento}T12:00:00`) : new Date();
+        const r = ref.tipo === 'OP'
+          ? await baixarOpComoPaga(db, registro.id, acesso.perfil.nome, origem, data)
+          : await baixarContaPagarComoPaga(db, registro.id, acesso.perfil.nome, origem, data);
+        if (r) {
+          acao = 'BAIXADA'; baixadas++;
+          if (r.avisoP2s) { avisosP2s.push(r.avisoP2s); aviso = [aviso, r.avisoP2s].filter(Boolean).join(' '); }
+        } else {
+          acao = 'JA_BAIXADA';
+        }
+      }
+      linhas.push({ ...base, valorEsperado, situacao, acao, aviso });
+    }
+
+    if (payload.aplicar) {
+      registrarLogAuditoria({
+        usuario_nome: acesso.perfil.nome,
+        acao: `IMPORTOU RETORNO SISPAG (ARQUIVO) — ${leitura.registros.length} PAGAMENTO(S), ${baixadas} BAIXA(S)`,
+        setor: 'FINANCEIRO / RH',
+      });
+    }
+    return { ok: true, info: { linhas, ignorados: leitura.ignorados, baixadas, avisosP2s } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
 // CONSULTAR STATUS ATUAL NO ITAÚ — o api_status salvo em financeiro_lotes_pagamento
 // fica congelado no momento do envio (ex.: "Sucesso" só significa "aceito
 // pela API", não "pago de fato"). Pagamentos SISPAG passam por aprovação
@@ -1570,60 +1784,17 @@ export async function consultarStatusAtualItauAction(payload: { idPagamentoSispa
       const item = itens.find(i => i.api_cod_pagamento === payload.idPagamentoSispag);
 
       if (item?.fonte === 'OP' && item.opId) {
-        const { data: opAtualizada } = await db.from('op_ordens_pagamento')
-          .update({ status: 'PAGO', updated_at: new Date().toISOString() })
-          .eq('id', item.opId).neq('status', 'REPROVADA').neq('status', 'PAGO')
-          .select('numero_op, p2s_conta_pagar_oid').maybeSingle();
-        if (opAtualizada) {
-          opBaixada = { numeroOp: opAtualizada.numero_op };
-          registrarLogAuditoria({
-            usuario_nome: acesso.perfil.nome,
-            acao: `BAIXOU OP #${opAtualizada.numero_op} — STATUS: PAGO (CONFIRMADO NO ITAÚ VIA API, PAGAMENTO ${payload.idPagamentoSispag})`,
-            setor: 'OP',
-            equipamento_id: item.opId,
-            equipamento_nome: `OP #${opAtualizada.numero_op}`,
-          });
-          if (opAtualizada.p2s_conta_pagar_oid) {
-            try {
-              const baixa = await marcarContaPagarQuitada('PRODUCAO', opAtualizada.p2s_conta_pagar_oid, new Date());
-              if (baixa.ok) {
-                contaPagarBaixada = { descricao: `OP #${opAtualizada.numero_op}` };
-                registrarLogAuditoria({
-                  usuario_nome: acesso.perfil.nome,
-                  acao: `DEU BAIXA NO PRIMESTART (${opAtualizada.p2s_conta_pagar_oid}) — CONTA A PAGAR DA OP #${opAtualizada.numero_op} QUITADA`,
-                  setor: 'OP',
-                  equipamento_id: item.opId,
-                  equipamento_nome: `OP #${opAtualizada.numero_op}`,
-                });
-              } else {
-                avisoP2s = `OP #${opAtualizada.numero_op} baixada aqui, mas o PrimeStart recusou a quitação da conta: ${baixa.motivo}`;
-              }
-            } catch (e: any) {
-              avisoP2s = `OP #${opAtualizada.numero_op} baixada aqui, mas falhou ao dar baixa no PrimeStart: ${e.message}`;
-            }
-          }
+        const r = await baixarOpComoPaga(db, item.opId, acesso.perfil.nome, `CONFIRMADO NO ITAÚ VIA API, PAGAMENTO ${payload.idPagamentoSispag}`, new Date());
+        if (r) {
+          opBaixada = { numeroOp: r.numeroOp };
+          if (r.p2sQuitado) contaPagarBaixada = { descricao: `OP #${r.numeroOp}` };
+          avisoP2s = r.avisoP2s;
         }
       } else if (item?.fonte === 'CONTAS_PAGAR' && item.contaPagarId) {
-        const { data: contaAtualizada } = await db.from('financeiro_contas_pagar')
-          .update({ quitado: true, data_quitacao: new Date().toISOString().slice(0, 10) })
-          .eq('id', item.contaPagarId).eq('quitado', false)
-          .select('descricao, p2s_oid').maybeSingle();
-        if (contaAtualizada?.p2s_oid) {
-          try {
-            const baixa = await marcarContaPagarQuitada('PRODUCAO', contaAtualizada.p2s_oid, new Date());
-            if (baixa.ok) {
-              contaPagarBaixada = { descricao: contaAtualizada.descricao || 'Conta a Pagar' };
-              registrarLogAuditoria({
-                usuario_nome: acesso.perfil.nome,
-                acao: `DEU BAIXA NO PRIMESTART (${contaAtualizada.p2s_oid}) — CONTA A PAGAR QUITADA (CONFIRMADO NO ITAÚ VIA API, PAGAMENTO ${payload.idPagamentoSispag})`,
-                setor: 'FINANCEIRO / RH',
-              });
-            } else {
-              avisoP2s = `Marcada como paga aqui, mas o PrimeStart recusou a quitação: ${baixa.motivo}`;
-            }
-          } catch (e: any) {
-            avisoP2s = `Marcada como paga aqui, mas falhou ao dar baixa no PrimeStart: ${e.message}`;
-          }
+        const r = await baixarContaPagarComoPaga(db, item.contaPagarId, acesso.perfil.nome, `CONFIRMADO NO ITAÚ VIA API, PAGAMENTO ${payload.idPagamentoSispag}`, new Date());
+        if (r) {
+          if (r.p2sQuitado) contaPagarBaixada = { descricao: r.descricao };
+          avisoP2s = r.avisoP2s;
         }
       }
     }

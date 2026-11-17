@@ -14,6 +14,7 @@ import { listarIntegracoesAction } from '../../parametros/integracao/actions';
 import { sincronizarContasPagarP2sAction, salvarDadosPagamentoContaPagarAction } from '../contas-pagar/actions';
 import { normalizarItensOP, ItemOPNormalizado } from '../../op/utils';
 import SepararHolerites from '../../rh/holerite/SepararHolerites';
+import RetornoArquivoSispag from './RetornoArquivoSispag';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm, usePrompt } from '../../../components/ui/NotificationProvider';
@@ -255,7 +256,7 @@ export default function FinanceiroPage() {
 
   // Aba "Retorno API Itaú" — consulta o que foi persistido em
   // financeiro_lotes_pagamento.itens por enviarLoteAoBancoAction, item a item.
-  const [abaAtiva, setAbaAtiva] = useState<'lotes' | 'retorno_itau'>('lotes');
+  const [abaAtiva, setAbaAtiva] = useState<'lotes' | 'retorno_itau' | 'retorno_arquivo'>('lotes');
   const [loteRetornoId, setLoteRetornoId] = useState<number | null>(null);
   const [itensRetorno, setItensRetorno] = useState<ItemLote[]>([]);
   const [carregandoRetorno, setCarregandoRetorno] = useState(false);
@@ -1298,7 +1299,12 @@ export default function FinanceiroPage() {
           <button onClick={() => setAbaAtiva('retorno_itau')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'retorno_itau' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>
             🔌 Retorno API Itaú
           </button>
+          <button onClick={() => setAbaAtiva('retorno_arquivo')} className={`px-5 py-2.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all ${abaAtiva === 'retorno_arquivo' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D]'}`}>
+            📥 Retorno de Arquivo
+          </button>
         </div>
+
+        {abaAtiva === 'retorno_arquivo' && <RetornoArquivoSispag accessToken={accessToken} />}
 
         {abaAtiva === 'lotes' && (<>
         <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">

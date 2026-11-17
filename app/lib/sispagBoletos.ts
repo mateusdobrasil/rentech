@@ -168,6 +168,125 @@ const texto = (s: string | null | undefined) => String(s || '').normalize('NFD')
 const ddmmaaaa = (iso: string) => { const [a, m, d] = iso.split('-'); return `${d}${m}${a}`; };
 const centavos = (v: number) => Math.round(v * 100);
 
+// ---------------------------------------------------------------------------
+// Leitura do arquivo de RETORNO (o que o Itaú devolve depois de processar a
+// remessa: Transmissão de Arquivo → Retorno). Mesmo layout da remessa, com
+// "Nosso Número" e as ocorrências (Nota 8) preenchidos. O J-52 não volta no
+// retorno. Só os segmentos J e O são lidos — são os do arquivo de boletos; o
+// "Seu Número" (OP622, OP622 1, CP45...) é o que liga cada pagamento de volta
+// à OP / conta a pagar que gerou a remessa.
+// ---------------------------------------------------------------------------
+
+export const OCORRENCIAS_SISPAG: Record<string, string> = {
+  '00': 'Pagamento efetuado',
+  AE: 'Data de pagamento alterada',
+  AG: 'Número do lote inválido',
+  AH: 'Número sequencial do registro no lote inválido',
+  AJ: 'Tipo de movimento inválido',
+  AL: 'Código do banco favorecido inválido',
+  AO: 'Nome do favorecido inválido',
+  AP: 'Data de pagamento / vencimento inválida',
+  AR: 'Valor arrecadado / lançamento inválido',
+  BC: 'Nosso número inválido',
+  BD: 'Pagamento agendado',
+  BE: 'Pagamento agendado com forma alterada para OP',
+  BI: 'CPF/CNPJ do beneficiário ou pagador (J-52) inválido',
+  CD: 'CPF/CNPJ divergente do cadastrado',
+  CE: 'Pagamento cancelado',
+  CF: 'Valor do documento inválido',
+  CG: 'Valor do abatimento inválido',
+  CH: 'Valor do desconto inválido',
+  CI: 'CPF/CNPJ / identificador inválido',
+  CK: 'Tipo de inscrição inválida',
+  HA: 'Erro no lote',
+  HM: 'Erro no header do arquivo',
+  IB: 'Valor do documento inválido',
+  IC: 'Valor do abatimento inválido',
+  ID: 'Valor do desconto inválido',
+  IE: 'Valor da mora inválido',
+  IF: 'Valor da multa inválido',
+  IH: 'Valor do acréscimo inválido',
+  II: 'Data de vencimento inválida',
+  IK: 'Tributo não liquidável via SISPAG ou não conveniado com o Itaú',
+  IM: 'Tipo x forma de pagamento não compatível',
+  IN: 'Banco/agência não cadastrados',
+  IO: 'DAC / valor / identificador inválido',
+  IP: 'DAC do código de barras inválido',
+  IR: 'Pagamento alterado',
+  IS: 'Concessionária não conveniada com o Itaú',
+  LA: 'Data de pagamento do lote alterada',
+  LC: 'Lote de pagamentos cancelado',
+  NA: 'Pagamento cancelado por falta de autorização',
+  NI: 'Tributo já foi pago ou está vencido',
+  NR: 'Operação não realizada',
+  RJ: 'Registro rejeitado',
+  SS: 'Cancelado por insuficiência de saldo / limite diário excedido',
+  TA: 'Lote não aceito — totais com diferença',
+  TI: 'Titularidade inválida',
+};
+
+// Ocorrências que não indicam problema (só informam o andamento).
+const OCORRENCIAS_NEUTRAS = ['BD', 'AE', 'IR', 'LA'];
+
+export type SituacaoRetorno = 'PAGO' | 'AGENDADO' | 'RECUSADO';
+
+export type RegistroRetornoSispag = {
+  segmento: 'J' | 'O';
+  seuNumero: string;
+  referencia: { tipo: 'OP' | 'CP'; numero: number; parte: number | null } | null;
+  nossoNumero: string;
+  favorecido: string;
+  valorPago: number;
+  dataPagamento: string | null; // yyyy-mm-dd
+  ocorrencias: string[];
+  descricao: string;
+  situacao: SituacaoRetorno;
+};
+
+const dataIso = (ddmmaaaa: string) => /^\d{8}$/.test(ddmmaaaa) && ddmmaaaa !== '00000000'
+  ? `${ddmmaaaa.slice(4, 8)}-${ddmmaaaa.slice(2, 4)}-${ddmmaaaa.slice(0, 2)}` : null;
+
+export function lerRetornoSispag(conteudo: string):
+  { ok: true; cnpj: string; registros: RegistroRetornoSispag[]; ignorados: number } | { ok: false; erro: string } {
+  const linhas = String(conteudo || '').split(/\r?\n/).filter(l => l.trim().length > 0);
+  const header = linhas[0] || '';
+  if (header.slice(0, 3) !== '341' || header[7] !== '0') return { ok: false, erro: 'Não parece um arquivo SISPAG do Itaú (o primeiro registro não é um header de arquivo 341).' };
+  if (header[142] !== '2') return { ok: false, erro: 'Este arquivo é uma REMESSA, não um retorno — baixe o arquivo em Transmissão de Arquivo → Retorno.' };
+
+  const registros: RegistroRetornoSispag[] = [];
+  let ignorados = 0;
+  let ultimoJ = '';
+  for (const l of linhas) {
+    if (l[7] !== '3') continue; // só registros de detalhe
+    const seg = l[13];
+    const chave = l.slice(3, 13); // lote + nº do registro
+    if (seg === 'J' && chave === ultimoJ) continue; // J-52 (mesmo número do J) — não é pagamento
+    if (seg !== 'J' && seg !== 'O') { ignorados++; continue; }
+    if (seg === 'J') ultimoJ = chave;
+
+    const seuNumero = (seg === 'J' ? l.slice(182, 202) : l.slice(174, 194)).trim();
+    const ocorrencias = (l.slice(230, 240).match(/.{1,2}/g) || []).map(c => c.trim()).filter(Boolean);
+    const m = /^(OP|CP)\s*(\d+)(?:\s+(\d+))?$/.exec(seuNumero);
+    const situacao: SituacaoRetorno = ocorrencias.includes('00') ? 'PAGO'
+      : ocorrencias.length > 0 && ocorrencias.every(c => OCORRENCIAS_NEUTRAS.includes(c)) ? 'AGENDADO'
+      : 'RECUSADO';
+    registros.push({
+      segmento: seg,
+      seuNumero,
+      referencia: m ? { tipo: m[1] as 'OP' | 'CP', numero: Number(m[2]), parte: m[3] ? Number(m[3]) : null } : null,
+      nossoNumero: l.slice(215, 230).trim(),
+      favorecido: (seg === 'J' ? l.slice(61, 91) : l.slice(65, 95)).trim(),
+      // J: valor do pagamento (153–167). O: valor pago (145–159), ou o previsto (122–136) se ainda não efetivado.
+      valorPago: seg === 'J' ? Number(l.slice(152, 167)) / 100 : (Number(l.slice(144, 159)) || Number(l.slice(121, 136))) / 100,
+      dataPagamento: dataIso(seg === 'J' ? l.slice(144, 152) : l.slice(136, 144)),
+      ocorrencias,
+      descricao: ocorrencias.map(c => `${c} — ${OCORRENCIAS_SISPAG[c] || 'ocorrência não catalogada'}`).join('; ') || 'Sem ocorrência',
+      situacao,
+    });
+  }
+  return { ok: true, cnpj: header.slice(18, 32), registros, ignorados };
+}
+
 export function gerarArquivoSispagBoletos(params: {
   empresa: EmpresaPagadoraCnab;
   pagamentos: PagamentoBoletoCnab[];

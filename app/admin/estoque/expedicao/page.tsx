@@ -7,6 +7,8 @@ import { registrarLogAuditoria, sincronizarEstoqueEmLocacao } from '../../../act
 import { finalizarFichasLocacaoPorEventoAction } from './actions';
 import { itensFichasDoEventoAction } from './actions-fichas';
 import ConferenciaQR from './ConferenciaQR';
+import PainelOsSeparar, { type OsSeparar } from './PainelOsSeparar';
+import ModalConferenciaMontagem from './ModalConferenciaMontagem';
 import { sincronizarFichasReservaP2sAction } from '../../locacoes/fichas-reserva/actions';
 import { sincronizarEventosFeirasP2sAction } from '../../comercial/eventos-feiras/actions';
 import { Analytics } from "@vercel/analytics/next";
@@ -338,6 +340,7 @@ export default function ChecklistCargaRetorno() {
   const [divergenciasImpressao, setDivergenciasImpressao] = useState<DivergenciaRow[]>([]);
 
   const [modalNovo, setModalNovo] = useState(false);
+  const [modalConferencia, setModalConferencia] = useState(false);
   const [camposManuais, setCamposManuais] = useState({ evento_feira: '', cliente: '', local: '', periodo_inicio: '', periodo_fim: '', data_entrega: '' });
   const [criando, setCriando] = useState(false);
 
@@ -638,6 +641,14 @@ export default function ChecklistCargaRetorno() {
     // fica em branco até vincular um evento (deriva sozinho) ou o usuário
     // escolher na mão.
     setChecklistEmpresaId(empresasCatalogoVisivel.length === 1 ? empresasCatalogoVisivel[0].id : null);
+  };
+
+  // "OS para separar" → abre o Novo Checklist já com o evento (e a empresa) da ficha
+  const criarChecklistDaOs = (os: OsSeparar) => {
+    abrirModalNovo();
+    setChecklistEmpresaId(os.empresa_id);
+    if (os.evento) selecionarEvento(os.evento);
+    else setCamposManuais(prev => ({ ...prev, evento_feira: os.cliente, local: os.local || '', periodo_inicio: os.inicio, periodo_fim: os.fim }));
   };
 
   const selecionarEvento = (ev: EventoFeiraBusca) => {
@@ -1859,19 +1870,21 @@ export default function ChecklistCargaRetorno() {
           {/* ==================================================================== */}
           {/* VIEW: LISTA */}
           {/* ==================================================================== */}
+          {view === 'lista' && accessToken && <PainelOsSeparar accessToken={accessToken} onCriarChecklist={criarChecklistDaOs} />}
+
           {view === 'lista' && (
             <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
-                <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Checklists de Carga</h2>
-                <div className="flex flex-wrap gap-2 w-full md:w-auto">
+              <div className="mb-4">
+                <div className="flex flex-wrap justify-end gap-2 w-full">
                   <button onClick={sincronizarFichasEEventos} disabled={sincronizandoP2s} className="bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 px-4 py-2.5 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-emerald-200">
                     {sincronizandoP2s ? '🔄 Sincronizando...' : '🔄 Sincronizar Fichas/Eventos'}
                   </button>
                   <button onClick={() => setView('divergencias')} className="bg-orange-50 hover:bg-orange-100 text-orange-700 px-4 py-2.5 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-orange-200">
                     ⚠️ Divergências{totalDivergenciasAbertas > 0 ? ` (${totalDivergenciasAbertas})` : ''}
                   </button>
-                  <button onClick={abrirModalModelo} className="bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] px-4 py-2.5 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-[#CBD5E1]">
-                    🛠️ Modelo Padrão
+                  {/* "Modelo Padrão" saiu daqui (não era usado) — no lugar, o relatório de conferência */}
+                  <button onClick={() => setModalConferencia(true)} className="bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0C1D4D] px-4 py-2.5 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-sm border border-[#CBD5E1]">
+                    📋 Conferência Montagem/Desmontagem
                   </button>
                   <button onClick={abrirModalNovo} className="bg-[#336699] hover:bg-[#284B8C] text-white px-6 py-2.5 rounded-lg font-black text-xs uppercase tracking-wider transition-colors shadow-md hover:shadow-lg">
                     ➕ Novo Checklist
@@ -2359,6 +2372,11 @@ export default function ChecklistCargaRetorno() {
       </div>
 
       {/* ============================================================================ */}
+      {accessToken && (
+        <ModalConferenciaMontagem aberto={modalConferencia} onFechar={() => setModalConferencia(false)} accessToken={accessToken}
+          avisar={(msg, tipo) => toast(msg, tipo)} />
+      )}
+
       {/* MODAL: NOVO CHECKLIST */}
       {/* ============================================================================ */}
       {modalNovo && (

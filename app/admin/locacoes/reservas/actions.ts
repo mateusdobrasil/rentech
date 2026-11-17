@@ -26,6 +26,7 @@ import {
 import { calcularDescontoPct, descontoPendente } from '../../../lib/locacao/descontoFicha';
 import { BUCKET_PROPOSTAS } from './propostaCore';
 import { FORMAS_PAGAMENTO } from '../../../lib/locacao/textosPadrao';
+import { avisarOsParaSeparar } from '../../../lib/locacao/avisoExpedicao';
 import { especDoProduto } from '../../../lib/locacao/ledTecnico';
 import { regrasVendedores } from '../../../lib/comercial/comissoes';
 import type { RegraComissao } from '../../../lib/comercial/regraComissao';
@@ -596,6 +597,7 @@ export async function mudarStatusFichaAction(id: number, acao: AcaoStatus, motiv
     const { error } = await db.from('locacao_fichas_reserva').update({ status: regra.para, ...extra, updated_at: new Date().toISOString() }).eq('id', id);
     if (error) throw error;
     await historico(id, ctx.perfil.nome, acao, [regra.rotulo, txt(motivo)].filter(Boolean).join(': '), de, regra.para);
+    if (acao === 'RESERVAR') await avisarOsParaSeparar(db, id);
     log(ctx.perfil.nome, `FICHA DE RESERVA: ${acao}`, `#${id} ${de} → ${regra.para}${motivo ? ` (${motivo})` : ''}`);
     return { ok: true, info: { status: regra.para } };
   } catch (e: any) {

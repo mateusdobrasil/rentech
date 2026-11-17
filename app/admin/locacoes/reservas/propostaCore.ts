@@ -12,6 +12,7 @@ import { registrarLogAuditoria } from '../../../actions';
 import { autentiqueConsultarDocumento } from '../../../lib/autentique';
 import { reservarFicha } from '../../../lib/locacao/disponibilidade';
 import { numeroFichaPorId } from '../../../lib/locacao/fichaNumero';
+import { avisarOsParaSeparar } from '../../../lib/locacao/avisoExpedicao';
 
 type Db = ReturnType<typeof supabaseAdmin>;
 export const BUCKET_PROPOSTAS = 'locacao-propostas';
@@ -93,6 +94,7 @@ export async function processarEventoProposta(
       if (r.ok) {
         await db.from('locacao_fichas_reserva').update({ status: 'RESERVADA', updated_at: new Date().toISOString() }).eq('id', f.id);
         await historico(db, f.id, 'SISTEMA', 'RESERVAR', 'Equipamentos reservados automaticamente após a assinatura', 'APROVADO', 'RESERVADA');
+        await avisarOsParaSeparar(db, f.id);
       } else {
         const faltas = (r.faltas || []).map(l => `${l.nome} (faltam ${l.falta})`).join(', ');
         await historico(db, f.id, 'SISTEMA', 'RESERVA_PENDENTE', `Assinada, mas não deu para reservar: ${faltas || r.erro || 'falta equipamento'}. Ajuste e use "Aprovar e reservar".`);

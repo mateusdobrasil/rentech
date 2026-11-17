@@ -13,6 +13,7 @@
 // passam por aqui, e não pelo client supabase que o resto da tela usa.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
+import { gerarConferenciaMontagemPdf, type OsConferencia } from '../../../lib/locacao/gerarConferenciaMontagemPdf';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 const ROTA = '/admin/estoque/expedicao';
@@ -192,6 +193,202 @@ export async function removerPecaAction(pecaId: number, accessToken: string): Pr
       ? await db.from('checklist_item_pecas').select('id', { count: 'exact', head: true }).eq('checklist_item_id', p.checklist_item_id).eq('tipo', p.tipo)
       : { count: 0 };
     return { ok: true, info: { checklist_item_id: p.checklist_item_id, tipo: p.tipo, contagem: count || 0 } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// OS PARA SEPARAR (2026-11-17): fichas aprovadas/reservadas que ainda NÃO estão
+// em nenhum checklist — o painel do topo da Expedição avisa a operação. "Está
+// num checklist" = o nº da ficha aparece em checklists.ficha_numero ou em
+// checklist_itens.os_numero ("027646", "027475, 027318", "FR-07050").
+// Inclui as fichas do P2S (status A) e as criadas aqui. Só eventos que ainda
+// não terminaram.
+// ============================================================================
+export async function osParaSepararAction(accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  const db = supabaseAdmin();
+  try {
+    const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+    const fichas: any[] = [];
+    for (let de = 0; ; de += 1000) {
+      const { data, error } = await db.from('locacao_fichas_reserva')
+        .select('id, origem, p2s_numero, status, empresa_id, data_saida, data_montagem, data_inicio, data_fim, aprovado_em, local_entrega, vendedor_nome, parceiro:parceiros(nome_exibicao, nome_completo), evento:eventos_feiras(id, nome, local, data_inicial, data_final, p2s_oid)')
+        .in('status', ['APROVADO', 'RESERVADA']).gte('data_fim', hoje).order('id').range(de, de + 999);
+      if (error) throw error;
+      fichas.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    const visiveis = fichas.filter(f => empresaPermitida(ctx.permitidas, f.empresa_id));
+    if (!visiveis.length) return { ok: true, info: { os: [] } };
+
+    // números já em checklist (checklists dos últimos 12 meses)
+    const corte = new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10);
+    const usados = new Set<string>();
+    const tokens = (t: string | null | undefined) => normalizar(t || '').replace(/^P2S\s*/, '').split(/[,;/\s]+/).filter(Boolean);
+    const ids: string[] = [];
+    for (let de = 0; ; de += 1000) {
+      const { data, error } = await db.from('checklists').select('id, ficha_numero').gte('updated_at', corte).order('id').range(de, de + 999);
+      if (error) throw error;
+      for (const c of (data || []) as any[]) { ids.push(c.id); tokens(c.ficha_numero).forEach(x => usados.add(x)); }
+      if (!data || data.length < 1000) break;
+    }
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await db.from('checklist_itens').select('os_numero').in('checklist_id', ids.slice(i, i + 200)).not('os_numero', 'is', null);
+      if (error) throw error;
+      for (const it of (data || []) as any[]) tokens(it.os_numero).forEach(x => usados.add(x));
+    }
+
+    const pendentes = visiveis.filter(f => !usados.has(normalizar(numeroFicha(f))));
+    // quantos equipamentos cada uma tem (só das pendentes)
+    const qtdItens = new Map<number, number>();
+    const pIds = pendentes.map(f => f.id);
+    for (let i = 0; i < pIds.length; i += 300) {
+      const { data } = await db.from('locacao_fichas_reserva_itens').select('ficha_id, quantidade, tipo').in('ficha_id', pIds.slice(i, i + 300)).in('tipo', ['EQUIPAMENTO', 'KIT', 'OUTRO']);
+      for (const it of (data || []) as any[]) qtdItens.set(it.ficha_id, (qtdItens.get(it.ficha_id) || 0) + Number(it.quantidade || 0));
+    }
+    const dia = (iso: string) => Date.parse(`${iso}T12:00:00Z`);
+    const os = pendentes.map(f => {
+      const saida = f.data_saida || f.data_montagem || f.data_inicio;
+      return {
+        ficha_id: f.id, numero: numeroFicha(f), origem: f.origem, status: f.status, empresa_id: f.empresa_id,
+        cliente: f.parceiro ? (f.parceiro.nome_exibicao || f.parceiro.nome_completo) : '—',
+        evento: f.evento ? { nome: f.evento.nome, local: f.evento.local, data_inicial: f.evento.data_inicial, data_final: f.evento.data_final, p2s_oid: f.evento.p2s_oid } : null,
+        local: f.local_entrega || f.evento?.local || null, vendedor: f.vendedor_nome,
+        saida, inicio: f.data_inicio, fim: f.data_fim, dias_ate_saida: Math.round((dia(saida) - dia(hoje)) / 86_400_000),
+        aprovado_em: f.aprovado_em, novo: !!f.aprovado_em && Date.now() - Date.parse(f.aprovado_em) < 48 * 3_600_000,
+        qtd_itens: qtdItens.get(f.id) || 0,
+      };
+    }).sort((a, b) => a.saida.localeCompare(b.saida) || a.numero.localeCompare(b.numero));
+    return { ok: true, info: { os } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// CONFERÊNCIA DE MONTAGEM / DESMONTAGEM (2026-11-17): relatório impresso por
+// evento — uma folha por OS que está nos checklists daquele evento, com os
+// equipamentos e serviços/extras da ficha e colunas de check.
+// ============================================================================
+/** Eventos que têm checklist (os mais recentes primeiro). */
+export async function eventosComChecklistAction(accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  try {
+    const { data, error } = await supabaseAdmin().from('checklists')
+      .select('id, evento_feira, empresa_id, status, periodo_inicio, periodo_fim, updated_at')
+      .not('evento_feira', 'is', null).order('updated_at', { ascending: false }).limit(800);
+    if (error) throw error;
+    const grupos = new Map<string, { nome: string; checklists: number; status: string[]; periodo_inicio: string | null; periodo_fim: string | null; atualizado: string }>();
+    for (const c of (data || []) as any[]) {
+      if (c.empresa_id !== null && !empresaPermitida(ctx.permitidas, c.empresa_id)) continue;
+      const chave = normalizar(c.evento_feira);
+      if (!chave) continue;
+      const g = grupos.get(chave) || { nome: String(c.evento_feira).trim(), checklists: 0, status: [] as string[], periodo_inicio: c.periodo_inicio, periodo_fim: c.periodo_fim, atualizado: c.updated_at };
+      g.checklists++;
+      if (!g.status.includes(c.status)) g.status.push(c.status);
+      if (c.periodo_inicio && (!g.periodo_inicio || c.periodo_inicio < g.periodo_inicio)) g.periodo_inicio = c.periodo_inicio;
+      if (c.periodo_fim && (!g.periodo_fim || c.periodo_fim > g.periodo_fim)) g.periodo_fim = c.periodo_fim;
+      grupos.set(chave, g);
+    }
+    return { ok: true, info: [...grupos.values()] };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+export async function conferenciaMontagemAction(evento: string, accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  const chave = normalizar(evento);
+  if (!chave) return { ok: false, erro: 'Escolha o evento.' };
+  const db = supabaseAdmin();
+  try {
+    // checklists do evento
+    const { data: cks, error } = await db.from('checklists').select('id, evento_feira, empresa_id, cliente, local, ficha_numero')
+      .ilike('evento_feira', `%${evento.trim().replace(/[%_]/g, ' ')}%`).limit(200);
+    if (error) throw error;
+    const doEvento = ((cks || []) as any[]).filter(c => normalizar(c.evento_feira) === chave && (c.empresa_id === null || empresaPermitida(ctx.permitidas, c.empresa_id)));
+    if (!doEvento.length) return { ok: false, erro: 'Nenhum checklist encontrado para este evento.' };
+
+    // OSs citadas nos itens (e no cabeçalho) dos checklists, na ordem em que aparecem
+    const tokens = (t: string | null | undefined) => normalizar(t || '').replace(/^P2S\s*/, '').split(/[,;/\s]+/).filter(Boolean);
+    const ordem: string[] = [];
+    const itensChecklist = new Map<string, { descricao: string; quantidade: number }[]>();
+    const add = (n: string) => { if (!ordem.includes(n)) ordem.push(n); };
+    for (const c of doEvento) tokens(c.ficha_numero).forEach(add);
+    const { data: itens, error: eI } = await db.from('checklist_itens').select('checklist_id, ordem, descricao, qtd_prevista, os_numero, extra')
+      .in('checklist_id', doEvento.map(c => c.id)).not('os_numero', 'is', null).order('ordem');
+    if (eI) throw eI;
+    for (const it of (itens || []) as any[]) {
+      const nums = tokens(it.os_numero);
+      nums.forEach(add);
+      // item com uma OS só: guarda como reserva (OS que não está no sistema)
+      if (nums.length === 1) itensChecklist.set(nums[0], [...(itensChecklist.get(nums[0]) || []), { descricao: String(it.descricao || ''), quantidade: Number(it.qtd_prevista) || 0 }]);
+    }
+    if (!ordem.length) return { ok: false, erro: 'Os checklists deste evento ainda não têm OS vinculada (use "Importar das OSs" no checklist).' };
+
+    // fichas: "FR-00012" (daqui) ou nº do P2S
+    const idsSis = ordem.filter(n => /^FR-\d+$/.test(n)).map(n => Number(n.slice(3)));
+    const numsP2s = ordem.filter(n => !/^FR-/.test(n));
+    const sel = 'id, origem, p2s_numero, empresa_id, contato_nome, contato_telefone, vendedor_nome, endereco_estande, local_entrega, data_montagem, data_inicio, data_fim, data_desmontagem, observacoes, observacoes_internas, parceiro:parceiros(nome_exibicao, nome_completo), empresa:empresas(nome, nome_curto)';
+    const [rSis, rP2s] = await Promise.all([
+      idsSis.length ? db.from('locacao_fichas_reserva').select(sel).in('id', idsSis) : Promise.resolve({ data: [], error: null }),
+      numsP2s.length ? db.from('locacao_fichas_reserva').select(sel).eq('origem', 'P2S').in('p2s_numero', numsP2s) : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (rSis.error) throw rSis.error;
+    if (rP2s.error) throw rP2s.error;
+    const porNumero = new Map<string, any>();
+    for (const f of [...(rSis.data || []), ...(rP2s.data || [])] as any[]) {
+      if (empresaPermitida(ctx.permitidas, f.empresa_id)) porNumero.set(normalizar(numeroFicha(f)), f);
+    }
+    const fichaIds = [...porNumero.values()].map(f => f.id);
+    const { data: fItens, error: eF } = fichaIds.length
+      ? await db.from('locacao_fichas_reserva_itens').select('ficha_id, ordem, tipo, descricao, quantidade, produto_id, led_largura_m, led_altura_m, produto:produtos(codigo_formatado)').in('ficha_id', fichaIds).order('ordem')
+      : { data: [], error: null };
+    if (eF) throw eF;
+    const itensPorFicha = new Map<number, any[]>();
+    for (const it of (fItens || []) as any[]) itensPorFicha.set(it.ficha_id, [...(itensPorFicha.get(it.ficha_id) || []), it]);
+
+    const m2 = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const lista: OsConferencia[] = ordem.map(n => {
+      const f = porNumero.get(n);
+      const ck = doEvento[0];
+      if (!f) {
+        return {
+          numero: n, logo: 'RENTECH' as const, cliente: ck.cliente || '—', local: ck.local || null,
+          equipamentos: (itensChecklist.get(n) || []).map(i => ({ quantidade: i.quantidade, descricao: i.descricao })), servicos: [], doChecklist: true,
+        };
+      }
+      const its = itensPorFicha.get(f.id) || [];
+      const ehEquip = (i: any) => i.tipo === 'EQUIPAMENTO' || i.tipo === 'KIT' || (i.tipo === 'OUTRO' && i.produto_id);
+      const conv = (i: any) => ({
+        quantidade: Number(i.quantidade) || 0, descricao: String(i.descricao || ''), codigo: i.produto?.codigo_formatado || null,
+        detalhe: Number(i.led_largura_m) > 0 && Number(i.led_altura_m) > 0 ? `painel ${m2(Number(i.led_largura_m))} x ${m2(Number(i.led_altura_m))} m` : null,
+      });
+      const nomeEmp = `${f.empresa?.nome_curto || ''} ${f.empresa?.nome || ''}`.toUpperCase();
+      return {
+        numero: n, logo: (/ALFA/.test(nomeEmp) ? 'ALFALIGHT' : 'RENTECH') as 'ALFALIGHT' | 'RENTECH',
+        cliente: f.parceiro ? (f.parceiro.nome_exibicao || f.parceiro.nome_completo) : '—',
+        estande: f.endereco_estande, local: f.local_entrega,
+        contato: [f.contato_nome, f.contato_telefone].filter(Boolean).join(' · ') || null, vendedor: f.vendedor_nome,
+        montagem: f.data_montagem, inicio: f.data_inicio, fim: f.data_fim, desmontagem: f.data_desmontagem,
+        observacoes: [f.observacoes, f.observacoes_internas].filter(Boolean).join(' | ') || null,
+        equipamentos: its.filter(ehEquip).map(conv), servicos: its.filter(i => !ehEquip(i)).map(conv),
+      };
+    });
+    const bytes = await gerarConferenciaMontagemPdf(doEvento[0].evento_feira.trim(), lista);
+    return {
+      ok: true,
+      info: {
+        base64: Buffer.from(bytes).toString('base64'),
+        nome: `conferencia-montagem-${normalizar(evento).toLowerCase().replace(/[^a-z0-9]+/g, '-')}.pdf`,
+        qtdOs: lista.length, foraDoSistema: lista.filter(o => o.doChecklist).length,
+      },
+    };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

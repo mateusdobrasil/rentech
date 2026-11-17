@@ -29,6 +29,16 @@ const separarContaDac = (contaComDac: string | null | undefined): { conta: strin
   return { conta: conta || '', dac: dac || '' };
 };
 
+// O Itaú (Transmissão de Arquivos) só aceita nome com até 8 caracteres antes
+// da extensão — "O nome do arquivo deve ter no máximo 8 caracteres" no 1º
+// teste de boletos (2026-11-17). Prefixo de 2 letras + dia/hora/minuto da
+// geração, pra dois arquivos do mesmo dia não terem o mesmo nome.
+const nomeArquivoSispag = (prefixo: 'PX' | 'TD' | 'BL') => {
+  const d = new Date();
+  const p2 = (n: number) => String(n).padStart(2, '0');
+  return `${prefixo}${p2(d.getDate())}${p2(d.getHours())}${p2(d.getMinutes())}.txt`;
+};
+
 const BRL = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtDataHora = (d: string) => new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 const fmtData = (d: string | null) => formatarDataBR(d);
@@ -831,7 +841,7 @@ export default function FinanceiroPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `SISPAG_PIX_${mesReferencia.replace('-', '')}.txt`;
+    a.download = nomeArquivoSispag('PX');
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -978,7 +988,7 @@ export default function FinanceiroPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `SISPAG_CC_TED_${mesReferencia.replace('-', '')}.txt`;
+    a.download = nomeArquivoSispag('TD');
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -1050,7 +1060,7 @@ export default function FinanceiroPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `SISPAG_BOLETOS_${mesReferencia.replace('-', '')}.txt`;
+    a.download = nomeArquivoSispag('BL');
     a.click();
     URL.revokeObjectURL(url);
   };

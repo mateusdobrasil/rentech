@@ -279,5 +279,8 @@ export function gerarArquivoSispagBoletos(params: {
   const errado = linhas.findIndex(l => l.length !== 240);
   if (errado >= 0) throw new Error(`Registro ${errado + 1} do arquivo saiu com ${linhas[errado].length} posições (esperado 240).`);
 
-  return { conteudo: linhas.join('\r\n'), lotes: resumo };
+  // CRLF também depois do ÚLTIMO registro: sem ele o validador do Itaú
+  // recusou o trailer de arquivo ("Tamanho do Registro 6 inválido", 1º teste
+  // em 2026-11-17) — cada registro tem que ter 240 posições + CRLF.
+  return { conteudo: linhas.map(l => l + '\r\n').join(''), lotes: resumo };
 }

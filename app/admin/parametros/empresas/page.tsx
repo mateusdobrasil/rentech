@@ -5,6 +5,7 @@ import { useConfirm } from '../../../components/ui/NotificationProvider';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
+import { CONTRATO_CLAUSULAS_PADRAO, PROPOSTA_EXTRAS_PADRAO, PROPOSTA_TERMO_PADRAO } from '../../../lib/locacao/textosPadrao';
 import { registrarLogAuditoria } from '../../../actions';
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
@@ -51,6 +52,16 @@ interface Empresa {
   email_contato?: string | null;
   site?: string | null;
   proposta_condicoes?: string | null;
+  // Contrato de locação + proposta (layout 2026-11-17) —
+  // .sql/Pendentes/locacao_contrato_proposta.sql. Ausentes enquanto o SQL não roda.
+  inscricao_estadual?: string | null;
+  inscricao_municipal?: string | null;
+  contrato_clausulas?: string | null;
+  contrato_representante_nome?: string | null;
+  contrato_representante_email?: string | null;
+  contrato_representante_celular?: string | null;
+  proposta_extras?: string | null;
+  proposta_validade_dias?: number | null;
 }
 
 // De onde vêm os recebimentos da empresa — lido pelo Relatório do Diretor
@@ -60,8 +71,9 @@ const FONTES_RECEBIMENTOS = [
   { valor: 'EXTERNA', rotulo: 'Outra fonte (não integrada)', ajuda: 'O Relatório do Diretor ignora o contas a receber do P2S desta empresa.' },
 ] as const;
 
-const empresaFormPadrao: { nome: string; razao_social: string; cnpj: string; ativo: boolean; fonte_recebimentos: 'P2S' | 'EXTERNA'; cnpjs_p2s: string; endereco: string; telefone: string; email_contato: string; site: string; proposta_condicoes: string } =
-  { nome: '', razao_social: '', cnpj: '', ativo: true, fonte_recebimentos: 'P2S', cnpjs_p2s: '', endereco: '', telefone: '', email_contato: '', site: '', proposta_condicoes: '' };
+const contratoFormPadrao = { inscricao_estadual: '', inscricao_municipal: '', contrato_clausulas: '', contrato_representante_nome: '', contrato_representante_email: '', contrato_representante_celular: '', proposta_extras: '', proposta_validade_dias: '7' };
+const empresaFormPadrao: { nome: string; razao_social: string; cnpj: string; ativo: boolean; fonte_recebimentos: 'P2S' | 'EXTERNA'; cnpjs_p2s: string; endereco: string; telefone: string; email_contato: string; site: string; proposta_condicoes: string } & typeof contratoFormPadrao =
+  { nome: '', razao_social: '', cnpj: '', ativo: true, fonte_recebimentos: 'P2S', cnpjs_p2s: '', endereco: '', telefone: '', email_contato: '', site: '', proposta_condicoes: '', ...contratoFormPadrao };
 
 // "34.075.821/0001-09, 10.353.694/0001-02" → ['34075821000109', '10353694000102'] (só CNPJs completos)
 const listaCnpjs = (texto: string) => [...new Set(texto.split(/[,;\n]+/).map(c => somenteDigitos(c)).filter(c => c.length === 14))];
@@ -117,9 +129,13 @@ export default function EmpresasPage() {
   const colunaFonteExiste = empresas.some(e => e.fonte_recebimentos !== undefined);
   const colunaCnpjsP2sExiste = empresas.some(e => e.cnpjs_p2s !== undefined);
   const colunasPropostaExistem = empresas.some(e => e.proposta_condicoes !== undefined);
+  const colunasContratoExistem = empresas.some(e => e.contrato_clausulas !== undefined);
 
   const prepararEdicao = (e: Empresa) => {
-    setForm({ nome: e.nome, razao_social: e.razao_social || '', cnpj: mascararCnpjDigitando(e.cnpj || ''), ativo: e.ativo, fonte_recebimentos: e.fonte_recebimentos === 'EXTERNA' ? 'EXTERNA' : 'P2S', cnpjs_p2s: (e.cnpjs_p2s || []).map(formatarCnpj).join(', '), endereco: e.endereco || '', telefone: e.telefone || '', email_contato: e.email_contato || '', site: e.site || '', proposta_condicoes: e.proposta_condicoes || '' });
+    setForm({ nome: e.nome, razao_social: e.razao_social || '', cnpj: mascararCnpjDigitando(e.cnpj || ''), ativo: e.ativo, fonte_recebimentos: e.fonte_recebimentos === 'EXTERNA' ? 'EXTERNA' : 'P2S', cnpjs_p2s: (e.cnpjs_p2s || []).map(formatarCnpj).join(', '), endereco: e.endereco || '', telefone: e.telefone || '', email_contato: e.email_contato || '', site: e.site || '', proposta_condicoes: e.proposta_condicoes || '',
+      inscricao_estadual: e.inscricao_estadual || '', inscricao_municipal: e.inscricao_municipal || '', contrato_clausulas: e.contrato_clausulas || '',
+      contrato_representante_nome: e.contrato_representante_nome || '', contrato_representante_email: e.contrato_representante_email || '',
+      contrato_representante_celular: e.contrato_representante_celular || '', proposta_extras: e.proposta_extras || '', proposta_validade_dias: String(e.proposta_validade_dias ?? 7) });
     setEditandoId(e.id);
   };
 
@@ -143,6 +159,15 @@ export default function EmpresasPage() {
         ...(colunasPropostaExistem ? {
           endereco: form.endereco.trim() || null, telefone: form.telefone.trim() || null, email_contato: form.email_contato.trim() || null,
           site: form.site.trim() || null, proposta_condicoes: form.proposta_condicoes.trim() || null,
+        } : {}),
+        ...(colunasContratoExistem ? {
+          inscricao_estadual: form.inscricao_estadual.trim() || null, inscricao_municipal: form.inscricao_municipal.trim() || null,
+          contrato_clausulas: form.contrato_clausulas.trim() || null,
+          contrato_representante_nome: form.contrato_representante_nome.trim() || null,
+          contrato_representante_email: form.contrato_representante_email.trim() || null,
+          contrato_representante_celular: form.contrato_representante_celular.trim() || null,
+          proposta_extras: form.proposta_extras.trim() || null,
+          proposta_validade_dias: Math.max(1, Math.min(90, Number(form.proposta_validade_dias) || 7)),
         } : {}),
       };
 
@@ -317,10 +342,60 @@ export default function EmpresasPage() {
                   <input type="text" value={form.site} onChange={e => setForm({ ...form, site: e.target.value })} className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699]" />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Condições gerais da proposta</label>
-                  <textarea rows={6} placeholder="Em branco = texto padrão (validade, guarda dos equipamentos, avarias pelo valor de indenização, diárias por atraso...)" value={form.proposta_condicoes} onChange={e => setForm({ ...form, proposta_condicoes: e.target.value })}
+                  <div className="flex justify-between items-end mb-1">
+                    <label className="block text-[10px] font-black text-gray-500 uppercase">Termo de responsabilidade (proposta)</label>
+                    {!form.proposta_condicoes.trim() && <button type="button" onClick={() => setForm({ ...form, proposta_condicoes: PROPOSTA_TERMO_PADRAO })} className="text-[9px] font-black uppercase text-[#336699]">carregar padrão</button>}
+                  </div>
+                  <textarea rows={6} placeholder="Em branco = termo do orçamento padrão (fiel depositário, extravio, diárias por atraso, cancelamento 24h...)" value={form.proposta_condicoes} onChange={e => setForm({ ...form, proposta_condicoes: e.target.value })}
                     className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699]" />
-                  <p className="text-[10px] text-gray-400 mt-1">Aparece no fim de toda proposta desta empresa. Uma cláusula por linha.</p>
+                  <p className="text-[10px] text-gray-400 mt-1">Aparece no fim de toda proposta desta empresa. Um item por linha.</p>
+                </div>
+                {colunasContratoExistem && (
+                  <>
+                    <div>
+                      <div className="flex justify-between items-end mb-1">
+                        <label className="block text-[10px] font-black text-gray-500 uppercase">Extras sob consulta (proposta)</label>
+                        {!form.proposta_extras.trim() && <button type="button" onClick={() => setForm({ ...form, proposta_extras: PROPOSTA_EXTRAS_PADRAO })} className="text-[9px] font-black uppercase text-[#336699]">carregar padrão</button>}
+                      </div>
+                      <textarea rows={4} placeholder="Em branco = lista padrão (cabeamento acima de 10 m, notebook/player, conversores...)" value={form.proposta_extras} onChange={e => setForm({ ...form, proposta_extras: e.target.value })} className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699]" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Validade padrão do orçamento (dias)</label>
+                      <input type="number" min={1} max={90} value={form.proposta_validade_dias} onChange={e => setForm({ ...form, proposta_validade_dias: e.target.value })} className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699]" />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            {colunasContratoExistem && (
+              <div className="space-y-3 border-t border-gray-100 pt-3">
+                <p className="text-[10px] font-black text-[#336699] uppercase">Contrato de locação</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Inscrição estadual</label>
+                    <input type="text" value={form.inscricao_estadual} onChange={e => setForm({ ...form, inscricao_estadual: e.target.value })} className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699]" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Inscrição municipal</label>
+                    <input type="text" value={form.inscricao_municipal} onChange={e => setForm({ ...form, inscricao_municipal: e.target.value })} className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699]" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Representante que assina pela empresa</label>
+                  <input type="text" placeholder="Nome" value={form.contrato_representante_nome} onChange={e => setForm({ ...form, contrato_representante_nome: e.target.value })} className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699] mb-2" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="text" placeholder="E-mail" value={form.contrato_representante_email} onChange={e => setForm({ ...form, contrato_representante_email: e.target.value })} className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699]" />
+                    <input type="text" placeholder="Celular (WhatsApp)" value={form.contrato_representante_celular} onChange={e => setForm({ ...form, contrato_representante_celular: e.target.value })} className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699]" />
+                  </div>
+                  <p className="text-[10px] text-gray-400 mt-1">Vem preenchido no envio do contrato para a Autentique (dá para trocar na hora).</p>
+                </div>
+                <div>
+                  <div className="flex justify-between items-end mb-1">
+                    <label className="block text-[10px] font-black text-gray-500 uppercase">Cláusulas do contrato</label>
+                    {!form.contrato_clausulas.trim() && <button type="button" onClick={() => setForm({ ...form, contrato_clausulas: CONTRATO_CLAUSULAS_PADRAO })} className="text-[9px] font-black uppercase text-[#336699]">carregar padrão para editar</button>}
+                  </div>
+                  <textarea rows={8} placeholder="Em branco = contrato padrão da Rentech (Definições + Cláusulas 1ª a 41ª)" value={form.contrato_clausulas} onChange={e => setForm({ ...form, contrato_clausulas: e.target.value })} className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold bg-gray-50 text-gray-700 outline-none focus:border-[#336699] font-mono" />
+                  <p className="text-[10px] text-gray-400 mt-1">"## Título" vira título de seção; **texto** sai em negrito; linha em branco separa parágrafos.</p>
                 </div>
               </div>
             )}

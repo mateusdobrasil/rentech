@@ -213,3 +213,81 @@ export async function removerSetorPermissaoAction(payload: { id: number; usuario
     return { ok: false, erro: e.message };
   }
 }
+
+// ---------------------------------------------------------------------------
+// LOCAÇÃO: acesso do usuário às fichas (escopo, criar/editar/excluir, desconto)
+// Tabela locacao_acesso_usuarios (.sql/Pendentes/comercial_carteira_comissoes.sql).
+// ---------------------------------------------------------------------------
+export interface AcessoLocacaoForm {
+  vendedor_id: number | null;
+  escopo_fichas: 'TODAS' | 'CARTEIRA';
+  pode_criar: boolean;
+  pode_editar: boolean;
+  pode_excluir: boolean;
+  desconto_max_pct: number;
+  pode_aprovar_desconto: boolean;
+}
+
+export async function carregarAcessoLocacaoAction(perfilId: string, accessToken: string): Promise<Resultado & { info?: { acesso: AcessoLocacaoForm; configurado: boolean; vendedores: { id: number; nome: string }[] } }> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  const db = supabaseAdmin();
+  try {
+    const [{ data }, { data: vend, error: eV }] = await Promise.all([
+      db.from('locacao_acesso_usuarios').select('*').eq('perfil_id', perfilId).maybeSingle(),
+      db.from('colaboradores').select('id, nome_exibicao, nome_completo').eq('flag_vendedor_rep', true).eq('status_colaborador', 'A').order('nome_exibicao'),
+    ]);
+    if (eV) throw eV;
+    const r = data as any;
+    return {
+      ok: true,
+      info: {
+        configurado: !!r,
+        acesso: {
+          vendedor_id: r?.vendedor_id ?? null,
+          escopo_fichas: r?.escopo_fichas === 'TODAS' ? 'TODAS' : 'CARTEIRA',
+          pode_criar: r ? !!r.pode_criar : true, pode_editar: r ? !!r.pode_editar : true, pode_excluir: r ? !!r.pode_excluir : false,
+          desconto_max_pct: r ? Number(r.desconto_max_pct) || 0 : 0, pode_aprovar_desconto: r ? !!r.pode_aprovar_desconto : false,
+        },
+        vendedores: ((vend || []) as any[]).map(v => ({ id: v.id, nome: String(v.nome_exibicao || v.nome_completo || '').trim() })),
+      },
+    };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+export async function salvarAcessoLocacaoAction(payload: { perfilId: string; usuarioNome: string; acesso: AcessoLocacaoForm }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  const a = payload.acesso;
+  const pct = Number(a.desconto_max_pct);
+  if (!Number.isFinite(pct) || pct < 0 || pct > 100) return { ok: false, erro: 'Desconto máximo deve ficar entre 0% e 100%.' };
+  if (!['TODAS', 'CARTEIRA'].includes(a.escopo_fichas)) return { ok: false, erro: 'Escopo inválido.' };
+  const db = supabaseAdmin();
+  try {
+    const { data: perfil } = await db.from('perfis_usuarios').select('nome').eq('id', payload.perfilId).maybeSingle();
+    if (!perfil) return { ok: false, erro: 'Usuário não encontrado.' };
+    let nomeVendedor: string | null = null;
+    if (a.vendedor_id) {
+      const { data: v } = await db.from('colaboradores').select('nome_exibicao, flag_vendedor_rep').eq('id', a.vendedor_id).maybeSingle();
+      if (!v?.flag_vendedor_rep) return { ok: false, erro: 'Vendedor inválido.' };
+      nomeVendedor = v.nome_exibicao;
+    }
+    const linha = {
+      perfil_id: payload.perfilId, vendedor_id: a.vendedor_id || null, escopo_fichas: a.escopo_fichas,
+      pode_criar: !!a.pode_criar, pode_editar: !!a.pode_editar, pode_excluir: !!a.pode_excluir,
+      desconto_max_pct: Math.round(pct * 100) / 100, pode_aprovar_desconto: !!a.pode_aprovar_desconto,
+      atualizado_por: payload.usuarioNome || acesso.perfil.nome, atualizado_em: new Date().toISOString(),
+    };
+    const { error } = await db.from('locacao_acesso_usuarios').upsert(linha, { onConflict: 'perfil_id' });
+    if (error) throw new Error(error.message);
+    await registrarLogAuditoria({
+      usuario_nome: payload.usuarioNome || acesso.perfil.nome, acao: 'ALTEROU ACESSO DE LOCAÇÃO', setor: 'PERMISSÕES', equipamento_id: payload.perfilId,
+      equipamento_nome: `${perfil.nome} — ${a.escopo_fichas === 'TODAS' ? 'todas as fichas' : 'só carteira'}${nomeVendedor ? ` · vendedor ${nomeVendedor}` : ''} · ${[a.pode_criar && 'criar', a.pode_editar && 'editar', a.pode_excluir && 'excluir'].filter(Boolean).join('/') || 'só leitura'} · desconto até ${linha.desconto_max_pct}%${a.pode_aprovar_desconto ? ' · aprova desconto' : ''}`,
+    });
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}

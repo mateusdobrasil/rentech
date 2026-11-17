@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { finalizarAssinaturaOP } from '../../../admin/op/assinaturaOpCore';
 import { processarEventoProposta } from '../../../admin/locacoes/reservas/propostaCore';
+import { processarEventoContrato } from '../../../admin/locacoes/reservas/contratoCore';
 
 type Extraido = {
   docId: string | null;
@@ -149,7 +150,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, status, origem: 'OP' });
     }
 
-    // 3) Proposta de locação (locacao_propostas, 2026-11-16) — assinou:
+    // 3a) Contrato de locação (locacao_contratos, 2026-11-17) — dois
+    // signatários (cliente + locadora): o status vem da consulta ao documento,
+    // não do payload (que marca "assinado" já na primeira assinatura).
+    try {
+      if (await processarEventoContrato(db, dados.docId)) return NextResponse.json({ ok: true, origem: 'CONTRATO_LOCACAO' });
+    } catch (e: any) {
+      console.error('Webhook Autentique — falha ao processar contrato de locação:', e.message);
+      return NextResponse.json({ ok: false, erro: e.message }, { status: 200 });
+    }
+
+    // 3b) Proposta de locação (locacao_propostas, 2026-11-16) — assinou:
     // arquiva o PDF, aprova a ficha e tenta reservar (propostaCore.ts).
     try {
       const tratado = await processarEventoProposta(db, dados.docId, {

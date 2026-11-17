@@ -150,7 +150,7 @@ export default function PainelProposta({ fichaId, accessToken, status, alterado,
             Valor por item
           </label>
           <button onClick={previa} disabled={gerando} className={`${btn} bg-white border border-[#CBD5E1] text-[#0C1D4D]`}>{gerando ? 'Gerando...' : '📄 Baixar PDF'}</button>
-          {podeEnviar && <button onClick={abrirEnvio} disabled={!!indisponivel} className={`${btn} bg-[#0C1D4D] hover:bg-[#284B8C] text-white`}>✍ Enviar para assinatura</button>}
+          {podeEnviar && <button onClick={abrirEnvio} disabled={!!indisponivel} className={`${btn} bg-[#0C1D4D] hover:bg-[#284B8C] text-white`}>✍ Enviar proposta</button>}
         </div>
       </div>
 

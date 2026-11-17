@@ -5,12 +5,15 @@ import { useRouter, useParams } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import {
   contextoNovaFichaAction, carregarFichaAction, salvarFichaAction, mudarStatusFichaAction, duplicarFichaAction,
+  aprovarDescontoFichaAction, excluirFichaAction,
   precificarFichaAction, verificarDisponibilidadeFichaAction,
   buscarClientesFichaAction, buscarEventosFichaAction, buscarProdutosFichaAction,
   type StatusFicha, type TipoItem, type AcaoStatus, type DadosFicha,
 } from '../actions';
 import type { Modalidade, OrigemPreco } from '../../../../lib/locacao/precificacao';
 import type { LinhaDisponibilidade } from '../../../../lib/locacao/disponibilidade';
+import type { AcessoTela } from '../../../../lib/locacao/acessoFichas';
+import { pctLocacaoAplicada, type RegraComissao } from '../../../../lib/comercial/regraComissao';
 import { usePageAccess } from '../../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../../components/ui/HubStates';
 import CampoBusca, { type OpcaoBusca } from '../../../../components/ui/CampoBusca';
@@ -21,12 +24,15 @@ import { diasInclusivos, dataValida, hojeISO } from '../../../../lib/locacao/dat
 import { STATUS_FICHA, MODALIDADES, numeroFicha } from '../statusFicha';
 import PainelProposta from './PainelProposta';
 import PainelTitulos from './PainelTitulos';
+import PainelContrato from './PainelContrato';
+import { calcularLed, resumoLed, type EspecLed } from '../../../../lib/locacao/ledTecnico';
+import { FORMAS_PAGAMENTO, ROTULO_FORMA_PAGAMENTO } from '../../../../lib/locacao/textosPadrao';
 
 // Editor da Ficha de Reserva própria (orçamento → reserva), 2026-11-16.
 // /admin/locacoes/reservas/nova cria; /admin/locacoes/reservas/<id> edita.
 // Permissão: a mesma linha de /admin/locacoes/reservas.
 
-interface EmpresaOpcao { id: number; nome: string }
+interface EmpresaOpcao { id: number; nome: string; validadeDias?: number }
 interface ItemUI {
   chave: string;
   id: number | null;
@@ -44,17 +50,22 @@ interface ItemUI {
   preco_manual: boolean;
   semPreco: string | null; // motivo quando a tabela não precifica
   observacoes: string;
+  led: EspecLed | null;     // painel de LED: ficha técnica do produto
+  led_largura: string;      // medida pedida (m)
+  led_altura: string;
 }
 interface Cabecalho {
   empresa_id: number;
   modalidade: Modalidade;
   contato_nome: string; contato_telefone: string; contato_email: string;
+  vendedor_id: number | null;
   vendedor_nome: string;
   local_entrega: string; endereco_estande: string;
   data_saida: string; data_montagem: string; data_inicio: string; data_fim: string; data_desmontagem: string; data_retorno: string;
   dias_cobrados: string;
   validade_orcamento: string;
   condicao_pagamento: string;
+  forma_pagamento: string;
   observacoes: string; observacoes_internas: string;
   desconto: string;
 }
@@ -86,10 +97,10 @@ function descreverOrigem(o: OrigemPreco | null): string {
   return s;
 }
 
-const cabecalhoVazio = (empresaId: number, vendedor: string): Cabecalho => ({
-  empresa_id: empresaId, modalidade: 'DIARIA', contato_nome: '', contato_telefone: '', contato_email: '', vendedor_nome: vendedor,
+const cabecalhoVazio = (empresaId: number, vendedor: string, vendedorId: number | null = null, validadeDias = 7): Cabecalho => ({
+  empresa_id: empresaId, modalidade: 'DIARIA', contato_nome: '', contato_telefone: '', contato_email: '', vendedor_id: vendedorId, vendedor_nome: vendedor,
   local_entrega: '', endereco_estande: '', data_saida: '', data_montagem: '', data_inicio: '', data_fim: '', data_desmontagem: '', data_retorno: '',
-  dias_cobrados: '', validade_orcamento: somarDiasISO(hojeISO(), 15), condicao_pagamento: '', observacoes: '', observacoes_internas: '', desconto: '',
+  dias_cobrados: '', validade_orcamento: somarDiasISO(hojeISO(), validadeDias), condicao_pagamento: '', forma_pagamento: '', observacoes: '', observacoes_internas: '', desconto: '',
 });
 
 export default function EditorFichaPage() {
@@ -121,9 +132,15 @@ export default function EditorFichaPage() {
   const [salvando, setSalvando] = useState(false);
   const [alterado, setAlterado] = useState(false);
   const [diasManual, setDiasManual] = useState(false);
+  const [acesso, setAcesso] = useState<AcessoTela | null>(null);
+  const [vendedores, setVendedores] = useState<{ id: number; nome: string }[]>([]);
+  const [carteira, setCarteira] = useState<{ vendedor_id: number; nome: string } | null>(null);
+  const [descPendente, setDescPendente] = useState(false);
+  const [regrasComissao, setRegrasComissao] = useState<Record<number, RegraComissao>>({});
 
   const doP2s = fichaInfo?.origem === 'P2S';
-  const editavel = EDITAVEIS.includes(status) && !doP2s;
+  const podeAlterar = !!acesso && (ehNova ? acesso.podeCriar : acesso.podeEditar);
+  const editavel = EDITAVEIS.includes(status) && !doP2s && podeAlterar;
   const diasEvento = dataValida(cab.data_inicio) && dataValida(cab.data_fim) && cab.data_fim >= cab.data_inicio ? diasInclusivos(cab.data_inicio, cab.data_fim) : null;
   const diasCobrados = Math.max(1, Number(cab.dias_cobrados) || diasEvento || 1);
 
@@ -131,16 +148,21 @@ export default function EditorFichaPage() {
   const aplicarFicha = (info: any) => {
     const f = info.ficha;
     setEmpresas(info.empresas);
+    setAcesso(info.acesso || null);
+    setVendedores(info.vendedores || []);
+    setCarteira(info.carteira || null);
+    setDescPendente(!!info.descontoPendente);
+    setRegrasComissao(info.regrasComissao || {});
     setFichaInfo(f);
     setStatus(f.status);
     setCab({
       empresa_id: f.empresa_id, modalidade: f.modalidade,
       contato_nome: f.contato_nome || '', contato_telefone: f.contato_telefone || '', contato_email: f.contato_email || '',
-      vendedor_nome: f.vendedor_nome || '', local_entrega: f.local_entrega || '', endereco_estande: f.endereco_estande || '',
+      vendedor_id: f.vendedor_id ?? null, vendedor_nome: f.vendedor_nome || '', local_entrega: f.local_entrega || '', endereco_estande: f.endereco_estande || '',
       data_saida: f.data_saida || '', data_montagem: f.data_montagem || '', data_inicio: f.data_inicio || '', data_fim: f.data_fim || '',
       data_desmontagem: f.data_desmontagem || '', data_retorno: f.data_retorno || '',
       dias_cobrados: f.dias_cobrados ? String(f.dias_cobrados) : '',
-      validade_orcamento: f.validade_orcamento || '', condicao_pagamento: f.condicao_pagamento || '',
+      validade_orcamento: f.validade_orcamento || '', condicao_pagamento: f.condicao_pagamento || '', forma_pagamento: f.forma_pagamento || '',
       observacoes: f.observacoes || '', observacoes_internas: f.observacoes_internas || '',
       desconto: Number(f.desconto_valor) ? mostrar(Number(f.desconto_valor)) : '',
     });
@@ -153,6 +175,7 @@ export default function EditorFichaPage() {
       dias: i.dias && Number(i.dias) !== (f.dias_cobrados || 0) ? String(i.dias) : '',
       valor_unitario: mostrar(Number(i.valor_unitario)), desconto: Number(i.desconto_valor) ? mostrar(Number(i.desconto_valor)) : '',
       origem: i.origem_preco || null, preco_manual: !!i.preco_manual, semPreco: null, observacoes: i.observacoes || '',
+      led: i.led_espec || null, led_largura: i.led_largura_m ? mostrar(Number(i.led_largura_m)) : '', led_altura: i.led_altura_m ? mostrar(Number(i.led_altura_m)) : '',
     })));
     setHistorico(info.historico || []);
     setAlocacoes(info.alocacoes || []);
@@ -165,7 +188,11 @@ export default function EditorFichaPage() {
       const r = await contextoNovaFichaAction(accessToken);
       if (!r.ok) { toast(r.erro || 'Erro.', 'error'); setCarregando(false); return; }
       setEmpresas(r.info.empresas);
-      setCab(cabecalhoVazio(r.info.empresas[0]?.id || 0, r.info.usuario || ''));
+      setAcesso(r.info.acesso || null);
+      setVendedores(r.info.vendedores || []);
+      setRegrasComissao(r.info.regrasComissao || {});
+      const a = r.info.acesso as AcessoTela | undefined;
+      setCab(cabecalhoVazio(r.info.empresas[0]?.id || 0, a?.vendedorNome || r.info.usuario || '', a?.vendedorId ?? null, r.info.empresas[0]?.validadeDias || 7));
     } else {
       const r = await carregarFichaAction(fichaIdUrl!, accessToken);
       if (!r.ok) { toast(r.erro || 'Erro ao carregar a ficha.', 'error'); setCarregando(false); return; }
@@ -251,6 +278,7 @@ export default function EditorFichaPage() {
       chave: novaChave(), id: null, tipo: p.eh_kit ? 'KIT' : 'EQUIPAMENTO', produto_id: p.id, produto_codigo: p.codigo_formatado, unidade: p.unidade,
       controle: p.controle_locacao, descricao: p.nome_item, quantidade: '1', dias: '', valor_unitario: '', desconto: '',
       origem: null, preco_manual: false, semPreco: null, observacoes: '',
+      led: p.led || null, led_largura: '', led_altura: '',
     };
     setItens(prev => [...prev, novo]);
     setAlterado(true);
@@ -263,6 +291,7 @@ export default function EditorFichaPage() {
       chave: novaChave(), id: null, tipo, produto_id: null, produto_codigo: null, unidade: null, controle: null,
       descricao: tipo === 'FRETE' ? 'Frete' : tipo === 'SERVICO' ? 'Montagem e operação técnica' : '', quantidade: '1', dias: '',
       valor_unitario: '', desconto: '', origem: null, preco_manual: true, semPreco: null, observacoes: '',
+      led: null, led_largura: '', led_altura: '',
     }]);
     setAlterado(true);
   };
@@ -273,6 +302,13 @@ export default function EditorFichaPage() {
     setAlterado(true);
     if ('quantidade' in parcial || 'dias' in parcial) setDisp(null);
     if (reprecificar && atual) precificar([{ ...atual, ...parcial }], true);
+  };
+
+  // painel de LED: largura × altura (m) → gabinetes inteiros → quantidade = m² real
+  const mudarMedidaLed = (i: ItemUI, parcial: { led_largura?: string; led_altura?: string }) => {
+    const prox = { ...i, ...parcial };
+    const m = prox.led ? calcularLed(prox.led, lerValor(prox.led_largura) || 0, lerValor(prox.led_altura) || 0) : null;
+    mudarItem(i.chave, { ...parcial, ...(m ? { quantidade: mostrarQtd(m.m2) } : {}) });
   };
 
   const removerItem = (chave: string) => { setItens(prev => prev.filter(i => i.chave !== chave)); setAlterado(true); setDisp(null); };
@@ -329,15 +365,16 @@ export default function EditorFichaPage() {
         id: i.id, tipo: i.tipo, produto_id: i.produto_id, descricao: i.descricao, quantidade: q, dias: ehEquip(i.tipo) ? diasDoItem(i) : (Number(i.dias) || null),
         valor_unitario: vu || 0, desconto_valor: d || 0, origem_preco: i.preco_manual ? (i.origem ? { ...i.origem, sugerido: true } : null) : i.origem,
         preco_manual: i.preco_manual, observacoes: i.observacoes || null,
+        led_largura_m: i.led ? lerValor(i.led_largura) : null, led_altura_m: i.led ? lerValor(i.led_altura) : null,
       });
     }
     return {
       id: fichaIdUrl, empresa_id: cab.empresa_id, modalidade: cab.modalidade, parceiro_id: Number(cliente.id),
       contato_nome: cab.contato_nome, contato_telefone: cab.contato_telefone, contato_email: cab.contato_email,
       evento_id: evento ? String(evento.id) : null, tabela_preco_id: tabelas[0]?.id || fichaInfo?.tabela_preco_id || null,
-      vendedor_nome: cab.vendedor_nome, local_entrega: cab.local_entrega, endereco_estande: cab.endereco_estande,
+      vendedor_id: cab.vendedor_id, vendedor_nome: cab.vendedor_nome, local_entrega: cab.local_entrega, endereco_estande: cab.endereco_estande,
       ...datasAtuais(), dias_cobrados: diasCobrados, validade_orcamento: cab.validade_orcamento || null,
-      condicao_pagamento: cab.condicao_pagamento, observacoes: cab.observacoes, observacoes_internas: cab.observacoes_internas,
+      condicao_pagamento: cab.condicao_pagamento, forma_pagamento: cab.forma_pagamento || null, observacoes: cab.observacoes, observacoes_internas: cab.observacoes_internas,
       desconto_valor: desc || 0, itens: itensOut,
     };
   };
@@ -403,6 +440,30 @@ export default function EditorFichaPage() {
     router.push(`${ROTA}/${r.info.id}`);
   };
 
+  const aprovarDesconto = async () => {
+    if (!fichaIdUrl) return;
+    if (!(await confirmar({ title: 'Aprovar desconto', confirmLabel: 'Aprovar', message: `Aprovar o desconto de ${Number(fichaInfo?.desconto_pct || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}% sobre a tabela? Depois disso a ficha pode ser enviada e reservada.` }))) return;
+    setSalvando(true);
+    const r = await aprovarDescontoFichaAction(fichaIdUrl, accessToken);
+    setSalvando(false);
+    if (!r.ok) return toast(r.erro || 'Erro ao aprovar.', 'error');
+    toast('Desconto aprovado.', 'success');
+    const rec = await carregarFichaAction(fichaIdUrl, accessToken);
+    if (rec.ok) aplicarFicha(rec.info);
+  };
+
+  const excluir = async () => {
+    if (!fichaIdUrl) return;
+    if (!(await confirmar({ title: 'Excluir ficha', danger: true, confirmLabel: 'Excluir', message: 'Apaga a ficha de vez (itens, histórico e propostas canceladas). Não dá para desfazer. Se ela teve movimento, prefira Cancelar.' }))) return;
+    setSalvando(true);
+    const r = await excluirFichaAction(fichaIdUrl, accessToken);
+    setSalvando(false);
+    if (!r.ok) return toast(r.erro || 'Erro ao excluir.', 'error');
+    toast('Ficha excluída.', 'success');
+    setAlterado(false);
+    router.push(ROTA);
+  };
+
   const voltar = async () => {
     if (alterado && !(await confirmar({ title: 'Sair sem salvar', danger: true, confirmLabel: 'Sair', message: 'Há alterações não salvas. Sair mesmo assim?' }))) return;
     router.push(ROTA);
@@ -460,7 +521,7 @@ export default function EditorFichaPage() {
   const btn = 'px-4 py-2 rounded-lg font-bold uppercase text-[10px] tracking-wider disabled:opacity-40';
 
   const botoesStatus: { acao: AcaoStatus; rotulo: string; cls: string }[] = [];
-  if (!ehNova && !doP2s) {
+  if (!ehNova && !doP2s && acesso) {
     if (status === 'ORCAMENTO') botoesStatus.push({ acao: 'ENVIAR', rotulo: 'Marcar como enviado', cls: 'bg-white border border-[#336699] text-[#336699]' });
     if (['ORCAMENTO', 'ENVIADO', 'APROVADO'].includes(status)) botoesStatus.push({ acao: 'RESERVAR', rotulo: '✔ Aprovar e reservar', cls: 'bg-emerald-600 hover:bg-emerald-700 text-white' });
     if (['ENVIADO', 'APROVADO'].includes(status)) botoesStatus.push({ acao: 'VOLTAR_ORCAMENTO', rotulo: 'Voltar a orçamento', cls: 'bg-white border border-[#CBD5E1] text-gray-600' });
@@ -469,6 +530,24 @@ export default function EditorFichaPage() {
     if (EDITAVEIS.includes(status)) botoesStatus.push({ acao: 'CANCELAR', rotulo: 'Cancelar', cls: 'bg-white border border-red-200 text-red-600' });
     if (['PERDIDO', 'CANCELADA'].includes(status)) botoesStatus.push({ acao: 'REABRIR', rotulo: 'Reabrir', cls: 'bg-white border border-[#336699] text-[#336699]' });
   }
+  // permissões do usuário: perder/cancelar = excluir; o resto = editar
+  const botoesPermitidos = botoesStatus.filter(b => (b.acao === 'PERDER' || b.acao === 'CANCELAR') ? acesso?.podeExcluir : acesso?.podeEditar);
+  const podeExcluirFicha = !ehNova && !doP2s && !!acesso?.podeExcluir && ['ORCAMENTO', 'ENVIADO', 'PERDIDO', 'CANCELADA'].includes(status);
+
+  // estimativa do desconto sobre a tabela (o servidor recalcula ao salvar)
+  const referenciaTabela = itens.reduce((s, i) => {
+    const q = lerValor(i.quantidade) || 0, vu = lerValor(i.valor_unitario) || 0;
+    if ([q, vu].some(Number.isNaN)) return s;
+    const ref = ehEquip(i.tipo) && i.origem?.valor_tabela !== undefined ? i.origem.valor_tabela : vu;
+    return s + q * ref;
+  }, 0);
+  const descontoEstimadoPct = referenciaTabela > 0.009 ? Math.max(0, ((referenciaTabela - totalGeral) / referenciaTabela) * 100) : 0;
+  const passaLimite = !!acesso && !acesso.podeAprovarDesconto && descontoEstimadoPct > acesso.descontoMaxPct + 0.005;
+
+  // comissão prevista do vendedor da ficha (regra: tabela/prazo padrão = cheia; faixas de desconto e de prazo)
+  const regraVend = cab.vendedor_id ? regrasComissao[cab.vendedor_id] : undefined;
+  const diasNaoCobrados = diasEvento ? Math.max(0, diasEvento - diasCobrados) : 0;
+  const comissaoPrevista = regraVend ? pctLocacaoAplicada(regraVend, descontoEstimadoPct, diasNaoCobrados) : null;
 
   return (
     <div className="min-h-screen bg-[#F0F4F8] font-sans text-[#0A2A4A] flex flex-col pt-16">
@@ -494,13 +573,26 @@ export default function EditorFichaPage() {
                 {fichaInfo?.motivo_perda && <p className="text-xs text-red-600 mt-1">Motivo: {fichaInfo.motivo_perda}</p>}
                 {fichaInfo?.aprovado_em && <p className="text-xs text-gray-500 mt-1">Aprovado em {new Date(fichaInfo.aprovado_em).toLocaleString('pt-BR')} por {fichaInfo.aprovado_por}</p>}
                 {doP2s && <p className="text-xs text-orange-700 mt-1">Ficha do PrimeStart, importada só para leitura (o P2S segue oficial). Alterações são feitas lá e chegam na próxima importação{fichaInfo?.p2s_sincronizado_em ? ` — última: ${new Date(fichaInfo.p2s_sincronizado_em).toLocaleString('pt-BR')}` : ''}. Use Duplicar para simular uma cópia aqui.</p>}
-                {!editavel && !doP2s && <p className="text-xs text-gray-500 mt-1">Ficha {STATUS_FICHA[status]?.rotulo.toLowerCase()} — só leitura{['PERDIDO', 'CANCELADA'].includes(status) ? ' (use Reabrir para editar)' : ''}.</p>}
+                {!editavel && !doP2s && EDITAVEIS.includes(status) && !podeAlterar && <p className="text-xs text-gray-500 mt-1">Só leitura — seu usuário não pode alterar fichas.</p>}
+                {!editavel && !doP2s && !EDITAVEIS.includes(status) && <p className="text-xs text-gray-500 mt-1">Ficha {STATUS_FICHA[status]?.rotulo.toLowerCase()} — só leitura{['PERDIDO', 'CANCELADA'].includes(status) ? ' (use Reabrir para editar)' : ''}.</p>}
+                {descPendente && (
+                  <p className="text-xs text-amber-700 font-bold mt-1">
+                    ⏳ Desconto de {Number(fichaInfo?.desconto_pct || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}% sobre a tabela aguardando aprovação — não dá para enviar a proposta nem reservar antes.
+                  </p>
+                )}
+                {!descPendente && Number(fichaInfo?.desconto_pct) > 0 && fichaInfo?.desconto_aprovado_por && (
+                  <p className="text-[10px] text-gray-500 mt-1">Desconto de {Number(fichaInfo.desconto_aprovado_pct).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}% aprovado por {fichaInfo.desconto_aprovado_por}.</p>
+                )}
               </div>
               <div className="flex flex-wrap gap-2">
-                {botoesStatus.map(b => (
+                {descPendente && acesso?.podeAprovarDesconto && (
+                  <button onClick={aprovarDesconto} disabled={salvando || alterado} title={alterado ? 'Salve antes de aprovar' : ''} className={`${btn} bg-amber-500 hover:bg-amber-600 text-white`}>✔ Aprovar desconto</button>
+                )}
+                {botoesPermitidos.map(b => (
                   <button key={b.acao} onClick={() => executar(b.acao)} disabled={salvando} className={`${btn} ${b.cls}`}>{b.rotulo}</button>
                 ))}
-                {!ehNova && <button onClick={duplicar} disabled={salvando} className={`${btn} bg-white border border-[#CBD5E1] text-gray-600`}>Duplicar</button>}
+                {!ehNova && acesso?.podeCriar && <button onClick={duplicar} disabled={salvando} className={`${btn} bg-white border border-[#CBD5E1] text-gray-600`}>Duplicar</button>}
+                {podeExcluirFicha && <button onClick={excluir} disabled={salvando} className={`${btn} bg-white border border-red-300 text-red-700`}>Excluir</button>}
                 {editavel && (
                   <button onClick={salvar} disabled={salvando || (!alterado && !ehNova)} className={`${btn} bg-[#0C1D4D] hover:bg-[#284B8C] text-white`}>
                     {salvando ? 'Salvando...' : ehNova ? 'Criar orçamento' : 'Salvar'}
@@ -521,9 +613,19 @@ export default function EditorFichaPage() {
                     onEscolher={o => {
                       setCliente(o); setAlterado(true);
                       const ex = (o.extra || {}) as any;
-                      setCab(c => ({ ...c, contato_telefone: c.contato_telefone || ex.telefone || '', contato_email: c.contato_email || ex.email || '' }));
+                      setCarteira(ex.carteira_vendedor_id ? { vendedor_id: ex.carteira_vendedor_id, nome: ex.carteira_nome || '' } : null);
+                      setCab(c => ({
+                        ...c, contato_telefone: c.contato_telefone || ex.telefone || '', contato_email: c.contato_email || ex.email || '',
+                        // gestão: o vendedor acompanha o dono da carteira do cliente
+                        ...(acesso?.escopo === 'TODAS' && ex.carteira_vendedor_id ? { vendedor_id: ex.carteira_vendedor_id, vendedor_nome: ex.carteira_nome || c.vendedor_nome } : {}),
+                      }));
                     }}
-                    onLimpar={() => { setCliente(null); setAlterado(true); }} />
+                    onLimpar={() => { setCliente(null); setCarteira(null); setAlterado(true); }} />
+                  {cliente && (
+                    <p className="text-[10px] mt-1 text-gray-500">
+                      {carteira ? <>Carteira: <strong className="text-[#0C1D4D]">{carteira.nome}</strong></> : <span className="text-amber-600 font-bold">Cliente sem carteira — entra na carteira do vendedor da ficha ao salvar.</span>}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className={labelCls}>Evento / Feira</label>
@@ -568,10 +670,30 @@ export default function EditorFichaPage() {
                 </select>
                 <p className="text-[10px] text-gray-400 mt-1">{MODALIDADES.find(m => m.v === cab.modalidade)?.desc}</p>
               </div>
-              <div><label className={labelCls}>Vendedor</label><input value={cab.vendedor_nome} onChange={e => mudarCab({ vendedor_nome: e.target.value })} disabled={!editavel} className={inputCls} /></div>
+              <div>
+                <label className={labelCls}>Vendedor (comissão)</label>
+                {acesso?.escopo === 'TODAS' ? (
+                  <select value={cab.vendedor_id ?? ''} disabled={!editavel} className={inputCls}
+                    onChange={e => { const id = e.target.value ? Number(e.target.value) : null; mudarCab({ vendedor_id: id, vendedor_nome: vendedores.find(v => v.id === id)?.nome || '' }); }}>
+                    <option value="">— sem vendedor —</option>
+                    {cab.vendedor_id && !vendedores.some(v => v.id === cab.vendedor_id) && <option value={cab.vendedor_id}>{cab.vendedor_nome} (inativo)</option>}
+                    {vendedores.map(v => <option key={v.id} value={v.id}>{v.nome}</option>)}
+                  </select>
+                ) : (
+                  <input value={cab.vendedor_nome || acesso?.vendedorNome || ''} disabled className={inputCls} />
+                )}
+                {carteira && cab.vendedor_id && carteira.vendedor_id !== cab.vendedor_id && <p className="text-[10px] text-amber-600 font-bold mt-1">⚠ O cliente é da carteira de {carteira.nome}.</p>}
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <div><label className={labelCls}>Validade</label><input type="date" value={cab.validade_orcamento} onChange={e => mudarCab({ validade_orcamento: e.target.value })} disabled={!editavel} className={inputCls} /></div>
-                <div><label className={labelCls}>Pagamento</label><input value={cab.condicao_pagamento} onChange={e => mudarCab({ condicao_pagamento: e.target.value })} placeholder="Ex.: 50% + 50%" disabled={!editavel} className={inputCls} /></div>
+                <div><label className={labelCls}>Pagamento</label><input value={cab.condicao_pagamento} onChange={e => mudarCab({ condicao_pagamento: e.target.value })} placeholder="Ex.: 14 dias após entrega" disabled={!editavel} className={inputCls} /></div>
+              </div>
+              <div>
+                <label className={labelCls}>Forma de pagamento</label>
+                <select value={cab.forma_pagamento} onChange={e => mudarCab({ forma_pagamento: e.target.value })} disabled={!editavel} className={inputCls}>
+                  <option value="">—</option>
+                  {FORMAS_PAGAMENTO.map(fp => <option key={fp} value={fp}>{ROTULO_FORMA_PAGAMENTO[fp]}</option>)}
+                </select>
               </div>
             </div>
           </div>
@@ -668,6 +790,22 @@ export default function EditorFichaPage() {
                             </p>
                           )}
                           {res && <p className="text-[10px] text-emerald-700 mt-0.5">Reservado: {res.pecas.length ? res.pecas.join(', ') : mostrarQtd(res.qtd)}</p>}
+                          {i.led && (() => {
+                            const m = calcularLed(i.led, lerValor(i.led_largura) || 0, lerValor(i.led_altura) || 0);
+                            return (
+                              <div className="mt-1.5 bg-blue-50/60 border border-blue-100 rounded-lg p-2">
+                                <div className="flex items-center gap-1 text-[10px] font-bold text-[#0C1D4D]">
+                                  Painel:
+                                  <input value={i.led_largura} onChange={e => mudarMedidaLed(i, { led_largura: e.target.value })} disabled={!editavel} placeholder="larg." inputMode="decimal" className="w-14 border border-[#CBD5E1] rounded px-1.5 py-0.5 text-right disabled:bg-transparent" />
+                                  m ×
+                                  <input value={i.led_altura} onChange={e => mudarMedidaLed(i, { led_altura: e.target.value })} disabled={!editavel} placeholder="alt." inputMode="decimal" className="w-14 border border-[#CBD5E1] rounded px-1.5 py-0.5 text-right disabled:bg-transparent" />
+                                  m
+                                </div>
+                                {m ? <p className="text-[10px] text-blue-800 mt-1">{resumoLed(m)}</p>
+                                  : <p className="text-[10px] text-gray-400 mt-1">Informe largura × altura: a quantidade vira os m² com gabinetes inteiros e a proposta traz a ficha técnica.</p>}
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="p-1"><input value={i.quantidade} onChange={e => mudarItem(i.chave, { quantidade: e.target.value })} disabled={!editavel} inputMode="decimal" className="w-full border border-[#E2E8F0] rounded px-2 py-1 text-right disabled:bg-transparent disabled:border-transparent" /></td>
                         <td className="p-1">
@@ -716,6 +854,20 @@ export default function EditorFichaPage() {
                     className="w-28 border border-[#E2E8F0] rounded px-2 py-1 text-right disabled:bg-transparent disabled:border-transparent" />
                 </div>
                 <div className="flex justify-between border-t border-[#E2E8F0] pt-2 mt-2"><span className="font-black uppercase text-[#0C1D4D]">Total</span><span className="font-black text-xl text-[#0C1D4D]">{formatarMoeda(totalGeral)}</span></div>
+                {descontoEstimadoPct > 0.005 && (
+                  <div className={`flex justify-between text-[11px] ${passaLimite ? 'text-amber-700 font-bold' : 'text-gray-500'}`}>
+                    <span>Desconto sobre a tabela{acesso && !acesso.podeAprovarDesconto ? ` (seu limite: ${acesso.descontoMaxPct.toLocaleString('pt-BR')}%)` : ''}</span>
+                    <span>{descontoEstimadoPct.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%</span>
+                  </div>
+                )}
+                {passaLimite && <p className="text-[10px] text-amber-700">Acima do seu limite: ao salvar, a ficha fica aguardando aprovação de desconto.</p>}
+                {!doP2s && regraVend && comissaoPrevista && (
+                  <div className={`mt-2 rounded-lg px-3 py-2 text-[11px] ${comissaoPrevista.pct < regraVend.pct_locacao - 0.0001 ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'}`}>
+                    <p className="font-black uppercase text-[10px]">Comissão prevista{cab.vendedor_nome ? ` · ${cab.vendedor_nome}` : ''}</p>
+                    <p>Locação <strong>{comissaoPrevista.pct.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%</strong>{comissaoPrevista.pct < regraVend.pct_locacao - 0.0001 ? ` (cheia: ${regraVend.pct_locacao.toLocaleString('pt-BR')}%)` : ''} · serviços {regraVend.pct_servicos.toLocaleString('pt-BR')}%</p>
+                    <p className="text-[10px] opacity-80">{comissaoPrevista.motivo}</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -761,6 +913,16 @@ export default function EditorFichaPage() {
           {!ehNova && fichaIdUrl && !doP2s && (
             <PainelProposta
               fichaId={fichaIdUrl} accessToken={accessToken} status={status} alterado={alterado}
+              contatoNome={cab.contato_nome} contatoTelefone={cab.contato_telefone} contatoEmail={cab.contato_email}
+              clienteNome={cliente?.nome || ''}
+              onMudou={async () => { const rec = await carregarFichaAction(fichaIdUrl, accessToken); if (rec.ok) aplicarFicha(rec.info); }}
+            />
+          )}
+
+          {/* ---------- contrato (Autentique: cliente + locadora) ---------- */}
+          {!ehNova && fichaIdUrl && !doP2s && (
+            <PainelContrato
+              fichaId={fichaIdUrl} accessToken={accessToken} status={status} alterado={alterado} podeEditar={!!acesso?.podeEditar}
               contatoNome={cab.contato_nome} contatoTelefone={cab.contato_telefone} contatoEmail={cab.contato_email}
               clienteNome={cliente?.nome || ''}
               onMudou={async () => { const rec = await carregarFichaAction(fichaIdUrl, accessToken); if (rec.ok) aplicarFicha(rec.info); }}

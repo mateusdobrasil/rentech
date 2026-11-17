@@ -14,6 +14,7 @@ import { buscarClientes } from '../../../lib/locacao/buscas';
 import { sugerirParcelas } from '../../../lib/financeiro/parcelas';
 import { dataValida, hojeISO } from '../../../lib/locacao/datas';
 import { numeroFicha } from '../../../lib/locacao/fichaNumero';
+import { acessoLocacao, podeVerCliente, MSG_FICHA_FORA_CARTEIRA } from '../../../lib/locacao/acessoFichas';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 const ROTA = '/admin/financeiro/titulos-receber';
@@ -81,8 +82,10 @@ export async function titulosDaFichaAction(fichaId: number, accessToken: string)
   if ('erro' in ctx) return { ok: false, erro: ctx.erro };
   const db = supabaseAdmin();
   try {
-    const { data: f } = await db.from('locacao_fichas_reserva').select('id, empresa_id, status, origem, valor_total, condicao_pagamento, data_fim').eq('id', fichaId).maybeSingle();
+    const { data: f } = await db.from('locacao_fichas_reserva').select('id, empresa_id, parceiro_id, status, origem, valor_total, condicao_pagamento, data_fim').eq('id', fichaId).maybeSingle();
     if (!f || !empresaPermitida(ctx.permitidas, f.empresa_id)) return { ok: false, erro: 'Ficha não encontrada.' };
+    // vendedor padrão só vê os títulos das fichas da carteira dele
+    if (!(await podeVerCliente(db, await acessoLocacao(db, ctx.perfil), f.parceiro_id))) return { ok: false, erro: MSG_FICHA_FORA_CARTEIRA };
     const { data: titulos } = await db.from('financeiro_titulos_receber').select('id, parcela, total_parcelas, descricao, valor, vencimento, status, data_pagamento, valor_pago, boleto_status')
       .eq('ficha_id', fichaId).order('vencimento');
     const gerado = (titulos || []).filter((t: any) => t.status !== 'CANCELADO').reduce((s: number, t: any) => s + n(t.valor), 0);

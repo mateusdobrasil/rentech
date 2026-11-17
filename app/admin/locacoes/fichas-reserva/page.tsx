@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import * as XLSX from 'xlsx';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../actions';
-import { sincronizarFichasReservaP2sAction, buscarUltimaSincronizacaoFichasAction } from './actions';
+import { sincronizarFichasReservaP2sAction, buscarUltimaSincronizacaoFichasAction, escopoFichasEspelhoAction } from './actions';
 import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
@@ -356,6 +356,12 @@ export default function ImportadorFichasReserva() {
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess();
 
   const [nomeArquivo, setNomeArquivo] = useState('');
+  // vendedor padrão (escopo CARTEIRA) vê as fichas do P2S em Orçamentos e Reservas, filtradas pela carteira
+  const [soCarteira, setSoCarteira] = useState(false);
+  useEffect(() => {
+    if (authLoading || acessoNegado || !accessToken) return;
+    escopoFichasEspelhoAction(accessToken).then(r => { if (r.ok) setSoCarteira(r.info.escopo === 'CARTEIRA'); });
+  }, [authLoading, acessoNegado, accessToken]);
   const [linhasProcessadas, setLinhasProcessadas] = useState<LinhaProcessada[]>([]);
   const [erroArquivo, setErroArquivo] = useState('');
   const [importando, setImportando] = useState(false);
@@ -560,6 +566,18 @@ export default function ImportadorFichasReserva() {
 
   if (erro) return <HubErro mensagem={erro} onTentarNovamente={tentarNovamente} />;
 
+  if (soCarteira) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-violet-200">
+          <div className="text-5xl mb-4">👤</div>
+          <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider mb-2">Use Orçamentos e Reservas</h2>
+          <p className="text-sm text-gray-500 mb-6">Esta tela mostra todas as fichas do P2S. As fichas dos clientes da sua carteira (inclusive as do P2S) estão em Orçamentos e Reservas.</p>
+          <button onClick={() => router.push('/admin/locacoes/reservas')} className="block bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider">Abrir Orçamentos e Reservas</button>
+        </div>
+      </div>
+    );
+  }
   if (acessoNegado) {
     return (
       <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">

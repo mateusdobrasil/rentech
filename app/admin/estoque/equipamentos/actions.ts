@@ -140,12 +140,15 @@ export async function carregarEquipamentoAction(produtoId: number, accessToken: 
         .eq('componente_produto_id', produtoId),
     ]);
     for (const r of [rSaldos, rPat, rKit, rUsadoEm] as any[]) if (r.error) throw r.error;
+    // ficha técnica de painel de LED (tabela pode não existir antes do SQL)
+    const { data: led } = await db.from('locacao_produto_led').select('*').eq('produto_id', produtoId).maybeSingle();
 
     return {
       ok: true,
       info: {
         empresas: empresas.map(({ id, nome }) => ({ id, nome })),
         produto,
+        led: led || null,
         saldos: rSaldos.data || [],
         patrimonios: rPat.data || [],
         kit: (rKit.data || []).map((k: any) => ({
@@ -177,6 +180,49 @@ export async function salvarConfigEquipamentoAction(
     if (error) throw error;
     log(ctx.perfil.nome, 'CONFIGUROU EQUIPAMENTO DE LOCAÇÃO',
       `${antes?.nome_item || produtoId}: ${antes?.controle_locacao || '?'} → ${dados.controle_locacao}, preparo ${preparo}d, retorno ${retorno}d`);
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// Ficha técnica de PAINEL DE LED (2026-11-17): gabinete, resolução, peso e
+// consumo — a ficha calcula m², gabinetes, pixel map, peso e consumo a partir
+// da largura × altura pedida, e a proposta mostra. dados = null apaga.
+export interface DadosEspecLed {
+  pitch_mm: number | null; gabinete_largura_cm: number; gabinete_altura_cm: number;
+  resolucao_largura_px: number; resolucao_altura_px: number;
+  peso_kg_gabinete: number | null; consumo_w_gabinete: number | null; descricao_tecnica: string | null;
+}
+export async function salvarEspecLedAction(produtoId: number, dados: DadosEspecLed | null, accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  const db = supabaseAdmin();
+  try {
+    const { data: prod } = await db.from('produtos').select('nome_item').eq('id', produtoId).maybeSingle();
+    if (!prod) return { ok: false, erro: 'Produto não encontrado.' };
+    if (!dados) {
+      const { error } = await db.from('locacao_produto_led').delete().eq('produto_id', produtoId);
+      if (error) throw error;
+      log(ctx.perfil.nome, 'REMOVEU FICHA TÉCNICA DE LED', prod.nome_item);
+      return { ok: true };
+    }
+    const positivo = (v: unknown) => num(v) > 0;
+    if (![dados.gabinete_largura_cm, dados.gabinete_altura_cm, dados.resolucao_largura_px, dados.resolucao_altura_px].every(positivo)) {
+      return { ok: false, erro: 'Informe tamanho do gabinete (cm) e resolução do gabinete (px).' };
+    }
+    const opc = (v: unknown) => (positivo(v) ? num(v) : null);
+    const linha = {
+      produto_id: produtoId, pitch_mm: opc(dados.pitch_mm),
+      gabinete_largura_cm: num(dados.gabinete_largura_cm), gabinete_altura_cm: num(dados.gabinete_altura_cm),
+      resolucao_largura_px: Math.round(num(dados.resolucao_largura_px)), resolucao_altura_px: Math.round(num(dados.resolucao_altura_px)),
+      peso_kg_gabinete: opc(dados.peso_kg_gabinete), consumo_w_gabinete: opc(dados.consumo_w_gabinete),
+      descricao_tecnica: (dados.descricao_tecnica || '').trim() || null,
+      atualizado_por: ctx.perfil.nome, atualizado_em: new Date().toISOString(),
+    };
+    const { error } = await db.from('locacao_produto_led').upsert(linha, { onConflict: 'produto_id' });
+    if (error) throw error;
+    log(ctx.perfil.nome, 'SALVOU FICHA TÉCNICA DE LED', `${prod.nome_item}: gabinete ${linha.gabinete_largura_cm}x${linha.gabinete_altura_cm} cm, ${linha.resolucao_largura_px}x${linha.resolucao_altura_px} px`);
     return { ok: true };
   } catch (e: any) {
     return { ok: false, erro: e.message };

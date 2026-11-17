@@ -22,6 +22,7 @@ import { resetarMfaUsuarioAction } from '../../actions-mfa';
 import {
   atualizarAcessoUsuarioAction, salvarPaginaPermissaoAction, removerPaginaPermissaoAction,
   alternar2faPaginaAction, adicionarSetorPermissaoAction, removerSetorPermissaoAction,
+  carregarAcessoLocacaoAction, salvarAcessoLocacaoAction, type AcessoLocacaoForm,
 } from './actions';
 
 // Setores de permissão: antes era uma lista fixa aqui no código, agora vem
@@ -115,6 +116,11 @@ export default function GestaoPermissoes() {
   const [vinculosPorUsuario, setVinculosPorUsuario] = useState<Record<string, number[]>>({});
   const [empresasSelecionadasNovo, setEmpresasSelecionadasNovo] = useState<number[]>([]);
   const [empresasSelecionadasEdicao, setEmpresasSelecionadasEdicao] = useState<number[]>([]);
+  // Locação: acesso às fichas (locacao_acesso_usuarios)
+  const [acessoLoc, setAcessoLoc] = useState<AcessoLocacaoForm | null>(null);
+  const [acessoLocConfigurado, setAcessoLocConfigurado] = useState(true);
+  const [vendedoresLoc, setVendedoresLoc] = useState<{ id: number; nome: string }[]>([]);
+  const [acessoLocErro, setAcessoLocErro] = useState('');
 
   // Estados da aba de Páginas
   const [paginas, setPaginas] = useState<PaginaPermissao[]>([]);
@@ -190,6 +196,11 @@ export default function GestaoPermissoes() {
   const abrirModalEdicao = (user: UsuarioAuth) => {
     setEmpresasSelecionadasEdicao(vinculosPorUsuario[user.id] || []);
     setModalEdicao({ open: true, user: { ...user } });
+    setAcessoLoc(null); setAcessoLocErro('');
+    carregarAcessoLocacaoAction(user.id, accessToken).then(r => {
+      if (!r.ok || !r.info) { setAcessoLocErro(r.erro || 'Não carregou o acesso de locação.'); return; }
+      setAcessoLoc(r.info.acesso); setAcessoLocConfigurado(r.info.configurado); setVendedoresLoc(r.info.vendedores);
+    });
   };
 
   const sincronizarVinculoEmpresas = async (perfilId: string, empresaIds: number[]) => {
@@ -210,6 +221,11 @@ export default function GestaoPermissoes() {
       if (!res.ok) throw new Error(res.erro);
 
       await sincronizarVinculoEmpresas(modalEdicao.user.id, empresasSelecionadasEdicao);
+
+      if (acessoLoc && !ehAdministradorGlobal(modalEdicao.user.permissao)) {
+        const rl = await salvarAcessoLocacaoAction({ perfilId: modalEdicao.user.id, usuarioNome: usuarioAtual, acesso: acessoLoc }, accessToken);
+        if (!rl.ok) throw new Error(`Acesso salvo, mas o de Locação não: ${rl.erro}`);
+      }
 
       setUsuarios(usuarios.map(u => u.id === modalEdicao.user?.id ? modalEdicao.user : u));
       mostrarFeedback('Permissões atualizadas com sucesso!', 'success');
@@ -1300,6 +1316,63 @@ export default function GestaoPermissoes() {
                     ? <p className="text-[10px] text-emerald-700 font-bold uppercase mt-2 leading-tight">💬 O código do "Esqueci minha senha" por WhatsApp vai para {mascararCelular(fc.celular)} (celular da ficha).</p>
                     : <p className="text-[10px] text-amber-600 font-bold uppercase mt-2 leading-tight">⚠ A ficha deste colaborador não tem celular — cadastre na Ficha do Funcionário pra liberar o WhatsApp.</p>;
                 })()}
+              </div>
+
+
+              {/* LOCAÇÃO: acesso às fichas de reserva/locação */}
+              <div className="border-2 border-violet-200 rounded-xl p-4 space-y-3 bg-violet-50/40">
+                <label className="block text-[10px] font-black text-violet-800 uppercase tracking-widest">Locação — fichas dos clientes</label>
+                {ehAdministradorGlobal(modalEdicao.user.permissao) ? (
+                  <p className="text-[10px] text-[#64748B] font-bold uppercase leading-tight">Administrador: vê todas as fichas e pode tudo (criar, editar, excluir e aprovar qualquer desconto).</p>
+                ) : acessoLocErro ? (
+                  <p className="text-[10px] text-red-600 font-bold">{acessoLocErro}</p>
+                ) : !acessoLoc ? (
+                  <p className="text-[10px] text-gray-400 font-bold uppercase">Carregando...</p>
+                ) : (
+                  <>
+                    {!acessoLocConfigurado && <p className="text-[10px] text-amber-700 font-bold uppercase leading-tight">Ainda não configurado — valendo o padrão de vendedor (só a carteira; sem vendedor ligado não vê fichas).</p>}
+                    <div>
+                      <span className="block text-[10px] font-black text-[#64748B] uppercase mb-1">Vendedor (P2S) deste usuário</span>
+                      <select className="w-full p-2.5 bg-white border-2 border-[#CBD5E1] rounded-xl text-sm font-bold text-[#0A2A4A]"
+                        value={acessoLoc.vendedor_id ?? ''} onChange={e => setAcessoLoc({ ...acessoLoc, vendedor_id: e.target.value ? Number(e.target.value) : null })}>
+                        <option value="">— Nenhum —</option>
+                        {vendedoresLoc.map(v => <option key={v.id} value={v.id}>{v.nome}</option>)}
+                      </select>
+                      <p className="text-[10px] text-[#94A3B8] font-bold uppercase mt-1 leading-tight">Define a carteira e a comissão. Fichas novas saem com este vendedor.</p>
+                    </div>
+                    <div>
+                      <span className="block text-[10px] font-black text-[#64748B] uppercase mb-1">Quais fichas vê</span>
+                      <div className="grid grid-cols-2 gap-2">
+                        {([['CARTEIRA', 'Só a carteira', 'Vendedor padrão: só os clientes dele'], ['TODAS', 'Todas', 'Gestão: todos os clientes e vendedores']] as const).map(([v, rot, desc]) => (
+                          <button key={v} type="button" onClick={() => setAcessoLoc({ ...acessoLoc, escopo_fichas: v })}
+                            className={`text-left p-2.5 rounded-xl border-2 ${acessoLoc.escopo_fichas === v ? 'border-violet-600 bg-white' : 'border-[#E2E8F0] bg-white/60'}`}>
+                            <span className="block text-xs font-black text-[#0C1D4D] uppercase">{rot}</span>
+                            <span className="block text-[9px] text-[#64748B] font-bold leading-tight">{desc}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {([['pode_criar', 'Inserir'], ['pode_editar', 'Editar'], ['pode_excluir', 'Excluir']] as const).map(([k, rot]) => (
+                        <label key={k} className="flex items-center gap-2 bg-white border border-[#E2E8F0] rounded-lg p-2 text-xs font-black text-[#0C1D4D] uppercase cursor-pointer select-none">
+                          <input type="checkbox" className="w-4 h-4 accent-violet-600" checked={acessoLoc[k]} onChange={e => setAcessoLoc({ ...acessoLoc, [k]: e.target.checked })} />{rot}
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-[9px] text-[#94A3B8] font-bold uppercase leading-tight -mt-1">Inserir: novo orçamento e duplicar · Editar: alterar, enviar proposta, reservar · Excluir: cancelar, marcar perdido e apagar orçamento.</p>
+                    <div className="grid grid-cols-2 gap-2 items-end">
+                      <div>
+                        <span className="block text-[10px] font-black text-[#64748B] uppercase mb-1">Desconto máximo (%)</span>
+                        <input type="number" min={0} max={100} step={0.5} className="w-full p-2.5 bg-white border-2 border-[#CBD5E1] rounded-xl text-sm font-bold text-[#0A2A4A]"
+                          value={acessoLoc.desconto_max_pct} onChange={e => setAcessoLoc({ ...acessoLoc, desconto_max_pct: Number(e.target.value) })} />
+                      </div>
+                      <label className="flex items-center gap-2 bg-white border border-[#E2E8F0] rounded-lg p-2.5 text-[10px] font-black text-[#0C1D4D] uppercase cursor-pointer select-none">
+                        <input type="checkbox" className="w-4 h-4 accent-violet-600" checked={acessoLoc.pode_aprovar_desconto} onChange={e => setAcessoLoc({ ...acessoLoc, pode_aprovar_desconto: e.target.checked })} />Aprova desconto acima do limite
+                      </label>
+                    </div>
+                    <p className="text-[9px] text-[#94A3B8] font-bold uppercase leading-tight -mt-1">Desconto contado sobre o preço da tabela. Acima do limite, a ficha fica aguardando aprovação (não envia proposta nem reserva).</p>
+                  </>
+                )}
               </div>
 
               <div className="flex items-center justify-between bg-gray-50 p-4 border border-gray-200 rounded-xl">

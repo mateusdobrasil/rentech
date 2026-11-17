@@ -110,12 +110,20 @@ async function importarSemTrava(db: Db, opcoes: OpcoesImportacao): Promise<Resul
     mapaPorP2sOid(db, 'parceiros', 'id', fichas.map(f => ref(f.Parceiro)).filter((x): x is string => !!x)),
     mapaPorP2sOid(db, 'produtos', 'id, nome_item, dias_preparo, dias_retorno', fichas.flatMap(f => itensDe(f).map(i => ref(i.ItemEstoque))).filter((x): x is string => !!x)),
     mapaPorP2sOid(db, 'eventos_feiras', 'id', fichas.map(f => ref(f.Evento)).filter((x): x is string => !!x)),
-    mapaPorP2sOid(db, 'colaboradores', 'nome_exibicao, nome_completo', fichas.map(f => ref(f.VendedorRep)).filter((x): x is string => !!x)),
+    mapaPorP2sOid(db, 'colaboradores', 'id, nome_exibicao, nome_completo', fichas.map(f => ref(f.VendedorRep)).filter((x): x is string => !!x)),
     resolverCentrosP2s(ambiente, fichas.map(f => ref(f.Centro) || undefined)),
     db.from('empresas').select('*').eq('ativo', true),
   ]);
   const empresas = (empresasData || []) as LinhaEmpresa[];
   const agora = new Date().toISOString();
+  // Ficha sem VendedorRep vem com o login de quem reservou: casa pelo login do P2S.
+  const { data: vendData } = await db.from('colaboradores').select('id, login_usuario_associado, status_colaborador').eq('flag_vendedor_rep', true);
+  const vendedorPorLogin = new Map<string, number>();
+  const vendedoresAtivos = new Set<number>();
+  for (const v of (vendData || []) as any[]) {
+    if (v.login_usuario_associado) vendedorPorLogin.set(String(v.login_usuario_associado).trim().toLowerCase(), v.id);
+    if (v.status_colaborador === 'A') vendedoresAtivos.add(v.id);
+  }
 
   // Clientes que o espelho de parceiros não tem (a carga completa deixou
   // buracos) — busca só esses no P2S, grava e completa o mapa.
@@ -155,6 +163,7 @@ async function importarSemTrava(db: Db, opcoes: OpcoesImportacao): Promise<Resul
       status: STATUS_P2S[statusP2s] || 'ORCAMENTO', modalidade: 'DIARIA',
       empresa_id: empresaId, parceiro_id: parceiro.id, evento_id: eventos.get(ref(f.Evento) || '')?.id || null,
       vendedor_nome: vend ? (vend.nome_exibicao || vend.nome_completo) : (String(f.ResponsavelReserva || '') || null),
+      vendedor_id: vend?.id ?? vendedorPorLogin.get(String(f.ResponsavelReserva || '').trim().toLowerCase()) ?? null,
       contato_telefone: String(f.TelefoneContato || '').trim() || null, contato_email: String(f.EMailContato || '').trim() || null,
       local_entrega: endereco || null,
       data_inicio: inicio, data_fim: fim, dias_cobrados: diasInclusivos(inicio, fim),
@@ -176,6 +185,19 @@ async function importarSemTrava(db: Db, opcoes: OpcoesImportacao): Promise<Resul
     for (const x of data || []) idPorOid.set(x.p2s_oid, x.id);
   }
   res.gravadas = idPorOid.size;
+
+  // Carteira: cliente que ainda não tem vendedor responsável entra na carteira
+  // do vendedor da ficha mais recente (não troca dono existente).
+  const novosNaCarteira = new Map<number, number>();
+  for (const c of [...cabecalhos].sort((a, b) => String(b.data_inicio).localeCompare(String(a.data_inicio)))) {
+    if (c.vendedor_id && vendedoresAtivos.has(c.vendedor_id) && c.status !== 'CANCELADA' && !novosNaCarteira.has(c.parceiro_id)) novosNaCarteira.set(c.parceiro_id, c.vendedor_id);
+  }
+  const linhasCarteira = [...novosNaCarteira].map(([parceiro_id, vendedor_id]) => ({ parceiro_id, vendedor_id, origem: 'PRIMEIRA_FICHA', definido_por: 'Importação P2S' }));
+  // Não derruba a importação (a agenda depende dela) se a carteira falhar.
+  for (let i = 0; i < linhasCarteira.length; i += 300) {
+    const { error } = await db.from('comercial_carteira_clientes').upsert(linhasCarteira.slice(i, i + 300), { onConflict: 'parceiro_id', ignoreDuplicates: true });
+    if (error) { console.error('[importarFichasP2s] carteira:', error.message); break; }
+  }
 
   // ---------------- itens + alocações (substitui tudo das fichas lidas) ----------------
   const itensNovos: any[] = [];

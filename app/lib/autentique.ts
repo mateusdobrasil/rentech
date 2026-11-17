@@ -22,12 +22,17 @@ export interface CriarDocumentoParams {
   pdfBuffer: Uint8Array;      // conteúdo do PDF do holerite (Buffer é um Uint8Array)
   pdfNomeArquivo: string;     // ex: "holerite-joao-2026-06.pdf"
   sandbox: boolean;           // true = teste, não gasta créditos
+  // Vários signatários (ex.: contrato de locação: cliente + representante da
+  // locadora). Quando vem, substitui o signatário único acima.
+  signatarios?: { nome: string; cpf?: string; celular?: string; email?: string }[];
 }
 
 export interface CriarDocumentoResultado {
   docId: string;
   publicId: string | null;
   linkAssinatura: string | null;
+  /** Um por signatário, na ordem enviada (link individual de cada um). */
+  assinaturas: { publicId: string | null; nome: string | null; email: string | null; link: string | null }[];
 }
 
 // ============================================================================
@@ -39,17 +44,23 @@ export async function autentiqueCriarDocumento(p: CriarDocumentoParams): Promise
   // Monta o signatário. Prioriza WhatsApp se houver celular; senão e-mail.
   // A validação por CPF vai em configs.cpf (garante que só aquele CPF assina) —
   // NÃO em security_verifications, que é para biometria/documento com foto.
-  const signer: any = { action: 'SIGN' };
-  if (p.signatarioCpf) signer.configs = { cpf: p.signatarioCpf };
-  if (p.signatarioCelular) {
-    signer.phone = p.signatarioCelular;
-    signer.delivery_method = 'DELIVERY_METHOD_WHATSAPP';
-  } else if (p.signatarioEmail) {
-    signer.email = p.signatarioEmail;
-  } else {
-    // Sem celular nem e-mail: adiciona por nome e retorna o link para envio manual
-    signer.name = p.signatarioNome;
-  }
+  const montarSigner = (x: { nome: string; cpf?: string; celular?: string; email?: string }) => {
+    const signer: any = { action: 'SIGN' };
+    if (x.cpf) signer.configs = { cpf: x.cpf };
+    if (x.celular) {
+      signer.phone = x.celular;
+      signer.delivery_method = 'DELIVERY_METHOD_WHATSAPP';
+    } else if (x.email) {
+      signer.email = x.email;
+    } else {
+      // Sem celular nem e-mail: adiciona por nome e retorna o link para envio manual
+      signer.name = x.nome;
+    }
+    return signer;
+  };
+  const listaSigners = p.signatarios?.length
+    ? p.signatarios.map(montarSigner)
+    : [montarSigner({ nome: p.signatarioNome, cpf: p.signatarioCpf, celular: p.signatarioCelular, email: p.signatarioEmail })];
 
   const query = `
     mutation CreateDocument($document: DocumentInput!, $signers: [SignerInput!]!, $file: Upload!) {
@@ -59,6 +70,7 @@ export async function autentiqueCriarDocumento(p: CriarDocumentoParams): Promise
         signatures {
           public_id
           name
+          email
           action { name }
           link { short_link }
         }
@@ -70,7 +82,7 @@ export async function autentiqueCriarDocumento(p: CriarDocumentoParams): Promise
     query,
     variables: {
       document: { name: p.nomeDocumento },
-      signers: [signer],
+      signers: listaSigners,
       file: null
     }
   });
@@ -107,12 +119,14 @@ export async function autentiqueCriarDocumento(p: CriarDocumentoParams): Promise
   const doc = json.data?.createDocument;
   if (!doc?.id) throw new Error('Autentique não retornou o id do documento.');
 
-  const assinatura = (doc.signatures || []).find((s: any) => s.action?.name === 'SIGN') || doc.signatures?.[0];
+  const sigs = (doc.signatures || []).filter((s: any) => s.action?.name === 'SIGN');
+  const assinatura = sigs[0] || doc.signatures?.[0];
 
   return {
     docId: doc.id,
     publicId: assinatura?.public_id || null,
-    linkAssinatura: assinatura?.link?.short_link || null
+    linkAssinatura: assinatura?.link?.short_link || null,
+    assinaturas: sigs.map((s: any) => ({ publicId: s.public_id || null, nome: s.name || null, email: s.email || null, link: s.link?.short_link || null })),
   };
 }
 

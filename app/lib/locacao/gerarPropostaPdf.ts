@@ -1,10 +1,17 @@
 // app/lib/locacao/gerarPropostaPdf.ts
-// PDF da Proposta de Locação (Ficha de Reserva própria), 2026-11-16.
-// Só servidor (lê o logo de app/imgs, mesmo padrão de gerarHoleritePdf).
-// Vai para o cliente assinar no Autentique e também pode ser baixado.
-import fs from 'node:fs';
-import path from 'node:path';
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage, type PDFImage } from 'pdf-lib';
+// PDF da Proposta de Locação (Ficha de Reserva própria). Layout de 2026-11-17
+// inspirado no modelo do Grupo Pleno escolhido pelo usuário:
+//   cabeçalho com nº / emissão / validade / vendedor (telefone e e-mail);
+//   01 Das partes · 02 Período e evento · 03 Equipamentos (por categoria, com
+//   subtotal; ficha técnica dos painéis de LED) · 04 Pagamento (forma,
+//   condição, parcelas) · 05 Extras e Termo de Responsabilidade (textos do
+//   orçamento padrão da Rentech) · assinaturas.
+// Só servidor. Vai para o cliente assinar na Autentique e pode ser baixado.
+import { PDFDocument, StandardFonts, rgb, type PDFPage, type PDFImage } from 'pdf-lib';
+import {
+  A4, AZUL, AZUL_MEDIO, CINZA, CINZA_CLARO, FUNDO, BRANCO, BRL, dataBR, qtd, num, s, quebrar, lerLogo, larguraReal,
+} from './pdfBase';
+import type { MontagemLed } from './ledTecnico';
 
 export interface ItemPropostaPdf {
   tipo: string;
@@ -16,7 +23,9 @@ export interface ItemPropostaPdf {
   valor_unitario: number;
   desconto_valor: number;
   valor_total: number;
-  composicao?: string | null;   // kits: "10× Gabinete · 1× Processadora"
+  composicao?: string | null;   // kits: "10x Gabinete · 1x Processadora"
+  grupo: string;                // categoria do produto ou "SERVIÇOS E LOGÍSTICA"
+  led?: { montagem: MontagemLed; descricao?: string | null; pitch?: number | null } | null;
 }
 
 export interface DadosPropostaPdf {
@@ -24,80 +33,22 @@ export interface DadosPropostaPdf {
   emitidaEm: string;            // ISO
   validade?: string | null;     // ISO data
   empresa: { nome: string; razao_social?: string | null; cnpj?: string | null; endereco?: string | null; telefone?: string | null; email?: string | null; site?: string | null; logo: 'RENTECH' | 'ALFALIGHT' };
-  cliente: { nome: string; documento?: string | null; endereco?: string | null; contato?: string | null; telefone?: string | null; email?: string | null };
-  evento: { nome?: string | null; local?: string | null; estande?: string | null; inicio: string; fim: string; dias: number; montagem?: string | null; desmontagem?: string | null; saida?: string | null; retorno?: string | null };
+  cliente: { nome: string; documento?: string | null; inscricao?: string | null; endereco?: string | null; contato?: string | null; telefone?: string | null; email?: string | null };
+  evento: { nome?: string | null; local?: string | null; estande?: string | null; inicio: string; fim: string; dias: number; diasCobrados?: number | null; montagem?: string | null; desmontagem?: string | null; saida?: string | null; retorno?: string | null };
   modalidade: string;
-  vendedor?: string | null;
+  vendedor?: { nome: string; telefone?: string | null; email?: string | null } | null;
   itens: ItemPropostaPdf[];
   totais: { equipamentos: number; servicos: number; desconto: number; total: number };
   mostrarValoresItens: boolean;
-  condicaoPagamento?: string | null;
+  pagamento: { forma?: string | null; condicao?: string | null; parcelas: { vencimento: string; valor: number }[] };
   observacoes?: string | null;
-  condicoesGerais: string;
+  extras: string;               // um item por linha
+  termo: string;                // um item por linha
 }
 
-export const CONDICOES_GERAIS_PADRAO = [
-  'Esta proposta é válida até a data indicada e a reserva dos equipamentos só é garantida após o aceite (assinatura) do cliente.',
-  'Os equipamentos são entregues testados e em perfeito funcionamento. A partir da entrega até a devolução, a guarda e a conservação são de responsabilidade do cliente.',
-  'Avarias, perdas, furtos ou extravios serão cobrados pelo valor de reposição/indenização do equipamento.',
-  'Atrasos na devolução geram cobrança de diárias adicionais conforme a tabela vigente.',
-  'Alterações de quantidades, itens ou datas estão sujeitas à disponibilidade e podem alterar os valores desta proposta.',
-  'Cancelamentos após a confirmação estão sujeitos às condições comerciais acordadas.',
-].map((t, i) => `${i + 1}. ${t}`).join('\n');
-
-const AZUL = rgb(12 / 255, 29 / 255, 77 / 255);
-const AZUL_MEDIO = rgb(51 / 255, 102 / 255, 153 / 255);
-const CINZA = rgb(0.39, 0.45, 0.55);
-const CINZA_CLARO = rgb(0.89, 0.91, 0.94);
-const FUNDO = rgb(0.97, 0.98, 0.99);
-
-const A4 = { w: 595.28, h: 841.89 };
 const M = 36;
 const LARG = A4.w - 2 * M;
-
-const logos = new Map<string, Buffer>();
-function lerLogo(qual: 'RENTECH' | 'ALFALIGHT'): Buffer | null {
-  if (!logos.has(qual)) {
-    // caminhos literais de propósito: o file tracing da Vercel só empacota o
-    // arquivo se enxergar o caminho fixo no código
-    try {
-      logos.set(qual, qual === 'ALFALIGHT'
-        ? fs.readFileSync(path.join(process.cwd(), 'app', 'imgs', 'logo-alfalight.png'))
-        : fs.readFileSync(path.join(process.cwd(), 'app', 'imgs', 'logo.png')));
-    } catch { return null; }
-  }
-  return logos.get(qual) || null;
-}
-
-const BRL = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const dataBR = (iso?: string | null) => { if (!iso) return '—'; const [a, m, d] = iso.slice(0, 10).split('-'); return `${d}/${m}/${a}`; };
-const qtd = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
-// Helvetica do pdf-lib = WinAnsi; troca/tira o que não existe nela.
-const s = (t?: string | null) => (t || '').replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[–—]/g, '-').replace(/×/g, 'x').replace(/•/g, '-').replace(/[^\x20-\x7E -ÿ\n]/g, '');
-
-function quebrar(texto: string, fonte: PDFFont, tam: number, largura: number): string[] {
-  const linhas: string[] = [];
-  for (const par of s(texto).split('\n')) {
-    const palavras = par.split(/\s+/).filter(Boolean);
-    if (!palavras.length) { linhas.push(''); continue; }
-    let atual = '';
-    for (const p of palavras) {
-      const tent = atual ? `${atual} ${p}` : p;
-      if (fonte.widthOfTextAtSize(tent, tam) <= largura) { atual = tent; continue; }
-      if (atual) linhas.push(atual);
-      // palavra maior que a linha: corta
-      let resto = p;
-      while (fonte.widthOfTextAtSize(resto, tam) > largura && resto.length > 1) {
-        let k = resto.length;
-        while (k > 1 && fonte.widthOfTextAtSize(resto.slice(0, k), tam) > largura) k--;
-        linhas.push(resto.slice(0, k)); resto = resto.slice(k);
-      }
-      atual = resto;
-    }
-    if (atual) linhas.push(atual);
-  }
-  return linhas;
-}
+const GRUPO_SERVICOS = 'SERVIÇOS E LOGÍSTICA';
 
 export async function gerarPropostaPdf(d: DadosPropostaPdf): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
@@ -112,184 +63,311 @@ export async function gerarPropostaPdf(d: DadosPropostaPdf): Promise<Uint8Array>
   const paginas: PDFPage[] = [];
   let pg!: PDFPage;
   let y = 0;
-
   const texto = (t: string, x: number, yy: number, tam = 9, fonte = f, cor = AZUL) => pg.drawText(s(t), { x, y: yy, size: tam, font: fonte, color: cor });
-  const direita = (t: string, xDir: number, yy: number, tam = 9, fonte = f, cor = AZUL) => texto(t, xDir - fonte.widthOfTextAtSize(s(t), tam), yy, tam, fonte, cor);
+  const direita = (t: string, xDir: number, yy: number, tam = 9, fonte = f, cor = AZUL) => texto(t, xDir - larguraReal(fonte, s(t), tam), yy, tam, fonte, cor);
 
   const novaPagina = (primeira: boolean) => {
     pg = pdf.addPage([A4.w, A4.h]);
     paginas.push(pg);
     y = A4.h - M;
-    if (primeira) {
-      // cabeçalho completo
-      let xTexto = M;
-      if (logo) {
-        const h = 42, w = Math.min(150, h * (logo.width / logo.height));
-        const hh = w / (logo.width / logo.height);
-        pg.drawImage(logo, { x: M, y: y - hh, width: w, height: hh });
-        xTexto = M + w + 14;
-      }
-      const linhasEmp = [
-        d.empresa.razao_social || d.empresa.nome,
-        d.empresa.cnpj ? `CNPJ ${d.empresa.cnpj}` : '',
-        d.empresa.endereco || '',
-        [d.empresa.telefone, d.empresa.email, d.empresa.site].filter(Boolean).join('  ·  '),
-      ].filter(Boolean);
-      let ye = y - 9;
-      linhasEmp.forEach((l, i) => {
-        for (const q of quebrar(l, i === 0 ? fb : f, i === 0 ? 10 : 8, A4.w - M - xTexto)) { texto(q, xTexto, ye, i === 0 ? 10 : 8, i === 0 ? fb : f, i === 0 ? AZUL : CINZA); ye -= i === 0 ? 13 : 10.5; }
-      });
-      y = Math.min(y - 50, ye - 4);
-      pg.drawRectangle({ x: M, y: y - 34, width: LARG, height: 34, color: AZUL });
-      texto('PROPOSTA DE LOCAÇÃO', M + 12, y - 22, 13, fb, rgb(1, 1, 1));
-      direita(`Nº ${d.numero}`, A4.w - M - 12, y - 15, 11, fb, rgb(1, 1, 1));
-      direita(`Emitida em ${dataBR(d.emitidaEm)}${d.validade ? `  ·  Válida até ${dataBR(d.validade)}` : ''}`, A4.w - M - 12, y - 27, 8, f, rgb(0.85, 0.9, 1));
-      y -= 48;
-    } else {
-      texto(`PROPOSTA DE LOCAÇÃO Nº ${d.numero}`, M, y - 10, 9, fb);
+    if (!primeira) {
+      texto(`PROPOSTA COMERCIAL  ${d.numero}`, M, y - 10, 9, fb);
       direita(d.empresa.razao_social || d.empresa.nome, A4.w - M, y - 10, 8, f, CINZA);
       pg.drawLine({ start: { x: M, y: y - 16 }, end: { x: A4.w - M, y: y - 16 }, thickness: 0.5, color: CINZA_CLARO });
       y -= 30;
+      return;
     }
+    // faixa escura com logo e dados da empresa
+    const hFaixa = 70;
+    pg.drawRectangle({ x: M, y: y - hFaixa, width: LARG, height: hFaixa, color: AZUL });
+    let xTexto = M + 14;
+    if (logo) {
+      const h = 46, w = Math.min(150, h * (logo.width / logo.height)), hh = w / (logo.width / logo.height);
+      pg.drawRectangle({ x: M + 10, y: y - hFaixa / 2 - hh / 2 - 4, width: w + 8, height: hh + 8, color: BRANCO });
+      pg.drawImage(logo, { x: M + 14, y: y - hFaixa / 2 - hh / 2, width: w, height: hh });
+      xTexto = M + w + 34;
+    }
+    const linhasEmp = [
+      [d.empresa.razao_social || d.empresa.nome, 10, fb],
+      [[d.empresa.cnpj ? `CNPJ ${d.empresa.cnpj}` : '', d.empresa.telefone].filter(Boolean).join('  ·  '), 7.5, f],
+      [[d.empresa.email, d.empresa.site].filter(Boolean).join('  ·  '), 7.5, f],
+    ] as const;
+    let ye = y - 24;
+    for (const [t, tam, fonte] of linhasEmp) { if (t) { texto(t, xTexto, ye, tam, fonte, BRANCO); ye -= 12; } }
+    y -= hFaixa + 10;
+
+    // cartão título + cartão nº/validade/vendedor
+    const hCard = 74, wDir = 190;
+    pg.drawRectangle({ x: M, y: y - hCard, width: LARG - wDir - 10, height: hCard, color: FUNDO });
+    texto('PROPOSTA COMERCIAL', M + 14, y - 20, 8, fb, CINZA);
+    texto('LOCAÇÃO DE EQUIPAMENTOS', M + 14, y - 40, 15, fb);
+    quebrar(`${d.cliente.nome}${d.cliente.documento ? `  ·  ${d.cliente.documento}` : ''}`, f, 9, LARG - wDir - 40).slice(0, 2)
+      .forEach((l, i) => texto(l, M + 14, y - 56 - i * 11, 9, f, CINZA));
+    const xD = A4.w - M - wDir;
+    pg.drawRectangle({ x: xD, y: y - hCard, width: wDir, height: hCard, color: FUNDO });
+    direita(d.numero, A4.w - M - 12, y - 18, 13, fb);
+    direita(`Emitida em ${dataBR(d.emitidaEm)}`, A4.w - M - 12, y - 30, 7.5, f, CINZA);
+    if (d.validade) direita(`Válida até ${dataBR(d.validade)}`, A4.w - M - 12, y - 40, 7.5, fb, rgb(0.8, 0.1, 0.15));
+    if (d.vendedor?.nome) {
+      direita('VENDEDOR', A4.w - M - 12, y - 52, 6.5, fb, CINZA);
+      direita(d.vendedor.nome, A4.w - M - 12, y - 61, 8, fb);
+      const contato = [d.vendedor.telefone, d.vendedor.email].filter(Boolean).join('  ·  ');
+      if (contato) direita(contato, A4.w - M - 12, y - 70, 6.5, f, CINZA);
+    }
+    y -= hCard + 16;
   };
 
   const garantir = (altura: number) => { if (y - altura < M + 30) novaPagina(false); };
 
-  const secao = (titulo: string) => {
-    garantir(30);
-    texto(titulo.toUpperCase(), M, y - 10, 8.5, fb, AZUL_MEDIO);
-    pg.drawLine({ start: { x: M, y: y - 14 }, end: { x: A4.w - M, y: y - 14 }, thickness: 0.6, color: CINZA_CLARO });
-    y -= 24;
+  // "01  DAS PARTES"
+  const secao = (n: string, titulo: string) => {
+    garantir(40);
+    texto(n, M, y - 20, 20, fb, CINZA_CLARO);
+    texto(titulo.toUpperCase(), M + 32, y - 17, 12, fb);
+    pg.drawLine({ start: { x: M, y: y - 25 }, end: { x: A4.w - M, y: y - 25 }, thickness: 1.2, color: AZUL });
+    y -= 36;
   };
 
-  // pares rótulo/valor em 2 colunas
-  const campos = (pares: [string, string | null | undefined][]) => {
-    const validos = pares.filter(([, v]) => v && String(v).trim());
-    const col = LARG / 2;
-    for (let i = 0; i < validos.length; i += 2) {
-      const linha = validos.slice(i, i + 2);
-      const alturas = linha.map(([, v]) => quebrar(String(v), f, 9, col - 12).length);
-      const h = Math.max(...alturas) * 11 + 12;
-      garantir(h);
-      linha.forEach(([r, v], k) => {
-        const x = M + k * col;
-        texto(r.toUpperCase(), x, y - 7, 6.5, fb, CINZA);
-        quebrar(String(v), f, 9, col - 12).forEach((l, j) => texto(l, x, y - 18 - j * 11, 9));
-      });
-      y -= h + 2;
+  // linhas rótulo/valor numa coluna (x, largura); devolve a altura usada
+  const blocoCampos = (x: number, largura: number, yIni: number, titulo: string | null, pares: [string, string | null | undefined][]) => {
+    let yy = yIni;
+    if (titulo) { texto(titulo, x, yy - 9, 8.5, fb); pg.drawLine({ start: { x, y: yy - 13 }, end: { x: x + largura, y: yy - 13 }, thickness: 0.5, color: CINZA_CLARO }); yy -= 20; }
+    const rot = 78;
+    for (const [r, v] of pares) {
+      if (!v || !String(v).trim()) continue;
+      const linhas = quebrar(String(v), fb, 8, largura - rot - 4);
+      texto(r.toUpperCase(), x, yy - 8, 6.5, f, CINZA);
+      linhas.forEach((l, i) => texto(l, x + rot, yy - 8 - i * 10, 8, fb));
+      yy -= Math.max(1, linhas.length) * 10 + 5;
+      pg.drawLine({ start: { x, y: yy + 2 }, end: { x: x + largura, y: yy + 2 }, thickness: 0.3, color: CINZA_CLARO });
     }
+    return yIni - yy;
   };
 
   novaPagina(true);
 
-  // ---------------- cliente ----------------
-  secao('Cliente');
-  campos([
-    ['Cliente', d.cliente.nome], ['CNPJ / CPF', d.cliente.documento],
-    ['Contato', d.cliente.contato], ['Telefone / e-mail', [d.cliente.telefone, d.cliente.email].filter(Boolean).join('  ·  ')],
-    ['Endereço', d.cliente.endereco],
-  ]);
+  // ======================= 01 DAS PARTES =======================
+  secao('01', 'Das partes');
+  {
+    const col = (LARG - 20) / 2;
+    const parcCli: [string, string | null | undefined][] = [
+      ['Razão social', d.cliente.nome], ['CNPJ / CPF', d.cliente.documento], ['Inscr. estadual', d.cliente.inscricao],
+      ['Endereço', d.cliente.endereco], ['Responsável', d.cliente.contato], ['Telefone', d.cliente.telefone], ['E-mail', d.cliente.email],
+    ];
+    const parcEmp: [string, string | null | undefined][] = [
+      ['Empresa', d.empresa.razao_social || d.empresa.nome], ['CNPJ', d.empresa.cnpj], ['Endereço', d.empresa.endereco],
+      ['Telefone', d.empresa.telefone], ['E-mail', d.empresa.email], ['Site', d.empresa.site],
+    ];
+    garantir(150);
+    const h1 = blocoCampos(M, col, y, 'LOCATÁRIA', parcCli);
+    const h2 = blocoCampos(M + col + 20, col, y, 'LOCADORA', parcEmp);
+    y -= Math.max(h1, h2) + 14;
+  }
 
-  // ---------------- evento ----------------
-  secao('Evento');
-  campos([
-    ['Evento', d.evento.nome], ['Local de entrega', d.evento.local],
-    ['Período do evento', `${dataBR(d.evento.inicio)} a ${dataBR(d.evento.fim)}  (${d.evento.dias} dia${d.evento.dias > 1 ? 's' : ''})`],
-    ['Estande / endereço', d.evento.estande],
-    ['Montagem', d.evento.montagem ? dataBR(d.evento.montagem) : null], ['Desmontagem', d.evento.desmontagem ? dataBR(d.evento.desmontagem) : null],
-    ['Modalidade', d.modalidade], ['Vendedor', d.vendedor],
-  ]);
+  // ======================= 02 PERÍODO E EVENTO =======================
+  secao('02', 'Período e evento');
+  {
+    const col = (LARG - 20) / 2;
+    const dias = `${dataBR(d.evento.inicio)} a ${dataBR(d.evento.fim)}  (${d.evento.dias} dia${d.evento.dias > 1 ? 's' : ''})`;
+    const esq: [string, string | null | undefined][] = [
+      ['Evento', d.evento.nome], ['Local de entrega', d.evento.local], ['Estande', d.evento.estande],
+      ['Data do evento', dias],
+    ];
+    const dir: [string, string | null | undefined][] = [
+      ['Saída', d.evento.saida ? dataBR(d.evento.saida) : null], ['Montagem', d.evento.montagem ? dataBR(d.evento.montagem) : null],
+      ['Desmontagem', d.evento.desmontagem ? dataBR(d.evento.desmontagem) : null], ['Retorno', d.evento.retorno ? dataBR(d.evento.retorno) : null],
+      ['Diárias cobradas', d.evento.diasCobrados && d.evento.diasCobrados !== d.evento.dias ? String(d.evento.diasCobrados) : null],
+      ['Modalidade', d.modalidade],
+    ];
+    garantir(110);
+    const h1 = blocoCampos(M, col, y, null, esq);
+    const h2 = blocoCampos(M + col + 20, col, y, null, dir);
+    y -= Math.max(h1, h2) + 14;
+  }
 
-  // ---------------- itens ----------------
-  secao('Equipamentos e serviços');
+  // ======================= 03 EQUIPAMENTOS =======================
+  const grupos = new Map<string, ItemPropostaPdf[]>();
+  for (const it of d.itens) grupos.set(it.grupo, [...(grupos.get(it.grupo) || []), it]);
+  // serviços e logística sempre por último
+  const ordem = [...grupos.keys()].sort((a, b) => (a === GRUPO_SERVICOS ? 1 : 0) - (b === GRUPO_SERVICOS ? 1 : 0));
+  secao('03', 'Equipamentos');
+  texto(`${d.itens.length} ite${d.itens.length === 1 ? 'm' : 'ns'} · ${ordem.length} grupo${ordem.length === 1 ? '' : 's'}`, A4.w - M - 120, y + 19, 7.5, f, CINZA);
   const comValores = d.mostrarValoresItens;
-  const cols = comValores
-    ? [{ t: 'ITEM', w: LARG - 250, al: 'e' }, { t: 'QTD', w: 45, al: 'd' }, { t: 'DIAS', w: 35, al: 'd' }, { t: 'VALOR UNIT.', w: 80, al: 'd' }, { t: 'TOTAL', w: 90, al: 'd' }]
-    : [{ t: 'ITEM', w: LARG - 90, al: 'e' }, { t: 'QTD', w: 50, al: 'd' }, { t: 'DIAS', w: 40, al: 'd' }];
-  const cabTabela = () => {
-    pg.drawRectangle({ x: M, y: y - 16, width: LARG, height: 16, color: FUNDO });
-    let x = M;
-    for (const c of cols) {
-      if (c.al === 'd') direita(c.t, x + c.w - 6, y - 11, 7, fb, CINZA); else texto(c.t, x + 6, y - 11, 7, fb, CINZA);
-      x += c.w;
-    }
-    y -= 20;
-  };
-  cabTabela();
-  for (const it of d.itens) {
-    const largItem = cols[0].w - 12;
-    const linhasDesc = quebrar(it.descricao, fb, 8.5, largItem);
-    const ROTULO_TIPO: Record<string, string> = { SERVICO: 'Serviço', FRETE: 'Frete', OUTRO: 'Outro' };
-    const sub = [it.codigo, ROTULO_TIPO[it.tipo] || null].filter(Boolean).join(' · ');
-    const linhasComp = it.composicao ? quebrar(`Composição: ${it.composicao}`, f, 7, largItem) : [];
-    const linhasDesconto = comValores && it.desconto_valor > 0 ? 1 : 0;
-    const h = linhasDesc.length * 10.5 + (sub ? 9 : 0) + linhasComp.length * 8.5 + linhasDesconto * 9 + 8;
-    if (y - h < M + 30) { novaPagina(false); cabTabela(); }
-    let yy = y - 9;
-    linhasDesc.forEach(l => { texto(l, M + 6, yy, 8.5, fb); yy -= 10.5; });
-    if (sub) { texto(sub, M + 6, yy, 7, f, CINZA); yy -= 9; }
-    linhasComp.forEach(l => { texto(l, M + 6, yy, 7, f, CINZA); yy -= 8.5; });
-    let x = M + cols[0].w;
-    direita(qtd(it.quantidade) + (it.unidade ? ` ${it.unidade}` : ''), x + cols[1].w - 6, y - 9, 8.5); x += cols[1].w;
-    direita(it.dias ? String(it.dias) : '—', x + cols[2].w - 6, y - 9, 8.5); x += cols[2].w;
+  const wQtd = 70, wVal = comValores ? 150 : 0;
+  const largDesc = LARG - 24 - wQtd - wVal;
+
+  for (const nomeGrupo of ordem) {
+    const lista = grupos.get(nomeGrupo)!;
+    const subtotal = lista.reduce((acc, i) => acc + i.valor_total, 0);
+    garantir(60);
+    pg.drawRectangle({ x: M, y: y - 22, width: LARG, height: 22, color: AZUL });
+    texto(nomeGrupo.toUpperCase(), M + 12, y - 15, 9.5, fb, BRANCO);
+    if (comValores) direita(BRL(subtotal), A4.w - M - 12, y - 15, 9.5, fb, BRANCO);
+    y -= 30;
+
+    lista.forEach((it, idx) => {
+      const linhasDesc = quebrar(it.descricao, fb, 9, largDesc);
+      const sub = [it.codigo, it.unidade].filter(Boolean).join(' · ');
+      const linhasComp = it.composicao ? quebrar(`Composição: ${it.composicao}`, f, 7, largDesc) : [];
+      const led = it.led;
+      const hLed = led ? 96 : 0;
+      const h = linhasDesc.length * 11 + (sub ? 9 : 0) + linhasComp.length * 8.5 + hLed + 12;
+      garantir(h);
+      let yy = y - 10;
+      texto(String(idx + 1).padStart(2, '0'), M + 2, yy, 7, fb, CINZA_CLARO);
+      linhasDesc.forEach(l => { texto(l, M + 16, yy, 9, fb); yy -= 11; });
+      if (sub) { texto(sub, M + 16, yy, 7, f, CINZA); yy -= 9; }
+      linhasComp.forEach(l => { texto(l, M + 16, yy, 7, f, CINZA); yy -= 8.5; });
+      // qtd · dias
+      const xQ = M + 16 + largDesc;
+      const qtdTxt = `${qtd(it.quantidade)} ${led ? 'm²' : it.unidade ? it.unidade.toLowerCase() : 'un'}`;
+      direita(qtdTxt, xQ + wQtd, y - 10, 8, f, CINZA);
+      if (it.dias) direita(`${it.dias} diária${it.dias > 1 ? 's' : ''}`, xQ + wQtd, y - 20, 7, f, CINZA);
+      if (comValores) {
+        direita(`${BRL(it.valor_unitario)}/${led ? 'm²' : 'un'}`, A4.w - M - 80, y - 10, 7.5, f, CINZA);
+        direita(BRL(it.valor_total), A4.w - M - 6, y - 10, 10, fb);
+        if (it.desconto_valor > 0) direita(`desconto ${BRL(it.desconto_valor)}`, A4.w - M - 6, y - 21, 6.5, f, CINZA);
+      }
+      // ficha técnica do painel de LED
+      if (led) {
+        const m = led.montagem;
+        const yL = yy - 2;
+        texto('INFORMAÇÕES TÉCNICAS', M + 16, yL - 6, 6.5, fb, CINZA);
+        const chips = [
+          `${num(m.m2)} m²  ·  ${num(m.larguraM)} m (L) x ${num(m.alturaM)} m (A)`,
+          `Pixel map ${m.pixelLargura.toLocaleString('pt-BR')} x ${m.pixelAltura.toLocaleString('pt-BR')} px`,
+          `${m.gabinetes} gabinetes (${m.colunas} x ${m.linhas})`,
+          [m.pesoKg !== null ? `Peso ~${num(m.pesoKg, 0)} kg` : null, m.consumoKw !== null ? `Consumo ~${num(m.consumoKw, 1)} kW` : null].filter(Boolean).join('  ·  '),
+        ].filter(Boolean);
+        let yc = yL - 18;
+        for (const c of chips) {
+          const w = larguraReal(f, s(c), 7) + 12;
+          pg.drawRectangle({ x: M + 16, y: yc - 4, width: w, height: 12, color: FUNDO, borderColor: CINZA_CLARO, borderWidth: 0.5 });
+          texto(c, M + 22, yc, 7, f, AZUL);
+          yc -= 15;
+        }
+        if (led.descricao) quebrar(led.descricao, f, 6.5, 250).slice(0, 2).forEach((l, k) => texto(l, M + 16, yc - k * 8, 6.5, f, CINZA));
+        // desenho do painel (grade de gabinetes) à direita
+        const caixaW = 170, caixaH = 64;
+        const escala = Math.min(caixaW / m.colunas, caixaH / m.linhas);
+        const gw = m.colunas * escala, gh = m.linhas * escala;
+        const gx = M + 280, gyTop = yL - 8;
+        pg.drawRectangle({ x: gx, y: gyTop - gh, width: gw, height: gh, color: rgb(0.93, 0.96, 1), borderColor: AZUL_MEDIO, borderWidth: 1 });
+        if (m.colunas <= 60) for (let c = 1; c < m.colunas; c++) pg.drawLine({ start: { x: gx + c * escala, y: gyTop }, end: { x: gx + c * escala, y: gyTop - gh }, thickness: 0.3, color: rgb(0.75, 0.82, 0.92) });
+        if (m.linhas <= 40) for (let l = 1; l < m.linhas; l++) pg.drawLine({ start: { x: gx, y: gyTop - l * escala }, end: { x: gx + gw, y: gyTop - l * escala }, thickness: 0.3, color: rgb(0.75, 0.82, 0.92) });
+        const lbl = String(m.colunas);
+        texto(lbl, gx + gw / 2 - larguraReal(f, lbl, 7) / 2, gyTop - gh - 9, 7, f, CINZA);
+        texto(String(m.linhas), gx + gw + 4, gyTop - gh / 2 - 3, 7, f, CINZA);
+      }
+      y -= h;
+      pg.drawLine({ start: { x: M, y: y + 3 }, end: { x: A4.w - M, y: y + 3 }, thickness: 0.4, color: CINZA_CLARO });
+    });
     if (comValores) {
-      direita(BRL(it.valor_unitario), x + cols[3].w - 6, y - 9, 8.5); x += cols[3].w;
-      direita(BRL(it.valor_total), x + cols[4].w - 6, y - 9, 8.5, fb);
-      if (it.desconto_valor > 0) direita(`desconto ${BRL(it.desconto_valor)}`, x + cols[4].w - 6, y - 19, 6.5, f, CINZA);
+      garantir(20);
+      pg.drawRectangle({ x: M, y: y - 18, width: LARG, height: 18, color: FUNDO });
+      direita(`SUBTOTAL ${nomeGrupo.toUpperCase()}`, A4.w - M - 100, y - 12, 7, fb, CINZA);
+      direita(BRL(subtotal), A4.w - M - 8, y - 12, 9, fb);
+      y -= 26;
     }
-    y -= h;
-    pg.drawLine({ start: { x: M, y: y + 2 }, end: { x: A4.w - M, y: y + 2 }, thickness: 0.4, color: CINZA_CLARO });
+    y -= 6;
   }
 
-  // ---------------- totais ----------------
-  const linhasTot: [string, string, boolean][] = [];
-  if (d.totais.servicos > 0) {
-    linhasTot.push(['Equipamentos', BRL(d.totais.equipamentos), false]);
-    linhasTot.push(['Serviços / frete', BRL(d.totais.servicos), false]);
-  }
-  if (d.totais.desconto > 0) {
-    if (!linhasTot.length) linhasTot.push(['Subtotal', BRL(d.totais.equipamentos + d.totais.servicos), false]);
-    linhasTot.push(['Desconto', `- ${BRL(d.totais.desconto)}`, false]);
-  }
-  garantir(linhasTot.length * 13 + 40);
-  y -= 6;
-  for (const [r, v] of linhasTot) { direita(r, A4.w - M - 110, y - 9, 8.5, f, CINZA); direita(v, A4.w - M - 6, y - 9, 8.5); y -= 13; }
-  pg.drawRectangle({ x: A4.w - M - 230, y: y - 26, width: 230, height: 24, color: AZUL });
-  texto('TOTAL DA PROPOSTA', A4.w - M - 222, y - 17, 8.5, fb, rgb(1, 1, 1));
-  direita(BRL(d.totais.total), A4.w - M - 8, y - 18, 12, fb, rgb(1, 1, 1));
-  y -= 40;
-
-  // ---------------- pagamento / observações ----------------
-  if (d.condicaoPagamento || d.observacoes) {
-    secao('Condições comerciais');
-    campos([['Condição de pagamento', d.condicaoPagamento], ['Validade da proposta', d.validade ? dataBR(d.validade) : null]]);
-    if (d.observacoes) {
-      for (const l of quebrar(d.observacoes, f, 8.5, LARG)) { garantir(12); texto(l, M, y - 9, 8.5); y -= 11.5; }
-      y -= 6;
-    }
-  }
-
-  // ---------------- condições gerais ----------------
-  secao('Condições gerais');
-  for (const l of quebrar(d.condicoesGerais || CONDICOES_GERAIS_PADRAO, f, 7.5, LARG)) { garantir(11); texto(l, M, y - 8, 7.5, f, CINZA); y -= 10; }
-
-  // ---------------- aceite ----------------
+  // totais
   garantir(70);
-  y -= 16;
-  pg.drawRectangle({ x: M, y: y - 46, width: LARG, height: 46, borderColor: CINZA_CLARO, borderWidth: 0.8, color: FUNDO });
-  texto('ACEITE DO CLIENTE', M + 10, y - 14, 8, fb, AZUL_MEDIO);
-  for (const [i, l] of quebrar(`Ao assinar eletronicamente esta proposta, ${d.cliente.nome} declara estar de acordo com os itens, valores, datas e condições acima. A assinatura é registrada pela plataforma Autentique.`, f, 7.5, LARG - 20).entries()) {
-    texto(l, M + 10, y - 26 - i * 9.5, 7.5, f, CINZA);
+  const bruto = d.totais.equipamentos + d.totais.servicos;
+  const hTot = 52;
+  pg.drawRectangle({ x: M, y: y - hTot, width: LARG, height: hTot, color: FUNDO });
+  texto(d.totais.desconto > 0 ? 'SUB-TOTAL SEM DESCONTO' : 'VALOR TOTAL', M + 14, y - 18, 7, fb, CINZA);
+  texto(BRL(bruto), M + 14, y - 34, 12, f, CINZA);
+  if (d.totais.desconto > 0) {
+    texto('DESCONTO', M + 180, y - 18, 7, fb, CINZA);
+    texto(`- ${BRL(d.totais.desconto)}`, M + 180, y - 34, 12, f, CINZA);
   }
-  y -= 56;
+  direita('VALOR FINAL', A4.w - M - 14, y - 18, 7, fb, CINZA);
+  direita(BRL(d.totais.total), A4.w - M - 14, y - 40, 18, fb);
+  y -= hTot + 16;
 
-  // ---------------- rodapé ----------------
+  // ======================= 04 PAGAMENTO =======================
+  secao('04', 'Pagamento');
+  {
+    const col = (LARG - 20) / 2;
+    const parc = d.pagamento.parcelas;
+    const esq: [string, string | null | undefined][] = [
+      ['Forma de pagamento', d.pagamento.forma], ['Condição', d.pagamento.condicao],
+      ['Parcelas', parc.length ? `${parc.length}x` : null],
+      ['Validade', d.validade ? `${dataBR(d.validade)}, ou enquanto durarem os estoques` : null],
+    ];
+    garantir(80);
+    const h1 = blocoCampos(M, col, y, null, esq);
+    // parcelas
+    let h2 = 0;
+    if (parc.length) {
+      const x = M + col + 20;
+      let yy = y;
+      texto('PARCELA', x, yy - 8, 6.5, fb, CINZA); texto('VENCIMENTO', x + 60, yy - 8, 6.5, fb, CINZA); direita('VALOR', x + col, yy - 8, 6.5, fb, CINZA);
+      yy -= 14;
+      parc.slice(0, 12).forEach((p, i) => {
+        texto(`${i + 1}ª`, x, yy - 8, 8, fb); texto(dataBR(p.vencimento), x + 60, yy - 8, 8, f); direita(BRL(p.valor), x + col, yy - 8, 8, fb);
+        yy -= 12;
+        pg.drawLine({ start: { x, y: yy + 1 }, end: { x: x + col, y: yy + 1 }, thickness: 0.3, color: CINZA_CLARO });
+      });
+      texto('Vencimentos estimados pela condição de pagamento.', x, yy - 8, 6, f, CINZA);
+      h2 = y - (yy - 12);
+    }
+    y -= Math.max(h1, h2) + 12;
+    if (d.observacoes) {
+      garantir(30);
+      texto('OBSERVAÇÕES', M, y - 8, 6.5, fb, CINZA); y -= 14;
+      for (const l of quebrar(d.observacoes, f, 8.5, LARG)) { garantir(12); texto(l, M, y - 8, 8.5); y -= 11; }
+      y -= 8;
+    }
+  }
+
+  // ======================= 05 TERMOS =======================
+  secao('05', 'Termos e responsabilidades');
+  const lista = (titulo: string, textoLista: string, marcador: string) => {
+    const itens = textoLista.split('\n').map(x => x.trim().replace(/^[-*•]\s*/, '')).filter(Boolean);
+    if (!itens.length) return;
+    garantir(30);
+    texto(titulo.toUpperCase(), M, y - 8, 8, fb); y -= 16;
+    for (const it of itens) {
+      const linhas = quebrar(it, f, 7.8, LARG - 14);
+      garantir(linhas.length * 10 + 3);
+      texto(marcador, M + 2, y - 8, 7.8, fb, AZUL_MEDIO);
+      linhas.forEach((l, i) => texto(l, M + 12, y - 8 - i * 10, 7.8, f, rgb(0.2, 0.25, 0.32)));
+      y -= linhas.length * 10 + 3;
+    }
+    y -= 8;
+  };
+  lista('Extras sob consulta', d.extras, '+');
+  lista('Termo de responsabilidade', d.termo, '-');
+
+  // ======================= assinaturas =======================
+  garantir(90);
+  y -= 30;
+  const wAss = (LARG - 40) / 2;
+  for (const [i, rot] of [[0, 'LOCADORA'], [1, 'LOCATÁRIA']] as const) {
+    const x = M + i * (wAss + 40);
+    pg.drawLine({ start: { x, y }, end: { x: x + wAss, y }, thickness: 0.8, color: AZUL });
+    const nome = i === 0 ? (d.empresa.razao_social || d.empresa.nome) : d.cliente.nome;
+    const linhasNome = quebrar(nome, f, 7, wAss).slice(0, 2);
+    linhasNome.forEach((l, k) => texto(l, x + wAss / 2 - larguraReal(f, l, 7) / 2, y - 10 - k * 9, 7, f, CINZA));
+    texto(rot, x + wAss / 2 - larguraReal(fb, rot, 7) / 2, y - 12 - linhasNome.length * 9, 7, fb, CINZA);
+  }
+  y -= 44;
+  const aviso = 'Esta proposta só terá validade mediante aceite do cliente. A assinatura eletrônica é registrada pela plataforma Autentique.';
+  for (const l of quebrar(aviso, f, 7, LARG)) { texto(l, A4.w / 2 - larguraReal(f, l, 7) / 2, y, 7, f, CINZA); y -= 9; }
+
+  // rodapé
   const total = paginas.length;
   paginas.forEach((p, i) => {
-    p.drawText(s(`${d.empresa.razao_social || d.empresa.nome}  ·  Proposta ${d.numero}`), { x: M, y: 18, size: 6.5, font: f, color: CINZA });
+    p.drawLine({ start: { x: M, y: 28 }, end: { x: A4.w - M, y: 28 }, thickness: 1.2, color: AZUL_MEDIO });
+    p.drawText(s(`${d.empresa.razao_social || d.empresa.nome}  ·  Proposta ${d.numero}`), { x: M, y: 17, size: 6.5, font: f, color: CINZA });
     const t = `Página ${i + 1} de ${total}`;
-    p.drawText(t, { x: A4.w - M - f.widthOfTextAtSize(t, 6.5), y: 18, size: 6.5, font: f, color: CINZA });
+    p.drawText(t, { x: A4.w - M - larguraReal(f, t, 6.5), y: 17, size: 6.5, font: f, color: CINZA });
   });
 
   return pdf.save();
 }
+
+export { GRUPO_SERVICOS };

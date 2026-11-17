@@ -36,6 +36,18 @@ const modulosComercial = [
     descricao: 'Cadastro de clientes, fornecedores e colaboradores sincronizado direto do PrimeStart (P2S).',
     icone: '🤝', link: '/admin/comercial/parceiros',
     cor: 'bg-amber-50 border-amber-200 text-amber-700', hover: 'hover:border-amber-500'
+  },
+  {
+    titulo: 'Carteira de Clientes',
+    descricao: 'Vendedor responsável por cliente. O vendedor padrão só vê as fichas dos clientes da carteira dele.',
+    icone: '👥', link: '/admin/comercial/carteira',
+    cor: 'bg-violet-50 border-violet-200 text-violet-700', hover: 'hover:border-violet-500'
+  },
+  {
+    titulo: 'Comissões de Vendas',
+    descricao: 'Comissão por vendedor sobre o que o cliente pagou (locação e serviços), fechamento mensal e % de cada vendedor.',
+    icone: '💰', link: '/admin/comercial/comissoes',
+    cor: 'bg-emerald-50 border-emerald-200 text-emerald-700', hover: 'hover:border-emerald-500'
   }
 ];
 

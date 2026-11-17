@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import {
-  listarEquipamentosAction, carregarEquipamentoAction, salvarConfigEquipamentoAction, definirControleEmMassaAction,
+  listarEquipamentosAction, carregarEquipamentoAction, salvarConfigEquipamentoAction, salvarEspecLedAction, definirControleEmMassaAction,
   salvarSaldoAction, excluirSaldoAction, salvarPatrimonioAction, gerarPatrimoniosLoteAction, excluirPatrimonioAction,
   importarPatrimoniosP2sAction, salvarKitAction, buscarProdutosAction, cargaSaldosP2sAction,
   type ControleLocacao, type SituacaoPatrimonio, type DadosPatrimonio,
@@ -384,6 +384,10 @@ function DetalheEquipamento({ produtoId, accessToken, onFechar, toast, confirmar
   const [selPat, setSelPat] = useState<Set<number>>(new Set());
   const [filtroSituacao, setFiltroSituacao] = useState<'' | SituacaoPatrimonio>('');
 
+  // ficha técnica de LED
+  const [led, setLed] = useState<Record<string, string>>({});
+  const [temLed, setTemLed] = useState(false);
+
   // kit
   const [kit, setKit] = useState<ItemKit[]>([]);
   const [kitAlterado, setKitAlterado] = useState(false);
@@ -399,6 +403,26 @@ function DetalheEquipamento({ produtoId, accessToken, onFechar, toast, confirmar
     setNovoSaldo(s => ({ ...s, empresa_id: s.empresa_id || d.empresas[0]?.id || 0 }));
     setEdicaoSaldo(Object.fromEntries(d.saldos.map(s => [s.id, { total: fmtQtd(Number(s.quantidade_total)), manut: fmtQtd(Number(s.quantidade_manutencao)), obs: s.observacoes || '' }])));
     setKit(d.kit); setKitAlterado(false);
+    const l: any = (d as any).led;
+    setTemLed(!!l);
+    setLed({
+      pitch_mm: l?.pitch_mm != null ? String(l.pitch_mm).replace('.', ',') : '', gl: l ? String(l.gabinete_largura_cm).replace('.', ',') : '50', ga: l ? String(l.gabinete_altura_cm).replace('.', ',') : '50',
+      rl: l ? String(l.resolucao_largura_px) : '', ra: l ? String(l.resolucao_altura_px) : '',
+      peso: l?.peso_kg_gabinete != null ? String(l.peso_kg_gabinete).replace('.', ',') : '', consumo: l?.consumo_w_gabinete != null ? String(l.consumo_w_gabinete).replace('.', ',') : '',
+      desc: l?.descricao_tecnica || '',
+    });
+  };
+
+  const salvarLed = async (remover = false) => {
+    const n = (k: string) => Number(String(led[k] || '').replace(',', '.')) || 0;
+    setSalvando(true);
+    const r = await salvarEspecLedAction(produtoId, remover ? null : {
+      pitch_mm: n('pitch_mm') || null, gabinete_largura_cm: n('gl'), gabinete_altura_cm: n('ga'), resolucao_largura_px: n('rl'), resolucao_altura_px: n('ra'),
+      peso_kg_gabinete: n('peso') || null, consumo_w_gabinete: n('consumo') || null, descricao_tecnica: led.desc || null,
+    }, accessToken);
+    setSalvando(false);
+    if (!r.ok) return toast(r.erro || 'Erro ao salvar.', 'error');
+    toast(remover ? 'Ficha técnica removida.' : 'Ficha técnica de LED salva.', 'success'); setMudou(true); carregar();
   };
 
   useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [produtoId]);
@@ -582,6 +606,25 @@ function DetalheEquipamento({ produtoId, accessToken, onFechar, toast, confirmar
                 </div>
               </div>
               <p className="text-[10px] text-gray-400 -mt-3">Dias que o item fica preso na agenda antes da saída (teste, configuração) e depois do retorno (conferência, limpeza). Não entram no preço.</p>
+              {(temLed || /LED/i.test(`${p.categoria_nome || ''} ${p.sub_categoria_nome || ''}`)) && (
+                <div className="border border-blue-100 bg-blue-50/40 rounded-xl p-4 space-y-3">
+                  <div>
+                    <p className="text-xs font-black text-[#0C1D4D] uppercase">Ficha técnica do painel de LED</p>
+                    <p className="text-[10px] text-gray-500">Com isto, a ficha de reserva pede largura × altura do painel, calcula m², gabinetes, pixel map, peso e consumo, e a proposta mostra a ficha técnica com o desenho do painel.</p>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    {([['pitch_mm', 'Pitch (mm)', 'ex.: 2,6'], ['gl', 'Gabinete largura (cm)', '50'], ['ga', 'Gabinete altura (cm)', '50'], ['rl', 'Resolução larg. (px)', '192'],
+                      ['ra', 'Resolução alt. (px)', '192'], ['peso', 'Peso por gabinete (kg)', '9'], ['consumo', 'Consumo por gabinete (W)', '150']] as [string, string, string][]).map(([k, rot, ph]) => (
+                      <div key={k}><label className={labelCls}>{rot}</label><input value={led[k] || ''} placeholder={ph} inputMode="decimal" onChange={e => setLed(x => ({ ...x, [k]: e.target.value }))} className={inputCls} /></div>
+                    ))}
+                  </div>
+                  <div><label className={labelCls}>Descrição técnica (aparece na proposta)</label><input value={led.desc || ''} placeholder="Ex.: INDOOR SMD · gabinete slim · refresh 3840Hz · player para vídeo em looping incluso" onChange={e => setLed(x => ({ ...x, desc: e.target.value }))} className={inputCls} /></div>
+                  <div className="flex justify-end gap-2">
+                    {temLed && <button onClick={() => salvarLed(true)} disabled={salvando} className="px-4 py-2 rounded-lg text-xs font-bold uppercase text-red-600 border border-red-200">Remover</button>}
+                    <button onClick={() => salvarLed()} disabled={salvando} className="bg-[#336699] hover:bg-[#284B8C] disabled:opacity-50 text-white px-5 py-2 rounded-lg text-xs font-bold uppercase tracking-wider">Salvar ficha técnica</button>
+                  </div>
+                </div>
+              )}
               <div className="flex justify-end">
                 <button onClick={salvarConfig} disabled={salvando} className="bg-[#0C1D4D] hover:bg-[#284B8C] disabled:opacity-50 text-white px-5 py-2 rounded-lg text-xs font-bold uppercase tracking-wider">
                   {salvando ? 'Salvando...' : 'Salvar configuração'}

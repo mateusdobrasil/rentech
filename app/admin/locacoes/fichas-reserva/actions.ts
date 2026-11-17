@@ -6,6 +6,8 @@
 // app/api/cron/sync-p2s/route.ts, que roda sem sessão de usuário — ver
 // comentário no topo de fichasCore.ts).
 import { validarAcesso } from '../../../lib/serverAuth';
+import { supabaseAdmin } from '../../../lib/supabase';
+import { acessoLocacao } from '../../../lib/locacao/acessoFichas';
 import { obterUltimaSincronizacao } from '../../../lib/syncLog';
 import { sincronizarFichasReservaCore, type SincronizarFichasReservaOpcoes } from './fichasCore';
 
@@ -33,4 +35,12 @@ export async function buscarUltimaSincronizacaoFichasAction(accessToken: string)
   if (!acesso.ok) return { ok: false, erro: acesso.message };
   const info = await obterUltimaSincronizacao('fichas_reserva', 'PRODUCAO');
   return { ok: true, info };
+}
+
+/** Escopo do usuário nas fichas: vendedor padrão (CARTEIRA) não usa esta tela — ela mostra todas as fichas do P2S. */
+export async function escopoFichasEspelhoAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  const a = await acessoLocacao(supabaseAdmin(), acesso.perfil);
+  return { ok: true, info: { escopo: a.escopo } };
 }

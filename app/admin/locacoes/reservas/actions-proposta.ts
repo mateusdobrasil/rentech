@@ -10,18 +10,25 @@ import { registrarLogAuditoria } from '../../../actions';
 import { autentiqueCriarDocumento, autentiqueCancelarDocumento } from '../../../lib/autentique';
 import { gerarPropostaPdf } from '../../../lib/locacao/gerarPropostaPdf';
 import { montarDadosProposta, atualizarPropostaPelaAutentique, numeroFichaTexto, BUCKET_PROPOSTAS } from './propostaCore';
+import { acessoLocacao, podeVerCliente, MSG_FICHA_FORA_CARTEIRA } from '../../../lib/locacao/acessoFichas';
+import { descontoPendente } from '../../../lib/locacao/descontoFicha';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 const ROTA = '/admin/locacoes/reservas';
 
 async function contextoFicha(accessToken: string, fichaId: number) {
-  const acesso = await validarAcesso(accessToken, ROTA);
-  if (!acesso.ok) return { erro: acesso.message } as const;
-  const permitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
-  const { data: ficha } = await supabaseAdmin().from('locacao_fichas_reserva').select('*').eq('id', fichaId).maybeSingle();
+  const v = await validarAcesso(accessToken, ROTA);
+  if (!v.ok) return { erro: v.message } as const;
+  const db = supabaseAdmin();
+  const [permitidas, acesso] = await Promise.all([
+    obterEmpresasPermitidas(v.perfil.id, v.perfil.permissaoNormalizada),
+    acessoLocacao(db, v.perfil),
+  ]);
+  const { data: ficha } = await db.from('locacao_fichas_reserva').select('*').eq('id', fichaId).maybeSingle();
   if (!ficha) return { erro: 'Ficha não encontrada.' } as const;
   if (!empresaPermitida(permitidas, ficha.empresa_id)) return { erro: 'Você não tem acesso a esta empresa.' } as const;
-  return { perfil: acesso.perfil, ficha } as const;
+  if (!(await podeVerCliente(db, acesso, ficha.parceiro_id))) return { erro: MSG_FICHA_FORA_CARTEIRA } as const;
+  return { perfil: v.perfil, ficha, acesso } as const;
 }
 
 async function contextoProposta(accessToken: string, propostaId: number) {
@@ -29,8 +36,10 @@ async function contextoProposta(accessToken: string, propostaId: number) {
   if (!prop) return { erro: 'Proposta não encontrada.' } as const;
   const ctx = await contextoFicha(accessToken, prop.ficha_id);
   if ('erro' in ctx) return { erro: ctx.erro as string } as const;
-  return { perfil: ctx.perfil, ficha: ctx.ficha, prop } as const;
+  return { perfil: ctx.perfil, ficha: ctx.ficha, acesso: ctx.acesso, prop } as const;
 }
+
+const SEM_EDITAR = 'Seu usuário não pode alterar fichas de locação.';
 
 // "(11) 99999-0000" → "+5511999990000"; já com 55 → só põe o "+".
 function celularE164(t?: string | null): string | null {
@@ -76,6 +85,8 @@ export async function enviarPropostaAction(
   const ctx = await contextoFicha(accessToken, fichaId);
   if ('erro' in ctx) return { ok: false, erro: ctx.erro };
   const f = ctx.ficha;
+  if (!ctx.acesso.podeEditar) return { ok: false, erro: SEM_EDITAR };
+  if (descontoPendente(f)) return { ok: false, erro: `Desconto de ${Number(f.desconto_pct).toLocaleString('pt-BR')}% aguardando aprovação — a proposta só sai depois de aprovado.` };
   if (f.origem === 'P2S') return { ok: false, erro: 'Ficha importada do P2S — a proposta sai pelo PrimeStart.' };
   if (!['ORCAMENTO', 'ENVIADO', 'APROVADO', 'RESERVADA'].includes(f.status)) return { ok: false, erro: 'Esta ficha não está em fase de proposta.' };
   const nome = (dados.signatario_nome || '').trim();
@@ -172,6 +183,7 @@ export async function baixarPropostaAction(propostaId: number, qual: 'ORIGINAL' 
 export async function cancelarPropostaAction(propostaId: number, motivo: string, accessToken: string): Promise<Resultado> {
   const ctx = await contextoProposta(accessToken, propostaId);
   if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  if (!ctx.acesso.podeEditar) return { ok: false, erro: SEM_EDITAR };
   if (!['ENVIADO', 'VISUALIZADO'].includes(ctx.prop.status)) return { ok: false, erro: 'Só dá para cancelar proposta ainda não assinada.' };
   try {
     if (ctx.prop.autentique_doc_id) await autentiqueCancelarDocumento(ctx.prop.autentique_doc_id);

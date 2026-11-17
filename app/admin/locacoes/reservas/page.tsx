@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
+import type { AcessoTela } from '../../../lib/locacao/acessoFichas';
 import { listarFichasAction, importarFichasP2sAction, listarSolicitacoesPortalAction, atualizarSolicitacaoPortalAction, converterSolicitacaoPortalAction, type StatusFicha } from './actions';
 import Modal from '../../../components/ui/Modal';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
@@ -17,7 +18,7 @@ import { hojeISO } from '../../../lib/locacao/datas';
 
 interface FichaLista {
   id: number; empresa_id: number; status: StatusFicha; modalidade: string; data_inicio: string; data_fim: string;
-  valor_total: number; vendedor_nome: string | null; validade_orcamento: string | null; updated_at: string;
+  valor_total: number; vendedor_nome: string | null; desconto_pendente?: boolean; validade_orcamento: string | null; updated_at: string;
   cliente: string; evento_nome: string | null; p2s_numero: string | null; p2s_status: string | null; origem: 'SISTEMA' | 'P2S'; motivo_perda: string | null;
 }
 interface EmpresaOpcao { id: number; nome: string }
@@ -48,6 +49,8 @@ export default function ReservasPage() {
   const [ultimaImportacao, setUltimaImportacao] = useState<string | null>(null);
   const [importando, setImportando] = useState(false);
   const [recarregar, setRecarregar] = useState(0);
+  const [acesso, setAcesso] = useState<AcessoTela | null>(null);
+  const [clientesCarteira, setClientesCarteira] = useState<number | null>(null);
   // pedidos de orçamento vindos do Portal do Cliente (/cliente)
   const [pedidos, setPedidos] = useState<any[]>([]);
   const [modalPedidos, setModalPedidos] = useState(false);
@@ -58,10 +61,12 @@ export default function ReservasPage() {
     (async () => {
       setCarregando(true);
       const r = await listarFichasAction(accessToken);
-      if (r.ok) { setEmpresas(r.info.empresas); setFichas(r.info.fichas); setUltimaImportacao(r.info.ultimaImportacaoP2s); setEmpresaConversao(e => e || r.info.empresas[0]?.id || 0); }
+      if (r.ok) {
+        setEmpresas(r.info.empresas); setFichas(r.info.fichas); setUltimaImportacao(r.info.ultimaImportacaoP2s || null); setEmpresaConversao(e => e || r.info.empresas[0]?.id || 0);
+        setAcesso(r.info.acesso || null); setClientesCarteira(r.info.clientesCarteira ?? null);
+      } else toast(r.erro || 'Erro ao carregar.', 'error');
       const rp = await listarSolicitacoesPortalAction(accessToken);
       if (rp.ok) setPedidos(rp.info);
-      else toast(r.erro || 'Erro ao carregar.', 'error');
       setCarregando(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -128,6 +133,14 @@ export default function ReservasPage() {
             })}
           </div>
 
+          {acesso?.escopo === 'CARTEIRA' && (
+            <div className="bg-violet-50 border border-violet-200 rounded-2xl p-4 text-xs text-violet-900">
+              {acesso.vendedorId
+                ? <>👤 Mostrando só as fichas dos clientes da <strong>sua carteira</strong>{acesso.vendedorNome ? <> ({acesso.vendedorNome})</> : null}{clientesCarteira !== null ? <> — {clientesCarteira} cliente(s)</> : null}. Cliente novo (sem carteira) entra na sua carteira na primeira ficha.</>
+                : <>⚠ Seu usuário não está ligado a um vendedor, por isso nenhuma ficha aparece. Peça ao Administrador: Parâmetros → Permissões → seu usuário → Locação.</>}
+            </div>
+          )}
+
           {pedidos.length > 0 && (
             <button onClick={() => setModalPedidos(true)} className="w-full text-left bg-emerald-50 border border-emerald-300 rounded-2xl p-4 flex justify-between items-center gap-3 hover:bg-emerald-100">
               <span className="text-sm text-emerald-900">📨 <strong>{pedidos.length} pedido(s) de orçamento</strong> do Portal do Cliente aguardando atendimento{pedidos.filter(p => p.status === 'NOVA').length ? ` (${pedidos.filter(p => p.status === 'NOVA').length} novo(s))` : ''}.</span>
@@ -140,7 +153,7 @@ export default function ReservasPage() {
               <strong>Fase paralela:</strong> o P2S segue oficial. As fichas de lá são importadas aqui <strong>só para leitura</strong> (selo P2S) e as aprovadas/em locação ocupam a agenda de disponibilidade. Importa sozinho às 11h e 17h.
               {ultimaImportacao && <> Última importação: {new Date(ultimaImportacao).toLocaleString('pt-BR')}.</>}
             </p>
-            <button disabled={importando} onClick={async () => {
+            {acesso?.escopo === 'TODAS' && <button disabled={importando} onClick={async () => {
               setImportando(true);
               const r = await importarFichasP2sAction(accessToken);
               setImportando(false);
@@ -150,14 +163,14 @@ export default function ReservasPage() {
               setRecarregar(x => x + 1);
             }} className="flex-shrink-0 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg font-bold uppercase text-[10px] tracking-wider">
               {importando ? 'Importando...' : '⬇ Importar do P2S agora'}
-            </button>
+            </button>}
           </div>
 
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-4 md:p-6">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
               <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">{GRUPOS.find(g => g.chave === grupo)?.rotulo}</h2>
-              <button onClick={() => router.push('/admin/locacoes/reservas/nova')}
-                className="bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-5 py-2.5 rounded-lg font-bold uppercase text-xs tracking-wider">+ Novo orçamento</button>
+              {acesso?.podeCriar && <button onClick={() => router.push('/admin/locacoes/reservas/nova')}
+                className="bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-5 py-2.5 rounded-lg font-bold uppercase text-xs tracking-wider">+ Novo orçamento</button>}
             </div>
 
             <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -215,6 +228,7 @@ export default function ReservasPage() {
                           <td className="p-2 whitespace-nowrap">
                             <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${STATUS_FICHA[f.status]?.cls}`}>{STATUS_FICHA[f.status]?.rotulo || f.status}</span>
                             {vencido && <span className="block text-[9px] text-amber-600 font-bold mt-0.5">validade vencida</span>}
+                            {f.desconto_pendente && <span className="block text-[9px] text-amber-700 font-bold mt-0.5">⏳ desconto a aprovar</span>}
                           </td>
                           <td className="p-2"><span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase whitespace-nowrap ${corSeloEmpresa(f.empresa_id)}`}>{nomeEmpresa(f.empresa_id)}</span></td>
                           <td className="p-2 text-gray-500">{f.vendedor_nome || '—'}</td>

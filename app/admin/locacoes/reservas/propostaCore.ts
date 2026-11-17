@@ -11,94 +11,16 @@ import { supabaseAdmin } from '../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../actions';
 import { autentiqueConsultarDocumento } from '../../../lib/autentique';
 import { reservarFicha } from '../../../lib/locacao/disponibilidade';
-import { diasInclusivos } from '../../../lib/locacao/datas';
-import { CONDICOES_GERAIS_PADRAO, type DadosPropostaPdf } from '../../../lib/locacao/gerarPropostaPdf';
 import { numeroFichaPorId } from '../../../lib/locacao/fichaNumero';
 
 type Db = ReturnType<typeof supabaseAdmin>;
 export const BUCKET_PROPOSTAS = 'locacao-propostas';
 export type StatusProposta = 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO' | 'CANCELADO';
 
-const MODALIDADE_ROTULO: Record<string, string> = { DIARIA: 'Por diária', PERIODO: 'Período fechado', MENSAL: 'Mensal' };
 export const numeroFichaTexto = numeroFichaPorId;
 
-const digitos = (s?: string | null) => (s || '').replace(/\D/g, '');
-function formatarDocumento(cnpj?: string | null, cpf?: string | null): string | null {
-  const c = digitos(cnpj);
-  if (c.length === 14) return `${c.slice(0, 2)}.${c.slice(2, 5)}.${c.slice(5, 8)}/${c.slice(8, 12)}-${c.slice(12)}`;
-  const p = digitos(cpf);
-  if (p.length === 11) return `${p.slice(0, 3)}.${p.slice(3, 6)}.${p.slice(6, 9)}-${p.slice(9)}`;
-  return cnpj || cpf || null;
-}
-
-/** Monta tudo que o PDF precisa a partir da ficha salva. */
-export async function montarDadosProposta(db: Db, fichaId: number, mostrarValoresItens: boolean): Promise<DadosPropostaPdf> {
-  const { data: f, error } = await db.from('locacao_fichas_reserva').select('*').eq('id', fichaId).single();
-  if (error) throw error;
-  const [rEmp, rCli, rEv, rItens] = await Promise.all([
-    db.from('empresas').select('*').eq('id', f.empresa_id).single(),
-    db.from('parceiros').select('nome_exibicao, nome_completo, cnpj, cpf, endereco1, numero1, complemento1, bairro1, cidade1, estado1, cep1').eq('id', f.parceiro_id).maybeSingle(),
-    f.evento_id ? db.from('eventos_feiras').select('nome, local').eq('id', f.evento_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
-    db.from('locacao_fichas_reserva_itens').select('*, produto:produtos(codigo_formatado, unidade)').eq('ficha_id', fichaId).order('ordem'),
-  ]);
-  for (const r of [rEmp, rCli, rEv, rItens] as any[]) if (r.error) throw r.error;
-  const emp: any = rEmp.data, cli: any = rCli.data, ev: any = rEv.data;
-  const itens: any[] = rItens.data || [];
-
-  // composição dos kits
-  const kitIds = itens.filter(i => i.tipo === 'KIT' && i.produto_id).map(i => i.produto_id);
-  const composicao = new Map<number, string>();
-  if (kitIds.length) {
-    const { data: comps } = await db.from('locacao_kit_itens')
-      .select('kit_produto_id, quantidade, opcional, componente:produtos!locacao_kit_itens_componente_produto_id_fkey(nome_item)')
-      .in('kit_produto_id', kitIds).order('ordem');
-    const porKit = new Map<number, string[]>();
-    for (const c of (comps || []) as any[]) {
-      const lista = porKit.get(c.kit_produto_id) || [];
-      lista.push(`${Number(c.quantidade).toLocaleString('pt-BR', { maximumFractionDigits: 3 })}x ${c.componente?.nome_item || ''}${c.opcional ? ' (opcional)' : ''}`);
-      porKit.set(c.kit_produto_id, lista);
-    }
-    for (const [k, l] of porKit) composicao.set(k, l.join(' · '));
-  }
-
-  const nomeEmp = `${emp?.nome_curto || ''} ${emp?.nome || ''}`.toUpperCase();
-  const enderecoCli = cli ? [
-    [cli.endereco1, cli.numero1].filter(Boolean).join(', '), cli.complemento1, cli.bairro1,
-    [cli.cidade1, cli.estado1].filter(Boolean).join('/'), cli.cep1 ? `CEP ${cli.cep1}` : null,
-  ].filter(Boolean).join(' - ') : null;
-
-  return {
-    numero: numeroFichaTexto(fichaId),
-    emitidaEm: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()),
-    validade: f.validade_orcamento,
-    empresa: {
-      nome: emp?.nome_curto || emp?.nome || '', razao_social: emp?.razao_social, cnpj: formatarDocumento(emp?.cnpj, null),
-      endereco: emp?.endereco, telefone: emp?.telefone, email: emp?.email_contato, site: emp?.site,
-      logo: /ALFA/.test(nomeEmp) ? 'ALFALIGHT' : 'RENTECH',
-    },
-    cliente: {
-      nome: cli ? (cli.nome_completo || cli.nome_exibicao) : 'Cliente', documento: cli ? formatarDocumento(cli.cnpj, cli.cpf) : null,
-      endereco: enderecoCli, contato: f.contato_nome, telefone: f.contato_telefone, email: f.contato_email,
-    },
-    evento: {
-      nome: ev?.nome || null, local: f.local_entrega || ev?.local || null, estande: f.endereco_estande,
-      inicio: f.data_inicio, fim: f.data_fim, dias: diasInclusivos(f.data_inicio, f.data_fim),
-      montagem: f.data_montagem, desmontagem: f.data_desmontagem, saida: f.data_saida, retorno: f.data_retorno,
-    },
-    modalidade: MODALIDADE_ROTULO[f.modalidade] || f.modalidade,
-    vendedor: f.vendedor_nome,
-    itens: itens.map(i => ({
-      tipo: i.tipo, descricao: i.descricao, codigo: i.produto?.codigo_formatado || null, unidade: i.produto?.unidade || null,
-      quantidade: Number(i.quantidade), dias: i.dias, valor_unitario: Number(i.valor_unitario), desconto_valor: Number(i.desconto_valor),
-      valor_total: Number(i.valor_total), composicao: i.tipo === 'KIT' ? composicao.get(i.produto_id) || null : null,
-    })),
-    totais: { equipamentos: Number(f.valor_equipamentos), servicos: Number(f.valor_servicos), desconto: Number(f.desconto_valor), total: Number(f.valor_total) },
-    mostrarValoresItens,
-    condicaoPagamento: f.condicao_pagamento,
-    observacoes: f.observacoes,
-    condicoesGerais: emp?.proposta_condicoes?.trim() || CONDICOES_GERAIS_PADRAO,
-  };
-}
+// Montagem dos dados do PDF: app/lib/locacao/dadosDocumentos.ts (compartilhada com o contrato).
+export { montarDadosProposta } from '../../../lib/locacao/dadosDocumentos';
 
 async function historico(db: Db, fichaId: number, usuario: string, acao: string, detalhe: string, de?: string | null, para?: string | null) {
   await db.from('locacao_fichas_reserva_historico').insert({ ficha_id: fichaId, usuario, acao, detalhe, status_de: de ?? null, status_para: para ?? null });

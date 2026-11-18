@@ -3,6 +3,7 @@ import { supabaseAdmin } from '../../../lib/supabase';
 import { gerarRelatorioDiario, CHAVE_CARD_DIRETORIA } from '../../../lib/diretoria/relatorioDiario';
 import { hojeISO, somarDias } from '../../../lib/diretoria/indicadoresDiarios';
 import { notificarPush } from '../../../lib/push';
+import { familiaAtiva } from '../../../lib/diretoria/envioDiretoria';
 
 // Relatório Diário do Diretor (IA) — um por empresa ativa. Agenda
 // (vercel.json): todo dia 13h UTC = 10h em Brasília, meia hora depois da
@@ -16,8 +17,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Acesso Não Autorizado' }, { status: 401 });
   }
   const db = supabaseAdmin();
-  const { data: card } = await db.from('parametros_automacoes').select('ativo').eq('chave', CHAVE_CARD_DIRETORIA).maybeSingle();
-  if (!card || card.ativo === false) return NextResponse.json({ success: true, executado: false, motivo: 'Rotina desativada (ou card ainda não criado) em Agendamentos e Disparos.' });
+  // Original ou cópia (um card por empresa) — basta um ligado
+  if (!(await familiaAtiva(db, CHAVE_CARD_DIRETORIA))) return NextResponse.json({ success: true, executado: false, motivo: 'Rotina desativada (ou card ainda não criado) em Agendamentos e Disparos.' });
 
   const D = somarDias(hojeISO(), -1);
   const { data: empresas } = await db.from('empresas').select('*').eq('ativo', true).order('id');

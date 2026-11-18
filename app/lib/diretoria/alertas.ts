@@ -313,7 +313,7 @@ export async function processarAlertas(db: DB, empresa: { id: number; nome: stri
         empresa: empresa.nome,
         alertas: lista,
         link: `${baseUrlSistema()}/admin/diretoria?empresa=${empresa.id}&tipo=ALERTAS`,
-      }));
+      }), empresa.id);
       envioTexto = envio.texto;
       enviados = envio.enviados;
       await db.from('diretoria_alertas')

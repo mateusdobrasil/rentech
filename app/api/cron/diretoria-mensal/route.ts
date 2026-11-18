@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
+import { familiaAtiva } from '../../../lib/diretoria/envioDiretoria';
 import { gerarRelatorioPeriodo, CHAVE_CARD_MENSAL, CHAVE_CARD_ANUAL } from '../../../lib/diretoria/relatorioPeriodo';
 import { hojeISO } from '../../../lib/diretoria/indicadoresDiarios';
 import { mesFechado } from '../../../lib/diretoria/indicadoresPeriodo';
@@ -17,11 +18,10 @@ export async function GET(request: Request) {
   }
   const db = supabaseAdmin();
   const hoje = hojeISO();
-  const { data: cards } = await db.from('parametros_automacoes').select('chave, ativo').in('chave', [CHAVE_CARD_MENSAL, CHAVE_CARD_ANUAL]);
-  const ligado = (chave: string) => ((cards || []) as { chave: string; ativo: boolean }[]).some(c => c.chave === chave && c.ativo !== false);
+  // Original ou cópia (um card por empresa) — basta um ligado
   const tipos: ('MENSAL' | 'ANUAL')[] = [];
-  if (ligado(CHAVE_CARD_MENSAL)) tipos.push('MENSAL');
-  if (hoje.slice(5) === '01-01' && ligado(CHAVE_CARD_ANUAL)) tipos.push('ANUAL');
+  if (await familiaAtiva(db, CHAVE_CARD_MENSAL)) tipos.push('MENSAL');
+  if (hoje.slice(5) === '01-01' && await familiaAtiva(db, CHAVE_CARD_ANUAL)) tipos.push('ANUAL');
   if (!tipos.length) return NextResponse.json({ success: true, executado: false, motivo: 'Nada a gerar hoje (cards desligados ou não é 1º de janeiro para o anual).' });
 
   const { ano, mes } = mesFechado(hoje);

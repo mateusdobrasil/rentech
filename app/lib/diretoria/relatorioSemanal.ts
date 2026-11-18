@@ -85,7 +85,7 @@ export async function gerarRelatorioSemanal(
       periodo: `${dataBR(inicio).slice(0, 5)} a ${dataBR(fim)}`,
       conteudo: ia.conteudo,
       link: `${baseUrlSistema()}/admin/diretoria?empresa=${empresa.id}&tipo=SEMANAL&data=${inicio}`,
-    }));
+    }), empresa.id);
     envioTexto = envio.texto;
     await db.from('diretoria_relatorios').update({ whatsapp_enviado_em: envio.enviados > 0 ? new Date().toISOString() : null, whatsapp_resultado: envio.texto }).eq('id', salvo.id);
   }

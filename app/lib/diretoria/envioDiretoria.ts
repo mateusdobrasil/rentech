@@ -20,16 +20,42 @@ export interface ResultadoEnvioDiretoria { texto: string; enviados: number }
 export const baseUrlSistema = () => process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
 export const dataBR = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
 
-export async function enviarPeloCard(db: DB, chaveCard: string, hojeISO: string, email: { assunto: string; html: string; texto: string }): Promise<ResultadoEnvioDiretoria> {
+// FAMÍLIA DO CARD (2026-11-18): o card original (chave fixa, ex.
+// "diretoria-relatorio-diario") + as cópias feitas pelo "Duplicar" em
+// Agendamentos (chave "<original>--2", "--3"...). Uso: o diretor da Rentech é
+// diferente do da AlfaLight — um card por empresa (campo Empresa do card),
+// cada um com seus destinatários. Card com empresa "Todas" (null) recebe o
+// relatório de todas as empresas.
+interface CardDiretoria { chave: string; ativo: boolean; canais: string[] | null; destinatarios: string[] | null; dias_semana: number[] | null; empresa_id: number | null }
+
+export async function cardsDaFamilia(db: DB, chaveCard: string): Promise<CardDiretoria[]> {
+  const { data } = await db.from('parametros_automacoes')
+    .select('chave, ativo, canais, destinatarios, dias_semana, empresa_id')
+    .like('chave', `${chaveCard}%`);
+  return ((data || []) as CardDiretoria[]).filter(c => c.chave === chaveCard || c.chave.startsWith(`${chaveCard}--`));
+}
+
+// A rotina (cron) roda se QUALQUER card da família estiver ligado.
+export async function familiaAtiva(db: DB, chaveCard: string): Promise<boolean> {
+  return (await cardsDaFamilia(db, chaveCard)).some(c => c.ativo !== false);
+}
+
+export async function enviarPeloCard(db: DB, chaveCard: string, hojeISO: string, email: { assunto: string; html: string; texto: string }, empresaId: number | null): Promise<ResultadoEnvioDiretoria> {
   const nao = (texto: string) => ({ texto, enviados: 0 });
-  const { data: card } = await db.from('parametros_automacoes').select('ativo, canais, destinatarios, dias_semana').eq('chave', chaveCard).maybeSingle();
-  if (!card || card.ativo === false) return nao('Não enviado: card desligado em Agendamentos e Disparos.');
-  if (!((card.canais as string[]) || []).includes('E-mail')) return nao('Não enviado: canal E-mail desmarcado no card.');
-  const nomes = (card.destinatarios as string[]) || [];
-  if (!nomes.length) return nao('Não enviado: card sem destinatários.');
+  // Cards da família que valem pra esta empresa (o dela, ou "Todas")
+  const daEmpresa = (await cardsDaFamilia(db, chaveCard)).filter(c => c.empresa_id == null || c.empresa_id === empresaId);
+  if (!daEmpresa.length) return nao('Não enviado: nenhum card desta rotina para esta empresa em Agendamentos e Disparos (duplique o card e escolha a empresa).');
+  const ligados = daEmpresa.filter(c => c.ativo !== false);
+  if (!ligados.length) return nao('Não enviado: card desta empresa desligado em Agendamentos e Disparos.');
+  const comEmailMarcado = ligados.filter(c => (c.canais || []).includes('E-mail'));
+  if (!comEmailMarcado.length) return nao('Não enviado: canal E-mail desmarcado no card.');
   const diaSemana = new Date(`${hojeISO}T12:00:00Z`).getUTCDay();
-  const dias = (card.dias_semana as number[] | null) || [0, 1, 2, 3, 4, 5, 6];
-  if (!dias.includes(diaSemana)) return nao('Não enviado: hoje não está nos dias do card.');
+  const doDia = comEmailMarcado.filter(c => (c.dias_semana || [0, 1, 2, 3, 4, 5, 6]).includes(diaSemana));
+  if (!doDia.length) return nao('Não enviado: hoje não está nos dias do card.');
+  const usados = doDia.filter(c => (c.destinatarios || []).length > 0);
+  // Mesma pessoa em dois cards (ex.: card da empresa + card "Todas") recebe uma vez só
+  const nomes = [...new Set(usados.flatMap(c => c.destinatarios || []))];
+  if (!nomes.length) return nao('Não enviado: card sem destinatários.');
 
   const { data: pessoas } = await db.from('folha_funcionarios').select('nome_completo, email').eq('ativo', true).in('nome_completo', nomes);
   const comEmail = ((pessoas || []) as { nome_completo: string; email: string | null }[]).filter(p => (p.email || '').includes('@'));
@@ -55,8 +81,9 @@ export async function enviarPeloCard(db: DB, chaveCard: string, hojeISO: string,
     }
   }
 
-  await db.from('parametros_automacoes').update({ ultima_execucao: new Date().toISOString() }).eq('chave', chaveCard);
-  if (enviados > 0) await db.from('parametros_automacoes_envios').insert({ chave: chaveCard, canal: 'E-mail', quantidade: enviados });
+  const chavesUsadas = usados.map(c => c.chave);
+  await db.from('parametros_automacoes').update({ ultima_execucao: new Date().toISOString() }).in('chave', chavesUsadas);
+  if (enviados > 0) await db.from('parametros_automacoes_envios').insert({ chave: chavesUsadas[0], canal: 'E-mail', quantidade: enviados });
 
   const partes = [enviados ? `E-mail enviado para ${enviados}.` : 'Nenhum e-mail enviado.'];
   if (falhas.length) partes.push(`Falhou: ${falhas.join(', ')}.`);

@@ -363,7 +363,14 @@ export async function duplicarAutomacaoAction(id: number, accessToken: string): 
     if (!empresaPermitida(empresasPermitidas, original.empresa_id)) return { ok: false, erro: 'Automação não encontrada.' };
 
     const nome = await gerarNomeCopia(db, original.nome);
-    const chave = await gerarChaveUnica(db, nome);
+    // Chave da FAMÍLIA do original ("<chave>--2", "--3"...), não do nome: as
+    // rotinas que acham o card pela chave fixa (ex.: relatórios do Diretor IA,
+    // um card por empresa) reconhecem a cópia como parte da mesma rotina — ver
+    // cardsDaFamilia em app/lib/diretoria/envioDiretoria.ts.
+    const raiz = String(original.chave).replace(/--\d+$/, '');
+    let n = 2;
+    let chave = `${raiz}--${n}`;
+    while ((await db.from('parametros_automacoes').select('id').eq('chave', chave).maybeSingle()).data) chave = `${raiz}--${++n}`;
     // Copia todas as colunas do card, menos identidade, histórico de execução e carimbos de data
     const { id: _id, chave: _chave, nome: _nome, ultima_execucao: _ult, criado_em: _c1, created_at: _c2, atualizado_em: _a1, updated_at: _a2, ...campos } = original;
     const { data: novo, error } = await db.from('parametros_automacoes')

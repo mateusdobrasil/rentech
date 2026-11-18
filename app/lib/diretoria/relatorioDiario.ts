@@ -132,7 +132,7 @@ export async function gerarRelatorioDiario(
       periodo: `${indicadores.dia_semana_referencia}, ${dataBR(D)}`,
       conteudo: ia.conteudo,
       link: `${baseUrlSistema()}/admin/diretoria?empresa=${empresa.id}&tipo=DIARIO&data=${D}`,
-    }));
+    }), empresa.id);
     envioTexto = envio.texto;
     await db.from('diretoria_relatorios').update({ whatsapp_enviado_em: envio.enviados > 0 ? new Date().toISOString() : null, whatsapp_resultado: envio.texto }).eq('id', salvo.id);
   }

@@ -93,7 +93,7 @@ export async function gerarRelatorioPeriodo(
       periodo: tipo === 'MENSAL' ? `${MESES_EXTENSO[mes - 1]}/${ano}` : String(anoFechado),
       conteudo: ia.conteudo,
       link: `${baseUrlSistema()}/admin/diretoria?empresa=${empresa.id}&tipo=${tipo}&data=${P.inicio}`,
-    }));
+    }), empresa.id);
     envioTexto = envio.texto;
     await db.from('diretoria_relatorios').update({ whatsapp_enviado_em: envio.enviados > 0 ? new Date().toISOString() : null, whatsapp_resultado: envio.texto }).eq('id', salvo.id);
   }

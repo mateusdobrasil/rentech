@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
+import { familiaAtiva } from '../../../lib/diretoria/envioDiretoria';
 import { gerarRelatorioSemanal, CHAVE_CARD_SEMANAL } from '../../../lib/diretoria/relatorioSemanal';
 import { semanaFechada } from '../../../lib/diretoria/indicadoresSemanais';
 import { notificarPush } from '../../../lib/push';
@@ -14,8 +15,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Acesso Não Autorizado' }, { status: 401 });
   }
   const db = supabaseAdmin();
-  const { data: card } = await db.from('parametros_automacoes').select('ativo').eq('chave', CHAVE_CARD_SEMANAL).maybeSingle();
-  if (!card || card.ativo === false) return NextResponse.json({ success: true, executado: false, motivo: 'Rotina desativada (ou card ainda não criado) em Agendamentos e Disparos.' });
+  // Original ou cópia (um card por empresa) — basta um ligado
+  if (!(await familiaAtiva(db, CHAVE_CARD_SEMANAL))) return NextResponse.json({ success: true, executado: false, motivo: 'Rotina desativada (ou card ainda não criado) em Agendamentos e Disparos.' });
 
   const { inicio } = semanaFechada();
   const { data: empresas } = await db.from('empresas').select('*').eq('ativo', true).order('id');

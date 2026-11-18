@@ -334,6 +334,48 @@ export async function contarEnviosMesAction(accessToken: string): Promise<Result
   }
 }
 
+// Nome do clone: "Aviso área" → "Aviso área(1)"; se já existir, (2), (3)...
+// Clonar um clone ("Aviso área(1)") continua a sequência do original.
+async function gerarNomeCopia(db: ReturnType<typeof supabaseAdmin>, nome: string): Promise<string> {
+  const base = nome.replace(/\s*\(\d+\)\s*$/, '').trim();
+  const { data } = await db.from('parametros_automacoes').select('nome').ilike('nome', `${base.replace(/[%_\\]/g, m => '\\' + m)}(%`);
+  const usados = new Set((data || []).map(r => String(r.nome).trim()));
+  let n = 1;
+  while (usados.has(`${base}(${n})`)) n++;
+  return `${base}(${n})`;
+}
+
+// DUPLICAR — clone do card com tudo igual (tipo, canais, mensagem, horário,
+// destinatários, template...), só com ID, nome e chave novos. Nasce
+// DESATIVADO: card ativo do mesmo evento/horário dispararia a mesma mensagem
+// em dobro pros colaboradores — o usuário ajusta e liga quando quiser.
+export async function duplicarAutomacaoAction(id: number, accessToken: string): Promise<Resultado<{ id: number; nome: string }>> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  try {
+    const { data: original, error: erroLeitura } = await db.from('parametros_automacoes').select('*').eq('id', id).maybeSingle();
+    if (erroLeitura) throw new Error(erroLeitura.message);
+    if (!original) return { ok: false, erro: 'Automação não encontrada.' };
+
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!empresaPermitida(empresasPermitidas, original.empresa_id)) return { ok: false, erro: 'Automação não encontrada.' };
+
+    const nome = await gerarNomeCopia(db, original.nome);
+    const chave = await gerarChaveUnica(db, nome);
+    // Copia todas as colunas do card, menos identidade, histórico de execução e carimbos de data
+    const { id: _id, chave: _chave, nome: _nome, ultima_execucao: _ult, criado_em: _c1, created_at: _c2, atualizado_em: _a1, updated_at: _a2, ...campos } = original;
+    const { data: novo, error } = await db.from('parametros_automacoes')
+      .insert({ ...campos, chave, nome, ativo: false, ultima_execucao: null })
+      .select('id').single();
+    if (error) throw new Error(error.message);
+    return { ok: true, data: { id: novo.id, nome } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
 // Checagem ao vivo da conexão da Z-API (substitui o badge fixo "Conectado").
 export async function excluirAutomacaoAction(id: number, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);

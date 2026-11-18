@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import {
   listarAutomacoesAction, alternarStatusAutomacaoAction,
-  criarAutomacaoAction, atualizarAutomacaoAction, excluirAutomacaoAction,
+  criarAutomacaoAction, atualizarAutomacaoAction, excluirAutomacaoAction, duplicarAutomacaoAction,
   listarFuncionariosParaAutomacaoAction, contarEnviosMesAction,
   type RotinaAutomacaoDB, type FormAutomacao, type FuncionarioParaAutomacao
 } from './actions';
@@ -306,6 +306,17 @@ export default function GestaoAgendamentos() {
     }
   };
 
+  // Duplicar: clone do card (tudo igual, só ID e nome novos — "Nome(1)"), nasce desligado
+  const [duplicandoId, setDuplicandoId] = useState<number | null>(null);
+  const duplicar = async (rotina: RotinaAutomacaoDB) => {
+    setDuplicandoId(rotina.id);
+    const res = await duplicarAutomacaoAction(rotina.id, accessToken);
+    setDuplicandoId(null);
+    if (!res.ok) { toast('Erro ao duplicar: ' + res.erro, 'error'); return; }
+    toast(`Cópia criada: ${res.data?.nome} — nasce DESLIGADA pra não disparar em dobro. Ajuste e ligue quando quiser.`, 'success');
+    carregarRotinas();
+  };
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center pt-16">
@@ -480,9 +491,14 @@ export default function GestaoAgendamentos() {
                     </span>
                   )}
                 </div>
-                <button onClick={() => abrirModalEditar(rotina)} className="text-[10px] font-black text-[#336699] uppercase tracking-wider hover:underline">
-                  Configurar ⚙️
-                </button>
+                <div className="flex items-center gap-3 shrink-0">
+                  <button onClick={() => duplicar(rotina)} disabled={duplicandoId === rotina.id} title="Cria uma cópia deste card (desligada), com o nome + (1)" className="text-[10px] font-black text-[#64748B] uppercase tracking-wider hover:underline disabled:opacity-50">
+                    {duplicandoId === rotina.id ? 'Duplicando...' : 'Duplicar ⧉'}
+                  </button>
+                  <button onClick={() => abrirModalEditar(rotina)} className="text-[10px] font-black text-[#336699] uppercase tracking-wider hover:underline">
+                    Configurar ⚙️
+                  </button>
+                </div>
               </div>
             </div>
           ))}

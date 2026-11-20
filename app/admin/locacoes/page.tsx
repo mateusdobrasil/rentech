@@ -31,6 +31,12 @@ const modulosLocacoes = [
     cor: 'bg-blue-50 border-blue-200 text-blue-700', hover: 'hover:border-blue-500'
   },
   {
+    titulo: 'Fichas de Locação',
+    descricao: 'Saídas e devoluções das OSs, trocas, extravios, prorrogação e complemento — com a OS assinada pelo cliente na tela. Inclui o histórico do P2S.',
+    icone: '🚚', link: '/admin/locacoes/fichas-locacao',
+    cor: 'bg-indigo-50 border-indigo-200 text-indigo-700', hover: 'hover:border-indigo-500'
+  },
+  {
     titulo: 'Agenda de Disponibilidade',
     descricao: 'Calendário por equipamento: quanto sobra livre em cada dia, com as reservas do P2S e as daqui, e as faltas em destaque.',
     icone: '📅', link: '/admin/locacoes/agenda',

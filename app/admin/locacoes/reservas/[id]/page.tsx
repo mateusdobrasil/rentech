@@ -25,6 +25,7 @@ import { STATUS_FICHA, MODALIDADES, numeroFicha } from '../statusFicha';
 import PainelProposta from './PainelProposta';
 import PainelTitulos from './PainelTitulos';
 import PainelContrato from './PainelContrato';
+import PainelFichaLocacao from './PainelFichaLocacao';
 import { calcularLed, resumoLed, type EspecLed } from '../../../../lib/locacao/ledTecnico';
 import { FORMAS_PAGAMENTO, ROTULO_FORMA_PAGAMENTO } from '../../../../lib/locacao/textosPadrao';
 import { rotuloStatusP2s } from '../../../../lib/locacao/statusP2s';
@@ -983,6 +984,12 @@ export default function EditorFichaPage() {
               clienteNome={cliente?.nome || ''}
               onMudou={async () => { const rec = await carregarFichaAction(fichaIdUrl, accessToken); if (rec.ok) aplicarFicha(rec.info); }}
             />
+          )}
+
+          {/* ---------- ficha de locação (saída/devolução + OS assinada) ---------- */}
+          {!ehNova && fichaIdUrl && !doP2s && (
+            <PainelFichaLocacao fichaId={fichaIdUrl} accessToken={accessToken} status={status} alterado={alterado} podeEditar={!!acesso?.podeEditar}
+              dataFim={cab.data_fim} onMudou={async () => { const rec = await carregarFichaAction(fichaIdUrl, accessToken); if (rec.ok) aplicarFicha(rec.info); }} />
           )}
 
           {/* ---------- faturamento (títulos a receber) ---------- */}

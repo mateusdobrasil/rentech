@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria, sincronizarEstoqueEmLocacao } from '../../../actions';
 import { finalizarFichasLocacaoPorEventoAction } from './actions';
-import { itensFichasDoEventoAction } from './actions-fichas';
+import { itensFichasDoEventoAction, sincronizarFichaLocacaoDoChecklistAction } from './actions-fichas';
 import ConferenciaQR from './ConferenciaQR';
 import PainelOsSeparar, { type OsSeparar } from './PainelOsSeparar';
 import ModalConferenciaMontagem from './ModalConferenciaMontagem';
@@ -1648,9 +1648,23 @@ export default function ChecklistCargaRetorno() {
       }
     }
 
+    // Ficha de Locação própria: saída/retorno conferidos das OSs do sistema (FR-…)
+    let avisoFl = '';
+    let erroFl: string | null = null;
+    const temOsDoSistema = itensSalvos.some(i => /FR-d+/i.test(i.os_numero || '') && (i.saida_ok || i.retorno_ok));
+    if (temOsDoSistema) {
+      const rFl = await sincronizarFichaLocacaoDoChecklistAction(checklistAtual.id, accessToken);
+      if (!rFl.ok) erroFl = rFl.erro || 'Falha ao registrar na ficha de locação.';
+      else {
+        const x = rFl.info as { fichas: string[]; saidas: number; devolucoes: number; extravios: number; avisos: string[] };
+        if (x.saidas || x.devolucoes || x.extravios) avisoFl = ` Ficha de locação ${x.fichas.join(', ')}: ${x.saidas} saída(s), ${x.devolucoes} devolução(ões)${x.extravios ? `, ${x.extravios} sem entrada (extravio + cobrança de reposição no Financeiro)` : ''} — colha a assinatura do cliente na ficha.`;
+        if (x.avisos.length) avisoFl += ` ⚠ ${x.avisos.join(' ')}`;
+      }
+    }
+
     setSalvando(false);
 
-    const erroPosSalvamento = erroDivergencia || erroEstoque || erroP2s;
+    const erroPosSalvamento = erroDivergencia || erroEstoque || erroP2s || erroFl;
     const avisoEstoque = idsEquipamentosAfetados.length > 0 && !erroEstoque
       ? ` Estoque atualizado (${idsEquipamentosAfetados.length} equipamento(s) em locação/liberado(s)).`
       : '';
@@ -1660,11 +1674,12 @@ export default function ChecklistCargaRetorno() {
           open: true, type: 'error', title: 'Checklist salvo, mas...',
           msg: erroDivergencia ? `Falhou ao atualizar a aba Divergências: ${erroDivergencia}`
             : erroEstoque ? `Falhou ao atualizar o estoque: ${erroEstoque}`
+            : erroFl ? `Falhou ao registrar na ficha de locação: ${erroFl}`
             : `Falhou ao atualizar fichas no PrimeStart: ${erroP2s}`,
         }
-      : { open: true, type: 'success', title: 'Salvo', msg: `Checklist atualizado com sucesso.${qtdDivergenciasAtivas > 0 ? ` ${qtdDivergenciasAtivas} item(ns) divergente(s) em Divergências.` : ''}${avisoEstoque}${avisoP2s}` });
+      : { open: true, type: 'success', title: 'Salvo', msg: `Checklist atualizado com sucesso.${qtdDivergenciasAtivas > 0 ? ` ${qtdDivergenciasAtivas} item(ns) divergente(s) em Divergências.` : ''}${avisoEstoque}${avisoP2s}${avisoFl}` });
     if (!erroPosSalvamento) {
-      setTimeout(() => setDialog(prev => ({ ...prev, open: false })), qtdDivergenciasAtivas > 0 || avisoEstoque || avisoP2s ? 2400 : 1800);
+      setTimeout(() => setDialog(prev => ({ ...prev, open: false })), avisoFl ? 6000 : qtdDivergenciasAtivas > 0 || avisoEstoque || avisoP2s ? 2400 : 1800);
       voltarParaLista();
     }
   };

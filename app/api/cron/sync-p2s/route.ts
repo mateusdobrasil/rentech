@@ -8,6 +8,7 @@ import { sincronizarProdutosCore } from '../../../admin/estoque/produtos/produto
 import { sincronizarParceirosCore, sincronizarColaboradoresCore } from '../../../admin/comercial/parceiros/parceirosCore';
 import { sincronizarFichasReservaCore } from '../../../admin/locacoes/fichas-reserva/fichasCore';
 import { importarFichasP2sCore } from '../../../lib/locacao/importarFichasP2s';
+import { estenderAtrasos } from '../../../lib/locacao/fichaLocacao';
 import { sincronizarEventosFeirasCore } from '../../../admin/comercial/eventos-feiras/eventosCore';
 import { sincronizarContasPagarCore } from '../../../admin/financeiro/contas-pagar/contasPagarCore';
 import { sincronizarContasReceberCore } from '../../../admin/financeiro/contas-receber/contasReceberCore';
@@ -60,6 +61,9 @@ export async function GET(request: Request) {
     { nome: 'eventos_feiras', fn: () => sincronizarEventosFeirasCore() },
     { nome: 'contas_pagar', fn: () => sincronizarContasPagarCore() },
     { nome: 'contas_receber', fn: () => sincronizarContasReceberCore() },
+    // Ficha de Locação própria (sem P2S): o que não voltou no prazo segue
+    // ocupando a agenda até hoje + dias de retorno.
+    { nome: 'locacao_atrasos', fn: () => estenderAtrasos(db) },
   ];
 
   const resultados: Record<string, any> = {};

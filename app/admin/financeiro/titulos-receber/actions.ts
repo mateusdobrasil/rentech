@@ -86,9 +86,10 @@ export async function titulosDaFichaAction(fichaId: number, accessToken: string)
     if (!f || !empresaPermitida(ctx.permitidas, f.empresa_id)) return { ok: false, erro: 'Ficha não encontrada.' };
     // vendedor padrão só vê os títulos das fichas da carteira dele
     if (!(await podeVerCliente(db, await acessoLocacao(db, ctx.perfil), f.parceiro_id))) return { ok: false, erro: MSG_FICHA_FORA_CARTEIRA };
-    const { data: titulos } = await db.from('financeiro_titulos_receber').select('id, parcela, total_parcelas, descricao, valor, vencimento, status, data_pagamento, valor_pago, boleto_status')
+    const { data: titulos } = await db.from('financeiro_titulos_receber').select('id, origem, parcela, total_parcelas, descricao, valor, vencimento, status, data_pagamento, valor_pago, boleto_status')
       .eq('ficha_id', fichaId).order('vencimento');
-    const gerado = (titulos || []).filter((t: any) => t.status !== 'CANCELADO').reduce((s: number, t: any) => s + n(t.valor), 0);
+    // saldo da locação: só os títulos da própria locação (avaria/reposição são à parte)
+    const gerado = (titulos || []).filter((t: any) => t.status !== 'CANCELADO' && t.origem === 'FICHA').reduce((s: number, t: any) => s + n(t.valor), 0);
     const saldo = arred(n(f.valor_total) - gerado);
     const podeGerar = (await validarAcesso(accessToken, ROTA)).ok;
     return {
@@ -118,8 +119,8 @@ export async function gerarTitulosFichaAction(fichaId: number, parcelas: { valor
       if (!(n(p.valor) > 0)) return { ok: false, erro: 'Há parcela sem valor.' };
       if (!dataValida(p.vencimento)) return { ok: false, erro: 'Há parcela sem vencimento.' };
     }
-    const { data: existentes } = await db.from('financeiro_titulos_receber').select('valor, status').eq('ficha_id', fichaId);
-    const gerado = (existentes || []).filter((t: any) => t.status !== 'CANCELADO').reduce((s: number, t: any) => s + n(t.valor), 0);
+    const { data: existentes } = await db.from('financeiro_titulos_receber').select('valor, status, origem').eq('ficha_id', fichaId);
+    const gerado = (existentes || []).filter((t: any) => t.status !== 'CANCELADO' && t.origem === 'FICHA').reduce((s: number, t: any) => s + n(t.valor), 0);
     const novo = parcelas.reduce((s, p) => s + n(p.valor), 0);
     if (gerado + novo > n(f.valor_total) + 0.01) {
       return { ok: false, erro: `As parcelas (${novo.toFixed(2)}) passam do saldo da ficha (${(n(f.valor_total) - gerado).toFixed(2)}).` };
@@ -241,7 +242,13 @@ export async function cancelarTituloAction(id: number, motivo: string, accessTok
   if ('erro' in a) return { ok: false, erro: a.erro };
   if (a.t.status !== 'ABERTO') return { ok: false, erro: 'Só título em aberto pode ser cancelado (estorne a baixa antes).' };
   await db.from('financeiro_titulos_receber').update({ status: 'CANCELADO', motivo_cancelamento: motivo.trim(), atualizado_em: new Date().toISOString() }).eq('id', id);
-  if (a.t.avaria_id) await db.from('locacao_avarias').update({ status_cobranca: 'COBRAR' }).eq('id', a.t.avaria_id);
+  // reposição (extravio) cancelada = decisão de NÃO cobrar: fica só no histórico
+  // (decisão do usuário 2026-11-20); avaria comum volta para "a cobrar"
+  if (a.t.avaria_id) {
+    await db.from('locacao_avarias').update(a.t.origem === 'REPOSICAO'
+      ? { status_cobranca: 'NAO_COBRAR', observacao_cobranca: `Reposição cancelada pelo Financeiro: ${motivo.trim()}`, atualizado_em: new Date().toISOString() }
+      : { status_cobranca: 'COBRAR', atualizado_em: new Date().toISOString() }).eq('id', a.t.avaria_id);
+  }
   log(ctx.perfil.nome, 'CANCELOU TÍTULO A RECEBER', `#${id} ${a.t.descricao}: ${motivo.trim()}`);
   return { ok: true };
 }

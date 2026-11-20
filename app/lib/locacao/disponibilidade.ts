@@ -40,7 +40,9 @@ export interface LinhaDisponibilidade {
   viaKits: string[];
 }
 
-const STATUS_ATIVOS = ['RESERVADO', 'LOCADO'];
+// DEVOLVIDO ocupa só até o fim do período, que na devolução vira data da
+// devolução + dias de retorno (limpeza/teste) — ficha de locação própria.
+const STATUS_ATIVOS = ['RESERVADO', 'LOCADO', 'DEVOLVIDO'];
 const n = (v: unknown) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
 
 async function carregarInfoProdutos(db: Db, ids: number[]): Promise<Map<number, InfoProduto>> {
@@ -214,6 +216,59 @@ export async function reservarFicha(db: Db, fichaId: number): Promise<{ ok: bool
   const patrimoniosAntigos = new Set((antigas || []).map(a => a.patrimonio_id).filter(Boolean));
 
   try {
+    const m = await montarLinhas(db, ficha, verif, patrimoniosAntigos, fichaId);
+    if ('erro' in m) return { ok: false, erro: m.erro };
+    // Troca as alocações RESERVADO da ficha pelas novas numa TRANSAÇÃO só
+    // (função SQL locacao_trocar_reserva): se a trava de patrimônio (EXCLUDE)
+    // recusar alguma linha, nada muda e a reserva anterior continua valendo.
+    const { error } = await db.rpc('locacao_trocar_reserva', { p_ficha_id: fichaId, p_novas: m.linhas });
+    if (error) throw error;
+    return { ok: true };
+  } catch (e: any) {
+    const msg = String(e.message || e);
+    if (msg.includes('locacao_alocacoes_patrimonio_sem_conflito')) return { ok: false, erro: 'Outra reserva pegou uma das peças agora há pouco — a reserva anterior foi mantida. Tente de novo.' };
+    return { ok: false, erro: msg };
+  }
+}
+
+/**
+ * Reserva SÓ os itens indicados, somando às alocações que a ficha já tem
+ * (complemento /B de uma ficha em locação). As alocações atuais da própria
+ * ficha contam como ocupadas — não são refeitas.
+ */
+export async function reservarItensAdicionais(db: Db, fichaId: number, itemIds: number[]): Promise<{ ok: boolean; erro?: string; faltas?: LinhaDisponibilidade[] }> {
+  if (!itemIds.length) return { ok: true };
+  const { data: ficha, error: eF } = await db.from('locacao_fichas_reserva')
+    .select('id, empresa_id, data_saida, data_montagem, data_inicio, data_fim, data_desmontagem, data_retorno').eq('id', fichaId).single();
+  if (eF) throw eF;
+  const { data: itens, error: eI } = await db.from('locacao_fichas_reserva_itens')
+    .select('id, tipo, produto_id, quantidade').eq('ficha_id', fichaId).in('id', itemIds).in('tipo', ['EQUIPAMENTO', 'KIT']);
+  if (eI) throw eI;
+  const verif = await verificarDisponibilidade(db, {
+    empresaId: ficha.empresa_id, datas: ficha, ignorarFichaId: null,
+    itens: (itens || []).filter(i => i.produto_id).map(i => ({ ficha_item_id: i.id, produto_id: i.produto_id, quantidade: n(i.quantidade) })),
+  });
+  if (verif.temFalta) return { ok: false, faltas: verif.linhas.filter(l => l.falta > 0) };
+  try {
+    const m = await montarLinhas(db, ficha, verif, new Set(), null);
+    if ('erro' in m) return { ok: false, erro: m.erro };
+    if (m.linhas.length) {
+      const { error } = await db.from('locacao_alocacoes').insert(m.linhas.map(l => ({ ...l, ficha_id: fichaId, status: 'RESERVADO' })));
+      if (error) throw error;
+    }
+    return { ok: true };
+  } catch (e: any) {
+    const msg = String(e.message || e);
+    if (msg.includes('locacao_alocacoes_patrimonio_sem_conflito')) return { ok: false, erro: 'Outra reserva pegou uma das peças agora há pouco. Tente de novo.' };
+    return { ok: false, erro: msg };
+  }
+}
+
+/** Linhas de alocação para a demanda verificada (peças livres escolhidas automaticamente). */
+async function montarLinhas(
+  db: Db, ficha: { empresa_id: number }, verif: Awaited<ReturnType<typeof verificarDisponibilidade>>,
+  patrimoniosAntigos: Set<number>, ignorarFichaId: number | null,
+): Promise<{ linhas: any[] } | { erro: string }> {
     const linhasNovas: any[] = [];
     for (const l of verif.linhas) {
       const partes = verif.demanda.get(l.produto_id) || [];
@@ -226,29 +281,19 @@ export async function reservarFicha(db: Db, fichaId: number): Promise<{ ok: bool
       const { data: pats, error: eP } = await db.from('locacao_patrimonios').select('id, numero_patrimonio')
         .eq('empresa_id', ficha.empresa_id).eq('produto_id', l.produto_id).eq('situacao', 'ATIVO');
       if (eP) throw eP;
-      const ocupadas = new Set((await alocacoesAtivas(db, ficha.empresa_id, [l.produto_id], l.periodo.inicio, l.periodo.fim, fichaId)).map(a => a.patrimonio_id));
+      const ocupadas = new Set((await alocacoesAtivas(db, ficha.empresa_id, [l.produto_id], l.periodo.inicio, l.periodo.fim, ignorarFichaId)).map(a => a.patrimonio_id));
       const livres = (pats || []).filter(p => !ocupadas.has(p.id))
         .sort((a, b) => Number(patrimoniosAntigos.has(b.id)) - Number(patrimoniosAntigos.has(a.id)) || a.numero_patrimonio.localeCompare(b.numero_patrimonio, 'pt-BR', { numeric: true }));
       let idx = 0;
       for (const p of partes) {
         for (let k = 0; k < p.quantidade; k++) {
           const peca = livres[idx++];
-          if (!peca) return { ok: false, erro: `Faltou peça livre de "${l.nome}" ao reservar.` };
+          if (!peca) return { erro: `Faltou peça livre de "${l.nome}" ao reservar.` };
           linhasNovas.push({ ficha_item_id: p.ficha_item_id, empresa_id: ficha.empresa_id, produto_id: l.produto_id, patrimonio_id: peca.id, quantidade: 1, periodo });
         }
       }
     }
-    // Troca as alocações RESERVADO da ficha pelas novas numa TRANSAÇÃO só
-    // (função SQL locacao_trocar_reserva): se a trava de patrimônio (EXCLUDE)
-    // recusar alguma linha, nada muda e a reserva anterior continua valendo.
-    const { error } = await db.rpc('locacao_trocar_reserva', { p_ficha_id: fichaId, p_novas: linhasNovas });
-    if (error) throw error;
-    return { ok: true };
-  } catch (e: any) {
-    const msg = String(e.message || e);
-    if (msg.includes('locacao_alocacoes_patrimonio_sem_conflito')) return { ok: false, erro: 'Outra reserva pegou uma das peças agora há pouco — a reserva anterior foi mantida. Tente de novo.' };
-    return { ok: false, erro: msg };
-  }
+    return { linhas: linhasNovas };
 }
 
 /** Solta as peças/quantidades reservadas da ficha (cancelar, voltar a orçamento). */

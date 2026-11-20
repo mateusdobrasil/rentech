@@ -19,7 +19,7 @@ import { somarDias, hojeISO } from '../../../lib/locacao/datas';
 // Títulos a Receber de locação (2026-11-17, Fase 3a). Regras em ./actions.ts.
 
 interface Titulo {
-  id: number; empresa_id: number; parceiro_id: number; origem: 'FICHA' | 'AVARIA' | 'AVULSO'; ficha_id: number | null; avaria_id: number | null;
+  id: number; empresa_id: number; parceiro_id: number; origem: 'FICHA' | 'AVARIA' | 'AVULSO' | 'REPOSICAO'; ficha_id: number | null; avaria_id: number | null;
   descricao: string; parcela: number; total_parcelas: number; valor: number; data_emissao: string; vencimento: string;
   status: 'ABERTO' | 'PAGO' | 'CANCELADO'; forma_pagamento: string | null; data_pagamento: string | null; valor_pago: number | null;
   juros_multa: number; desconto: number; observacoes: string | null; motivo_cancelamento: string | null; boleto_status: string;
@@ -185,7 +185,7 @@ export default function TitulosReceberPage() {
                 <option value="pagos">Pagos</option><option value="cancelados">Cancelados</option><option value="todos">Todos</option>
               </select>
               <select value={origem} onChange={e => setOrigem(e.target.value)} className="border border-[#CBD5E1] rounded-lg px-2 py-2 text-xs font-bold">
-                <option value="">Todas as origens</option><option value="FICHA">Fichas</option><option value="AVARIA">Avarias</option><option value="AVULSO">Avulsos</option>
+                <option value="">Todas as origens</option><option value="FICHA">Fichas</option><option value="AVARIA">Avarias</option><option value="REPOSICAO">Reposição (não devolvido)</option><option value="AVULSO">Avulsos</option>
               </select>
               <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Cliente, descrição, ficha, nº..." className="border border-[#CBD5E1] rounded-lg px-3 py-2 text-xs w-60" />
               {empresas.length > 1 && (
@@ -219,7 +219,7 @@ export default function TitulosReceberPage() {
                           <td className="p-2 min-w-[220px]">
                             <p>{t.descricao}</p>
                             <p className="text-[10px] text-gray-400">
-                              {t.origem === 'FICHA' && t.ficha_id ? <button onClick={() => router.push(`/admin/locacoes/reservas/${t.ficha_id}`)} className="text-[#336699] font-bold hover:underline">{t.ficha_numero}</button> : t.origem.toLowerCase()}
+                              {(t.origem === 'FICHA' || t.origem === 'REPOSICAO') && t.ficha_id ? <button onClick={() => router.push(`/admin/locacoes/reservas/${t.ficha_id}`)} className="text-[#336699] font-bold hover:underline">{t.origem === 'REPOSICAO' ? `reposição · ${t.ficha_numero}` : t.ficha_numero}</button> : t.origem.toLowerCase()}
                               {t.status === 'CANCELADO' && t.motivo_cancelamento ? ` · cancelado: ${t.motivo_cancelamento}` : ''}
                             </p>
                           </td>

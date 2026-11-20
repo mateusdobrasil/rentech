@@ -14,6 +14,7 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { gerarConferenciaMontagemPdf, type OsConferencia } from '../../../lib/locacao/gerarConferenciaMontagemPdf';
+import { sincronizarChecklistComFichasLocacao } from '../../../lib/locacao/expedicaoFichaLocacao';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 const ROTA = '/admin/estoque/expedicao';
@@ -193,6 +194,23 @@ export async function removerPecaAction(pecaId: number, accessToken: string): Pr
       ? await db.from('checklist_item_pecas').select('id', { count: 'exact', head: true }).eq('checklist_item_id', p.checklist_item_id).eq('tipo', p.tipo)
       : { count: 0 };
     return { ok: true, info: { checklist_item_id: p.checklist_item_id, tipo: p.tipo, contagem: count || 0 } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
+// ============================================================================
+// FICHA DE LOCAÇÃO PRÓPRIA (2026-11-20): depois de salvar o checklist, o que
+// foi conferido na saída/retorno das OSs do sistema (FR-…) vira movimento na
+// ficha de locação (abre a FL /A na 1ª saída). Fichas do P2S não mudam.
+// ============================================================================
+export async function sincronizarFichaLocacaoDoChecklistAction(checklistId: string, accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  const chk = await checklistDoUsuario(checklistId, ctx.permitidas);
+  if ('erro' in chk) return { ok: false, erro: chk.erro };
+  try {
+    return { ok: true, info: await sincronizarChecklistComFichasLocacao(supabaseAdmin(), checklistId, ctx.perfil.nome) };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

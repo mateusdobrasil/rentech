@@ -11,6 +11,9 @@
 //   recursivo até 3 níveis); componentes "opcionais" não são reservados.
 // PERÍODO: datas da ficha ± dias de preparo/retorno de CADA produto
 //   (app/lib/locacao/datas.ts → periodoAlocacao).
+// SUBLOCAÇÃO (2026-11-20): o que a OS tem sublocado e CONFIRMADO com um
+//   parceiro (locacao_sublocacoes) sai da demanda sobre o estoque próprio
+//   (abaterSublocadoDaFicha) — a reserva cobre só o resto.
 //
 // Concorrência: patrimônio tem garantia no banco (EXCLUDE gist em
 // locacao_alocacoes). Quantidade não — duas reservas simultâneas do último
@@ -38,6 +41,8 @@ export interface LinhaDisponibilidade {
   disponivel: number;
   falta: number;
   viaKits: string[];
+  /** quanto desta demanda vem de sublocação confirmada (já abatido de "demanda") */
+  sublocado?: number;
 }
 
 // DEVOLVIDO ocupa só até o fim do período, que na devolução vira data da
@@ -146,11 +151,42 @@ export function picoDiario(alocs: AlocacaoAtiva[], inicio: string, fim: string):
   return pico;
 }
 
+/** Quantidade sublocada e confirmada (por produto) para uma OS. */
+export async function sublocadoPorProduto(db: Db, fichaId: number): Promise<Map<number, number>> {
+  const mapa = new Map<number, number>();
+  const { data, error } = await db.from('locacao_sublocacoes').select('id, status, itens:locacao_sublocacao_itens(produto_id, quantidade)')
+    .eq('ficha_reserva_id', fichaId).in('status', ['CONFIRMADO', 'ENCERRADO']);
+  if (error) {
+    if (/locacao_sublocacoes/.test(error.message)) return mapa; // SQL da sublocação ainda não rodou
+    throw error;
+  }
+  for (const s of (data || []) as any[]) for (const i of s.itens || []) mapa.set(i.produto_id, (mapa.get(i.produto_id) || 0) + n(i.quantidade));
+  return mapa;
+}
+
 export async function verificarDisponibilidade(
   db: Db,
-  args: { empresaId: number; datas: DatasFicha; itens: ItemDemanda[]; ignorarFichaId?: number | null }
+  args: { empresaId: number; datas: DatasFicha; itens: ItemDemanda[]; ignorarFichaId?: number | null; abaterSublocadoDaFicha?: number | null }
 ): Promise<{ linhas: LinhaDisponibilidade[]; temFalta: boolean; demanda: Map<number, Parte[]>; info: Map<number, InfoProduto> }> {
   const demanda = await expandirKits(db, args.itens);
+  // sublocado confirmado da OS: tira das últimas partes de cada produto
+  const abatido = new Map<number, number>();
+  if (args.abaterSublocadoDaFicha) {
+    const sub = await sublocadoPorProduto(db, args.abaterSublocadoDaFicha);
+    for (const [produtoId, qtdSub] of sub) {
+      const partes = demanda.get(produtoId);
+      if (!partes) continue;
+      let resto = qtdSub;
+      for (let k = partes.length - 1; k >= 0 && resto > 0; k--) {
+        const tira = Math.min(resto, partes[k].quantidade);
+        partes[k] = { ...partes[k], quantidade: partes[k].quantidade - tira };
+        resto -= tira;
+      }
+      const restantes = partes.filter(p => p.quantidade > 1e-9);
+      if (restantes.length) demanda.set(produtoId, restantes); else demanda.delete(produtoId);
+      abatido.set(produtoId, qtdSub - resto);
+    }
+  }
   const ids = [...demanda.keys()];
   if (!ids.length) return { linhas: [], temFalta: false, demanda, info: new Map() };
 
@@ -177,6 +213,7 @@ export async function verificarDisponibilidade(
     return {
       produto_id: id, nome: p?.nome || `Produto #${id}`, codigo: p?.codigo || null, controle: p?.controle || 'QUANTIDADE',
       periodo, demanda: dem, capacidade, ocupado, disponivel, falta: Math.max(0, dem - disponivel), viaKits,
+      sublocado: abatido.get(id) || 0,
     };
   }).sort((a, b) => (a.codigo || a.nome).localeCompare(b.codigo || b.nome, 'pt-BR', { numeric: true }));
 
@@ -198,7 +235,7 @@ export async function reservarFicha(db: Db, fichaId: number): Promise<{ ok: bool
   if (eI) throw eI;
 
   const verif = await verificarDisponibilidade(db, {
-    empresaId: ficha.empresa_id, datas: ficha, ignorarFichaId: fichaId,
+    empresaId: ficha.empresa_id, datas: ficha, ignorarFichaId: fichaId, abaterSublocadoDaFicha: fichaId,
     itens: (itens || []).filter(i => i.produto_id).map(i => ({ ficha_item_id: i.id, produto_id: i.produto_id, quantidade: n(i.quantidade) })),
   });
   if (verif.temFalta) return { ok: false, faltas: verif.linhas.filter(l => l.falta > 0) };

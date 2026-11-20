@@ -37,6 +37,12 @@ const modulosLocacoes = [
     cor: 'bg-indigo-50 border-indigo-200 text-indigo-700', hover: 'hover:border-indigo-500'
   },
   {
+    titulo: 'Sublocação',
+    descricao: 'Equipamento de parceiros quando falta no estoque: pedido, entrada e devolução, avaria, pagamento por OP, margem e ranking de parceiros.',
+    icone: '🤝', link: '/admin/locacoes/sublocacoes',
+    cor: 'bg-sky-50 border-sky-200 text-sky-700', hover: 'hover:border-sky-500'
+  },
+  {
     titulo: 'Agenda de Disponibilidade',
     descricao: 'Calendário por equipamento: quanto sobra livre em cada dia, com as reservas do P2S e as daqui, e as faltas em destaque.',
     icone: '📅', link: '/admin/locacoes/agenda',

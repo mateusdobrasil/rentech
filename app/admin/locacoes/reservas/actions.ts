@@ -298,7 +298,7 @@ export async function verificarDisponibilidadeFichaAction(
   if (erroDatas) return { ok: false, erro: erroDatas };
   try {
     const r = await verificarDisponibilidade(supabaseAdmin(), {
-      empresaId: args.empresa_id, datas: limparDatas(args.datas), ignorarFichaId: args.ficha_id || null,
+      empresaId: args.empresa_id, datas: limparDatas(args.datas), ignorarFichaId: args.ficha_id || null, abaterSublocadoDaFicha: args.ficha_id || null,
       itens: args.itens.filter(i => i.produto_id && num(i.quantidade) > 0),
     });
     return { ok: true, info: { linhas: r.linhas, temFalta: r.temFalta } };

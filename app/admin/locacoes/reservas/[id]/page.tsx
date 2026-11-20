@@ -26,6 +26,8 @@ import PainelProposta from './PainelProposta';
 import PainelTitulos from './PainelTitulos';
 import PainelContrato from './PainelContrato';
 import PainelFichaLocacao from './PainelFichaLocacao';
+import PainelSublocacoes from './PainelSublocacoes';
+import FormSublocacao, { type InicialSublocacao } from '../../sublocacoes/FormSublocacao';
 import { calcularLed, resumoLed, type EspecLed } from '../../../../lib/locacao/ledTecnico';
 import { FORMAS_PAGAMENTO, ROTULO_FORMA_PAGAMENTO } from '../../../../lib/locacao/textosPadrao';
 import { rotuloStatusP2s } from '../../../../lib/locacao/statusP2s';
@@ -151,6 +153,9 @@ export default function EditorFichaPage() {
   const [alocacoes, setAlocacoes] = useState<any[]>([]);
   const [tabelas, setTabelas] = useState<{ id: number; nome: string; tipo: string }[]>([]);
   const [disp, setDisp] = useState<{ linhas: LinhaDisponibilidade[]; temFalta: boolean } | null>(null);
+  // sublocação (2026-11-20): "Sublocar o que falta" e o painel da OS
+  const [sublocar, setSublocar] = useState<InicialSublocacao | null>(null);
+  const [versaoSub, setVersaoSub] = useState(0);
   const [verificando, setVerificando] = useState(false);
   const [precificando, setPrecificando] = useState(false);
   const [salvando, setSalvando] = useState(false);
@@ -366,6 +371,21 @@ export default function EditorFichaPage() {
     data_saida: cab.data_saida || null, data_montagem: cab.data_montagem || null, data_inicio: cab.data_inicio, data_fim: cab.data_fim,
     data_desmontagem: cab.data_desmontagem || null, data_retorno: cab.data_retorno || null,
   });
+
+  const podeSublocarOs = !ehNova && !!fichaIdUrl && !doP2s && !!acesso?.podeEditar && ['ORCAMENTO', 'ENVIADO', 'APROVADO', 'RESERVADA', 'EM_LOCACAO'].includes(status);
+  const abrirSublocarFaltas = () => {
+    const faltas = (disp?.linhas || []).filter(l => l.falta > 0);
+    if (!faltas.length || !fichaIdUrl) return;
+    setSublocar({
+      empresa_id: cab.empresa_id, ficha_reserva_id: fichaIdUrl, osRotulo: `${numeroFicha(fichaIdUrl)} — ${cliente?.nome || ''}`,
+      data_retirada: faltas.map(l => l.periodo.inicio).sort()[0], data_devolucao: faltas.map(l => l.periodo.fim).sort().reverse()[0],
+      itens: faltas.map(l => ({ produto_id: l.produto_id, nome: l.nome, codigo: l.codigo, quantidade: String(l.falta).replace('.', ','), valor_unitario: '' })),
+    });
+  };
+  const abrirSublocarAvulsa = () => {
+    if (!fichaIdUrl) return;
+    setSublocar({ empresa_id: cab.empresa_id, ficha_reserva_id: fichaIdUrl, osRotulo: `${numeroFicha(fichaIdUrl)} — ${cliente?.nome || ''}`, data_retirada: cab.data_saida || cab.data_montagem || cab.data_inicio, data_devolucao: cab.data_retorno || cab.data_desmontagem || cab.data_fim, itens: [] });
+  };
 
   const verificar = async () => {
     const demanda = itens.filter(i => ehEquip(i.tipo) && i.produto_id).map(i => ({ produto_id: i.produto_id!, quantidade: lerValor(i.quantidade) || 0 }));
@@ -934,14 +954,20 @@ export default function EditorFichaPage() {
             <div className={`${cardCls} ${disp.temFalta ? 'border-red-200' : 'border-emerald-200'}`}>
               <div className="flex justify-between items-center mb-3">
                 <h2 className={`text-sm font-black uppercase tracking-wider ${disp.temFalta ? 'text-red-600' : 'text-emerald-700'}`}>{disp.temFalta ? '✖ Falta equipamento' : '✔ Tudo disponível'}</h2>
-                <button onClick={() => setDisp(null)} className="text-xs text-gray-400 font-bold">fechar</button>
+                <div className="flex items-center gap-3">
+                  {disp.temFalta && podeSublocarOs && (
+                    <button disabled={alterado} title={alterado ? 'Salve a ficha antes' : ''} onClick={abrirSublocarFaltas}
+                      className="text-[10px] font-black uppercase tracking-wider px-3 py-2 rounded-lg bg-[#0C1D4D] text-white disabled:opacity-40">🤝 Sublocar o que falta</button>
+                  )}
+                  <button onClick={() => setDisp(null)} className="text-xs text-gray-400 font-bold">fechar</button>
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="text-left text-[10px] font-black text-gray-500 uppercase tracking-wider border-b border-[#E2E8F0]">
                       <th className="p-2">Equipamento</th><th className="p-2">Período na agenda</th><th className="p-2 text-right">Precisa</th>
-                      <th className="p-2 text-right">Estoque</th><th className="p-2 text-right">Já reservado</th><th className="p-2 text-right">Livre</th><th className="p-2 text-right">Falta</th>
+                      <th className="p-2 text-right">Estoque</th><th className="p-2 text-right">Já reservado</th><th className="p-2 text-right">Livre</th>{disp.linhas.some(l => (l.sublocado || 0) > 0) && <th className="p-2 text-right">Sublocado</th>}<th className="p-2 text-right">Falta</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -956,6 +982,7 @@ export default function EditorFichaPage() {
                         <td className="p-2 text-right">{mostrarQtd(l.capacidade)}</td>
                         <td className="p-2 text-right">{mostrarQtd(l.ocupado)}</td>
                         <td className="p-2 text-right font-bold">{mostrarQtd(l.disponivel)}</td>
+                        {disp.linhas.some(x => (x.sublocado || 0) > 0) && <td className="p-2 text-right text-blue-700 font-bold">{l.sublocado ? mostrarQtd(l.sublocado) : '—'}</td>}
                         <td className={`p-2 text-right font-black ${l.falta > 0 ? 'text-red-600' : 'text-gray-300'}`}>{l.falta > 0 ? mostrarQtd(l.falta) : '—'}</td>
                       </tr>
                     ))}
@@ -990,6 +1017,18 @@ export default function EditorFichaPage() {
           {!ehNova && fichaIdUrl && !doP2s && (
             <PainelFichaLocacao fichaId={fichaIdUrl} accessToken={accessToken} status={status} alterado={alterado} podeEditar={!!acesso?.podeEditar}
               dataFim={cab.data_fim} onMudou={async () => { const rec = await carregarFichaAction(fichaIdUrl, accessToken); if (rec.ok) aplicarFicha(rec.info); }} />
+          )}
+
+          {/* ---------- sublocação (parceiros) ---------- */}
+          {!ehNova && fichaIdUrl && !doP2s && (
+            <PainelSublocacoes fichaId={fichaIdUrl} accessToken={accessToken} versao={versaoSub} podeSublocar={podeSublocarOs && !alterado} onSublocar={abrirSublocarAvulsa} />
+          )}
+          {sublocar && (
+            <FormSublocacao aberto onClose={() => setSublocar(null)} accessToken={accessToken} inicial={sublocar} titulo="🤝 Sublocar com parceiro"
+              onSalvo={(_, aviso) => {
+                setSublocar(null); setVersaoSub(v => v + 1); setDisp(null);
+                toast(aviso || (status === 'RESERVADA' || status === 'EM_LOCACAO' ? 'Sublocação salva — a reserva da OS foi refeita contando com o parceiro.' : 'Sublocação salva. Confirmada pelo parceiro, é só clicar em Reservar.'), aviso ? 'info' : 'success');
+              }} />
           )}
 
           {/* ---------- faturamento (títulos a receber) ---------- */}

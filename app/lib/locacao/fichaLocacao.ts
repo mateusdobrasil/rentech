@@ -27,7 +27,7 @@
 // painel da OS (ficha de reserva), não na tela da operação.
 //   atraso    → estenderAtrasos (cron) puxa o fim do LOCADO para hoje + retorno
 import type { supabaseAdmin } from '../supabase';
-import { expandirKits, verificarDisponibilidade, reservarItensAdicionais, type LinhaDisponibilidade } from './disponibilidade';
+import { expandirKits, verificarDisponibilidade, reservarItensAdicionais, sublocadoPorProduto, type LinhaDisponibilidade } from './disponibilidade';
 import { periodoAlocacao, daterangeInclusivo, lerDaterange, somarDias, diasInclusivos, hojeISO, dataValida, type DatasFicha } from './datas';
 import { numeroFichaPorId } from './fichaNumero';
 import { registrarAvaria } from './manutencao';
@@ -282,6 +282,8 @@ export async function registrarMovimento(db: Db, fichaLocacaoId: number, a: Args
   const semPecaNaAgenda = new Set<LinhaMovimento>();
   const { data: prodInfo } = await db.from('produtos').select('id, dias_preparo, dias_retorno, valor_indenizacao, custo_reposicao').in('id', [...new Set(saldos.map(s => s.produto_id))]);
   const info = new Map(((prodInfo || []) as any[]).map(p => [p.id, p]));
+  // sublocado (equipamento do parceiro): a saída além da reserva própria não ocupa o estoque próprio
+  const sublocado = a.tipo === 'SAIDA' ? await sublocadoPorProduto(db, reserva.id) : new Map<number, number>();
   for (const l of linhas) {
     const s = porId.get(l.previsto_id);
     if (!s) throw new Error('Item não pertence a esta ficha de locação.');
@@ -345,7 +347,8 @@ export async function registrarMovimento(db: Db, fichaLocacaoId: number, a: Args
       const { error } = await db.rpc('locacao_mover_alocacao', {
         p_ficha_id: reserva.id, p_ficha_item_id: s.ficha_item_id, p_empresa_id: fl.empresa_id, p_produto_id: s.produto_id,
         p_patrimonio_id: l.patrimonio_id ?? null, p_quantidade: q, p_de: a.troca || s.extra ? 'TROCA' : 'RESERVADO', p_para: 'LOCADO',
-        p_fim: null, p_periodo_novo: daterangeInclusivo(a.data < per.fim ? a.data : per.fim, per.fim),
+        p_fim: null,
+        p_periodo_novo: !a.troca && !s.extra && (sublocado.get(s.produto_id) || 0) > 0 ? null : daterangeInclusivo(a.data < per.fim ? a.data : per.fim, per.fim),
       });
       if (error) throw new Error(error.message.includes('patrimonio_sem_conflito') ? 'A peça está reservada para outra ficha nesse período.' : error.message);
     } else if (a.tipo === 'DEVOLUCAO') {

@@ -236,7 +236,21 @@ export async function relatorioEquipamentos(db: Db, f: FiltrosRelatorio) {
     g.locacoes.add(it.ficha_id); g.quantidade += n(it.quantidade); g.diarias += n(it.quantidade) * (n(it.dias) || 1); g.receita += n(it.valor_total);
     prod.set(it.produto_id, g);
   }
-  const porProduto = [...prod.entries()].map(([id, g]) => ({ produto_id: id, produto: g.produto, codigo: g.codigo, categoria: g.categoria, locacoes: g.locacoes.size, quantidade: r2(g.quantidade), diarias: r2(g.diarias), receita: r2(g.receita) }))
+  // sublocação (2026-11-20): custo com parceiros no período (pela data de retirada)
+  const custoSub = new Map<number, number>();
+  let freteSub = 0;
+  {
+    const { data: subs, error: eS } = await db.from('locacao_sublocacoes').select('valor_frete, itens:locacao_sublocacao_itens(produto_id, descricao, valor_total)')
+      .in('empresa_id', f.empresaIds.length ? f.empresaIds : [0]).neq('status', 'CANCELADO').gte('data_retirada', f.de).lte('data_retirada', f.ate).limit(5000);
+    if (!eS) for (const s of (subs || []) as any[]) {
+      freteSub += n(s.valor_frete);
+      for (const i of s.itens || []) {
+        custoSub.set(i.produto_id, (custoSub.get(i.produto_id) || 0) + n(i.valor_total));
+        if (!prod.has(i.produto_id)) prod.set(i.produto_id, { produto: i.descricao, codigo: '', categoria: '—', locacoes: new Set<number>(), quantidade: 0, diarias: 0, receita: 0 });
+      }
+    }
+  }
+  const porProduto = [...prod.entries()].map(([id, g]) => ({ produto_id: id, produto: g.produto, codigo: g.codigo, categoria: g.categoria, locacoes: g.locacoes.size, quantidade: r2(g.quantidade), diarias: r2(g.diarias), receita: r2(g.receita), sublocacao: r2(custoSub.get(id) || 0) }))
     .sort((a, b) => b.receita - a.receita);
   const cat = new Map<string, { categoria: string; produtos: number; locacoes: number; receita: number }>();
   for (const p of porProduto) {
@@ -263,6 +277,7 @@ export async function relatorioEquipamentos(db: Db, f: FiltrosRelatorio) {
       receita: r2(porProduto.reduce((s, p) => s + p.receita, 0)), produtosLocados: porProduto.length,
       unidades: r2(porProduto.reduce((s, p) => s + p.quantidade, 0)), fichas: ids.length, parados: parados.length,
       saidas: saidas.length, devolvidas: saidas.filter(x => x.data_devolucao).length, atrasadas: atrasadas.length,
+      custoSublocacao: r2([...custoSub.values()].reduce((s, v) => s + v, 0) + freteSub),
     },
     porProduto: porProduto.slice(0, 300),
     porCategoria: [...cat.values()].map(c => ({ ...c, receita: r2(c.receita) })).sort((a, b) => b.receita - a.receita),

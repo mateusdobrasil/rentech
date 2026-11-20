@@ -10,6 +10,7 @@ import { useToast } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { obterDadosPagamentoRescisaoAction } from '../../rh/actions/actions-rescisao';
 import { obterDadosPagamentoMultaAction } from '../../operacional/actions/actions-multas';
+import { dadosOpSublocacaoAction } from '../../locacoes/sublocacoes/actions';
 import { listarNaturezasPagamentoParaSelectAction } from '../actions-naturezas';
 import { buscarColaboradoresParaOpAction, type ColaboradorParaOp } from '../../comercial/parceiros/actions';
 
@@ -73,6 +74,12 @@ function NovaOrdemPagamentoForm() {
   const multaIdsParam = parametrosUrl.get('multaIds') || parametrosUrl.get('multaId') || '';
   const multaIds = useMemo(() => multaIdsParam.split(',').map(s => s.trim()).filter(Boolean), [multaIdsParam]);
   const [opMultaBloqueada, setOpMultaBloqueada] = useState<string | null>(null);
+  // Sublocação (2026-11-20): botão "Gerar OP" em /admin/locacoes/sublocacoes/[id]
+  // (?sublocacaoId=) — favorecido = parceiro, itens = equipamentos/frete/avarias,
+  // OS do cliente. Grava op_ordens_pagamento.sublocacao_id; o pagamento volta
+  // para a sublocação (status da OP).
+  const sublocacaoId = parametrosUrl.get('sublocacaoId');
+  const [opSublocacaoBloqueada, setOpSublocacaoBloqueada] = useState<string | null>(null);
 
   // Sessão + permissão da rota, resolvidas pelo hook compartilhado do módulo.
   const { authLoading, acessoNegado, perfil } = useAcessoRota('/admin/op/nova');
@@ -525,6 +532,28 @@ function NovaOrdemPagamentoForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [multaIdsParam, perfil?.accessToken]);
 
+  useEffect(() => {
+    if (!sublocacaoId || !perfil?.accessToken) return;
+    (async () => {
+      const res = await dadosOpSublocacaoAction(Number(sublocacaoId), perfil.accessToken);
+      if (!res.ok) { setOpSublocacaoBloqueada(res.erro || 'Não foi possível carregar a sublocação.'); return; }
+      const d = res.info;
+      if (d.natureza) setNatureza(d.natureza);
+      if (d.empresaId) setEmpresaId(d.empresaId);
+      setEmpresaRecebedora(d.favorecido);
+      if (d.documento) { setCnpjCpf(d.documento); aplicarMascaraCpfCnpj(d.documento); }
+      setEndereco(d.endereco || '');
+      if (d.telefone) aplicarMascaraCelularSignatario(d.telefone);
+      if (d.os) { setOsNum(d.os.numero); setOsCliente(String(d.os.cliente || '').toUpperCase()); setOsEvento(String(d.os.evento || '').toUpperCase()); setOsPeriodo(d.os.periodo); }
+      setObs(d.observacao);
+      const base = Date.now();
+      setItens((d.itens as { descricao: string; qtd: number; valor: number }[]).map((it, i) => ({ id: base + i, descricao: it.descricao, qtd: it.qtd, valorUnitario: it.valor })));
+      setDataVencimento(d.vencimento || new Date().toISOString().slice(0, 10));
+      toast(`Sublocação carregada — ${d.natureza ? '' : 'escolha a natureza de pagamento, '}confira a forma de pagamento (PIX/transferência/boleto), o signatário e anexe a NF ou recibo do parceiro.`, 'info');
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sublocacaoId, perfil?.accessToken]);
+
   const funcionariosFiltrados = useMemo(() => {
     if (!termoBuscaFunc) return listaFuncionarios;
     const termo = termoBuscaFunc.toLowerCase();
@@ -696,6 +725,7 @@ function NovaOrdemPagamentoForm() {
       file_urls: urlsAnexos,
       rescisao_id: rescisaoId ? Number(rescisaoId) : null,
       ...(multaIds.length ? { multa_debito_ids: multaIds } : {}),
+      ...(sublocacaoId ? { sublocacao_id: Number(sublocacaoId) } : {}),
     };
 
     const resposta = await criarOP(payload, perfil?.accessToken || '');
@@ -741,6 +771,21 @@ function NovaOrdemPagamentoForm() {
           <p className="text-sm text-gray-500 mb-6">{opRescisaoBloqueada}</p>
           <button onClick={() => router.push(`/admin/rh/rescisao/${rescisaoId}`)} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
             ⬅ Voltar para a Rescisão
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (opSublocacaoBloqueada) {
+    return (
+      <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-amber-200">
+          <div className="text-5xl mb-4">🔒</div>
+          <h2 className="text-xl font-black text-amber-600 uppercase tracking-wider mb-2">Não dá pra gerar OP</h2>
+          <p className="text-sm text-gray-500 mb-6">{opSublocacaoBloqueada}</p>
+          <button onClick={() => router.push(`/admin/locacoes/sublocacoes/${sublocacaoId}`)} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full tracking-wider hover:bg-[#284B8C] transition-colors">
+            ⬅ Voltar para a sublocação
           </button>
         </div>
       </div>

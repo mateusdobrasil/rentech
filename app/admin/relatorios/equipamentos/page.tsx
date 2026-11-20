@@ -9,7 +9,7 @@ import {
 
 // Equipamentos e Operação (2026-11-17): itens das fichas confirmadas (pela
 // data do evento) + fichas de locação do P2S (saídas, devoluções, atrasos).
-type Prod = { produto: string; codigo: string; categoria: string; locacoes: number; quantidade: number; diarias: number; receita: number };
+type Prod = { produto: string; codigo: string; categoria: string; locacoes: number; quantidade: number; diarias: number; receita: number; sublocacao: number };
 type Cat = { categoria: string; produtos: number; locacoes: number; receita: number };
 type Parado = { produto: string; codigo: string; categoria: string };
 type Atraso = { ficha: string; cliente: string; saida: string; retornoPrevisto: string; diasAtraso: number };
@@ -18,6 +18,7 @@ const colProd: Coluna<Prod>[] = [
   { chave: 'produto', titulo: 'Equipamento', peso: 3 }, { chave: 'codigo', titulo: 'Código' }, { chave: 'categoria', titulo: 'Categoria', peso: 1.5 },
   { chave: 'locacoes', titulo: 'Locações', direita: true, formato: inteiro }, { chave: 'quantidade', titulo: 'Unidades', direita: true, formato: decimal },
   { chave: 'diarias', titulo: 'Diárias', direita: true, formato: decimal }, { chave: 'receita', titulo: 'Receita', direita: true, formato: moeda, peso: 1.4 },
+  { chave: 'sublocacao', titulo: 'Custo sublocação', direita: true, formato: moeda, peso: 1.3 },
 ];
 const colCat: Coluna<Cat>[] = [
   { chave: 'categoria', titulo: 'Categoria', peso: 2 }, { chave: 'produtos', titulo: 'Equipamentos', direita: true, formato: inteiro },
@@ -40,6 +41,7 @@ export default function RelatorioEquipamentosPage() {
     { rotulo: 'Sem nenhuma locação', valor: inteiro(d.kpis.parados), detalhe: 'habilitados para locação' },
     { rotulo: 'Saídas (fichas de locação)', valor: inteiro(d.kpis.saidas), detalhe: `${inteiro(d.kpis.devolvidas)} já devolvidas` },
     { rotulo: 'Devoluções atrasadas', valor: inteiro(d.kpis.atrasadas), tom: d.kpis.atrasadas ? 'ruim' : 'bom', detalhe: 'passou do retorno previsto' },
+    { rotulo: 'Custo de sublocação', valor: moeda(d.kpis.custoSublocacao || 0), detalhe: 'pago a parceiros (com frete)' },
   ] : [];
   const montar = () => d && ({
     titulo: 'Equipamentos e Operação', subtitulo: r.subtitulo(empresas),

@@ -76,6 +76,9 @@ export interface NovaOPData {
   // pagar várias multas. Só vai no payload quando preenchido — a coluna vem
   // de .sql/Pendentes/operacional_multas_melhorias.sql.
   multa_debito_ids?: string[] | null;
+  // OP de pagamento ao parceiro de uma sublocação (?sublocacaoId= na tela) —
+  // coluna de .sql/Pendentes/locacao_sublocacao.sql. Só vai no payload quando preenchido.
+  sublocacao_id?: number | null;
 }
 
 // ============================================================================
@@ -212,6 +215,16 @@ export async function criarOP(data: NovaOPData, accessToken: string) {
     data.multa_debito_ids = ids;
   } else {
     delete data.multa_debito_ids;
+  }
+
+  // Sublocação: tem de existir, ser de empresa visível e estar confirmada.
+  if (data.sublocacao_id) {
+    const { data: sub } = await supabaseAdmin.from('locacao_sublocacoes').select('id, empresa_id, status').eq('id', data.sublocacao_id).maybeSingle();
+    if (!sub) return { success: false, message: 'Sublocação de origem não encontrada.' };
+    if (!empresaPermitida(empresasPermitidas, sub.empresa_id)) return { success: false, message: 'Você não tem acesso à empresa desta sublocação.' };
+    if (!['CONFIRMADO', 'ENCERRADO'].includes(sub.status)) return { success: false, message: 'A sublocação precisa estar confirmada para gerar OP.' };
+  } else {
+    delete data.sublocacao_id;
   }
 
   try {

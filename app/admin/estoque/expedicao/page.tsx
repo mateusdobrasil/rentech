@@ -8,6 +8,7 @@ import { finalizarFichasLocacaoPorEventoAction } from './actions';
 import { itensFichasDoEventoAction, sincronizarFichaLocacaoDoChecklistAction } from './actions-fichas';
 import ConferenciaQR from './ConferenciaQR';
 import PainelOsSeparar, { type OsSeparar } from './PainelOsSeparar';
+import PainelSublocacaoExpedicao from './PainelSublocacaoExpedicao';
 import ModalConferenciaMontagem from './ModalConferenciaMontagem';
 import { sincronizarFichasReservaP2sAction } from '../../locacoes/fichas-reserva/actions';
 import { sincronizarEventosFeirasP2sAction } from '../../comercial/eventos-feiras/actions';
@@ -1886,6 +1887,7 @@ export default function ChecklistCargaRetorno() {
           {/* VIEW: LISTA */}
           {/* ==================================================================== */}
           {view === 'lista' && accessToken && <PainelOsSeparar accessToken={accessToken} onCriarChecklist={criarChecklistDaOs} />}
+          {view === 'lista' && accessToken && <PainelSublocacaoExpedicao accessToken={accessToken} />}
 
           {view === 'lista' && (
             <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">

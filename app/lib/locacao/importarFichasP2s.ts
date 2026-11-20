@@ -11,12 +11,14 @@
 //   espelho daqui (parceiros, produtos, eventos_feiras, colaboradores) pelo
 //   p2s_oid — nada de uma chamada por objeto.
 // - Janela: fichas com DataFinal a partir de hoje − 30 dias.
-// - Status (rótulos da tela antiga de fichas, mesma ordem dos códigos):
-//     EP Em preparação → ORCAMENTO      EN Enviado → ENVIADO
+// - Status (lista oficial da P2S, 2026-11-19 — rótulos em lib/locacao/statusP2s.ts):
+//     EP Em preparação / DR Disponível p/ revisão / PR Pronto p/ envio /
+//     SB Stand by → ORCAMENTO (ainda não foi ao cliente ou está parado)
+//     EN Enviado → ENVIADO
 //     A  Aprovado, aguardando saída → RESERVADA (ocupa agenda)
 //     X  Em locação → EM_LOCACAO (ocupa agenda)
 //     E  Finalizado → FINALIZADA        RE Reprovado → PERDIDO
-//     CA Cancelado → CANCELADA          outros → ORCAMENTO (código cru fica em p2s_status)
+//     CA Cancelado → CANCELADA          código cru sempre fica em p2s_status
 // - Cada item do P2S tem as próprias datas; a alocação usa as datas do item
 //   ± dias de preparo/retorno do produto.
 // - Ocupa só o que está em aberto em cada item (não saiu + não voltou);
@@ -33,13 +35,20 @@ import { sincronizarParceirosPorOidsCore } from '../../admin/comercial/parceiros
 type Db = ReturnType<typeof supabaseAdmin>;
 
 const STATUS_P2S: Record<string, string> = {
-  EP: 'ORCAMENTO', EN: 'ENVIADO', A: 'RESERVADA', X: 'EM_LOCACAO', E: 'FINALIZADA', RE: 'PERDIDO', CA: 'CANCELADA',
+  EP: 'ORCAMENTO', DR: 'ORCAMENTO', PR: 'ORCAMENTO', SB: 'ORCAMENTO', EN: 'ENVIADO', A: 'RESERVADA', X: 'EM_LOCACAO', E: 'FINALIZADA', RE: 'PERDIDO', CA: 'CANCELADA',
 };
 const OCUPA_AGENDA: Record<string, 'RESERVADO' | 'LOCADO'> = { A: 'RESERVADO', X: 'LOCADO' };
 
 const ref = (v: unknown) => { const s = v ? String(v) : ''; return s && s !== 'null' ? s : null; };
 const n = (v: unknown) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
 const arred = (v: number) => Math.round(v * 100) / 100;
+// Colunas de valor são numeric(12,2) e quantidade numeric(12,3). O P2S tem
+// erro de digitação no histórico (ficha 003568, 04/2018: R$ 456 bilhões) que
+// estourava o campo e travava o mês inteiro. Valor fora do limite vira 0 e o
+// original fica anotado nas observações da ficha.
+const LIMITE_VALOR = 1e10;
+const LIMITE_QTD = 1e9;
+const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 function dataISO(serial: unknown): string | null {
   const x = Number(serial);
   if (!x) return null;
@@ -151,9 +160,21 @@ async function importarSemTrava(db: Db, opcoes: OpcoesImportacao): Promise<Resul
     if (!fim || fim < inicio) fim = inicio;
 
     const vend = vendedores.get(ref(f.VendedorRep) || '');
-    const equip = arred(n(f.ValorFinalItens));
-    const serv = arred(n(f.ValorTotalExtrasOrcados));
-    const total = arred(n(f.ValorFinal));
+    const invalidos: string[] = [];
+    const valorOk = (v: unknown, rotulo: string) => {
+      const x = arred(n(v));
+      if (Math.abs(x) < LIMITE_VALOR) return x;
+      invalidos.push(`${rotulo} ${brl(x)}`);
+      return 0;
+    };
+    const equip = valorOk(f.ValorFinalItens, 'equipamentos');
+    const serv = valorOk(f.ValorTotalExtrasOrcados, 'serviços');
+    const total = valorOk(f.ValorFinal, 'total');
+    const itemForaDoLimite = (Array.isArray(f.Itens) ? f.Itens : []).some((it: any) =>
+      [it.ValorTotal, it.ValorFinal, it.ValorTotalPeriodoPorUnid].some(v => Math.abs(n(v)) >= LIMITE_VALOR) || Math.abs(n(it.Quantidade)) >= LIMITE_QTD);
+    if (itemForaDoLimite && !invalidos.length) invalidos.push('item com valor/quantidade fora do limite');
+    const obsP2s = String(f.Observacoes || '').trim();
+    const avisoInvalido = invalidos.length ? `⚠ Valor inválido no P2S, gravado como 0 (${invalidos.join('; ')}).` : '';
     const emissao = dataISO(f.DataEmissao);
     const endereco = (f.EnderecoEntrega && typeof f.EnderecoEntrega === 'object') ? String((f.EnderecoEntrega as any).EnderecoCompleto || '').trim() : '';
     const statusP2s = String(f.Status || '');
@@ -168,7 +189,7 @@ async function importarSemTrava(db: Db, opcoes: OpcoesImportacao): Promise<Resul
       local_entrega: endereco || null,
       data_inicio: inicio, data_fim: fim, dias_cobrados: diasInclusivos(inicio, fim),
       validade_orcamento: emissao && n(f.NumDiasValidade) ? somarDias(emissao, n(f.NumDiasValidade)) : null,
-      observacoes: String(f.Observacoes || '').trim() || null,
+      observacoes: [obsP2s, avisoInvalido].filter(Boolean).join('\n') || null,
       valor_equipamentos: equip, valor_servicos: serv, desconto_valor: Math.max(0, arred(equip + serv - total)), valor_total: total,
       aprovado_em: n(f.DataAprovacao) ? `${dataISO(f.DataAprovacao)}T12:00:00Z` : null,
       data_emissao: emissao,
@@ -218,19 +239,20 @@ async function importarSemTrava(db: Db, opcoes: OpcoesImportacao): Promise<Resul
       if (item && q > 0) sublocado.set(item, (sublocado.get(item) || 0) + q);
     }
     let ordem = 0;
+    const noLimite = (v: unknown) => { const x = arred(n(v)); return Math.abs(x) < LIMITE_VALOR ? x : 0; };
     for (const it of itensDe(f).sort((a, b) => n(a.OrdemFicha) - n(b.OrdemFicha))) {
       const qtd = n(it.QuantidadePositiva) || Math.abs(n(it.Quantidade));
-      if (!(qtd > 0)) continue;
+      if (!(qtd > 0) || qtd >= LIMITE_QTD) continue;
       const prod = produtos.get(ref(it.ItemEstoque) || '');
       if (!prod) res.produtosNaoEncontrados++;
       const obs = String(it.Observacoes || '').trim();
-      const valorTotal = arred(n(it.ValorTotal));
-      const valorFinal = arred(n(it.ValorFinal));
+      const valorTotal = noLimite(it.ValorTotal);
+      const valorFinal = noLimite(it.ValorFinal);
       itensNovos.push({
         ficha_id: fichaId, ordem, tipo: prod ? 'EQUIPAMENTO' : 'OUTRO', produto_id: prod?.id || null,
         descricao: [prod?.nome_item || `Item do P2S ${ref(it.ItemEstoque) || ''}`.trim(), obs].filter(Boolean).join(' — '),
         quantidade: qtd, dias: n(it.NumDiasPeriodo) || n(it.NumDiasFaturamento) || null,
-        valor_unitario: arred(n(it.ValorTotalPeriodoPorUnid) || (qtd ? valorTotal / qtd : 0)),
+        valor_unitario: noLimite(n(it.ValorTotalPeriodoPorUnid) || (qtd ? valorTotal / qtd : 0)),
         desconto_valor: Math.max(0, arred(valorTotal - valorFinal)), valor_total: valorFinal,
         observacoes: null, preco_manual: false,
       });
@@ -257,10 +279,10 @@ async function importarSemTrava(db: Db, opcoes: OpcoesImportacao): Promise<Resul
     for (const ex of extrasDe(f)) {
       const descricao = String(ex.Descricao || '').trim();
       if (!descricao) continue;
-      const qtd = n(ex.Quantidade) > 0 ? n(ex.Quantidade) : 1;
+      const qtd = n(ex.Quantidade) > 0 && n(ex.Quantidade) < LIMITE_QTD ? n(ex.Quantidade) : 1;
       itensNovos.push({
         ficha_id: fichaId, ordem: ordem++, tipo: 'SERVICO', produto_id: null, descricao, quantidade: qtd, dias: null,
-        valor_unitario: arred(n(ex.ValorUnitario)), desconto_valor: 0, valor_total: arred(n(ex.ValorFinal)), preco_manual: false,
+        valor_unitario: noLimite(ex.ValorUnitario), desconto_valor: 0, valor_total: noLimite(ex.ValorFinal), preco_manual: false,
       });
     }
   }

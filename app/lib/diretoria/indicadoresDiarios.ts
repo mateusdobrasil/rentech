@@ -16,6 +16,7 @@
 import { supabaseAdmin } from '../supabase';
 import { buscarTodasPaginas } from '../paginacao';
 import { progressoMetasDoMes } from './metas';
+import { rotuloStatusP2s } from '../locacao/statusP2s';
 
 type DB = ReturnType<typeof supabaseAdmin>;
 export type ValorQtd = { valor: number; qtd: number };
@@ -252,9 +253,9 @@ async function blocoComercial(db: DB, E: number, D: string, T: string, falhou: F
     db.from('fichas_reserva').select(campos + ', justificativa_suspensao').eq('empresa_id', E).eq('faturamento_suspenso', true).gte('data_final', somarDias(D, -90)),
   ]);
   falhou('fichas de reserva', emitidasOntem.error || iniciando.error);
-  const ficha = (l: any) => ({ numero: l.numero, cliente: l.cliente, evento: l.evento_feira, valor: arred(num(l.valor_final)), inicio: l.data_inicial, fim: l.data_final, status: l.status, vendedor: l.vendedor });
+  const ficha = (l: any) => ({ numero: l.numero, cliente: l.cliente, evento: l.evento_feira, valor: arred(num(l.valor_final)), inicio: l.data_inicial, fim: l.data_final, status: rotuloStatusP2s(l.status), vendedor: l.vendedor });
   const semCanceladas = (linhas: any[]) => linhas.filter(l => l.status !== 'CA');
-  const porStatus = (linhas: any[]) => linhas.reduce((m: Record<string, number>, l) => { m[l.status || '?'] = (m[l.status || '?'] || 0) + 1; return m; }, {});
+  const porStatus = (linhas: any[]) => linhas.reduce((m: Record<string, number>, l) => { const s = rotuloStatusP2s(l.status); m[s] = (m[s] || 0) + 1; return m; }, {});
 
   return {
     fichas_emitidas_ontem: { ...vq(emitidasOntem.data || [], l => num(l.valor_final)), lista: maiores((emitidasOntem.data || []) as any[], l => num(l.valor_final), ficha, 10) },

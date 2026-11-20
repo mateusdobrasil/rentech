@@ -11,6 +11,7 @@ import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import UltimaSincronizacaoInfo from '../../../components/ui/UltimaSincronizacaoInfo';
 import type { UltimaSincronizacao } from '../../../lib/syncLog';
+import { STATUS_RESERVA_P2S, STATUS_P2S_ENCERRADOS, codigoStatusP2s, codigoFaturamentoP2s, rotuloStatusP2s } from '../../../lib/locacao/statusP2s';
 
 // ============================================================================
 // TIPOS
@@ -297,6 +298,10 @@ function processarLinhas(linhas: string[][]): { processadas: LinhaProcessada[]; 
       }
     });
 
+    // a planilha traz o rótulo ("Em Locação"); a API e o banco usam o código ("X")
+    if (dados.status) dados.status = codigoStatusP2s(dados.status) || dados.status;
+    if (dados.status_faturamento) dados.status_faturamento = codigoFaturamentoP2s(dados.status_faturamento);
+
     const anoRef = (dados.data_inicial || dados.data_final || '')?.slice(0, 4) || null;
     dados.data_entrega_agenda = extrairDataEntregaAgenda(dados.data_entrega || '', anoRef);
 
@@ -324,20 +329,15 @@ interface FichaGrid {
   vendedor: string | null;
 }
 
-const STATUS_DISPONIVEIS = [
-  'Enviado - Aguardando Retorno',
-  'Em Preparação',
-  'Aprovado - Aguardando Saída',
-  'Em Locação',
-  'Finalizado / Devolvido',
-  'Reprovado',
-  'Cancelado',
-];
+// Códigos oficiais da P2S (lib/locacao/statusP2s.ts) — o banco guarda o código.
+const STATUS_DISPONIVEIS = Object.entries(STATUS_RESERVA_P2S).map(([codigo, rotulo]) => ({ codigo, rotulo }));
 
 const TAMANHO_PAGINA = 50;
 
-// Status considerados "encerrados" — fichas que não precisam mais ficar na base operacional
-const STATUS_PARA_LIMPAR = ['Reprovado', 'Finalizado / Devolvido', 'Cancelado'];
+// Status considerados "encerrados" — fichas que não precisam mais ficar na base
+// operacional. Inclui os rótulos antigos de linhas importadas por planilha antes
+// da conversão para código.
+const STATUS_PARA_LIMPAR = [...STATUS_P2S_ENCERRADOS, ...STATUS_P2S_ENCERRADOS.map(c => STATUS_RESERVA_P2S[c])];
 
 const formatarDataBR = (iso: string | null): string => {
   if (!iso) return '—';
@@ -409,7 +409,8 @@ export default function ImportadorFichasReserva() {
         .order('numero', { ascending: false })
         .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
 
-      if (filtroStatus) query = query.eq('status', filtroStatus);
+      // código + rótulo antigo (linhas vindas da planilha antes da conversão)
+      if (filtroStatus) query = query.in('status', [filtroStatus, STATUS_RESERVA_P2S[filtroStatus] || filtroStatus]);
       if (filtroTexto.trim()) {
         const termo = `%${filtroTexto.trim()}%`;
         query = query.or(`numero.ilike.${termo},cliente.ilike.${termo},evento_feira.ilike.${termo}`);
@@ -682,7 +683,7 @@ export default function ImportadorFichasReserva() {
                         <td className="p-2 font-bold">{l.dados.numero || '—'}</td>
                         <td className="p-2">{l.dados.cliente || '—'}</td>
                         <td className="p-2">{l.dados.evento_feira || '—'}</td>
-                        <td className="p-2">{l.dados.status || '—'}</td>
+                        <td className="p-2">{rotuloStatusP2s(l.dados.status)}</td>
                         <td className="p-2">{l.dados.data_inicial || '—'}</td>
                         <td className="p-2">{l.dados.data_final || '—'}</td>
                         <td className="p-2">{l.dados.valor_final != null ? l.dados.valor_final.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—'}</td>
@@ -737,7 +738,7 @@ export default function ImportadorFichasReserva() {
                 className="border border-[#E2E8F0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#336699]"
               >
                 <option value="">Todos os status</option>
-                {STATUS_DISPONIVEIS.map(s => <option key={s} value={s}>{s}</option>)}
+                {STATUS_DISPONIVEIS.map(s => <option key={s.codigo} value={s.codigo}>{s.rotulo}</option>)}
               </select>
             </div>
 
@@ -778,7 +779,7 @@ export default function ImportadorFichasReserva() {
                         <td className="p-2 font-bold">{f.numero}</td>
                         <td className="p-2">{f.cliente}</td>
                         <td className="p-2">{f.evento_feira || '—'}</td>
-                        <td className="p-2">{f.status}</td>
+                        <td className="p-2">{rotuloStatusP2s(f.status)}</td>
                         <td className="p-2">{formatarDataBR(f.data_inicial)}</td>
                         <td className="p-2">{formatarDataBR(f.data_final)}</td>
                         <td className="p-2">{formatarDataBR(f.data_entrega_agenda)}</td>
@@ -840,7 +841,7 @@ export default function ImportadorFichasReserva() {
                     Esta ação vai <strong>excluir permanentemente</strong> do banco de dados todas as fichas com status:
                   </p>
                   <ul className="text-xs font-bold text-[#64748B] uppercase mb-4 space-y-1">
-                    {STATUS_PARA_LIMPAR.map(s => <li key={s}>• {s}</li>)}
+                    {STATUS_P2S_ENCERRADOS.map(s => <li key={s}>• {STATUS_RESERVA_P2S[s]}</li>)}
                   </ul>
                   <p className="text-sm font-black text-red-600">
                     {modalLimpar.total} ficha(s) serão excluída(s).

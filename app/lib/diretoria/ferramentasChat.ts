@@ -19,6 +19,7 @@ import { progressoMetasDoMes, metasDoAno } from './metas';
 import { projetarCaixa } from './caixa';
 import { somarKm } from './km';
 import { calcularIndicadoresPeriodo, periodosMensal, periodosAnual } from './indicadoresPeriodo';
+import { rotuloStatusP2s, rotuloFaturamentoP2s } from '../locacao/statusP2s';
 
 type DB = ReturnType<typeof supabaseAdmin>;
 
@@ -187,7 +188,7 @@ const FERRAMENTAS = [
   }),
   ferramenta({
     nome: 'fichas_de_locacao',
-    descricao: 'Fichas de reserva de locação (P2S). Filtre por cliente, evento, emissão ou período do evento (fichas que acontecem dentro de de/ate). Status são códigos crus do P2S; canceladas (CA) ficam de fora salvo se pedir status CA. Devolve total, por cliente, por evento e as linhas.',
+    descricao: 'Fichas de reserva de locação (P2S). Filtre por cliente, evento, emissão ou período do evento (fichas que acontecem dentro de de/ate). Filtro de status pelo código do P2S: EP em preparação, DR disponível para revisão, PR pronto para envio, EN enviado/aguardando retorno, SB stand by, A aprovado/aguardando saída, X em locação, E finalizado/devolvido, RE reprovado, CA cancelado. Canceladas (CA) ficam de fora salvo se pedir status CA. As linhas já trazem status e faturamento por extenso. Devolve total, por cliente, por evento e as linhas.',
     schema: z.strictObject({
       empresa_id: EMPRESA,
       cliente: TEXTO('do cliente'),
@@ -222,7 +223,7 @@ const FERRAMENTAS = [
         por_vendedor: agrupar(data, l => l.vendedor, valor, 10),
         ...limitar(data.map(l => ({
           numero: l.numero, cliente: l.cliente, evento: l.evento_feira, valor: arred(valor(l)), emissao: l.data_emissao,
-          inicio: l.data_inicial, fim: l.data_final, status: l.status, vendedor: l.vendedor, faturamento: l.status_faturamento, faturamento_suspenso: l.faturamento_suspenso,
+          inicio: l.data_inicial, fim: l.data_final, status: rotuloStatusP2s(l.status), vendedor: l.vendedor, faturamento: rotuloFaturamentoP2s(l.status_faturamento), faturamento_suspenso: l.faturamento_suspenso,
         })), e.limite),
       };
     },

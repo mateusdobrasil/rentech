@@ -13,6 +13,7 @@ import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 import { formatarMoeda, formatarDataBR } from '../../../lib/formatadores';
 import { STATUS_FICHA, numeroFicha } from './statusFicha';
 import { hojeISO } from '../../../lib/locacao/datas';
+import { rotuloStatusP2s } from '../../../lib/locacao/statusP2s';
 
 // Orçamentos e Reservas — lista das Fichas de Reserva próprias (2026-11-16).
 
@@ -233,6 +234,7 @@ export default function ReservasPage() {
                           <td className="p-2 whitespace-nowrap">{formatarDataBR(f.data_inicio)} a {formatarDataBR(f.data_fim)}</td>
                           <td className="p-2 whitespace-nowrap">
                             <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${STATUS_FICHA[f.status]?.cls}`}>{STATUS_FICHA[f.status]?.rotulo || f.status}</span>
+                            {f.origem === 'P2S' && f.p2s_status && ['DR', 'PR', 'SB'].includes(f.p2s_status) && <span className="block text-[9px] text-orange-700 font-bold mt-0.5">P2S: {rotuloStatusP2s(f.p2s_status)}</span>}
                             {vencido && <span className="block text-[9px] text-amber-600 font-bold mt-0.5">validade vencida</span>}
                             {f.desconto_pendente && <span className="block text-[9px] text-amber-700 font-bold mt-0.5">⏳ desconto a aprovar</span>}
                           </td>

@@ -15,11 +15,10 @@
 //   classe nesta instância (só existem CampoAdicional7-12 e
 //   CampoAdicionalSel1/2, que só guardam "Sim"/vazio). Por decisão do
 //   usuário, ficam null na sincronização via API até acharmos a origem real.
-// - Status vem em CÓDIGOS CURTOS (EN, EP, RE, CA, A, E, X, SB), não nos
-//   rótulos em português que a tela usa (STATUS_DISPONIVEIS em page.tsx).
-//   Por decisão do usuário, o código cru é gravado sem tradução por ora —
-//   ou seja, o filtro de status da tela (baseado nos rótulos) não vai casar
-//   com linhas vindas da API até esse mapeamento ser confirmado com a P2S.
+// - Status e StatusUltimoFaturamento vêm em CÓDIGOS CURTOS e são gravados
+//   assim (o Diretor/IA filtra por 'CA' etc.). Lista oficial confirmada pela
+//   P2S em 2026-11-19 em lib/locacao/statusP2s.ts — a tela traduz; o import
+//   por planilha converte o rótulo de volta para o código.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { consultarObjetos, buscarObjeto, criterio, p2sParaData, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
 import { obterCursorIncremental, registrarSincronizacao, calcularProximoCursor, cursorParaSerialP2s } from '../../../lib/syncLog';

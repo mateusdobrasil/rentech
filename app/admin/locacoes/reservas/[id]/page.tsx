@@ -27,6 +27,7 @@ import PainelTitulos from './PainelTitulos';
 import PainelContrato from './PainelContrato';
 import { calcularLed, resumoLed, type EspecLed } from '../../../../lib/locacao/ledTecnico';
 import { FORMAS_PAGAMENTO, ROTULO_FORMA_PAGAMENTO } from '../../../../lib/locacao/textosPadrao';
+import { rotuloStatusP2s } from '../../../../lib/locacao/statusP2s';
 
 // Editor da Ficha de Reserva própria (orçamento → reserva), 2026-11-16.
 // /admin/locacoes/reservas/nova cria; /admin/locacoes/reservas/<id> edita.
@@ -700,7 +701,7 @@ export default function EditorFichaPage() {
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <h1 className="text-2xl font-black text-[#0C1D4D] uppercase tracking-tight">{ehNova ? 'Novo orçamento' : doP2s ? `P2S ${fichaInfo.p2s_numero}` : numeroFicha(fichaIdUrl!)}</h1>
-                  {doP2s && <span className="text-[10px] font-black px-2.5 py-1 rounded-full uppercase bg-orange-100 text-orange-700">importada do P2S · {fichaInfo.p2s_status}</span>}
+                  {doP2s && <span className="text-[10px] font-black px-2.5 py-1 rounded-full uppercase bg-orange-100 text-orange-700">importada do P2S · {rotuloStatusP2s(fichaInfo.p2s_status)}</span>}
                   <span className={`text-[10px] font-black px-2.5 py-1 rounded-full uppercase ${STATUS_FICHA[status]?.cls}`}>{STATUS_FICHA[status]?.rotulo}</span>
                   {alterado && <span className="text-[10px] font-black px-2.5 py-1 rounded-full uppercase bg-amber-100 text-amber-700">não salvo</span>}
                 </div>

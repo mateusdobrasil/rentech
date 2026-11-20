@@ -9,6 +9,7 @@ import { hojeISO, somarDias, type FonteRecebimentos, type ValorQtd } from './ind
 import { progressoMetasDoMes } from './metas';
 import { projetarCaixa, resumoCaixa } from './caixa';
 import { somarKm } from './km';
+import { rotuloStatusP2s } from '../locacao/statusP2s';
 
 type DB = ReturnType<typeof supabaseAdmin>;
 
@@ -148,7 +149,7 @@ export async function calcularIndicadoresSemanais(db: DB, empresa: { id: number;
     fichas_emitidas_por_semana: serieFichas,
     fichas_media_4_semanas_anteriores: mediaAnteriores(serieFichas),
     variacao_pct_fichas_valor_vs_media: variacao(serieFichas[0].valor, mediaAnteriores(serieFichas).valor),
-    maiores_fichas_semana: fichasSemana.sort((a, b) => num(b.valor_final) - num(a.valor_final)).slice(0, 5).map(l => ({ numero: l.numero, cliente: l.cliente, evento: l.evento_feira, valor: arred(num(l.valor_final)), status: l.status })),
+    maiores_fichas_semana: fichasSemana.sort((a, b) => num(b.valor_final) - num(a.valor_final)).slice(0, 5).map(l => ({ numero: l.numero, cliente: l.cliente, evento: l.evento_feira, valor: arred(num(l.valor_final)), status: rotuloStatusP2s(l.status) })),
     locacoes_iniciando_proxima_semana: {
       qtd: (fichasProx.data || []).length,
       valor: arred(((fichasProx.data || []) as any[]).reduce((s, l) => s + num(l.valor_final), 0)),

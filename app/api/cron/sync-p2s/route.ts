@@ -10,6 +10,8 @@ import { sincronizarFichasReservaCore } from '../../../admin/locacoes/fichas-res
 import { importarFichasP2sCore } from '../../../lib/locacao/importarFichasP2s';
 import { estenderAtrasos } from '../../../lib/locacao/fichaLocacao';
 import { importarPlanoContasP2s } from '../../../lib/financeiro/planoContas';
+import { sincronizarMovimentosP2s } from '../../../lib/financeiro/caixa';
+import { gerarRecorrencias, sincronizarOpsTitulos } from '../../../lib/financeiro/pagar';
 import { sincronizarEventosFeirasCore } from '../../../admin/comercial/eventos-feiras/eventosCore';
 import { sincronizarContasPagarCore } from '../../../admin/financeiro/contas-pagar/contasPagarCore';
 import { sincronizarContasReceberCore } from '../../../admin/financeiro/contas-receber/contasReceberCore';
@@ -67,6 +69,11 @@ export async function GET(request: Request) {
     { nome: 'locacao_atrasos', fn: () => estenderAtrasos(db) },
     // Plano de contas (centros/sub-centros) → naturezas da OP (2026-11-20)
     { nome: 'plano_contas', fn: () => importarPlanoContasP2s(db) },
+    // Caixa e Bancos: contas pagas/recebidas do P2S → movimentos (depois de contas a pagar/receber)
+    { nome: 'caixa_movimentos', fn: () => sincronizarMovimentosP2s(db) },
+    // Contas a pagar próprio: vencimentos das recorrentes (45 dias) e títulos das OPs
+    { nome: 'pagar_recorrencias', fn: () => gerarRecorrencias(db) },
+    { nome: 'pagar_ops', fn: () => sincronizarOpsTitulos(db) },
   ];
 
   const resultados: Record<string, any> = {};

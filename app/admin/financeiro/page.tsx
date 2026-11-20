@@ -66,6 +66,30 @@ const modulosFinanceiro = [
     descricao: 'Títulos das fichas de reserva (parcelas), das avarias cobradas e avulsos — baixa, vencidos e recebido no mês. Ensaio enquanto o P2S for oficial.',
     icone: '💵', link: '/admin/financeiro/titulos-receber',
     cor: 'bg-emerald-50 border-emerald-200 text-emerald-700', hover: 'hover:border-emerald-500'
+  },
+  {
+    titulo: 'Caixa e Bancos',
+    descricao: 'Contas financeiras com saldo do dia, extrato, transferências e lançamentos avulsos. Na transição, os pagamentos e recebimentos do P2S entram sozinhos.',
+    icone: '🏦', link: '/admin/financeiro/caixa',
+    cor: 'bg-green-50 border-green-200 text-green-700', hover: 'hover:border-green-500'
+  },
+  {
+    titulo: 'Fluxo de Caixa e DRE',
+    descricao: 'Saldo projetado (realizado × previsto a pagar/receber) por dia, semana ou mês e DRE gerencial pelo plano de contas, em caixa ou competência.',
+    icone: '📈', link: '/admin/financeiro/fluxo',
+    cor: 'bg-lime-50 border-lime-200 text-lime-700', hover: 'hover:border-lime-500'
+  },
+  {
+    titulo: 'Conciliação Bancária',
+    descricao: 'Importe o extrato OFX do banco: o que bate com o sistema concilia sozinho; o resto você casa (inclusive lote SISPAG com vários pagamentos), lança ou ignora.',
+    icone: '🔗', link: '/admin/financeiro/conciliacao',
+    cor: 'bg-cyan-50 border-cyan-200 text-cyan-700', hover: 'hover:border-cyan-500'
+  },
+  {
+    titulo: 'Contas a Pagar (Sistema)',
+    descricao: 'Contas lançadas (boletos, impostos, fornecedores), recorrentes (aluguel, luz, internet) e as OPs — pagamento, parcelas e a virada da chave do P2S.',
+    icone: '💸', link: '/admin/financeiro/titulos-pagar',
+    cor: 'bg-rose-50 border-rose-200 text-rose-700', hover: 'hover:border-rose-500'
   }
 ];
 

@@ -7,6 +7,7 @@
 // quando houver especificação + credencial (campos boleto_* já existem).
 // Fase paralela: ENSAIO — a cobrança oficial segue no P2S.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { fontesDasEmpresas } from '../../../lib/financeiro/caixa';
 import { validarAcesso, validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { buscarTodasPaginas } from '../../../lib/paginacao';
 import { registrarLogAuditoria } from '../../../actions';
@@ -194,7 +195,7 @@ export async function criarTituloAvulsoAction(d: { empresa_id: number; parceiro_
   return { ok: true };
 }
 
-export async function baixarTituloAction(id: number, d: { data_pagamento: string; valor_pago: number; forma_pagamento: string; juros_multa?: number; desconto?: number; observacoes?: string | null }, accessToken: string): Promise<Resultado> {
+export async function baixarTituloAction(id: number, d: { data_pagamento: string; valor_pago: number; forma_pagamento: string; juros_multa?: number; desconto?: number; observacoes?: string | null; conta_id?: number | null }, accessToken: string): Promise<Resultado> {
   const ctx = await contexto(accessToken);
   if ('erro' in ctx) return { ok: false, erro: ctx.erro };
   if (!dataValida(d.data_pagamento)) return { ok: false, erro: 'Data do pagamento inválida.' };
@@ -204,10 +205,27 @@ export async function baixarTituloAction(id: number, d: { data_pagamento: string
     const a = await tituloDoUsuario(id, ctx.permitidas);
     if ('erro' in a) return { ok: false, erro: a.erro };
     if (a.t.status !== 'ABERTO') return { ok: false, erro: 'Título não está em aberto.' };
+    // Financeiro completo (2026-11-20): com a fonte da empresa = SISTEMA (depois da
+    // virada da chave), o recebimento entra no caixa — na conta informada ou na
+    // 1ª conta bancária ativa da empresa. Com fonte P2S fica só registrado.
+    let movimentoId: number | null = null, contaId: number | null = d.conta_id ?? null;
+    if ((await fontesDasEmpresas(db, [a.t.empresa_id])).get(a.t.empresa_id) === 'SISTEMA') {
+      if (!contaId) {
+        const { data: cs } = await db.from('financeiro_contas').select('id').eq('empresa_id', a.t.empresa_id).eq('ativa', true).eq('tipo', 'BANCO').order('ordem').limit(1);
+        contaId = (cs?.[0] as any)?.id ?? null;
+      }
+      if (!contaId) return { ok: false, erro: 'Cadastre uma conta em Caixa e Bancos para receber.' };
+      const { data: m, error: eM } = await db.from('financeiro_movimentos').insert({
+        empresa_id: a.t.empresa_id, conta_id: contaId, data: d.data_pagamento, tipo: 'ENTRADA', valor: arred(n(d.valor_pago)), descricao: a.t.descricao,
+        parceiro_id: a.t.parceiro_id, origem: 'TITULO_RECEBER', ref_id: String(id), criado_por: ctx.perfil.nome,
+      }).select('id').single();
+      if (eM) throw eM;
+      movimentoId = m.id;
+    }
     const { error } = await db.from('financeiro_titulos_receber').update({
       status: 'PAGO', data_pagamento: d.data_pagamento, valor_pago: arred(n(d.valor_pago)), forma_pagamento: d.forma_pagamento || null,
       juros_multa: arred(n(d.juros_multa)), desconto: arred(n(d.desconto)), observacoes: d.observacoes?.trim() || a.t.observacoes,
-      baixado_por: ctx.perfil.nome, atualizado_em: new Date().toISOString(),
+      baixado_por: ctx.perfil.nome, atualizado_em: new Date().toISOString(), conta_id: contaId, movimento_id: movimentoId,
     }).eq('id', id);
     if (error) throw error;
     if (a.t.avaria_id) await db.from('locacao_avarias').update({ status_cobranca: 'PAGO', atualizado_em: new Date().toISOString() }).eq('id', a.t.avaria_id);
@@ -227,7 +245,12 @@ export async function estornarBaixaAction(id: number, accessToken: string): Prom
   if (a.t.status !== 'PAGO') return { ok: false, erro: 'Título não está pago.' };
   await db.from('financeiro_titulos_receber').update({
     status: 'ABERTO', data_pagamento: null, valor_pago: null, forma_pagamento: null, juros_multa: 0, desconto: 0, baixado_por: null, atualizado_em: new Date().toISOString(),
+    conta_id: null, movimento_id: null,
   }).eq('id', id);
+  if (a.t.movimento_id) {
+    await db.from('financeiro_extrato_linhas').update({ status: 'PENDENTE', movimento_id: null, conciliado_por: null, conciliado_em: null }).eq('movimento_id', a.t.movimento_id);
+    await db.from('financeiro_movimentos').delete().eq('id', a.t.movimento_id);
+  }
   if (a.t.avaria_id) await db.from('locacao_avarias').update({ status_cobranca: 'COBRADO' }).eq('id', a.t.avaria_id);
   log(ctx.perfil.nome, 'ESTORNOU BAIXA DE TÍTULO', `#${id} ${a.t.descricao}`);
   return { ok: true };

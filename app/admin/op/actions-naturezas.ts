@@ -14,6 +14,7 @@ import { registrarLogAuditoria } from '../../actions';
 import { supabaseAdmin } from '../../lib/supabase';
 import { validarAcesso, validarAcessoAlgumaRota } from '../../lib/serverAuth';
 import { consultarObjetos, criterioRef, type AmbienteP2s } from '../../lib/p2s';
+import { importarPlanoContasP2s } from '../../lib/financeiro/planoContas';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -55,9 +56,31 @@ export async function listarNaturezasPagamentoParaSelectAction(accessToken: stri
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
-  const { data, error } = await db.from('op_naturezas_pagamento').select('natureza').order('natureza');
+  const { data, error } = await db.from('op_naturezas_pagamento').select('natureza, centro_financeiro_nome').order('natureza');
   if (error) return { ok: false, erro: error.message };
-  return { ok: true, info: { naturezas: (data || []).map(n => n.natureza as string) } };
+  // grupos por centro financeiro (plano de contas do P2S, 2026-11-20) — a lista passou de 19 para ~230
+  const porCentro = new Map<string, string[]>();
+  for (const n of (data || []) as any[]) {
+    const g = String(n.centro_financeiro_nome || 'SEM CLASSIFICAÇÃO');
+    porCentro.set(g, [...(porCentro.get(g) || []), String(n.natureza)]);
+  }
+  const grupos = [...porCentro.entries()].sort((a, b) => a[0].localeCompare(b[0], 'pt-BR', { numeric: true }))
+    .map(([centro, naturezas]) => ({ centro, naturezas: naturezas.sort((x, y) => x.localeCompare(y, 'pt-BR', { numeric: true })) }));
+  return { ok: true, info: { naturezas: (data || []).map(n => n.natureza as string), grupos } };
+}
+
+/** Importa o plano de contas do P2S e cria uma natureza por sub-centro (2026-11-20). */
+export async function importarPlanoContasP2sAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoGestao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  try {
+    const r = await importarPlanoContasP2s(supabaseAdmin());
+    registrarLogAuditoria({ usuario_nome: acesso.perfil.nome, acao: `IMPORTOU PLANO DE CONTAS DO P2S: ${r.centros} centros, ${r.subcentros} sub-centros, ${r.naturezasCriadas} naturezas novas`, setor: 'OP' });
+    revalidatePath('/admin');
+    return { ok: true, info: r };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
 }
 
 export async function criarNaturezaPagamentoAction(payload: { natureza: string }, accessToken: string): Promise<Resultado> {
@@ -129,6 +152,11 @@ export async function listarCentrosFinanceirosP2sAction(accessToken: string): Pr
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   try {
+    // plano de contas importado (financeiro_centros); sem importação ainda, consulta o P2S ao vivo
+    const { data: locais } = await supabaseAdmin().from('financeiro_centros').select('p2s_oid, nome_p2s').eq('em_desuso', false);
+    if (locais?.length) {
+      return { ok: true, info: { centros: (locais as any[]).map(c => ({ oid: c.p2s_oid as string, nome: c.nome_p2s as string })).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { numeric: true })) } };
+    }
     const ambiente: AmbienteP2s = 'PRODUCAO';
     const resultado = await consultarObjetos(ambiente, 'TCustomCentroCusto', [], { proxy: true });
     const centros = resultado.objectlist
@@ -146,6 +174,11 @@ export async function listarSubCentrosFinanceirosP2sAction(payload: { centroOid:
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   try {
+    const { data: centro } = await supabaseAdmin().from('financeiro_centros').select('id').eq('p2s_oid', payload.centroOid).maybeSingle();
+    if (centro) {
+      const { data: subs } = await supabaseAdmin().from('financeiro_subcentros').select('p2s_oid, nome_p2s').eq('centro_id', centro.id).eq('em_desuso', false);
+      if (subs?.length) return { ok: true, info: { subcentros: (subs as any[]).map(s => ({ oid: s.p2s_oid as string, nome: s.nome_p2s as string })).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { numeric: true })) } };
+    }
     const ambiente: AmbienteP2s = 'PRODUCAO';
     const resultado = await consultarObjetos(ambiente, 'TCustomSubCentroCusto', [criterioRef('CentroFinanceiro', payload.centroOid)], { proxy: true });
     const subcentros = resultado.objectlist

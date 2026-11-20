@@ -21,6 +21,7 @@ import { reservarFicha } from './disponibilidade';
 import { numeroFichaPorId } from './fichaNumero';
 import { dataValida, hojeISO, somarDias } from './datas';
 import { formatarDocumento } from './pdfBase';
+import { naturezaSublocacao } from '../financeiro/planoContas';
 
 type Db = ReturnType<typeof supabaseAdmin>;
 export type StatusSublocacao = 'SOLICITADO' | 'CONFIRMADO' | 'ENCERRADO' | 'CANCELADO';
@@ -294,12 +295,15 @@ export async function dadosOpSublocacao(db: Db, id: number) {
       ...(v.custoAvarias > 0 ? [{ descricao: 'AVARIA EM EQUIPAMENTO SUBLOCADO', qtd: 1, valor: v.custoAvarias }] : []),
     ].filter(i => i.valor > 0)
     : [{ descricao: `COMPLEMENTO DA SUBLOCAÇÃO ${atual.numero}${v.custoAvarias > 0 ? ' (AVARIAS)' : ''}`, qtd: 1, valor: v.aGerarOp }];
-  // natureza: a "SUBLOCAÇÃO ..." cujo complemento aparece nos itens; senão a
-  // genérica "SUBLOCAÇÃO" (se existir); senão não chuta — o usuário escolhe
+  // natureza: 1º o sub-centro do centro SUBLOCAÇÃO que casa com o equipamento
+  // (plano de contas do P2S — "6.4 TELEVISORES"); depois a "SUBLOCAÇÃO ..."
+  // manual cujo complemento aparece nos itens; depois a genérica "SUBLOCAÇÃO";
+  // senão não chuta — o usuário escolhe
+  const texto = atual.itens.map(i => `${i.descricao} ${i.categoria || ''}`).join(' ').toUpperCase();
   const { data: nats } = await db.from('op_naturezas_pagamento').select('natureza').ilike('natureza', 'SUBLOCA%').order('ordem');
   const lista = ((nats || []) as any[]).map(x => String(x.natureza));
-  const texto = atual.itens.map(i => `${i.descricao} ${i.categoria || ''}`).join(' ').toUpperCase();
-  const natureza = lista.find(nm => { const resto = nm.replace(/^SUBLOCA[ÇC][ÃA]O\s*/i, '').trim(); return resto && texto.includes(resto.toUpperCase()); })
+  const natureza = (await naturezaSublocacao(db, texto))
+    || lista.find(nm => { const resto = nm.replace(/^SUBLOCA[ÇC][ÃA]O\s*/i, '').trim(); return resto && !resto.startsWith('—') && texto.includes(resto.toUpperCase()); })
     || lista.find(nm => /^SUBLOCA[ÇC][ÃA]O$/i.test(nm.trim())) || null;
   const endereco = forn ? [[forn.endereco1, forn.numero1].filter(Boolean).join(', '), forn.complemento1, forn.bairro1, [forn.cidade1, forn.estado1].filter(Boolean).join('/'), forn.cep1].filter(Boolean).join(' - ') : '';
   return {

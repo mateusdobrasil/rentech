@@ -7,7 +7,7 @@ import { useAcessoRota } from '../useAcessoRota';
 import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import {
   listarNaturezasPagamentoAction, criarNaturezaPagamentoAction, excluirNaturezaPagamentoAction,
-  salvarClassificacaoNaturezaAction, listarCentrosFinanceirosP2sAction, listarSubCentrosFinanceirosP2sAction,
+  salvarClassificacaoNaturezaAction, listarCentrosFinanceirosP2sAction, listarSubCentrosFinanceirosP2sAction, importarPlanoContasP2sAction,
   type NaturezaPagamento
 } from '../actions-naturezas';
 
@@ -41,6 +41,8 @@ export default function NaturezasPagamentoPage() {
   const [carregandoCentros, setCarregandoCentros] = useState(false);
 
   const [novaNatureza, setNovaNatureza] = useState('');
+  const [busca, setBusca] = useState('');
+  const [importando, setImportando] = useState(false);
   const [criando, setCriando] = useState(false);
   const [excluindoId, setExcluindoId] = useState<number | null>(null);
 
@@ -57,6 +59,18 @@ export default function NaturezasPagamentoPage() {
   };
 
   useEffect(() => { if (!authLoading && perfil) carregar(); }, [authLoading, perfil]);
+
+  // Plano de contas do P2S → nosso banco; cada sub-centro vira natureza (2026-11-20)
+  const importarDoP2s = async () => {
+    if (!perfil) return;
+    if (!(await confirmar({ title: 'Importar do P2S', confirmLabel: 'Importar', message: 'Importa os Centros e Sub-Centros do PrimeStart para o nosso banco e cria uma natureza para cada sub-centro (ex.: "SUBLOCAÇÃO — 6.4 TELEVISORES"), já classificada. As naturezas atuais continuam; sub-centro que já tem natureza não ganha outra. Pode rodar de novo: atualiza nomes e cria o que for novo.' }))) return;
+    setImportando(true);
+    const r = await importarPlanoContasP2sAction(perfil.accessToken);
+    setImportando(false);
+    if (!r.ok) { toast('Falha ao importar: ' + r.erro, 'error'); return; }
+    toast(`${r.info.centros} centros e ${r.info.subcentros} sub-centros importados · ${r.info.naturezasCriadas} naturezas novas${r.info.naturezasAtualizadas ? `, ${r.info.naturezasAtualizadas} atualizadas` : ''}${r.info.puladas ? ` · ${r.info.puladas} sub-centro(s) já tinham natureza` : ''}.`, 'success');
+    carregar();
+  };
 
   // Catálogo de Centro Financeiro carregado uma vez só, direto do PrimeStart
   // — reaproveitado por qualquer linha que entrar em edição.
@@ -191,7 +205,13 @@ export default function NaturezasPagamentoPage() {
           <button onClick={criar} disabled={criando || !novaNatureza.trim()} className="text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 px-4 py-2.5 rounded-lg uppercase disabled:opacity-50 shrink-0">
             {criando ? 'Criando...' : '+ Nova Natureza'}
           </button>
+          <button onClick={importarDoP2s} disabled={importando} className="text-xs font-black text-[#0C1D4D] bg-white border border-[#CBD5E1] hover:bg-gray-50 px-4 py-2.5 rounded-lg uppercase disabled:opacity-50 shrink-0">
+            {importando ? 'Importando...' : '⬇ Importar do P2S'}
+          </button>
         </div>
+
+        <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Filtrar por natureza, centro ou sub-centro…"
+          className="w-full mb-3 p-2.5 border border-[#CBD5E1] rounded-lg text-sm outline-none focus:border-[#336699] text-[#0A2A4A] bg-white" />
 
         <div className="bg-white rounded-xl shadow-sm border border-[#E2E8F0] overflow-hidden">
           <table className="w-full text-left border-collapse">
@@ -210,7 +230,7 @@ export default function NaturezasPagamentoPage() {
               ) : naturezas.length === 0 ? (
                 <tr><td colSpan={5} className="text-center py-10 text-[#94A3B8] font-bold text-sm">Nenhuma natureza cadastrada.</td></tr>
               ) : (
-                naturezas.map(n => (
+                naturezas.filter(n => !busca.trim() || [n.natureza, n.centro_financeiro_nome, n.subcentro_financeiro_nome].some(x => (x || '').toLowerCase().includes(busca.trim().toLowerCase()))).map(n => (
                   <Fragment key={n.id}>
                     <tr className="hover:bg-[#F8FAFC] transition-colors">
                       <td className="p-3 font-black text-[#0C1D4D]">{n.natureza}</td>

@@ -9,6 +9,7 @@ import { sincronizarParceirosCore, sincronizarColaboradoresCore } from '../../..
 import { sincronizarFichasReservaCore } from '../../../admin/locacoes/fichas-reserva/fichasCore';
 import { importarFichasP2sCore } from '../../../lib/locacao/importarFichasP2s';
 import { estenderAtrasos } from '../../../lib/locacao/fichaLocacao';
+import { importarPlanoContasP2s } from '../../../lib/financeiro/planoContas';
 import { sincronizarEventosFeirasCore } from '../../../admin/comercial/eventos-feiras/eventosCore';
 import { sincronizarContasPagarCore } from '../../../admin/financeiro/contas-pagar/contasPagarCore';
 import { sincronizarContasReceberCore } from '../../../admin/financeiro/contas-receber/contasReceberCore';
@@ -64,6 +65,8 @@ export async function GET(request: Request) {
     // Ficha de Locação própria (sem P2S): o que não voltou no prazo segue
     // ocupando a agenda até hoje + dias de retorno.
     { nome: 'locacao_atrasos', fn: () => estenderAtrasos(db) },
+    // Plano de contas (centros/sub-centros) → naturezas da OP (2026-11-20)
+    { nome: 'plano_contas', fn: () => importarPlanoContasP2s(db) },
   ];
 
   const resultados: Record<string, any> = {};

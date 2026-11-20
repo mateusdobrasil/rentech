@@ -103,6 +103,8 @@ export default function PainelResponsavel() {
   // Catálogo de Natureza do Pagamento (op_naturezas_pagamento — gerido em
   // /admin/op/naturezas), usado no select de edição da OP.
   const [naturezasDisponiveis, setNaturezasDisponiveis] = useState<string[]>([]);
+  // agrupadas por centro financeiro (plano de contas do P2S, ~230 naturezas)
+  const [gruposNaturezas, setGruposNaturezas] = useState<{ centro: string; naturezas: string[] }[]>([]);
 
   // Estados de Modais
   const [modalDetalhes, setModalDetalhes] = useState<{ open: boolean; op: OP | null }>({ open: false, op: null });
@@ -164,7 +166,7 @@ export default function PainelResponsavel() {
     if (!perfil) return;
     async function carregarNaturezas() {
       const res = await listarNaturezasPagamentoParaSelectAction(perfil!.accessToken);
-      if (res.ok && res.info.naturezas.length > 0) setNaturezasDisponiveis(res.info.naturezas);
+      if (res.ok && res.info.naturezas.length > 0) { setNaturezasDisponiveis(res.info.naturezas); setGruposNaturezas(res.info.grupos || []); }
     }
     carregarNaturezas();
   }, [perfil]);
@@ -836,9 +838,14 @@ export default function PainelResponsavel() {
                     <select className="w-full p-2.5 border border-[#CBD5E1] rounded text-sm outline-none focus:border-[#336699] text-[#0A2A4A]" value={modalEdit.op.natureza_pagamento || ''} onChange={e => updateEditField('natureza_pagamento', e.target.value)}>
                       {/* A natureza atual da OP pode ter sido excluída do catálogo depois de
                           criada — inclui ela mesma na lista pra não sumir do select nesse caso. */}
-                      {[...new Set([...(modalEdit.op.natureza_pagamento ? [modalEdit.op.natureza_pagamento] : []), ...naturezasDisponiveis])].map(n => (
-                        <option key={n} value={n}>{n}</option>
-                      ))}
+                      {modalEdit.op.natureza_pagamento && !naturezasDisponiveis.includes(modalEdit.op.natureza_pagamento) && <option value={modalEdit.op.natureza_pagamento}>{modalEdit.op.natureza_pagamento}</option>}
+                      {gruposNaturezas.length > 0
+                        ? gruposNaturezas.map(g => (
+                          <optgroup key={g.centro} label={g.centro}>
+                            {g.naturezas.map(n => <option key={n} value={n}>{n}</option>)}
+                          </optgroup>
+                        ))
+                        : naturezasDisponiveis.map(n => <option key={n} value={n}>{n}</option>)}
                     </select>
                   </div>
                 </div>

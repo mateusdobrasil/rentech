@@ -96,6 +96,8 @@ function NovaOrdemPagamentoForm() {
   // Catálogo de Natureza do Pagamento (op_naturezas_pagamento — gerido em
   // /admin/op/naturezas), substitui a lista fixa que existia antes aqui.
   const [naturezasDisponiveis, setNaturezasDisponiveis] = useState<string[]>([]);
+  // agrupadas por centro financeiro (plano de contas do P2S, ~230 naturezas)
+  const [gruposNaturezas, setGruposNaturezas] = useState<{ centro: string; naturezas: string[] }[]>([]);
 
   // Empresa (Rentech × AlfaLight) da OP. null = ainda não sabemos o que o
   // usuário pode ver; [] catálogo ainda carregando. Trava sozinho quando o
@@ -207,7 +209,7 @@ function NovaOrdemPagamentoForm() {
     if (!perfil) return;
     async function carregarNaturezas() {
       const res = await listarNaturezasPagamentoParaSelectAction(perfil!.accessToken);
-      if (res.ok && res.info.naturezas.length > 0) setNaturezasDisponiveis(res.info.naturezas);
+      if (res.ok && res.info.naturezas.length > 0) { setNaturezasDisponiveis(res.info.naturezas); setGruposNaturezas(res.info.grupos || []); }
     }
     carregarNaturezas();
   }, [perfil]);
@@ -1035,9 +1037,14 @@ function NovaOrdemPagamentoForm() {
               </select>
               <label className="block text-xs font-bold text-[#64748B] uppercase tracking-wider mb-2">Natureza do Pagamento</label>
               <select className="w-full p-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg text-sm text-[#0A2A4A] focus:border-[#00A8E8] outline-none font-semibold cursor-pointer" value={natureza} onChange={(e) => setNatureza(e.target.value)}>
-                {(naturezasDisponiveis.length > 0 ? naturezasDisponiveis : [natureza]).map(n => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
+                {!naturezasDisponiveis.includes(natureza) && <option value={natureza}>{natureza || 'Selecione…'}</option>}
+                {gruposNaturezas.length > 0
+                  ? gruposNaturezas.map(g => (
+                    <optgroup key={g.centro} label={g.centro}>
+                      {g.naturezas.map(n => <option key={n} value={n}>{n}</option>)}
+                    </optgroup>
+                  ))
+                  : naturezasDisponiveis.map(n => <option key={n} value={n}>{n}</option>)}
               </select>
             </div>
           </section>

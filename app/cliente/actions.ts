@@ -15,6 +15,7 @@ import {
   hash, novoCodigo, normalizarEmail, emailValido, MOSTRAR_P2S, MOSTRAR_TITULOS,
 } from './sessao';
 import { numeroFicha } from '../lib/locacao/fichaNumero';
+import { numeroExibicao, linkFatura } from '../lib/financeiro/faturamento';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 const VISIVEIS = ['ENVIADO', 'APROVADO', 'RESERVADA', 'EM_LOCACAO', 'FINALIZADA'];
@@ -122,10 +123,15 @@ export async function painelClienteAction(): Promise<Resultado> {
         .in('parceiro_id', s.parceiros).neq('status', 'CANCELADO').order('vencimento', { ascending: false }).limit(200);
       titulos = data || [];
     }
+    // Notas de Débito OFICIAIS (as de ensaio, da transição, nunca aparecem para o cliente)
+    const { data: fats } = await db.from('financeiro_faturas').select('id, serie, numero, data_emissao, valor_total, token_publico, parceiro_id, status')
+      .in('parceiro_id', s.parceiros).eq('serie', 'OFICIAL').eq('status', 'EMITIDA').order('data_emissao', { ascending: false }).limit(100);
+    const faturas = ((fats || []) as any[]).map(f => ({ id: f.id, numero: numeroExibicao(f), emissao: f.data_emissao, valor: Number(f.valor_total), link: linkFatura(f.token_publico) }));
     return {
       ok: true,
       info: {
         email: s.email,
+        faturas,
         clientes: (rCli.data || []).map((c: any) => ({ id: c.id, nome: c.nome_exibicao || c.nome_completo })),
         fichas: fichas.map(f => ({
           id: f.id, numero: numeroFicha(f), status: f.status, parceiro_id: f.parceiro_id, evento: f.evento?.nome || null,

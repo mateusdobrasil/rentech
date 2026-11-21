@@ -90,6 +90,12 @@ const modulosFinanceiro = [
     descricao: 'Contas lançadas (boletos, impostos, fornecedores), recorrentes (aluguel, luz, internet) e as OPs — pagamento, parcelas e a virada da chave do P2S.',
     icone: '💸', link: '/admin/financeiro/titulos-pagar',
     cor: 'bg-rose-50 border-rose-200 text-rose-700', hover: 'hover:border-rose-500'
+  },
+  {
+    titulo: 'Faturamento',
+    descricao: 'Notas de Débito das locações devolvidas: fila a faturar, emissão individual ou em lote, parcelas e envio por e-mail, WhatsApp e Portal do Cliente.',
+    icone: '🧾', link: '/admin/financeiro/faturamento',
+    cor: 'bg-teal-50 border-teal-200 text-teal-700', hover: 'hover:border-teal-500'
   }
 ];
 

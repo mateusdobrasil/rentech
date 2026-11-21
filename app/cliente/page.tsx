@@ -125,7 +125,7 @@ export default function PortalClientePage() {
   };
   const abas: [Aba, string, number | null][] = [
     ['propostas', 'Propostas', grupos.propostas.length], ['reservas', 'Reservas', grupos.reservas.length], ['historico', 'Histórico', grupos.historico.length],
-    ...(painel.mostrarTitulos ? [['titulos', 'Financeiro', painel.titulos.filter((t: any) => t.status === 'ABERTO').length] as [Aba, string, number]] : []),
+    ...(painel.mostrarTitulos || (painel.faturas || []).length ? [['titulos', 'Financeiro', painel.mostrarTitulos ? painel.titulos.filter((t: any) => t.status === 'ABERTO').length : painel.faturas.length] as [Aba, string, number]] : []),
     ['solicitar', '+ Pedir orçamento', null],
   ];
 
@@ -178,7 +178,22 @@ export default function PortalClientePage() {
           )
         )}
 
-        {aba === 'titulos' && (
+        {aba === 'titulos' && (painel.faturas || []).length > 0 && (
+          <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-4 overflow-x-auto">
+            <p className="text-xs font-black uppercase tracking-wider text-gray-500 mb-2">Notas de Débito</p>
+            <table className="w-full text-sm">
+              <thead><tr className="text-left text-[11px] font-black text-gray-500 uppercase border-b"><th className="p-2">Nº</th><th className="p-2">Emissão</th><th className="p-2 text-right">Valor</th><th className="p-2"></th></tr></thead>
+              <tbody>{painel.faturas.map((f: any) => (
+                <tr key={f.id} className="border-b border-[#F1F5F9]">
+                  <td className="p-2 font-bold">{f.numero}</td><td className="p-2">{dataBR(f.emissao)}</td><td className="p-2 text-right font-bold">{BRL(Number(f.valor))}</td>
+                  <td className="p-2 text-right"><a href={f.link} target="_blank" rel="noopener noreferrer" className="text-xs font-black text-[#336699] hover:underline">Ver PDF</a></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+
+        {aba === 'titulos' && painel.mostrarTitulos && (
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-4 overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="text-left text-[11px] font-black text-gray-500 uppercase border-b"><th className="p-2">Vencimento</th><th className="p-2">Descrição</th><th className="p-2 text-right">Valor</th><th className="p-2">Situação</th></tr></thead>

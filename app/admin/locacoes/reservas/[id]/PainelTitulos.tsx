@@ -60,7 +60,10 @@ export default function PainelTitulos({ fichaId, accessToken, statusFicha, alter
         </div>
         {info.faturavel && info.saldo > 0.009 && !editando && (
           info.podeGerar
-            ? <button onClick={abrirGeracao} className="bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-4 py-2 rounded-lg font-bold uppercase text-[10px] tracking-wider">💵 Gerar títulos a receber</button>
+            ? <div className="flex flex-wrap gap-2">
+                <a href={`/admin/financeiro/faturamento?os=${fichaId}`} className="bg-[#047857] hover:bg-[#065F46] text-white px-4 py-2 rounded-lg font-bold uppercase text-[10px] tracking-wider">🧾 Faturar (Nota de Débito)</a>
+                <button onClick={abrirGeracao} className="bg-white border border-[#E2E8F0] text-[#0C1D4D] px-4 py-2 rounded-lg font-bold uppercase text-[10px] tracking-wider">💵 Só gerar títulos</button>
+              </div>
             : <p className="text-[10px] text-gray-400">Gerar títulos exige acesso a Financeiro → Títulos a Receber.</p>
         )}
       </div>

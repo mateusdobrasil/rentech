@@ -39,7 +39,9 @@ const num = (s: string | number) => { const x = Number(String(s ?? '').replace(/
 const numBR = (v: number, c = 2) => (Number.isFinite(v) ? v : 0).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: c });
 const btn = 'text-[10px] md:text-xs font-black uppercase tracking-wider px-4 py-2.5 rounded-lg shadow-sm disabled:opacity-40 transition-colors';
 const mini = 'text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-md border border-[#E2E8F0] hover:bg-[#F1F5F9] disabled:opacity-40';
-const inp = 'mt-1 w-full border border-[#E2E8F0] rounded-lg px-3 py-2 text-sm';
+// Cor e fundo explícitos: sem eles o campo herdava a cor clara do tema escuro do
+// sistema (globals.css) e o texto ficava branco sobre branco.
+const inp = 'mt-1 w-full border border-[#E2E8F0] rounded-lg px-3 py-2 text-sm bg-white text-[#0A2A4A] placeholder:text-gray-400';
 const lbl = 'text-[11px] font-black uppercase tracking-wider text-gray-500';
 
 function baixar(base64: string, nome: string, tipo: string) {
@@ -247,7 +249,7 @@ function Conteudo() {
   const setItem = (k: number, campo: keyof Item, v: string) => setItens(p => p.map((x, i) => (i === k ? { ...x, [campo]: v } : x)));
 
   return (
-    <div className="min-h-screen bg-[#F0F4F8] pt-20 pb-16 px-3 md:px-8">
+    <div className="min-h-screen bg-[#F0F4F8] text-[#0A2A4A] pt-20 pb-16 px-3 md:px-8">
       <div className="max-w-7xl mx-auto space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>

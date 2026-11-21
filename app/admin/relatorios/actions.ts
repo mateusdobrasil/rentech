@@ -9,6 +9,9 @@ import { validarAcesso, validarAcessoAlgumaRota, obterEmpresasPermitidas } from 
 import { acessoLocacao } from '../../lib/locacao/acessoFichas';
 import { relatorioVendas, relatorioOrcamentos, relatorioFinanceiro, relatorioEquipamentos, type FiltrosRelatorio } from '../../lib/relatorios/consultas';
 import { gerarRelatorioPdf, type DadosRelatorioPdf } from '../../lib/relatorios/gerarRelatorioPdf';
+import {
+  relatorioClientes, relatorioEventos, relatorioComissao, relatorioFaturamento, relatorioOcupacao, relatorioSublocacao, relatorioAvarias, relatorioNotasFiscais,
+} from '../../lib/relatorios/consultasExtras';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 export interface FiltrosTela { de: string; ate: string; empresaId: number | null; vendedorId?: number | null }
@@ -16,6 +19,10 @@ export interface FiltrosTela { de: string; ate: string; empresaId: number | null
 const ROTAS = {
   vendas: '/admin/relatorios/vendas', orcamentos: '/admin/relatorios/orcamentos',
   financeiro: '/admin/relatorios/financeiro', equipamentos: '/admin/relatorios/equipamentos',
+  // relatórios diversos (2026-11-21)
+  clientes: '/admin/relatorios/clientes', eventos: '/admin/relatorios/eventos', comissao: '/admin/relatorios/comissao',
+  faturamento: '/admin/relatorios/faturamento', ocupacao: '/admin/relatorios/ocupacao', sublocacao: '/admin/relatorios/sublocacao',
+  avarias: '/admin/relatorios/avarias', notasFiscais: '/admin/relatorios/notas-fiscais',
 } as const;
 const dataOk = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
 
@@ -70,6 +77,25 @@ export async function relatorioEquipamentosAction(ft: FiltrosTela, accessToken: 
   if ('erro' in ctx) return { ok: false, erro: ctx.erro };
   try { return { ok: true, info: { empresas: ctx.empresas, dados: await relatorioEquipamentos(ctx.db, ctx.filtros) } }; } catch (e: any) { return { ok: false, erro: e.message }; }
 }
+
+// ============================================================================
+// RELATÓRIOS DIVERSOS (2026-11-21) — Clientes, Eventos e Comissão respeitam a carteira
+// ============================================================================
+async function rodar(rota: string, ft: FiltrosTela, accessToken: string, carteira: boolean, fn: (db: ReturnType<typeof supabaseAdmin>, f: FiltrosRelatorio) => Promise<any>, comVendedores = false): Promise<Resultado> {
+  const ctx = await contexto(accessToken, rota, ft, carteira);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  try {
+    return { ok: true, info: { empresas: ctx.empresas, soDoVendedor: ctx.soDoVendedor, vendedores: comVendedores && !ctx.soDoVendedor ? await vendedoresDaLista(ctx.db) : [], dados: await fn(ctx.db, ctx.filtros) } };
+  } catch (e: any) { return { ok: false, erro: e.message }; }
+}
+export async function relatorioClientesAction(ft: FiltrosTela, t: string) { return rodar(ROTAS.clientes, ft, t, true, relatorioClientes, true); }
+export async function relatorioEventosAction(ft: FiltrosTela, t: string) { return rodar(ROTAS.eventos, ft, t, true, relatorioEventos, true); }
+export async function relatorioComissaoAction(ft: FiltrosTela, t: string) { return rodar(ROTAS.comissao, ft, t, true, relatorioComissao, true); }
+export async function relatorioFaturamentoAction(ft: FiltrosTela, t: string) { return rodar(ROTAS.faturamento, ft, t, false, relatorioFaturamento); }
+export async function relatorioOcupacaoAction(ft: FiltrosTela, t: string) { return rodar(ROTAS.ocupacao, ft, t, false, relatorioOcupacao); }
+export async function relatorioSublocacaoAction(ft: FiltrosTela, t: string) { return rodar(ROTAS.sublocacao, ft, t, false, relatorioSublocacao); }
+export async function relatorioAvariasAction(ft: FiltrosTela, t: string) { return rodar(ROTAS.avarias, ft, t, false, relatorioAvarias); }
+export async function relatorioNotasFiscaisAction(ft: FiltrosTela, t: string) { return rodar(ROTAS.notasFiscais, ft, t, false, relatorioNotasFiscais); }
 
 /** PDF de qualquer relatório (a tela manda os textos já formatados). */
 export async function relatorioPdfAction(dados: DadosRelatorioPdf, accessToken: string): Promise<Resultado> {

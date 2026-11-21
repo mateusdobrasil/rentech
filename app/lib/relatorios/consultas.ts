@@ -14,11 +14,11 @@ import { numeroFicha } from '../locacao/fichaNumero';
 type Db = ReturnType<typeof supabaseAdmin>;
 export interface FiltrosRelatorio { de: string; ate: string; empresaIds: number[]; vendedorId?: number | null }
 
-const CONFIRMADAS = ['APROVADO', 'RESERVADA', 'EM_LOCACAO', 'FINALIZADA'];
+export const CONFIRMADAS = ['APROVADO', 'RESERVADA', 'EM_LOCACAO', 'FINALIZADA'];
 const n = (v: unknown) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
 const r2 = (v: number) => Math.round(v * 100) / 100;
 const mesDe = (iso: string) => iso.slice(0, 7);
-const nomeParceiro = (p: any) => (p ? (p.nome_exibicao || p.nome_completo || '—') : '—');
+export const nomeParceiro = (p: any) => (p ? (p.nome_exibicao || p.nome_completo || '—') : '—');
 export const hojeISO = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 
 /** O mesmo intervalo, um ano antes. */
@@ -35,7 +35,7 @@ export function mesesDoIntervalo(de: string, ate: string): string[] {
   return out;
 }
 
-async function fichasPorData(db: Db, f: FiltrosRelatorio, campo: 'data_inicio' | 'data_emissao', status: string[] | null, colunas: string) {
+export async function fichasPorData(db: Db, f: FiltrosRelatorio, campo: 'data_inicio' | 'data_emissao', status: string[] | null, colunas: string) {
   if (!f.empresaIds.length) return [];
   const { data, error } = await buscarTodasPaginas<any>((de, ate) => {
     let q = db.from('locacao_fichas_reserva').select(colunas).in('empresa_id', f.empresaIds).gte(campo, f.de).lte(campo, f.ate);

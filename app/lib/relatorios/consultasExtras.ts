@@ -286,7 +286,7 @@ export async function relatorioFaturamento(db: Db, f: FiltrosRelatorio) {
   // a faturar: fichas de locação do P2S devolvidas no período e "Não faturado" + OS daqui finalizadas com saldo
   const { data: flAberto } = f.empresaIds.length ? await buscarTodasPaginas<any>((d, a) => db.from('locacao_fichas_locacao')
     .select('numero, data_saida, data_devolucao, ficha_reserva_id, parceiro:parceiros(nome_exibicao, nome_completo), reserva:locacao_fichas_reserva(valor_total)')
-    .in('empresa_id', f.empresaIds).eq('status_ultimo_faturamento', 'N').not('data_devolucao', 'is', null).gte('data_devolucao', f.de).lte('data_devolucao', f.ate).order('id').range(d, a), 1000, 50000) : { data: [] as any[] };
+    .in('empresa_id', f.empresaIds).eq('origem', 'P2S').eq('status_ultimo_faturamento', 'N').not('data_devolucao', 'is', null).gte('data_devolucao', f.de).lte('data_devolucao', f.ate).order('id').range(d, a), 1000, 50000) : { data: [] as any[] };
   const hoje = hojeISO();
   const aFaturar = [
     ...((flAberto || []) as any[]).map(x => ({ os: `R${x.ficha_reserva_id || x.numero}`, referencia: `FL ${x.numero}`, origem: 'P2S', cliente: nomeParceiro(x.parceiro), devolucao: x.data_devolucao, diasParado: diasEntre(x.data_devolucao, hoje), valorOs: r2(n(x.reserva?.valor_total)) })),

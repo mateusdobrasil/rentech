@@ -45,6 +45,8 @@
 // o próprio PrimeStart usa internamente). Validado em Sandbox: depois do
 // teste na Ficha 000005/A, a Ficha de Reserva 000005 já apareceu com
 // Status="E" (Encerrado/Finalizado) sem nenhuma ação extra daqui.
+import { fichaLocacaoP2sCongelada } from '../../../lib/virada/estado';
+import { supabaseAdmin } from '../../../lib/supabase';
 import { buscarObjeto, consultarObjetos, criterioRef, dataParaP2s, invocarMetodo, type AmbienteP2s, type ObjetoP2s, type ParametroMetodoP2s } from '../../../lib/p2s';
 import { validarAcesso } from '../../../lib/serverAuth';
 
@@ -77,6 +79,8 @@ function paramMetodo(paramname: string, paramtype: ParametroMetodoP2s['paramtype
 // via gExpedicao.EfetuaRetornoLocacao. Retorna pulou=true quando não havia
 // nada pendente pra essa ficha (idempotente — seguro chamar de novo).
 async function devolverFichaLocacao(ambiente: AmbienteP2s, gExpedicaoOid: string, ficha: ObjetoP2s, observacaoGeral: string): Promise<{ pulou: boolean }> {
+  // virada da chave: ficha já migrada (a devolução é registrada aqui) ou empresa que já virou
+  if (await fichaLocacaoP2sCongelada(supabaseAdmin(), ficha.oid)) return { pulou: true };
   const itens = Array.isArray(ficha.Itens) ? (ficha.Itens as any[]) : [];
   const itensSaida = itens.filter(it => Number(it?.QuantidadeMovimentada) < 0 && refOuNull(it?.PrevisaoMovEstoque));
 

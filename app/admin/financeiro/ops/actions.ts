@@ -14,6 +14,7 @@ import { validarAcesso, validarAcessoAlgumaRota } from '../../../lib/serverAuth'
 import { criarContaPagarParaOP, type ResultadoEnvioP2s } from './enviarOpP2sCore';
 import { contextoEnvioItau, consultarPagamentoSispag, semAcento, STATUS_ITAU_EFETUADO } from '../../../lib/itauSispag';
 import { marcarContaPagarQuitada } from '../../../lib/p2s';
+import { opEmEmpresaCongelada } from '../../../lib/virada/estado';
 
 const ROTA = '/admin/financeiro/ops';
 
@@ -238,7 +239,9 @@ export async function conciliarOpsComItauAction(accessToken: string): Promise<Re
           .select('numero_op').maybeSingle();
         if (opAtualizada) {
           let avisoP2s: string | undefined;
-          if (op.p2s_conta_pagar_oid) {
+          if (op.p2s_conta_pagar_oid && await opEmEmpresaCongelada(db, op.id)) {
+            // virada da chave: nada vai ao P2S
+          } else if (op.p2s_conta_pagar_oid) {
             try {
               const baixa = await marcarContaPagarQuitada('PRODUCAO', op.p2s_conta_pagar_oid, new Date());
               if (!baixa.ok) avisoP2s = `PrimeStart recusou a quitação: ${baixa.motivo}`;

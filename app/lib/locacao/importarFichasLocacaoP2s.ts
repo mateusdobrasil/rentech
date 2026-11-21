@@ -10,6 +10,7 @@ import { consultarObjetos, criterio, p2sParaData, type AmbienteP2s, type ObjetoP
 import { resolverCentrosP2s, empresaIdDoCentroP2s } from '../empresaP2s';
 import { carregarEmpresasCadastro } from '../empresa';
 import { sincronizarParceirosPorOidsCore } from '../../admin/comercial/parceiros/parceirosCore';
+import { empresasCongeladas } from '../virada/estado';
 
 type Db = ReturnType<typeof supabaseAdmin>;
 const ref = (v: unknown) => { const s = v ? String(v) : ''; return s && s !== 'null' ? s : null; };
@@ -69,6 +70,24 @@ export async function importarFichasLocacaoP2s(db: Db, opcoes: { de: string; ate
     carregarEmpresasCadastro(db),
   ]);
   const agora = new Date().toISOString();
+
+  // Virada da chave (2026-11-21): ficha de locação já migrada (origem SISTEMA) não é
+  // regravada — a importação apaga e refaz os movimentos, o que desfaria a ligação
+  // com os itens da ficha própria; e empresa congelada não é mais lida do P2S.
+  const congeladas = await empresasCongeladas(db);
+  const migradas = new Set<string>();
+  for (let i = 0; i < fichas.length; i += 300) {
+    const { data } = await db.from('locacao_fichas_locacao').select('p2s_oid').in('p2s_oid', fichas.slice(i, i + 300).map(f => f.oid)).neq('origem', 'P2S');
+    for (const x of (data || []) as any[]) migradas.add(x.p2s_oid);
+  }
+  const pular = (f: ObjetoP2s) => {
+    if (migradas.has(f.oid)) return true;
+    const centroOid = ref(f.Centro);
+    const emp = empresaIdDoCentroP2s(centroOid ? centros.get(centroOid) : undefined, empresas);
+    return !!emp && congeladas.has(emp);
+  };
+  for (let i = fichas.length - 1; i >= 0; i--) if (pular(fichas[i])) fichas.splice(i, 1);
+  if (!fichas.length) return res;
 
   const cabecalhos = fichas.map(f => {
     const reservaOid = ref(f.FichaReservaLocacao);

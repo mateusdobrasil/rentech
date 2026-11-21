@@ -12,6 +12,7 @@ import { gerarHtmlEmailOP } from './emailTemplate';
 import { ItemOPNormalizado, validarNovaOP, validarItensOP } from './utils';
 import { criarContaPagarParaOP, atualizarContaPagarParaOP } from '../financeiro/ops/enviarOpP2sCore';
 import { excluirObjeto } from '../../lib/p2s';
+import { opEmEmpresaCongelada, MSG_P2S_CONGELADO } from '../../lib/virada/estado';
 
 // ============================================================================
 // CLIENTE ADMIN: IGNORA RLS PARA OPERAÇÕES DO SERVIDOR
@@ -425,7 +426,9 @@ export async function reprovarOPAction(opId: string, motivo: string, accessToken
     // ======================================================================
     const dadosUpdate: Record<string, unknown> = { status: 'REPROVADA', updated_at: new Date().toISOString() };
     let notaP2s = '';
-    if (op.p2s_conta_pagar_oid) {
+    if (op.p2s_conta_pagar_oid && await opEmEmpresaCongelada(supabaseAdmin as any, opId)) {
+      notaP2s = ` — ${MSG_P2S_CONGELADO}`;
+    } else if (op.p2s_conta_pagar_oid) {
       try {
         await excluirObjeto('PRODUCAO', op.p2s_conta_pagar_oid);
         dadosUpdate.p2s_conta_pagar_oid = null;

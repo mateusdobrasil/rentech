@@ -16,6 +16,7 @@ import { enviarPixPorChave, enviarPixPorDadosBancarios, consultarPagamentoSispag
 import { gravarStatusItauItemLote } from '../../../lib/loteStatusItau';
 import { gravarGeracaoBeneficios, beneficiosGeradosParaLote } from '../../../lib/beneficiosGeracoes';
 import { marcarContaPagarQuitada } from '../../../lib/p2s';
+import { opEmEmpresaCongelada, contaPagarEmEmpresaCongelada } from '../../../lib/virada/estado';
 import { ispbPorCompe } from '../../../lib/bancosCompeIspb';
 import { formatarMoeda } from '../../../lib/formatadores';
 import { extrairBoletos, validarBoletosItem, lerRetornoSispag, type RegistroRetornoSispag, type SituacaoRetorno } from '../../../lib/sispagBoletos';
@@ -1534,7 +1535,7 @@ async function baixarOpComoPaga(db: any, opId: string, usuarioNome: string, orig
   });
   let p2sQuitado = false;
   let avisoP2s: string | null = null;
-  if (op.p2s_conta_pagar_oid) {
+  if (op.p2s_conta_pagar_oid && !(await opEmEmpresaCongelada(db, opId))) {
     try {
       const baixa = await marcarContaPagarQuitada('PRODUCAO', op.p2s_conta_pagar_oid, dataPagamento);
       if (baixa.ok) {
@@ -1564,7 +1565,7 @@ async function baixarContaPagarComoPaga(db: any, contaId: number, usuarioNome: s
   const descricao = conta.descricao || 'Conta a Pagar';
   let p2sQuitado = false;
   let avisoP2s: string | null = null;
-  if (conta.p2s_oid) {
+  if (conta.p2s_oid && !(await contaPagarEmEmpresaCongelada(db, { id: contaId }))) {
     try {
       const baixa = await marcarContaPagarQuitada('PRODUCAO', conta.p2s_oid, dataPagamento);
       if (baixa.ok) {

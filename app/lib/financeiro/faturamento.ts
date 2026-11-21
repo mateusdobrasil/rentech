@@ -17,7 +17,7 @@
 import type { supabaseAdmin } from '../supabase';
 import { buscarTodasPaginas } from '../paginacao';
 import { hojeISO, somarDias, dataValida } from '../locacao/datas';
-import { numeroFichaPorId } from '../locacao/fichaNumero';
+import { numeroFicha } from '../locacao/fichaNumero';
 import { fontesDasEmpresas } from './caixa';
 import { randomBytes } from 'crypto';
 import nodemailer from 'nodemailer';
@@ -38,7 +38,7 @@ export interface ItemFatura { tipo: string; descricao: string; quantidade: numbe
 // ============================================================================
 export async function composicaoOs(db: Db, reservaId: number) {
   const { data: r, error } = await db.from('locacao_fichas_reserva')
-    .select('id, empresa_id, parceiro_id, origem, status, valor_total, desconto_valor, data_inicio, data_fim, contato_nome, contato_telefone, contato_email, condicao_pagamento, forma_pagamento, parceiro:parceiros(nome_exibicao, nome_completo, email1, telefone1), evento:eventos_feiras(nome)')
+    .select('id, empresa_id, parceiro_id, origem, p2s_numero, valor_faturado_p2s, status, valor_total, desconto_valor, data_inicio, data_fim, contato_nome, contato_telefone, contato_email, condicao_pagamento, forma_pagamento, parceiro:parceiros(nome_exibicao, nome_completo, email1, telefone1), evento:eventos_feiras(nome)')
     .eq('id', reservaId).maybeSingle();
   if (error) throw error;
   if (!r) throw new Error('OS não encontrada.');
@@ -62,10 +62,11 @@ export async function composicaoOs(db: Db, reservaId: number) {
   const totalOs = arred(n(r.valor_total));
   const totalProrr = arred(prorrogacoes.reduce((a, p) => a + p.valor_total, 0));
   const descontosFaturas = ((fats || []) as any[]).filter(f => f.status !== 'CANCELADA').reduce((a, f) => a + n(f.valor_desconto), 0);
-  const jaGerado = arred(((tits || []) as any[]).reduce((a, t) => a + n(t.valor), 0) + descontosFaturas);
+  // OS migrada do P2S na virada: o que já tinha sido faturado lá (Notas de Débito do P2S) também abate
+  const jaGerado = arred(((tits || []) as any[]).reduce((a, t) => a + n(t.valor), 0) + descontosFaturas + n((r as any).valor_faturado_p2s));
   const saldo = arred(totalOs + totalProrr - jaGerado);
   return {
-    reserva: r as any, numeroOs: numeroFichaPorId(r.id), itensOs, prorrogacoes, totalOs, descontoOs: n(r.desconto_valor), totalProrr, jaGerado, saldo,
+    reserva: r as any, numeroOs: numeroFicha(r as any), itensOs, prorrogacoes, totalOs, descontoOs: n(r.desconto_valor), totalProrr, jaGerado, saldo,
     faturas: ((fats || []) as any[]).map(f => ({ ...f, numero_exibicao: numeroExibicao(f), valor_total: n(f.valor_total) })),
   };
 }
@@ -74,7 +75,7 @@ export async function composicaoOs(db: Db, reservaId: number) {
 export async function filaAFaturar(db: Db, empresaIds: number[], emAndamento: boolean) {
   const status = emAndamento ? ['RESERVADA', 'EM_LOCACAO', 'FINALIZADA'] : ['FINALIZADA'];
   const { data: oss, error } = await buscarTodasPaginas<any>((d, a) => db.from('locacao_fichas_reserva')
-    .select('id, empresa_id, status, valor_total, data_inicio, data_fim, parceiro_id, parceiro:parceiros(nome_exibicao, nome_completo), evento:eventos_feiras(nome)')
+    .select('id, empresa_id, origem, p2s_numero, valor_faturado_p2s, status, valor_total, data_inicio, data_fim, parceiro_id, parceiro:parceiros(nome_exibicao, nome_completo), evento:eventos_feiras(nome)')
     .eq('origem', 'SISTEMA').in('status', status).in('empresa_id', empresaIds.length ? empresaIds : [0]).order('data_fim').range(d, a), 1000, 20000);
   if (error) throw error;
   if (!oss.length) return [];
@@ -95,10 +96,10 @@ export async function filaAFaturar(db: Db, empresaIds: number[], emAndamento: bo
   return oss.map((o: any) => {
     const prorr = prorrs.filter(p => p.ficha_reserva_id === o.id).reduce((a, p) => a + Math.max(0, n(p.valor_estimado)), 0);
     const ja = tits.filter(t => t.ficha_id === o.id).reduce((a, t) => a + n(t.valor), 0)
-      + fats.filter(f => f.ficha_reserva_id === o.id).reduce((a, f) => a + n(f.valor_desconto), 0);
+      + fats.filter(f => f.ficha_reserva_id === o.id).reduce((a, f) => a + n(f.valor_desconto), 0) + n(o.valor_faturado_p2s);
     const saldo = arred(n(o.valor_total) + prorr - ja);
     return {
-      id: o.id, numero: numeroFichaPorId(o.id), empresa_id: o.empresa_id, status: o.status, cliente: o.parceiro ? (o.parceiro.nome_exibicao || o.parceiro.nome_completo) : '—',
+      id: o.id, numero: numeroFicha(o), empresa_id: o.empresa_id, status: o.status, cliente: o.parceiro ? (o.parceiro.nome_exibicao || o.parceiro.nome_completo) : '—',
       evento: o.evento?.nome || null, inicio: o.data_inicio, fim: o.data_fim, devolucao: devolucao.get(o.id) || null,
       total: arred(n(o.valor_total) + prorr), ja_faturado: arred(ja), saldo,
     };

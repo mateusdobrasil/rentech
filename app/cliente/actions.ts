@@ -117,10 +117,16 @@ export async function painelClienteAction(): Promise<Resultado> {
       if (['ENVIADO', 'VISUALIZADO'].includes(p.status) && !abertaPor.has(p.ficha_id)) abertaPor.set(p.ficha_id, p);
       if (p.status === 'ASSINADO') assinadaPor.add(p.ficha_id);
     }
+    // Títulos: todos com a chave MOSTRAR_TITULOS; sem ela, só os das empresas que já
+    // viraram a chave (Financeiro na fonte SISTEMA) — antes disso o oficial é o P2S.
     let titulos: any[] = [];
-    if (MOSTRAR_TITULOS) {
-      const { data } = await db.from('financeiro_titulos_receber').select('id, descricao, valor, vencimento, status, data_pagamento, parceiro_id, boleto_linha_digitavel, boleto_pix_copia_cola')
-        .in('parceiro_id', s.parceiros).neq('status', 'CANCELADO').order('vencimento', { ascending: false }).limit(200);
+    const { data: fontes } = await db.from('financeiro_parametros').select('empresa_id').eq('fonte', 'SISTEMA');
+    const empresasViradas = ((fontes || []) as any[]).map(x => x.empresa_id as number);
+    if (MOSTRAR_TITULOS || empresasViradas.length) {
+      let q = db.from('financeiro_titulos_receber').select('id, descricao, valor, vencimento, status, data_pagamento, parceiro_id, boleto_linha_digitavel, boleto_pix_copia_cola')
+        .in('parceiro_id', s.parceiros).neq('status', 'CANCELADO');
+      if (!MOSTRAR_TITULOS) q = q.in('empresa_id', empresasViradas);
+      const { data } = await q.order('vencimento', { ascending: false }).limit(200);
       titulos = data || [];
     }
     // Notas de Débito OFICIAIS (as de ensaio, da transição, nunca aparecem para o cliente)
@@ -139,7 +145,7 @@ export async function painelClienteAction(): Promise<Resultado> {
           local: f.local_entrega, valor_total: Number(f.valor_total), validade: f.validade_orcamento,
           proposta_para_assinar: abertaPor.get(f.id)?.link_assinatura || null, proposta_assinada: assinadaPor.has(f.id),
         })),
-        titulos, mostrarTitulos: MOSTRAR_TITULOS,
+        titulos, mostrarTitulos: MOSTRAR_TITULOS || empresasViradas.length > 0,
         solicitacoes: rSol.data || [],
       },
     };

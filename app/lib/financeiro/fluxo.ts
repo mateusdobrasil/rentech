@@ -144,25 +144,42 @@ export async function dre(db: Db, empresaIds: number[], de: string, ate: string,
   const pag = <T,>(fn: (d: number, a: number) => any) => buscarTodasPaginas<T>(fn, 1000, 200000);
   const caixa = regime === 'CAIXA';
 
-  if (p2s.length) {
+  // Espelho do P2S: empresas ainda no P2S (período todo) e, para as que já viraram a
+  // chave, o histórico ATÉ o dia do corte (depois dele valem os títulos daqui). Na
+  // competência, a conta que migrou como título não entra pelo espelho (entra pelo título).
+  const lerEspelho = async (ids: number[], limite: string | null) => {
+    const ateR = limite && limite <= ate ? somarDias(limite, -1) : ate;
+    if (!ids.length || ateR < de) return;
     const [rc, pg] = await Promise.all([
       caixa
-        ? pag<any>((d, a) => db.from('financeiro_contas_receber').select('centro_financeiro, sub_centro, valor_pago, valor_final, data_quitacao').in('empresa_id', p2s).eq('quitado', true).gte('data_quitacao', de).lte('data_quitacao', ate).order('id').range(d, a))
-        : pag<any>((d, a) => db.from('financeiro_contas_receber').select('centro_financeiro, sub_centro, valor_final, data_competencia, data_emissao, data_vencimento').in('empresa_id', p2s).gte('data_vencimento', somarDias(de, -120)).lte('data_vencimento', somarDias(ate, 120)).order('id').range(d, a)),
+        ? pag<any>((d, a) => db.from('financeiro_contas_receber').select('centro_financeiro, sub_centro, valor_pago, valor_final, data_quitacao').in('empresa_id', ids).eq('quitado', true).gte('data_quitacao', de).lte('data_quitacao', ateR).order('id').range(d, a))
+        : pag<any>((d, a) => { let q = db.from('financeiro_contas_receber').select('centro_financeiro, sub_centro, valor_final, data_competencia, data_emissao, data_vencimento').in('empresa_id', ids).gte('data_vencimento', somarDias(de, -120)).lte('data_vencimento', somarDias(ateR, 120)); if (limite) q = q.is('migrado_titulo_id', null); return q.order('id').range(d, a); }),
       caixa
-        ? pag<any>((d, a) => db.from('financeiro_contas_pagar').select('centro, sub_centro, valor_pago, valor, data_quitacao').in('empresa_id', p2s).eq('quitado', true).gte('data_quitacao', de).lte('data_quitacao', ate).order('id').range(d, a))
-        : pag<any>((d, a) => db.from('financeiro_contas_pagar').select('centro, sub_centro, valor, data_emissao, data_vencimento').in('empresa_id', p2s).gte('data_vencimento', somarDias(de, -120)).lte('data_vencimento', somarDias(ate, 120)).order('id').range(d, a)),
+        ? pag<any>((d, a) => db.from('financeiro_contas_pagar').select('centro, sub_centro, valor_pago, valor, data_quitacao').in('empresa_id', ids).eq('quitado', true).gte('data_quitacao', de).lte('data_quitacao', ateR).order('id').range(d, a))
+        : pag<any>((d, a) => { let q = db.from('financeiro_contas_pagar').select('centro, sub_centro, valor, data_emissao, data_vencimento').in('empresa_id', ids).gte('data_vencimento', somarDias(de, -120)).lte('data_vencimento', somarDias(ateR, 120)); if (limite) q = q.is('migrado_titulo_id', null); return q.order('id').range(d, a); }),
     ]);
     if (rc.error) throw rc.error;
     if (pg.error) throw pg.error;
+    const dentro = (dt: string | null) => !!dt && dt <= ateR;
     for (const r of rc.data) {
       const centro = limpo(String(r.centro_financeiro || '').split(/\r?\n/)[0]), sub = limpo(String(r.sub_centro || '').split(/\r?\n/)[0]);
-      somar('RECEITA', centro, sub, caixa ? r.data_quitacao : (r.data_competencia || r.data_emissao || r.data_vencimento), caixa ? (n(r.valor_pago) || n(r.valor_final)) : n(r.valor_final));
+      const dt = caixa ? r.data_quitacao : (r.data_competencia || r.data_emissao || r.data_vencimento);
+      if (dentro(dt)) somar('RECEITA', centro, sub, dt, caixa ? (n(r.valor_pago) || n(r.valor_final)) : n(r.valor_final));
     }
-    for (const p of pg.data) somar('DESPESA', p.centro, p.sub_centro, caixa ? p.data_quitacao : (p.data_emissao || p.data_vencimento), caixa ? (n(p.valor_pago) || n(p.valor)) : n(p.valor));
+    for (const p of pg.data) {
+      const dt = caixa ? p.data_quitacao : (p.data_emissao || p.data_vencimento);
+      if (dentro(dt)) somar('DESPESA', p.centro, p.sub_centro, dt, caixa ? (n(p.valor_pago) || n(p.valor)) : n(p.valor));
+    }
+  };
+  await lerEspelho(p2s, null);
+  if (sis.length) {
+    const { data: viradas } = await db.from('parametros_virada').select('empresa_id, data_corte').in('empresa_id', sis).not('data_corte', 'is', null);
+    const porCorte = new Map<string, number[]>();
+    for (const v of (viradas || []) as any[]) porCorte.set(v.data_corte, [...(porCorte.get(v.data_corte) || []), v.empresa_id]);
+    for (const [corte, ids] of porCorte) await lerEspelho(ids, corte);
   }
   if (sis.length) {
-    const ORIGEM_RECEITA: Record<string, string> = { FICHA: 'LOCAÇÃO', AVARIA: 'REPOSIÇÃO', REPOSICAO: 'REPOSIÇÃO', AVULSO: 'OUTRAS RECEITAS' };
+    const ORIGEM_RECEITA: Record<string, string> = { FICHA: 'LOCAÇÃO', AVARIA: 'REPOSIÇÃO', REPOSICAO: 'REPOSIÇÃO', AVULSO: 'OUTRAS RECEITAS', MIGRADO: 'LOCAÇÃO' };
     const [rc, pg] = await Promise.all([
       pag<any>((d, a) => db.from('financeiro_titulos_receber').select('origem, valor, valor_pago, status, data_pagamento, data_emissao').in('empresa_id', sis).neq('status', 'CANCELADO').order('id').range(d, a)),
       pag<any>((d, a) => db.from('financeiro_titulos_pagar').select('valor, valor_pago, status, data_pagamento, competencia, vencimento, subcentro:financeiro_subcentros(nome_p2s, centro:financeiro_centros(nome))').in('empresa_id', sis).neq('status', 'CANCELADO').order('id').range(d, a)),

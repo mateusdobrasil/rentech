@@ -30,6 +30,7 @@ import { consultarObjetos, criterio, p2sParaData, type AmbienteP2s, type ObjetoP
 import { resolverCentrosP2s, empresaIdDoCentroP2s } from '../empresaP2s';
 import type { LinhaEmpresa } from '../empresa';
 import { periodoAlocacao, daterangeInclusivo, diasInclusivos, somarDias } from './datas';
+import { empresasCongeladas } from '../virada/estado';
 import { sincronizarParceirosPorOidsCore } from '../../admin/comercial/parceiros/parceirosCore';
 
 type Db = ReturnType<typeof supabaseAdmin>;
@@ -144,6 +145,18 @@ async function importarSemTrava(db: Db, opcoes: OpcoesImportacao): Promise<Resul
     for (const [k, v] of novos) parceiros.set(k, v);
   }
 
+  // Virada da chave (2026-11-21): empresa congelada não é mais lida do P2S, e a
+  // OS que já migrou para o sistema (origem SISTEMA com p2s_oid) nunca é sobrescrita.
+  const congeladas = await empresasCongeladas(db);
+  const migradas = new Set<string>();
+  {
+    const oids = fichas.map(f => f.oid);
+    for (let i = 0; i < oids.length; i += 300) {
+      const { data } = await db.from('locacao_fichas_reserva').select('p2s_oid').in('p2s_oid', oids.slice(i, i + 300)).neq('origem', 'P2S');
+      for (const x of (data || []) as any[]) migradas.add(x.p2s_oid);
+    }
+  }
+
   // ---------------- cabeçalhos ----------------
   const cabecalhos: any[] = [];
   const porOid = new Map<string, ObjetoP2s>();
@@ -155,6 +168,8 @@ async function importarSemTrava(db: Db, opcoes: OpcoesImportacao): Promise<Resul
     const inicio = dataISO(f.DataInicial);
     let fim = dataISO(f.DataFinal);
     if (!empresaId) { res.puladas.push({ numero, motivo: 'centro sem empresa' }); continue; }
+    if (migradas.has(f.oid)) { res.puladas.push({ numero, motivo: 'já migrada para o sistema na virada' }); continue; }
+    if (congeladas.has(empresaId)) { res.puladas.push({ numero, motivo: 'empresa já virou a chave (P2S congelado)' }); continue; }
     if (!parceiro) { res.puladas.push({ numero, motivo: 'cliente não sincronizado (rode o sync de Parceiros)' }); continue; }
     if (!inicio) { res.puladas.push({ numero, motivo: 'sem data inicial' }); continue; }
     if (!fim || fim < inicio) fim = inicio;

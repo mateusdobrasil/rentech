@@ -155,7 +155,9 @@ export async function relatorioOrcamentos(db: Db, f: FiltrosRelatorio) {
 // FINANCEIRO
 // ============================================================================
 async function titulos(db: Db, tabela: 'financeiro_contas_receber' | 'financeiro_contas_pagar', colunas: string, montar: (q: any) => any, empresaIds: number[]) {
-  const { data, error } = await buscarTodasPaginas<any>((de, ate) => montar(db.from(tabela).select(colunas).in('empresa_id', empresaIds)).order('id').range(de, ate), 1000, 200000);
+  if (!empresaIds.length) return [];
+  // conta aberta que migrou como título na virada da chave sai do espelho (entra pelo título)
+  const { data, error } = await buscarTodasPaginas<any>((de, ate) => montar(db.from(tabela).select(colunas).in('empresa_id', empresaIds)).is('migrado_titulo_id', null).order('id').range(de, ate), 1000, 200000);
   if (error) throw error;
   return data;
 }
@@ -165,13 +167,31 @@ export async function relatorioFinanceiro(db: Db, f: FiltrosRelatorio) {
   const hoje = hojeISO();
   const colR = 'id, cliente, descricao, valor_final, valor_pago, data_vencimento, data_quitacao, quitado, centro_financeiro';
   const colP = 'id, fornecedor, descricao, valor, valor_pago, data_vencimento, data_quitacao, quitado, centro, sub_centro';
-  const [recebidos, aReceber, vencidos, pagos, aPagar] = await Promise.all([
+  // Empresas que já viraram a chave: além do histórico do espelho, os títulos daqui
+  const { data: fontesData } = await db.from('financeiro_parametros').select('empresa_id, fonte').in('empresa_id', f.empresaIds);
+  const sis = ((fontesData || []) as any[]).filter(x => x.fonte === 'SISTEMA').map(x => x.empresa_id as number);
+  const proprios = async (tabela: 'financeiro_titulos_receber' | 'financeiro_titulos_pagar', montar: (q: any) => any) => {
+    if (!sis.length) return [];
+    const col = tabela === 'financeiro_titulos_receber' ? 'descricao, valor, valor_pago, vencimento, data_pagamento, status, parceiro:parceiros(nome_exibicao, nome_completo)' : 'descricao, valor, valor_pago, vencimento, data_pagamento, status, fornecedor_nome, subcentro:financeiro_subcentros(nome_p2s, centro:financeiro_centros(nome))';
+    const { data, error } = await buscarTodasPaginas<any>((de, ate) => montar(db.from(tabela).select(col).in('empresa_id', sis).neq('status', 'CANCELADO')).order('id').range(de, ate), 1000, 100000);
+    if (error) throw error;
+    return ((data || []) as any[]).map(x => tabela === 'financeiro_titulos_receber'
+      ? { cliente: nomeParceiro(x.parceiro), descricao: x.descricao, valor_final: n(x.valor), valor_pago: x.status === 'PAGO' ? (n(x.valor_pago) || n(x.valor)) : 0, data_vencimento: x.vencimento, data_quitacao: x.data_pagamento, quitado: x.status === 'PAGO', centro_financeiro: 'LOCAÇÃO' }
+      : { fornecedor: x.fornecedor_nome, descricao: x.descricao, valor: n(x.valor), valor_pago: x.status === 'PAGO' ? (n(x.valor_pago) || n(x.valor)) : 0, data_vencimento: x.vencimento, data_quitacao: x.data_pagamento, quitado: x.status === 'PAGO', centro: x.subcentro?.centro?.nome || null, sub_centro: x.subcentro?.nome_p2s || null });
+  };
+  const [recebidos, aReceber, vencidos, pagos, aPagar, sR, sAR, sV, sP, sAP] = await Promise.all([
     titulos(db, 'financeiro_contas_receber', colR, q => q.eq('quitado', true).gte('data_quitacao', f.de).lte('data_quitacao', f.ate), f.empresaIds),
     titulos(db, 'financeiro_contas_receber', colR, q => q.eq('quitado', false).gte('data_vencimento', f.de).lte('data_vencimento', f.ate), f.empresaIds),
     titulos(db, 'financeiro_contas_receber', colR, q => q.eq('quitado', false).lt('data_vencimento', hoje), f.empresaIds),
     titulos(db, 'financeiro_contas_pagar', colP, q => q.eq('quitado', true).gte('data_quitacao', f.de).lte('data_quitacao', f.ate), f.empresaIds),
     titulos(db, 'financeiro_contas_pagar', colP, q => q.eq('quitado', false).gte('data_vencimento', f.de).lte('data_vencimento', f.ate), f.empresaIds),
+    proprios('financeiro_titulos_receber', q => q.eq('status', 'PAGO').gte('data_pagamento', f.de).lte('data_pagamento', f.ate)),
+    proprios('financeiro_titulos_receber', q => q.eq('status', 'ABERTO').gte('vencimento', f.de).lte('vencimento', f.ate)),
+    proprios('financeiro_titulos_receber', q => q.eq('status', 'ABERTO').lt('vencimento', hoje)),
+    proprios('financeiro_titulos_pagar', q => q.eq('status', 'PAGO').gte('data_pagamento', f.de).lte('data_pagamento', f.ate)),
+    proprios('financeiro_titulos_pagar', q => q.eq('status', 'ABERTO').gte('vencimento', f.de).lte('vencimento', f.ate)),
   ]);
+  recebidos.push(...sR); aReceber.push(...sAR); vencidos.push(...sV); pagos.push(...sP); aPagar.push(...sAP);
   const vR = (x: any) => n(x.valor_pago) || n(x.valor_final);
   const vRab = (x: any) => n(x.valor_final) - n(x.valor_pago);
   const vP = (x: any) => n(x.valor_pago) || n(x.valor);

@@ -13,6 +13,7 @@ import {
   consultarPagamentosSispag, consultarPagamentoSispag, credenciaisItauConfiguradas, semAcento,
   type AmbienteItau,
 } from '../../../lib/itauSispag';
+import { contaPagarEmEmpresaCongelada, MSG_P2S_CONGELADO } from '../../../lib/virada/estado';
 import { consultarObjetos, buscarObjeto, criterio, marcarContaPagarQuitada, dataParaP2s, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
 import { resolverNomes, paraDataISO, refOuNull, textoOuNull } from '../contas-pagar/contasPagarCore';
 import { revalidatePath } from 'next/cache';
@@ -588,6 +589,7 @@ export async function darBaixaContaPagarConciliacaoAction(payload: {
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   try {
+    if (await contaPagarEmEmpresaCongelada(supabaseAdmin(), { p2sOid: payload.p2sOid })) return { ok: false, erro: `${MSG_P2S_CONGELADO} Dê a baixa em Financeiro › Contas a Pagar.` };
     const data = payload.dataQuitacao ? new Date(`${payload.dataQuitacao}T12:00:00`) : new Date();
 
     // Reconfere direto no objeto (fora do proxy) antes de chamar o método de

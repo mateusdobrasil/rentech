@@ -42,6 +42,12 @@ const modulosParametros = [
     cor: 'border-orange-500/50 hover:border-orange-500', bgIcon: 'bg-orange-50 text-orange-600'
   },
   {
+    titulo: 'Virada da Chave',
+    descricao: 'Tira o P2S de cena empresa por empresa: congela a integração, migra as OS em andamento e as contas em aberto e liga o Financeiro e o Faturamento oficiais.',
+    icone: '🔑', link: '/admin/parametros/virada',
+    cor: 'border-red-500/50 hover:border-red-500', bgIcon: 'bg-red-50 text-red-600'
+  },
+  {
     titulo: 'Cadastro de Empresas',
     descricao: 'Empresas do Grupo Rentech (CNPJs) usadas para vincular funcionários e restringir acesso.',
     icone: '🏢', link: '/admin/parametros/empresas',

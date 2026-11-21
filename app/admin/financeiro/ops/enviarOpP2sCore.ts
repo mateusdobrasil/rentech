@@ -10,6 +10,7 @@
 import { revalidatePath } from 'next/cache';
 import { registrarLogAuditoria } from '../../../actions';
 import { supabaseAdmin } from '../../../lib/supabase';
+import { opEmEmpresaCongelada, MSG_P2S_CONGELADO } from '../../../lib/virada/estado';
 import { criarObjeto, atualizarObjeto, consultarObjetos, buscarObjeto, criterio, dataParaP2s, type AmbienteP2s } from '../../../lib/p2s';
 
 export interface ItemOPParaEnvioP2s {
@@ -231,6 +232,8 @@ async function resolverEntidade(op: OPParaEnvioP2s, ambiente: AmbienteP2s): Prom
 // do PrimeStart e volta pra cá pela sincronização + conciliação por
 // "OP: <número>" na descrição, fechando o ciclo.
 export async function criarContaPagarParaOP(op: OPParaEnvioP2s, nomeResponsavel: string): Promise<ResultadoEnvioP2s> {
+  // virada da chave: empresa que já virou não manda mais nada ao P2S
+  if (await opEmEmpresaCongelada(supabaseAdmin(), op.id)) throw new Error(MSG_P2S_CONGELADO);
   const ambiente: AmbienteP2s = 'PRODUCAO';
 
   const entidade = await resolverEntidade(op, ambiente);
@@ -318,6 +321,7 @@ export async function criarContaPagarParaOP(op: OPParaEnvioP2s, nomeResponsavel:
 // caminho pra mandar pela primeira vez.
 export async function atualizarContaPagarParaOP(op: OPParaEnvioP2s & { p2s_conta_pagar_oid: string | null }, nomeResponsavel: string): Promise<void> {
   if (!op.p2s_conta_pagar_oid) return;
+  if (await opEmEmpresaCongelada(supabaseAdmin(), op.id)) return;
 
   const ambiente: AmbienteP2s = 'PRODUCAO';
   const campos: Record<string, unknown> = {

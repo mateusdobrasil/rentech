@@ -96,6 +96,12 @@ const modulosFinanceiro = [
     descricao: 'Notas de Débito das locações devolvidas: fila a faturar, emissão individual ou em lote, parcelas e envio por e-mail, WhatsApp e Portal do Cliente.',
     icone: '🧾', link: '/admin/financeiro/faturamento',
     cor: 'bg-teal-50 border-teal-200 text-teal-700', hover: 'hover:border-teal-500'
+  },
+  {
+    titulo: 'Fiscal (NF-e / NFS-e)',
+    descricao: 'Notas fiscais pela Focus NFe: NFS-e de serviço ou de locação sob pedido, NF-e de remessa/retorno de equipamento e de venda. DANFE, XML, cancelamento e carta de correção.',
+    icone: '🏛️', link: '/admin/financeiro/fiscal',
+    cor: 'bg-slate-50 border-slate-200 text-slate-700', hover: 'hover:border-slate-500'
   }
 ];
 

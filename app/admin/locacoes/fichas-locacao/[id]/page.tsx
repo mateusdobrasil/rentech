@@ -289,7 +289,8 @@ export default function FichaLocacaoPage() {
           {!propria && <span className="text-[10px] font-black px-2.5 py-1 rounded-full uppercase bg-orange-100 text-orange-700">histórico do P2S · só leitura</span>}
           {f.empresa && <span className="text-[10px] font-bold text-gray-500">{f.empresa}</span>}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {propria && <button onClick={() => router.push(`/admin/financeiro/fiscal?remessa=${f.id}`)} className="text-[10px] md:text-xs font-black bg-white border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg tracking-wider uppercase">🏛️ NF-e de remessa</button>}
           {r && <button onClick={() => router.push(`/admin/locacoes/reservas/${r.id}`)} className="text-[10px] md:text-xs font-black bg-white border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg tracking-wider uppercase">📝 OS {r.os}</button>}
           <button onClick={() => router.push(ROTA)} className="text-[10px] md:text-xs font-black bg-white border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg tracking-wider uppercase">⬅ Fichas de locação</button>
         </div>

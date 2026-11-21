@@ -246,6 +246,7 @@ function Conteudo() {
                         {f.status !== 'CANCELADA' && <button onClick={() => email(f)} className="text-[10px] font-black text-[#336699]">e-mail</button>}
                         {f.status !== 'CANCELADA' && <button onClick={() => whatsapp(f)} className="text-[10px] font-black text-[#047857]">WhatsApp</button>}
                         {f.status !== 'CANCELADA' && <button onClick={() => copiarLink(f)} className="text-[10px] font-black text-gray-500">link</button>}
+                        {f.status !== 'CANCELADA' && <button onClick={() => router.push(`/admin/financeiro/fiscal?fatura=${f.id}`)} className="text-[10px] font-black text-slate-600" title="Emitir NFS-e (serviços ou locação) a partir desta Nota de Débito">NFS-e</button>}
                         {f.status !== 'CANCELADA' && f.situacao !== 'PAGA' && <button onClick={() => cancelar(f)} className="text-[10px] font-black text-gray-400 hover:text-red-500">cancelar</button>}
                       </td>
                     </tr>

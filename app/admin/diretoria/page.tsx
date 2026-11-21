@@ -74,6 +74,7 @@ const TIPO_ALERTA: Record<string, { icone: string; rotulo: string }> = {
   EXPEDICAO_SEM_RETORNO: { icone: '📦', rotulo: 'Material não voltou' },
   FROTA_FORA: { icone: '🚚', rotulo: 'Veículo fora' },
   CAIXA_SEMANA: { icone: '📉', rotulo: 'Caixa apertado' },
+  MDFE_ABERTO: { icone: '🧾', rotulo: 'MDF-e aberto' },
 };
 // Abas de cima; "Relatórios" agrupa Diário/Semanal/Mensal/Anual (escolhidos logo abaixo).
 const ABAS: { valor: 'RELATORIOS' | Exclude<Aba, TipoRel>; rotulo: string }[] = [

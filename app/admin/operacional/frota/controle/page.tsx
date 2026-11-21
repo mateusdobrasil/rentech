@@ -68,6 +68,13 @@ interface Veiculo {
   crlv_vencimento?: string | null;
   ipva_vencimento?: string | null;
   observacoes?: string;
+  // MDF-e (manifesto da viagem) — 2026-11-21
+  tara_kg?: number | null;
+  capacidade_kg?: number | null;
+  capacidade_m3?: number | null;
+  tipo_rodado?: string | null;
+  tipo_carroceria?: string | null;
+  uf_licenciamento?: string | null;
 }
 
 interface Documento {
@@ -664,6 +671,83 @@ export default function PainelControleFrota() {
                       <input type="checkbox" className="w-4 h-4 accent-[#336699]" checked={!!modalVeiculo.v.exibir_na_frota} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, exibir_na_frota: e.target.checked } })} />
                       <span className="text-xs font-semibold text-[#0C1D4D]">{modalVeiculo.v.exibir_na_frota ? 'Sim' : 'Não'}</span>
                     </label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Dados do MDF-e (manifesto da viagem com NF-e) — do CRLV */}
+              <div>
+                <h4 className="text-[10px] font-black text-[#0A2A4A] uppercase tracking-widest border-b border-[#CBD5E1] pb-2 mb-3">Dados para o MDF-e</h4>
+                <p className="text-[11px] text-[#64748B] mb-3">Do CRLV. Usados no manifesto quando o veículo leva NF-e (Financeiro › Fiscal › MDF-e).</p>
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Tara (kg)</label>
+                    <input type="number" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.tara_kg ?? ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, tara_kg: e.target.value ? parseInt(e.target.value) : null } })} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Capacidade (kg)</label>
+                    <input type="number" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.capacidade_kg ?? ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, capacidade_kg: e.target.value ? parseInt(e.target.value) : null } })} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Capacidade (m³)</label>
+                    <input type="number" className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm" value={modalVeiculo.v.capacidade_m3 ?? ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, capacidade_m3: e.target.value ? parseInt(e.target.value) : null } })} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Rodado</label>
+                    <select className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer" value={modalVeiculo.v.tipo_rodado || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, tipo_rodado: e.target.value || null } })}>
+                      <option value="">—</option>
+                      <option value="01">Truck</option>
+                      <option value="02">Toco</option>
+                      <option value="03">Cavalo mecânico</option>
+                      <option value="04">Van</option>
+                      <option value="05">Utilitário</option>
+                      <option value="06">Outros</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Carroceria</label>
+                    <select className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer" value={modalVeiculo.v.tipo_carroceria || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, tipo_carroceria: e.target.value || null } })}>
+                      <option value="">—</option>
+                      <option value="00">Não aplicável</option>
+                      <option value="01">Aberta</option>
+                      <option value="02">Fechada / baú</option>
+                      <option value="03">Granelera</option>
+                      <option value="04">Porta container</option>
+                      <option value="05">Sider</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">UF licenciamento</label>
+                    <select className="w-full p-2 border border-[#CBD5E1] rounded outline-none focus:border-[#336699] text-sm font-semibold cursor-pointer" value={modalVeiculo.v.uf_licenciamento || ''} onChange={e => setModalVeiculo({ ...modalVeiculo, v: { ...modalVeiculo.v, uf_licenciamento: e.target.value || null } })}>
+                      <option value="">—</option>
+                      <option value="AC">AC</option>
+                      <option value="AL">AL</option>
+                      <option value="AM">AM</option>
+                      <option value="AP">AP</option>
+                      <option value="BA">BA</option>
+                      <option value="CE">CE</option>
+                      <option value="DF">DF</option>
+                      <option value="ES">ES</option>
+                      <option value="GO">GO</option>
+                      <option value="MA">MA</option>
+                      <option value="MG">MG</option>
+                      <option value="MS">MS</option>
+                      <option value="MT">MT</option>
+                      <option value="PA">PA</option>
+                      <option value="PB">PB</option>
+                      <option value="PE">PE</option>
+                      <option value="PI">PI</option>
+                      <option value="PR">PR</option>
+                      <option value="RJ">RJ</option>
+                      <option value="RN">RN</option>
+                      <option value="RO">RO</option>
+                      <option value="RR">RR</option>
+                      <option value="RS">RS</option>
+                      <option value="SC">SC</option>
+                      <option value="SE">SE</option>
+                      <option value="SP">SP</option>
+                      <option value="TO">TO</option>
+                    </select>
                   </div>
                 </div>
               </div>

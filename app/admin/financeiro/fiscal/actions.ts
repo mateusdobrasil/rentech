@@ -14,6 +14,10 @@ import {
   emitirNfse, emitirNfe, consultarNota, cancelarNota, cartaCorrecao, arquivoNota, atualizarProcessando, operacoesNfe,
   itensRemessaDaFicha, itensRetornoDaRemessa, itemDoProduto, dadosParceiro, type ItemNfe, type VolumeNfe,
 } from '../../../lib/fiscal/notas';
+import {
+  notasParaMdfe, emitirMdfe, consultarMdfe, atualizarMdfeProcessando, encerrarMdfe, cancelarMdfe, incluirCondutorMdfe, arquivoMdfe, percursoSugerido,
+  UFS, TIPOS_RODADO, TIPOS_CARROCERIA, TIPOS_CARGA, type SentidoMdfe, type VeiculoMdfe, type CondutorMdfe,
+} from '../../../lib/fiscal/mdfe';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 const ROTA = '/admin/financeiro/fiscal';
@@ -247,7 +251,8 @@ export async function arquivoNotaAction(id: number, qual: 'pdf' | 'xml' | 'cce',
 // PARÂMETROS (só Administrador)
 // ============================================================================
 const CAMPOS_PARAM = ['ambiente', 'regime', 'lucro_presumido_desde', 'nfse_codigo_nbs', 'nfse_codigo_indicador_operacao', 'nfse_ibs_cbs_situacao_tributaria', 'nfse_ibs_cbs_classificacao_tributaria', 'nfse_item_lista_servico', 'nfse_codigo_tributario_municipio', 'nfse_codigo_cnae', 'nfse_aliquota', 'nfse_natureza_operacao', 'nfse_discriminacao_padrao',
-  'nfse_locacao_item_lista_servico', 'nfse_locacao_aliquota', 'nfse_locacao_discriminacao_padrao', 'enviar_ibs_cbs'] as const;
+  'nfse_locacao_item_lista_servico', 'nfse_locacao_aliquota', 'nfse_locacao_discriminacao_padrao', 'enviar_ibs_cbs',
+  'mdfe_cep_carregamento', 'mdfe_tipo_carga', 'mdfe_produto_predominante', 'mdfe_ncm', 'mdfe_seguradora_nome', 'mdfe_seguradora_cnpj', 'mdfe_apolice', 'mdfe_averbacao'] as const;
 export async function salvarParametrosFiscaisAction(empresaId: number, p: Record<string, any>, accessToken: string): Promise<Resultado> {
   const ctx = await contexto(accessToken);
   if ('erro' in ctx) return { ok: false, erro: ctx.erro };
@@ -264,6 +269,9 @@ export async function salvarParametrosFiscaisAction(empresaId: number, p: Record
   if (upd.nfse_natureza_operacao === null) delete upd.nfse_natureza_operacao;
   if (upd.ambiente === null) delete upd.ambiente;
   if (upd.regime === null) delete upd.regime;
+  if (upd.mdfe_tipo_carga === null) delete upd.mdfe_tipo_carga;
+  for (const k of ['mdfe_cep_carregamento', 'mdfe_seguradora_cnpj', 'mdfe_ncm'] as const) if (upd[k]) upd[k] = String(upd[k]).replace(/\D/g, '');
+  if (upd.mdfe_cep_carregamento && upd.mdfe_cep_carregamento.length !== 8) return { ok: false, erro: 'O CEP de carregamento do MDF-e tem 8 dígitos.' };
   const { error } = await ctx.db.from('fiscal_parametros').update(upd).eq('empresa_id', empresaId);
   if (error) return { ok: false, erro: error.message };
   log(ctx.perfil.nome, 'PARÂMETROS FISCAIS', `empresa ${empresaId}${p.ambiente ? ` · ambiente ${p.ambiente}` : ''}${p.regime ? ` · regime ${p.regime}` : ''}`);
@@ -288,4 +296,130 @@ export async function salvarOperacaoFiscalAction(codigo: string, p: Record<strin
   if (error) return { ok: false, erro: error.message };
   log(ctx.perfil.nome, 'OPERAÇÃO FISCAL', codigo);
   return { ok: true };
+}
+
+// ============================================================================
+// MDF-e (manifesto da viagem) — regras em app/lib/fiscal/mdfe.ts
+// ============================================================================
+async function mdfeVisivel(ctx: Ctx, id: number) {
+  const { data } = await ctx.db.from('fiscal_mdfe').select('id, empresa_id, numero, placa').eq('id', id).maybeSingle();
+  return data && empresaPermitida(ctx.permitidas, data.empresa_id) ? data : null;
+}
+
+export async function painelMdfeAction(empresaId: number | null, accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  const emissora = ctx.emissoras.find(e => e.id === empresaId) || ctx.emissoras[0];
+  if (!emissora) return { ok: true, info: { mdfes: [], notas: [], veiculos: [], condutores: [] } };
+  try {
+    await atualizarMdfeProcessando(ctx.db).catch(() => null);
+    const desde = new Date(Date.now() - 90 * 86_400_000).toISOString();
+    const [mdfes, notas, veiculos, condutores] = await Promise.all([
+      ctx.db.from('fiscal_mdfe').select('id, ambiente, status, numero, serie, chave, placa, condutores, uf_inicio, uf_fim, percurso, municipio_carregamento, municipios_descarregamento, valor_carga, peso_kg, interestadual, mensagem, criado_em, criado_por, encerrado_em, encerramento_municipio, motivo_cancelamento, caminho_pdf, caminho_xml, notas:fiscal_mdfe_notas(nota:fiscal_notas(numero))')
+        .eq('empresa_id', emissora.id).gte('criado_em', desde).order('id', { ascending: false }).limit(300),
+      notasParaMdfe(ctx.db, emissora.id, emissora.ambiente as any),
+      ctx.db.from('frota_veiculos').select('id, apelido, placa, tipo, modelo, renavam, propriedade, status, tara_kg, capacidade_kg, capacidade_m3, tipo_rodado, tipo_carroceria, uf_licenciamento').eq('empresa_id', emissora.id).neq('status', 'VENDIDO').order('apelido'),
+      ctx.db.from('folha_funcionarios').select('id, nome_completo, cpf, cargo').eq('empresa_id', emissora.id).eq('ativo', true).order('nome_completo'),
+    ]);
+    if (mdfes.error) throw mdfes.error;
+    const cargoMotorista = (c: unknown) => /MOTORISTA/i.test(String(c || ''));
+    return {
+      ok: true, info: {
+        empresaId: emissora.id, ambiente: emissora.ambiente,
+        mdfes: ((mdfes.data || []) as any[]).map(m => ({
+          ...m, notas: ((m.notas || []) as any[]).map((x: any) => x.nota?.numero).filter(Boolean), tem_pdf: !!m.caminho_pdf, tem_xml: !!m.caminho_xml, caminho_pdf: undefined, caminho_xml: undefined,
+          condutores: ((m.condutores || []) as any[]).map((c: any) => c.nome),
+          aberto_horas: m.status === 'AUTORIZADO' ? Math.floor((Date.now() - new Date(m.criado_em).getTime()) / 3_600_000) : null,
+        })),
+        notas, veiculos: veiculos.data || [],
+        // documento do colaborador vem da Ficha do Funcionário (RH); motoristas primeiro
+        condutores: ((condutores.data || []) as any[]).filter(c => String(c.cpf || '').replace(/\D/g, '').length === 11)
+          .map(c => ({ id: c.id, nome: limpo(c.nome_completo), cargo: limpo(c.cargo), motorista: cargoMotorista(c.cargo) }))
+          .sort((a, b) => Number(b.motorista) - Number(a.motorista) || a.nome.localeCompare(b.nome, 'pt-BR')),
+        ufs: UFS, rodados: TIPOS_RODADO, carrocerias: TIPOS_CARROCERIA, tiposCarga: TIPOS_CARGA,
+      },
+    };
+  } catch (e) { return falha(e); }
+}
+
+export async function percursoMdfeAction(inicio: string, fim: string, accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  return { ok: true, info: percursoSugerido(inicio, fim) };
+}
+
+export async function emitirMdfeAction(a: {
+  empresaId: number; sentido: SentidoMdfe; notaIds: number[]; veiculoId: string; veiculo?: VeiculoMdfe | null; funcionarioIds: number[];
+  percurso?: string[] | null; pesoKg?: number | null; dataViagem?: string | null; informacoes?: string | null;
+}, accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  if (!podeEmpresa(ctx, a.empresaId)) return { ok: false, erro: 'Esta empresa não emite documento fiscal pelo sistema.' };
+  try {
+    // nome e CPF do motorista saem da Ficha do Funcionário (nunca do que vem da tela)
+    const ids = [...new Set((a.funcionarioIds || []).map(Number))];
+    const { data } = ids.length ? await ctx.db.from('folha_funcionarios').select('id, nome_completo, cpf, empresa_id').in('id', ids) : { data: [] as any[] };
+    const f = new Map(((data || []) as any[]).filter(x => x.empresa_id === a.empresaId).map(x => [x.id, x]));
+    if (ids.some(id => !f.has(id))) return { ok: false, erro: 'Motorista não encontrado entre os funcionários da empresa.' };
+    const condutores: CondutorMdfe[] = ids.map(id => ({ nome: f.get(id).nome_completo, cpf: f.get(id).cpf, funcionario_id: id }));
+    const r = await emitirMdfe(ctx.db, { ...a, condutores }, ctx.perfil.nome);
+    log(ctx.perfil.nome, 'EMITIU MDF-e', `MDF-e #${r.id} · ${a.notaIds.length} NF-e · ${a.sentido} → ${r.status}`);
+    return { ok: true, info: r };
+  } catch (e) { return falha(e); }
+}
+
+export async function consultarMdfeAction(id: number, accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  if (!(await mdfeVisivel(ctx, id))) return { ok: false, erro: 'MDF-e não encontrado.' };
+  try { return { ok: true, info: await consultarMdfe(ctx.db, id) }; } catch (e) { return falha(e); }
+}
+
+export async function encerrarMdfeAction(id: number, e: { data?: string | null; uf?: string | null; municipio?: string | null }, accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  const v = await mdfeVisivel(ctx, id);
+  if (!v) return { ok: false, erro: 'MDF-e não encontrado.' };
+  if (e.data && !dataValida(e.data)) return { ok: false, erro: 'Data do encerramento inválida.' };
+  try {
+    await encerrarMdfe(ctx.db, id, e, ctx.perfil.nome);
+    log(ctx.perfil.nome, 'ENCERROU MDF-e', `nº ${v.numero || '#' + id} · ${v.placa}`);
+    return { ok: true };
+  } catch (err) { return falha(err); }
+}
+
+export async function cancelarMdfeAction(id: number, justificativa: string, accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  const v = await mdfeVisivel(ctx, id);
+  if (!v) return { ok: false, erro: 'MDF-e não encontrado.' };
+  try {
+    await cancelarMdfe(ctx.db, id, justificativa, ctx.perfil.nome);
+    log(ctx.perfil.nome, 'CANCELOU MDF-e', `nº ${v.numero || '#' + id}: ${limpo(justificativa)}`);
+    return { ok: true };
+  } catch (e) { return falha(e); }
+}
+
+export async function incluirCondutorMdfeAction(id: number, funcionarioId: number, accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  const v = await mdfeVisivel(ctx, id);
+  if (!v) return { ok: false, erro: 'MDF-e não encontrado.' };
+  try {
+    const { data: f } = await ctx.db.from('folha_funcionarios').select('id, nome_completo, cpf, empresa_id').eq('id', funcionarioId).maybeSingle();
+    if (!f || f.empresa_id !== v.empresa_id) return { ok: false, erro: 'Funcionário não encontrado.' };
+    await incluirCondutorMdfe(ctx.db, id, { nome: f.nome_completo, cpf: f.cpf, funcionario_id: f.id }, ctx.perfil.nome);
+    log(ctx.perfil.nome, 'MDF-e: INCLUIU MOTORISTA', `nº ${v.numero || '#' + id} · ${limpo(f.nome_completo)}`);
+    return { ok: true };
+  } catch (e) { return falha(e); }
+}
+
+export async function arquivoMdfeAction(id: number, qual: 'pdf' | 'xml', accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  if (!(await mdfeVisivel(ctx, id))) return { ok: false, erro: 'MDF-e não encontrado.' };
+  try {
+    const a = await arquivoMdfe(ctx.db, id, qual);
+    return { ok: true, info: { base64: a.bytes.toString('base64'), nome: a.nome, tipo: a.tipo } };
+  } catch (e) { return falha(e); }
 }

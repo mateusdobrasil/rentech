@@ -31,7 +31,7 @@ type DB = ReturnType<typeof supabaseAdmin>;
 export const CHAVE_CARD_ALERTAS = 'diretoria-alertas';
 
 export type TipoAlerta = 'OP_FAVORECIDO_NOVO' | 'OP_CONTA_COMPARTILHADA' | 'OP_VALOR_ALTO' | 'RECEBER_ATRASO' | 'EXPEDICAO_SEM_RETORNO' | 'FROTA_FORA' | 'CAIXA_SEMANA'
-  | 'META_TETO_OPS' | 'META_TETO_INADIMPLENCIA';
+  | 'META_TETO_OPS' | 'META_TETO_INADIMPLENCIA' | 'MDFE_ABERTO';
 
 interface NovoAlerta {
   empresa_id: number;
@@ -196,6 +196,23 @@ async function detectarRetornos(db: DB, E: number, hoje: string, p: ParametrosDi
   return alertas;
 }
 
+// MDF-e de produção autorizado e não encerrado há mais de 1 dia: enquanto estiver
+// aberto, a SEFAZ recusa outro MDF-e para a mesma placa (2026-11-21).
+async function detectarMdfeAbertos(db: DB, E: number, hoje: string): Promise<NovoAlerta[]> {
+  const { data, error } = await db.from('fiscal_mdfe').select('id, numero, placa, criado_em, municipios_descarregamento, valor_carga')
+    .eq('empresa_id', E).eq('status', 'AUTORIZADO').eq('ambiente', 'PRODUCAO').lt('criado_em', new Date(Date.now() - 86_400_000).toISOString());
+  if (error) throw error;
+  return ((data || []) as any[]).map(m => {
+    const destino = ((m.municipios_descarregamento || []) as any[]).map(d => `${d.nome}/${d.uf}`).join(', ');
+    return {
+      empresa_id: E, tipo: 'MDFE_ABERTO' as const, chave: `${E}:mdfe-aberto:${m.id}`,
+      titulo: `MDF-e nº ${m.numero} aberto: ${m.placa}`,
+      detalhe: `Emitido em ${dm(String(m.criado_em).slice(0, 10))}${destino ? ` para ${destino}` : ''}, há ${diasEntre(String(m.criado_em).slice(0, 10), hoje)} dia(s) sem encerrar. Enquanto estiver aberto, a SEFAZ recusa outro MDF-e para esta placa.`,
+      valor: num(m.valor_carga) || null, link: `${baseUrlSistema()}/admin/financeiro/fiscal`,
+    };
+  });
+}
+
 async function detectarCaixa(db: DB, E: number, hoje: string, fonte: FonteRecebimentos, p: ParametrosDiretoria): Promise<NovoAlerta[]> {
   // Sem recebimentos integrados não dá pra comparar entradas × saídas.
   if (fonte !== 'P2S') return [];
@@ -280,6 +297,7 @@ export async function detectarAlertas(db: DB, empresaId: number): Promise<{ dete
     proteger('retornos', () => detectarRetornos(db, empresaId, hoje, p)),
     proteger('caixa', () => detectarCaixa(db, empresaId, hoje, fonte, p)),
     proteger('metas', () => detectarTetos(db, empresaId, hoje, fonte)),
+    proteger('mdfe', () => detectarMdfeAbertos(db, empresaId, hoje)),
   ])).flat();
   return { detectados, erros };
 }

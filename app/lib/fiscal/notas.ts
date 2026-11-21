@@ -52,7 +52,7 @@ async function operacao(db: Db, codigo: string) {
   if (!data) throw new Error(`Operação fiscal ${codigo} não configurada.`);
   return data as any;
 }
-async function emitente(db: Db, empresaId: number) {
+export async function emitente(db: Db, empresaId: number) {
   const { data } = await db.from('empresas').select('id, razao_social, cnpj, inscricao_estadual, inscricao_municipal').eq('id', empresaId).single();
   const cnpj = dig(data?.cnpj);
   if (cnpj.length !== 14) throw new Error('CNPJ da empresa inválido no cadastro.');

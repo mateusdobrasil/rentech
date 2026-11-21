@@ -14,6 +14,7 @@ import {
   prepararRemessaAction, prepararRetornoAction, prepararNfseFaturaAction, emitirNfseAction, emitirNfeAction, consultarNotaAction,
   cancelarNotaAction, cartaCorrecaoAction, arquivoNotaAction, salvarParametrosFiscaisAction, salvarOperacaoFiscalAction,
 } from './actions';
+import MdfeAba from './MdfeAba';
 
 // Fiscal — NF-e / NFS-e pela Focus NFe (2026-11-21). Só a Rentech emite.
 // Enquanto o P2S for oficial, o ambiente fica em HOMOLOGAÇÃO (sem valor fiscal).
@@ -59,7 +60,8 @@ function Conteudo() {
   const confirmar = useConfirm();
   const pedir = usePrompt();
   const { authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess();
-  const [aba, setAba] = useState<'notas' | 'emitir' | 'parametros'>('notas');
+  const [aba, setAba] = useState<'notas' | 'emitir' | 'mdfe' | 'parametros'>('notas');
+  const [notaMdfe, setNotaMdfe] = useState<number | null>(null);
   const [de, setDe] = useState(`${hojeISO().slice(0, 8)}01`);
   const [ate, setAte] = useState(hojeISO());
   const [busca, setBusca] = useState('');
@@ -119,6 +121,7 @@ function Conteudo() {
   if (acessoNegado) return <div className="min-h-screen bg-[#F0F4F8] flex items-center justify-center p-4"><div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-red-200"><div className="text-5xl mb-4">⛔</div><h2 className="text-xl font-black text-red-600 uppercase mb-4">Acesso Restrito</h2><button onClick={() => router.push('/admin/financeiro')} className="bg-[#0C1D4D] text-white px-6 py-3 rounded-lg font-bold uppercase text-xs w-full">Voltar ao Financeiro</button></div></div>;
 
   const tok = accessToken as string;
+  const limparNotaMdfe = () => setNotaMdfe(null);
   const atualizar = () => setRecarregar(v => v + 1);
   const emissoras: any[] = info?.emissoras || [];
   const emissora = emissoras.find(e => e.id === empresaId) || emissoras[0];
@@ -254,7 +257,7 @@ function Conteudo() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <button onClick={() => router.push('/admin/financeiro')} className="text-xs font-bold text-[#336699] hover:underline">← Financeiro</button>
-            <h1 className="text-2xl font-black text-[#0C1D4D] uppercase tracking-tight">Fiscal · NF-e e NFS-e</h1>
+            <h1 className="text-2xl font-black text-[#0C1D4D] uppercase tracking-tight">Fiscal · NF-e, NFS-e e MDF-e</h1>
             <p className="text-xs text-gray-500">Emissão pela Focus NFe. A locação segue na Nota de Débito; aqui saem as notas fiscais.</p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -272,7 +275,7 @@ function Conteudo() {
         {!carregando && !emissoras.length && <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 text-sm text-gray-600">Nenhuma empresa sua emite nota fiscal pelo sistema (rode o SQL <code>fiscal_notas.sql</code>; só a Rentech emite).</div>}
 
         <div className="flex gap-1 border-b border-[#E2E8F0]">
-          {([['notas', 'Notas emitidas'], ['emitir', 'Emitir'], ...(info?.admin ? [['parametros', 'Parâmetros']] : [])] as [typeof aba, string][]).map(([k, r]) => (
+          {([['notas', 'Notas emitidas'], ['emitir', 'Emitir'], ['mdfe', 'MDF-e (viagem)'], ...(info?.admin ? [['parametros', 'Parâmetros']] : [])] as [typeof aba, string][]).map(([k, r]) => (
             <button key={k} onClick={() => setAba(k)} className={`px-4 py-2 text-xs font-black uppercase tracking-wider rounded-t-lg ${aba === k ? 'bg-white border border-b-white border-[#E2E8F0] text-[#0C1D4D] -mb-px' : 'text-gray-500 hover:text-[#0C1D4D]'}`}>{r}</button>
           ))}
         </div>
@@ -311,6 +314,7 @@ function Conteudo() {
                             {x.tem_xml && <button disabled={ocupado} onClick={() => arquivo(x, 'xml')} className={mini}>XML</button>}
                             {x.cce > 0 && <button disabled={ocupado} onClick={() => arquivo(x, 'cce')} className={mini}>CC-e</button>}
                             {x.status === 'AUTORIZADA' && x.operacao === 'REMESSA_LOCACAO' && <button disabled={ocupado} onClick={() => abrirRetorno(x)} className={`${mini} text-[#336699]`}>Retorno</button>}
+                            {x.status === 'AUTORIZADA' && ['REMESSA_LOCACAO', 'RETORNO_LOCACAO', 'VENDA_ATIVO', 'VENDA_MERCADORIA'].includes(x.operacao) && <button disabled={ocupado} onClick={() => { setNotaMdfe(x.id); setAba('mdfe'); }} className={mini} title="Manifesto da viagem com esta NF-e">MDF-e</button>}
                             {x.status === 'AUTORIZADA' && x.tipo === 'NFE' && <button disabled={ocupado} onClick={() => cce(x)} className={mini}>Corrigir</button>}
                             {x.status === 'AUTORIZADA' && <button disabled={ocupado} onClick={() => cancelar(x)} className={`${mini} text-red-700`}>Cancelar</button>}
                           </div>
@@ -437,6 +441,9 @@ function Conteudo() {
           </div>
         )}
 
+        {/* ============================== MDF-e ============================== */}
+        {aba === 'mdfe' && emissora && <MdfeAba tok={tok} empresaId={emissora.id} homolog={homolog} notaInicial={notaMdfe} onNotaUsada={limparNotaMdfe} />}
+
         {/* ============================== PARÂMETROS ============================== */}
         {aba === 'parametros' && info?.admin && <Parametros info={info} tok={tok} onSalvo={atualizar} />}
       </div>
@@ -514,6 +521,18 @@ function Parametros({ info, tok, onSalvo }: { info: any; tok: string; onSalvo: (
           {campo('nfse_ibs_cbs_situacao_tributaria', 'CST IBS/CBS')}
           {campo('nfse_ibs_cbs_classificacao_tributaria', 'cClassTrib')}
         </div>
+        <p className="text-xs font-black uppercase text-gray-500">MDF-e (manifesto da viagem)</p>
+        <div className="grid md:grid-cols-4 gap-3">
+          {campo('mdfe_cep_carregamento', 'CEP de saída da carga', 'endereço da Rentech — exigido quando a viagem leva 1 NF-e')}
+          <label className="text-xs"><span className={lbl}>Tipo de carga</span><select value={p.mdfe_tipo_carga || '05'} onChange={e => setP((x: any) => ({ ...x, mdfe_tipo_carga: e.target.value }))} className={inp}><option value="05">Carga geral</option><option value="04">Conteinerizada</option><option value="11">Perigosa (carga geral)</option></select></label>
+          <div className="md:col-span-2">{campo('mdfe_produto_predominante', 'Produto predominante')}</div>
+          {campo('mdfe_ncm', 'NCM predominante (opcional)')}
+          {campo('mdfe_seguradora_nome', 'Seguradora da carga (opcional)')}
+          {campo('mdfe_seguradora_cnpj', 'CNPJ da seguradora')}
+          {campo('mdfe_apolice', 'Nº da apólice')}
+          {campo('mdfe_averbacao', 'Nº de averbação (opcional)')}
+        </div>
+        <p className="text-[11px] text-gray-500">Seguro da carga é opcional para carga própria; preenchido (apólice + CNPJ da seguradora), vai em todo MDF-e.</p>
         <label className="text-xs flex items-center gap-2"><input type="checkbox" checked={!!p.enviar_ibs_cbs} onChange={e => setP((x: any) => ({ ...x, enviar_ibs_cbs: e.target.checked }))} /> Enviar campos IBS/CBS (reforma tributária) — só no Lucro Presumido</label>
         <div className="flex justify-end"><button onClick={salvar} disabled={salvando} className={`${btn} bg-[#0C1D4D] text-white`}>Salvar parâmetros</button></div>
       </div>

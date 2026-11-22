@@ -4,7 +4,7 @@
 // em loop manual: cada pergunta pode virar várias consultas antes da resposta.
 //
 // O histórico é SÓ DE ACRÉSCIMO e reenviado exatamente como saiu da API
-// (raciocínio e chamadas de ferramenta inclusos): o Opus 5.5 confere que
+// (raciocínio e chamadas de ferramenta inclusos): o modelo (Haiku 5.5) confere que
 // system, ferramentas e mensagens anteriores não mudaram (preserved
 // thinking). Por isso:
 // - INSTRUCOES e DEFINICOES_FERRAMENTAS são fixos — o que muda a cada
@@ -17,7 +17,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { supabaseAdmin } from '../supabase';
 import { hojeISO } from './indicadoresDiarios';
-import { MODELO_DIRETORIA } from './ia';
+import { MODELO_DIRETORIA, custoTokens } from './ia';
 import { DEFINICOES_FERRAMENTAS, VERSAO_FERRAMENTAS, executarFerramenta, rotuloFerramenta, type EmpresaChat } from './ferramentasChat';
 import { erroColunaInexistente } from '../../admin/financeiro/contas-pagar/contasPagarCore';
 
@@ -36,9 +36,7 @@ export interface ItemExibicao {
 const MAX_ITERACOES = 10;
 const MAX_PERGUNTAS = 25;
 
-// Preço Opus 5.5 por milhão de tokens (US$): entrada 4, saída 20, escrita de cache (5 min) 5, leitura de cache 0,20.
-const custo = (u: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null }) =>
-  (u.input_tokens * 4 + u.output_tokens * 20 + (u.cache_creation_input_tokens || 0) * 5 + (u.cache_read_input_tokens || 0) * 0.2) / 1e6;
+const custo = custoTokens;
 
 const INSTRUCOES = `Você é o Diretor (IA) de uma locadora de equipamentos para eventos e feiras no Brasil (o sistema se chama Rentech WEB). Responde perguntas do dono e da diretoria sobre a empresa consultando os dados do sistema com as ferramentas disponíveis.
 
@@ -50,10 +48,11 @@ Como trabalhar:
 - CPF, salário, dados bancários e chaves Pix estão fora do seu alcance; não tente obter nem estimar.
 
 O que você precisa saber sobre os dados:
-- Contas a receber, contas a pagar e fichas de reserva vêm do ERP PrimeStart (P2S), sincronizado às 9h30, 11h e 17h. Contas a pagar vencidas em aberto não são sincronizadas.
+- Antes da virada da chave, contas a receber, contas a pagar e fichas de reserva vêm do ERP PrimeStart (P2S), sincronizado às 9h30, 11h e 17h (contas a pagar vencidas em aberto não são sincronizadas). Depois da virada de uma empresa, as ferramentas passam a ler os dados do próprio sistema, sem mudar o formato; o histórico anterior ao corte continua sendo o do P2S.
+- A ferramenta locacao mostra a operação de locação do sistema; com ativo = false a empresa ainda está na fase paralela e só o fiscal de produção vale. A ferramenta disponibilidade responde se há equipamento livre num período — antes da virada, avise que a referência oficial ainda é o P2S.
 - Empresa com recebimentos de "fonte externa" não tem contas a receber no sistema.
 - Títulos a receber vencidos há mais de 365 dias costumam ser baixa pendente no P2S, não dívida real.
-- Status das fichas são códigos crus do P2S (RE, EN, EP, X, A, E, SB, CA = cancelada); não invente o significado dos outros.
+- Status das fichas vêm por extenso nas linhas; o filtro de status da ferramenta de fichas usa o código do P2S.
 - A Alfa Light ainda não usa o RH do sistema em 2026.
 
 Como responder:
@@ -118,8 +117,6 @@ export async function perguntarAoDiretor(
       const r = await client.beta.messages.create({
         model: MODELO_DIRETORIA,
         max_tokens: 16000,
-        betas: ['server-side-fallback-2026-07-01'],
-        fallbacks: 'default',
         output_config: { effort: 'medium' },
         cache_control: { type: 'ephemeral' },
         system: INSTRUCOES,
@@ -139,6 +136,8 @@ export async function perguntarAoDiretor(
       const chamadas = conteudo.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === 'tool_use');
       if (r.stop_reason !== 'tool_use' || !chamadas.length) {
         resposta = conteudo.filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text').map(b => b.text).join('\n').trim();
+        // A tela mostra texto puro: o Haiku às vezes usa **negrito** apesar da instrução.
+        resposta = resposta.replace(/\*\*(.+?)\*\*/g, '$1');
         if (r.stop_reason === 'max_tokens') resposta += '\n\n(Resposta cortada por ser longa demais.)';
         break;
       }

@@ -11,6 +11,7 @@ import { hojeISO, somarDias, type FonteRecebimentos } from './indicadoresDiarios
 import { progressoMetasDoMes, metasDoAno } from './metas';
 import { projetarCaixa, resumoCaixa } from './caixa';
 import { somarKm } from './km';
+import { fonteDoDiretor, descreverFonte, lerReceber, lerPagar, lerFichas } from './fontes';
 
 type DB = ReturnType<typeof supabaseAdmin>;
 export interface Periodo { rotulo: string; inicio: string; fim: string }
@@ -106,14 +107,18 @@ export async function calcularIndicadoresPeriodo(db: DB, empresa: { id: number; 
   const fonte: FonteRecebimentos = cadastro?.fonte_recebimentos === 'EXTERNA' ? 'EXTERNA' : 'P2S';
   if (fonte === 'EXTERNA') avisos.push('Os recebimentos desta empresa vêm de uma fonte externa, ainda não integrada ao sistema — recebido, a receber e inadimplência ficam fora deste relatório.');
   const vazio = Promise.resolve({ data: [] as any[], error: null });
+  // Antes ou depois da virada da chave (fontes.ts): de onde vêm contas e fichas.
+  const origem = await fonteDoDiretor(db, E);
+  const avisoFonte = descreverFonte(origem);
+  if (avisoFonte) avisos.push(avisoFonte);
 
   const pag = (montar: (de: number, a: number) => any) => buscarTodasPaginas(montar);
   const cobertura = await coberturaDados(db);
   const [receb, pago, ops, fichas, checklists, divergencias, frotaChk, multas, manut, ponto, func, alertas, relatorios] = await Promise.all([
-    fonte === 'P2S' ? pag((de, a) => db.from('financeiro_contas_receber').select('id, cliente, valor_pago, valor_final, data_quitacao').eq('empresa_id', E).eq('quitado', true).gte('data_quitacao', desde).lte('data_quitacao', ate).order('id').range(de, a)) : vazio,
-    pag((de, a) => db.from('financeiro_contas_pagar').select('id, fornecedor, centro, valor, valor_pago, data_quitacao').eq('empresa_id', E).eq('quitado', true).gte('data_quitacao', desde).lte('data_quitacao', ate).order('id').range(de, a)),
+    fonte === 'P2S' ? lerReceber(db, origem, { quitado: true, quitacaoDe: desde, quitacaoAte: ate }) : vazio,
+    lerPagar(db, origem, { quitado: true, quitacaoDe: desde, quitacaoAte: ate }),
     pag((de, a) => db.from('op_ordens_pagamento').select('id, total_geral, data_criacao, natureza_pagamento, empresa_recebedora, status').eq('empresa_id', E).neq('status', 'REPROVADA').gte('data_criacao', ini(desde)).lt('data_criacao', fimTs(ate)).order('id').range(de, a)),
-    pag((de, a) => db.from('fichas_reserva').select('id, cliente, evento_feira, vendedor, valor_final, data_emissao').eq('empresa_id', E).neq('status', 'CA').gte('data_emissao', desde).lte('data_emissao', ate).order('id').range(de, a)),
+    lerFichas(db, origem, { emissaoDe: desde, emissaoAte: ate }),
     pag((de, a) => db.from('checklists').select('id, created_at').eq('empresa_id', E).gte('created_at', ini(desde)).lt('created_at', fimTs(ate)).order('id').range(de, a)),
     pag((de, a) => db.from('checklist_divergencias').select('id, checklist_id, tipo, created_at').gte('created_at', ini(P.inicio)).lt('created_at', fimTs(P.fim)).order('id').range(de, a)),
     pag((de, a) => db.from('frota_checklists').select('id, saida_em, km_inicial, km_final').eq('empresa_id', E).gte('saida_em', ini(desde)).lt('saida_em', fimTs(ate)).order('id').range(de, a)),

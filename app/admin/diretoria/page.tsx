@@ -21,7 +21,7 @@ import Metas from './Metas';
 // exceção e parâmetros dos alertas. Os NÚMEROS dos cartões vêm direto de
 // `indicadores` (calculados por código em app/lib/diretoria/); só o texto é da IA.
 
-type Area = 'FINANCEIRO' | 'COMERCIAL' | 'EXPEDICAO' | 'FROTA' | 'RH' | 'DADOS';
+type Area = 'FINANCEIRO' | 'COMERCIAL' | 'LOCACAO' | 'EXPEDICAO' | 'FROTA' | 'RH' | 'DADOS';
 type Situacao = 'NORMAL' | 'ATENCAO' | 'CRITICO';
 type TipoRel = 'DIARIO' | 'SEMANAL' | 'MENSAL' | 'ANUAL';
 type Aba = TipoRel | 'ALERTAS' | 'CAIXA' | 'PERGUNTAR' | 'PARAMETROS';
@@ -55,10 +55,10 @@ interface Relatorio {
 interface Alerta { id: number; tipo: string; titulo: string; detalhe: string | null; valor: number | null; link: string | null; detectado_em: string; enviado_em: string | null; envio_resultado: string | null }
 interface Parametro { chave: string; valor: number; rotulo: string; descricao: string | null; atualizado_em: string; atualizado_por: string | null }
 
-const ROTULO_AREA: Record<Area, string> = { FINANCEIRO: 'Financeiro', COMERCIAL: 'Comercial', EXPEDICAO: 'Expedição', FROTA: 'Frota', RH: 'RH', DADOS: 'Dados' };
-const ICONE_AREA: Record<Area, string> = { FINANCEIRO: '💰', COMERCIAL: '🤝', EXPEDICAO: '📦', FROTA: '🚚', RH: '👥', DADOS: '🗄️' };
+const ROTULO_AREA: Record<Area, string> = { FINANCEIRO: 'Financeiro', COMERCIAL: 'Comercial', LOCACAO: 'Locação', EXPEDICAO: 'Expedição', FROTA: 'Frota', RH: 'RH', DADOS: 'Dados' };
+const ICONE_AREA: Record<Area, string> = { FINANCEIRO: '💰', COMERCIAL: '🤝', LOCACAO: '🎪', EXPEDICAO: '📦', FROTA: '🚚', RH: '👥', DADOS: '🗄️' };
 const LINK_AREA: Partial<Record<Area, string>> = {
-  FINANCEIRO: '/admin/financeiro', COMERCIAL: '/admin/comercial', EXPEDICAO: '/admin/estoque/expedicao', FROTA: '/admin/operacional/frota', RH: '/admin/rh',
+  FINANCEIRO: '/admin/financeiro', COMERCIAL: '/admin/comercial', LOCACAO: '/admin/locacoes', EXPEDICAO: '/admin/estoque/expedicao', FROTA: '/admin/operacional/frota', RH: '/admin/rh',
 };
 const COR_SITUACAO: Record<Situacao, { selo: string; ponto: string; rotulo: string }> = {
   NORMAL: { selo: 'bg-emerald-100 text-emerald-700 border-emerald-200', ponto: 'bg-emerald-500', rotulo: 'Normal' },
@@ -75,6 +75,8 @@ const TIPO_ALERTA: Record<string, { icone: string; rotulo: string }> = {
   FROTA_FORA: { icone: '🚚', rotulo: 'Veículo fora' },
   CAIXA_SEMANA: { icone: '📉', rotulo: 'Caixa apertado' },
   MDFE_ABERTO: { icone: '🧾', rotulo: 'MDF-e aberto' },
+  MDFE_PENDENTE: { icone: '🚚', rotulo: 'NF-e sem MDF-e' },
+  FALTA_AGENDA: { icone: '📦', rotulo: 'Falta na agenda' },
 };
 // Abas de cima; "Relatórios" agrupa Diário/Semanal/Mensal/Anual (escolhidos logo abaixo).
 const ABAS: { valor: 'RELATORIOS' | Exclude<Aba, TipoRel>; rotulo: string }[] = [

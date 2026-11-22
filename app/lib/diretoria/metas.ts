@@ -12,6 +12,7 @@ import { supabaseAdmin } from '../supabase';
 import { buscarTodasPaginas } from '../paginacao';
 // Só o tipo: indicadoresDiarios.ts importa este arquivo (sem ciclo em runtime).
 import type { FonteRecebimentos } from './indicadoresDiarios';
+import { fonteDoDiretor, lerReceber, lerFichas } from './fontes';
 
 function somarDias(iso: string, dias: number): string {
   const d = new Date(`${iso}T12:00:00Z`);
@@ -59,12 +60,14 @@ async function realizadosDoMes(db: DB, empresaId: number, fonte: FonteRecebiment
   const inicio = `${ano}-${String(mes).padStart(2, '0')}-01`;
   const fimMes = `${ano}-${String(mes).padStart(2, '0')}-${String(diasNoMes(ano, mes)).padStart(2, '0')}`;
   const fim = ate < fimMes ? ate : fimMes;
+  // Antes ou depois da virada da chave (fontes.ts): de onde vêm contas e fichas.
+  const origem = await fonteDoDiretor(db, empresaId);
   const [fichas, ops, receb, abertos] = await Promise.all([
-    buscarTodasPaginas((de, a) => db.from('fichas_reserva').select('id, valor_final').eq('empresa_id', empresaId).neq('status', 'CA').gte('data_emissao', inicio).lte('data_emissao', fim).order('id').range(de, a)),
+    lerFichas(db, origem, { emissaoDe: inicio, emissaoAte: fim }),
     buscarTodasPaginas((de, a) => db.from('op_ordens_pagamento').select('id, total_geral').eq('empresa_id', empresaId).neq('status', 'REPROVADA')
       .gte('data_criacao', `${inicio}T00:00:00-03:00`).lt('data_criacao', `${somarDias(fim, 1)}T00:00:00-03:00`).order('id').range(de, a)),
-    fonte === 'P2S' ? buscarTodasPaginas((de, a) => db.from('financeiro_contas_receber').select('id, valor_pago, valor_final').eq('empresa_id', empresaId).eq('quitado', true).gte('data_quitacao', inicio).lte('data_quitacao', fim).order('id').range(de, a)) : Promise.resolve({ data: [] as any[], error: null }),
-    fonte === 'P2S' ? buscarTodasPaginas((de, a) => db.from('financeiro_contas_receber').select('id, valor_final').eq('empresa_id', empresaId).eq('quitado', false).lt('data_vencimento', somarDias(fim, 1)).gte('data_vencimento', somarDias(fim, -364)).order('id').range(de, a)) : Promise.resolve({ data: [] as any[], error: null }),
+    fonte === 'P2S' ? lerReceber(db, origem, { quitado: true, quitacaoDe: inicio, quitacaoAte: fim }) : Promise.resolve({ data: [] as any[], error: null }),
+    fonte === 'P2S' ? lerReceber(db, origem, { quitado: false, vencAntes: somarDias(fim, 1), vencDe: somarDias(fim, -364) }) : Promise.resolve({ data: [] as any[], error: null }),
   ]);
   const soma = (l: any[], f: (x: any) => number) => arred(l.reduce((s, x) => s + f(x), 0));
   return {

@@ -13,8 +13,8 @@
 // projetado é, portanto, a VARIAÇÃO prevista a partir de hoje, não o saldo.
 // Vencidos a receber ficam à parte ("pode entrar"), fora da projeção.
 import { supabaseAdmin } from '../supabase';
-import { buscarTodasPaginas } from '../paginacao';
 import { hojeISO, somarDias, type FonteRecebimentos } from './indicadoresDiarios';
+import { fonteDoDiretor, lerReceber, lerPagar } from './fontes';
 
 type DB = ReturnType<typeof supabaseAdmin>;
 
@@ -43,18 +43,22 @@ export async function projetarCaixa(db: DB, empresa: { id: number; nome: string 
   const { data: cadastro } = await db.from('empresas').select('*').eq('id', E).maybeSingle();
   const fonte: FonteRecebimentos = cadastro?.fonte_recebimentos === 'EXTERNA' ? 'EXTERNA' : 'P2S';
   const vazio = Promise.resolve({ data: [] as any[], error: null });
+  // Antes ou depois da virada da chave (fontes.ts). Depois dela, cada OP já é um
+  // título a pagar do sistema — somar as OPs pendentes de novo contaria em dobro.
+  const origem = await fonteDoDiretor(db, E);
+  const sistema = origem.financeiro === 'SISTEMA';
 
   const [receber, vencidos, pagar, ops] = await Promise.all([
-    fonte === 'P2S' ? buscarTodasPaginas((de, a) => db.from('financeiro_contas_receber').select('id, cliente, valor_final, data_vencimento, evento').eq('empresa_id', E).eq('quitado', false).gte('data_vencimento', hoje).lte('data_vencimento', fim).order('id').range(de, a)) : vazio,
-    fonte === 'P2S' ? buscarTodasPaginas((de, a) => db.from('financeiro_contas_receber').select('id, valor_final').eq('empresa_id', E).eq('quitado', false).lt('data_vencimento', hoje).gte('data_vencimento', somarDias(hoje, -90)).order('id').range(de, a)) : vazio,
-    buscarTodasPaginas((de, a) => db.from('financeiro_contas_pagar').select('id, fornecedor, valor, data_vencimento, centro').eq('empresa_id', E).eq('quitado', false).gte('data_vencimento', hoje).lte('data_vencimento', fim).order('id').range(de, a)),
-    db.from('op_ordens_pagamento').select('numero_op, empresa_recebedora, natureza_pagamento, total_geral, data_vencimento').eq('empresa_id', E).eq('status', 'PENDENTE').is('p2s_conta_pagar_oid', null).lte('data_vencimento', fim),
+    fonte === 'P2S' ? lerReceber(db, origem, { quitado: false, vencDe: hoje, vencAte: fim }) : vazio,
+    fonte === 'P2S' ? lerReceber(db, origem, { quitado: false, vencAntes: hoje, vencDe: somarDias(hoje, -90) }) : vazio,
+    lerPagar(db, origem, { quitado: false, vencDe: hoje, vencAte: fim }),
+    sistema ? vazio : db.from('op_ordens_pagamento').select('numero_op, empresa_recebedora, natureza_pagamento, total_geral, data_vencimento').eq('empresa_id', E).eq('status', 'PENDENTE').is('p2s_conta_pagar_oid', null).lte('data_vencimento', fim),
   ]);
 
   const entradas: ItemCaixa[] = ((receber.data || []) as any[]).map(l => ({ nome: l.cliente || '(sem cliente)', valor: num(l.valor_final), data: l.data_vencimento, origem: l.evento ? `A receber · ${l.evento}` : 'A receber' }));
   // OP pendente já vencida entra na primeira semana (é saída a fazer agora).
   const saidas: (ItemCaixa & { centro: string })[] = [
-    ...((pagar.data || []) as any[]).map(l => ({ nome: l.fornecedor || '(sem fornecedor)', valor: num(l.valor), data: l.data_vencimento, origem: 'Conta a pagar (P2S)', centro: l.centro || '(sem centro)' })),
+    ...((pagar.data || []) as any[]).map(l => ({ nome: l.fornecedor || '(sem fornecedor)', valor: num(l.valor), data: l.data_vencimento, origem: sistema ? 'Conta a pagar' : 'Conta a pagar (P2S)', centro: l.centro || '(sem centro)' })),
     ...((ops.data || []) as any[]).map(l => ({ nome: `OP ${l.numero_op} · ${String(l.empresa_recebedora || '').trim()}`, valor: num(l.total_geral), data: l.data_vencimento && l.data_vencimento >= hoje ? l.data_vencimento : hoje, origem: 'OP pendente', centro: `OP · ${String(l.natureza_pagamento || 'sem natureza').trim().toUpperCase()}` })),
   ];
 

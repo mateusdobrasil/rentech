@@ -24,6 +24,8 @@ import { formatarMoeda } from '../formatadores';
 import { hojeISO, somarDias, type FonteRecebimentos } from './indicadoresDiarios';
 import { carregarParametrosDiretoria, type ParametrosDiretoria } from './parametros';
 import { progressoMetasDoMes } from './metas';
+import { fonteDoDiretor, lerReceber, lerPagar } from './fontes';
+import { faltasNaAgenda, nfeForaDeSpSemMdfe } from './locacao';
 import { enviarPeloCard, montarEmailAlertas, baseUrlSistema } from './envioDiretoria';
 
 type DB = ReturnType<typeof supabaseAdmin>;
@@ -31,7 +33,7 @@ type DB = ReturnType<typeof supabaseAdmin>;
 export const CHAVE_CARD_ALERTAS = 'diretoria-alertas';
 
 export type TipoAlerta = 'OP_FAVORECIDO_NOVO' | 'OP_CONTA_COMPARTILHADA' | 'OP_VALOR_ALTO' | 'RECEBER_ATRASO' | 'EXPEDICAO_SEM_RETORNO' | 'FROTA_FORA' | 'CAIXA_SEMANA'
-  | 'META_TETO_OPS' | 'META_TETO_INADIMPLENCIA' | 'MDFE_ABERTO';
+  | 'META_TETO_OPS' | 'META_TETO_INADIMPLENCIA' | 'MDFE_ABERTO' | 'MDFE_PENDENTE' | 'FALTA_AGENDA';
 
 interface NovoAlerta {
   empresa_id: number;
@@ -152,16 +154,17 @@ async function detectarOps(db: DB, E: number, p: ParametrosDiretoria): Promise<N
 }
 
 async function detectarReceber(db: DB, E: number, hoje: string, p: ParametrosDiretoria): Promise<NovoAlerta[]> {
-  const { data } = await db.from('financeiro_contas_receber')
-    .select('p2s_oid, cliente, valor_final, data_vencimento, documento, num_documento, evento')
-    .eq('empresa_id', E).eq('quitado', false).gte('valor_final', p.alerta_receber_valor_minimo)
-    .lt('data_vencimento', hoje).gte('data_vencimento', somarDias(hoje, -p.alerta_receber_janela_dias));
+  // Espelho do P2S antes da virada, títulos do sistema depois (fontes.ts).
+  const origem = await fonteDoDiretor(db, E);
+  const { data: linhas, error } = await lerReceber(db, origem, { quitado: false, vencAntes: hoje, vencDe: somarDias(hoje, -p.alerta_receber_janela_dias) });
+  if (error) throw error;
+  const data = linhas.filter(t => t.valor_final >= p.alerta_receber_valor_minimo);
   const link = `${baseUrlSistema()}/admin/diretoria`;
   return ((data || []) as any[]).map(t => {
     const valor = num(t.valor_final);
     const doc = [t.documento, t.num_documento].filter(Boolean).join(' ');
     return {
-      empresa_id: E, tipo: 'RECEBER_ATRASO' as const, chave: `${E}:receber-atraso:${t.p2s_oid}`,
+      empresa_id: E, tipo: 'RECEBER_ATRASO' as const, chave: `${E}:receber-atraso:${t.chave}`,
       titulo: `${t.cliente || '(sem cliente)'} não pagou ${BRL(valor)}`,
       detalhe: `Venceu em ${dm(t.data_vencimento)} (${diasEntre(t.data_vencimento, hoje)} dia(s) de atraso)${doc ? ` — ${doc}` : ''}${t.evento ? `, ${t.evento}` : ''}.`,
       valor, link,
@@ -213,15 +216,44 @@ async function detectarMdfeAbertos(db: DB, E: number, hoje: string): Promise<Nov
   });
 }
 
+// NF-e de PRODUÇÃO para fora de SP sem MDF-e (obrigatório só na viagem
+// interestadual — regra confirmada pelo usuário em 2026-11-22). Espera 1h:
+// dá tempo de emitir o MDF-e logo depois da nota.
+async function detectarMdfePendente(db: DB, E: number, hoje: string): Promise<NovoAlerta[]> {
+  const notas = await nfeForaDeSpSemMdfe(db, E, somarDias(hoje, -30));
+  const limite = new Date(Date.now() - 3_600_000).toISOString();
+  return notas.filter(n => n.emitida_em < limite).map(n => ({
+    empresa_id: E, tipo: 'MDFE_PENDENTE' as const, chave: `${E}:mdfe-pendente:${n.id}`,
+    titulo: `NF-e nº ${n.numero} para ${n.uf} sem MDF-e`,
+    detalhe: `${n.cliente} — viagem interestadual exige MDF-e antes de o caminhão sair (Financeiro › Fiscal › MDF-e).`,
+    valor: n.valor || null, link: `${baseUrlSistema()}/admin/financeiro/fiscal`,
+  }));
+}
+
+// Equipamento com mais reserva que estoque nos próximos 7 dias. Só depois da
+// virada (antes disso as reservas do sistema são ensaio) — locacao.ts.
+async function detectarFaltasAgenda(db: DB, E: number, hoje: string): Promise<NovoAlerta[]> {
+  const faltas = await faltasNaAgenda(db, await fonteDoDiretor(db, E), hoje, 7);
+  return faltas.map(f => ({
+    empresa_id: E, tipo: 'FALTA_AGENDA' as const, chave: `${E}:falta-agenda:${f.produto_id}:${f.primeiro_dia}`,
+    titulo: `Falta ${f.pico - f.estoque} un. de ${f.nome} em ${dm(f.primeiro_dia)}`,
+    detalhe: `Estoque ${f.estoque}, reservado ${f.pico} no pico. Sublocar, trocar o equipamento ou rever as reservas (Locações › Agenda).`,
+    valor: null, link: `${baseUrlSistema()}/admin/locacoes/agenda`,
+  }));
+}
+
 async function detectarCaixa(db: DB, E: number, hoje: string, fonte: FonteRecebimentos, p: ParametrosDiretoria): Promise<NovoAlerta[]> {
   // Sem recebimentos integrados não dá pra comparar entradas × saídas.
   if (fonte !== 'P2S') return [];
   const fim = somarDias(hoje, 6);
+  // Espelho do P2S antes da virada, títulos do sistema depois (fontes.ts).
+  const origem = await fonteDoDiretor(db, E);
   const [pagar, ops, receber] = await Promise.all([
-    db.from('financeiro_contas_pagar').select('fornecedor, valor, data_vencimento').eq('empresa_id', E).eq('quitado', false).gte('data_vencimento', hoje).lte('data_vencimento', fim),
-    // OP já enviada ao P2S vira conta a pagar lá — não contar duas vezes.
-    db.from('op_ordens_pagamento').select('numero_op, empresa_recebedora, total_geral, data_vencimento').eq('empresa_id', E).eq('status', 'PENDENTE').is('p2s_conta_pagar_oid', null).gte('data_vencimento', hoje).lte('data_vencimento', fim),
-    db.from('financeiro_contas_receber').select('cliente, valor_final, data_vencimento').eq('empresa_id', E).eq('quitado', false).gte('data_vencimento', hoje).lte('data_vencimento', fim),
+    lerPagar(db, origem, { quitado: false, vencDe: hoje, vencAte: fim }),
+    // OP já enviada ao P2S vira conta a pagar lá — não contar duas vezes. Depois
+    // da virada toda OP já é título a pagar do sistema.
+    origem.financeiro === 'SISTEMA' ? Promise.resolve({ data: [] as any[] }) : db.from('op_ordens_pagamento').select('numero_op, empresa_recebedora, total_geral, data_vencimento').eq('empresa_id', E).eq('status', 'PENDENTE').is('p2s_conta_pagar_oid', null).gte('data_vencimento', hoje).lte('data_vencimento', fim),
+    lerReceber(db, origem, { quitado: false, vencDe: hoje, vencAte: fim }),
   ]);
   const saidasP2s = ((pagar.data || []) as any[]).reduce((s, l) => s + num(l.valor), 0);
   const saidasOps = ((ops.data || []) as any[]).reduce((s, l) => s + num(l.total_geral), 0);
@@ -298,6 +330,8 @@ export async function detectarAlertas(db: DB, empresaId: number): Promise<{ dete
     proteger('caixa', () => detectarCaixa(db, empresaId, hoje, fonte, p)),
     proteger('metas', () => detectarTetos(db, empresaId, hoje, fonte)),
     proteger('mdfe', () => detectarMdfeAbertos(db, empresaId, hoje)),
+    proteger('mdfe-pendente', () => detectarMdfePendente(db, empresaId, hoje)),
+    proteger('agenda', () => detectarFaltasAgenda(db, empresaId, hoje)),
   ])).flat();
   return { detectados, erros };
 }
@@ -310,8 +344,15 @@ export async function processarAlertas(db: DB, empresa: { id: number; nome: stri
 
   let novos = 0;
   if (detectados.length) {
-    const { data: inseridos, error } = await db.from('diretoria_alertas')
+    let { data: inseridos, error } = await db.from('diretoria_alertas')
       .upsert(detectados, { onConflict: 'chave', ignoreDuplicates: true }).select('id');
+    // Tipo novo antes do SQL que o libera (diretoria_alertas_locacao.sql): grava os outros.
+    if (error?.code === '23514') {
+      const novosTipos = ['MDFE_PENDENTE', 'FALTA_AGENDA'];
+      erros.push(`alertas ${novosTipos.join('/')} não gravados: falta rodar .sql/Pendentes/diretoria_alertas_locacao.sql`);
+      ({ data: inseridos, error } = await db.from('diretoria_alertas')
+        .upsert(detectados.filter(a => !novosTipos.includes(a.tipo)), { onConflict: 'chave', ignoreDuplicates: true }).select('id'));
+    }
     if (error) erros.push(`gravar alertas: ${error.message}`);
     novos = (inseridos || []).length;
   }

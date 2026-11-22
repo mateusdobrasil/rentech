@@ -9,7 +9,8 @@ import { hojeISO, somarDias, type FonteRecebimentos, type ValorQtd } from './ind
 import { progressoMetasDoMes } from './metas';
 import { projetarCaixa, resumoCaixa } from './caixa';
 import { somarKm } from './km';
-import { rotuloStatusP2s } from '../locacao/statusP2s';
+import { fonteDoDiretor, descreverFonte, lerReceber, lerPagar, lerFichas } from './fontes';
+import { blocoLocacao } from './locacao';
 
 type DB = ReturnType<typeof supabaseAdmin>;
 
@@ -69,6 +70,8 @@ export interface IndicadoresSemanais {
   alertas_da_semana: { tipo: string; titulo: string }[];
   metas?: unknown;
   caixa?: unknown;
+  /** Situação da locação hoje (locacao.ts) — só depois da virada; antes, só o fiscal de produção. */
+  locacao?: unknown;
 }
 
 export async function calcularIndicadoresSemanais(db: DB, empresa: { id: number; nome: string }, hoje = hojeISO()): Promise<IndicadoresSemanais> {
@@ -84,17 +87,21 @@ export async function calcularIndicadoresSemanais(db: DB, empresa: { id: number;
   const fonte: FonteRecebimentos = cadastro?.fonte_recebimentos === 'EXTERNA' ? 'EXTERNA' : 'P2S';
   if (fonte === 'EXTERNA') avisos.push('Os recebimentos desta empresa vêm de uma fonte externa, ainda não integrada ao sistema — recebido, a receber e inadimplência ficam fora deste relatório.');
   const vazio = Promise.resolve({ data: [] as any[], error: null });
+  // Antes ou depois da virada da chave (fontes.ts): de onde vêm contas e fichas.
+  const origem = await fonteDoDiretor(db, E);
+  const avisoFonte = descreverFonte(origem);
+  if (avisoFonte) avisos.push(avisoFonte);
 
   const [receb, receberProx, receberAbertos, pago, pagarProx, opsCriadas, opsPagas, fichas, fichasProx, checklists, divergencias, foraAgora, frotaChk, multas, ponto, func, ferias, afast, diarios, alertas] = await Promise.all([
-    fonte === 'P2S' ? buscarTodasPaginas((de, ate) => db.from('financeiro_contas_receber').select('id, cliente, valor_pago, valor_final, data_quitacao').eq('empresa_id', E).eq('quitado', true).gte('data_quitacao', desde).lte('data_quitacao', sem.fim).order('id').range(de, ate)) : vazio,
-    fonte === 'P2S' ? db.from('financeiro_contas_receber').select('cliente, valor_final, data_vencimento, evento').eq('empresa_id', E).eq('quitado', false).gte('data_vencimento', prox.inicio).lte('data_vencimento', prox.fim) : vazio,
-    fonte === 'P2S' ? buscarTodasPaginas((de, ate) => db.from('financeiro_contas_receber').select('id, valor_final, data_vencimento').eq('empresa_id', E).eq('quitado', false).lt('data_vencimento', prox.inicio).order('id').range(de, ate)) : vazio,
-    buscarTodasPaginas((de, ate) => db.from('financeiro_contas_pagar').select('id, fornecedor, valor, valor_pago, centro, data_quitacao').eq('empresa_id', E).eq('quitado', true).gte('data_quitacao', desde).lte('data_quitacao', sem.fim).order('id').range(de, ate)),
-    db.from('financeiro_contas_pagar').select('fornecedor, valor, centro, data_vencimento').eq('empresa_id', E).eq('quitado', false).gte('data_vencimento', prox.inicio).lte('data_vencimento', prox.fim),
+    fonte === 'P2S' ? lerReceber(db, origem, { quitado: true, quitacaoDe: desde, quitacaoAte: sem.fim }) : vazio,
+    fonte === 'P2S' ? lerReceber(db, origem, { quitado: false, vencDe: prox.inicio, vencAte: prox.fim }) : vazio,
+    fonte === 'P2S' ? lerReceber(db, origem, { quitado: false, vencAntes: prox.inicio }) : vazio,
+    lerPagar(db, origem, { quitado: true, quitacaoDe: desde, quitacaoAte: sem.fim }),
+    lerPagar(db, origem, { quitado: false, vencDe: prox.inicio, vencAte: prox.fim }),
     db.from('op_ordens_pagamento').select('numero_op, total_geral, data_criacao, natureza_pagamento').eq('empresa_id', E).gte('data_criacao', inicioDia(desde)).lt('data_criacao', fimDia(sem.fim)),
     db.from('op_ordens_pagamento').select('numero_op, total_geral, pago_em').eq('empresa_id', E).gte('pago_em', inicioDia(desde)).lt('pago_em', fimDia(sem.fim)),
-    buscarTodasPaginas((de, ate) => db.from('fichas_reserva').select('id, numero, cliente, evento_feira, valor_final, data_emissao, status').eq('empresa_id', E).neq('status', 'CA').gte('data_emissao', desde).lte('data_emissao', sem.fim).order('id').range(de, ate)),
-    db.from('fichas_reserva').select('numero, cliente, evento_feira, valor_final, data_inicial, data_final, status').eq('empresa_id', E).neq('status', 'CA').gte('data_inicial', prox.inicio).lte('data_inicial', prox.fim).order('data_inicial'),
+    lerFichas(db, origem, { emissaoDe: desde, emissaoAte: sem.fim }),
+    lerFichas(db, origem, { inicioDe: prox.inicio, inicioAte: prox.fim, ordem: 'data_inicial' }),
     db.from('checklists').select('id, created_at').eq('empresa_id', E).gte('created_at', inicioDia(desde)).lt('created_at', fimDia(sem.fim)),
     db.from('checklist_divergencias').select('checklist_id, checklist_numero, tipo, descricao, qtd_esperada, qtd_real, evento_feira, created_at').gte('created_at', inicioDia(sem.inicio)).lt('created_at', fimDia(sem.fim)),
     db.from('checklists').select('numero, evento_feira, cliente, periodo_fim').eq('empresa_id', E).eq('status', 'SAIDA_CONFERIDA'),
@@ -149,7 +156,7 @@ export async function calcularIndicadoresSemanais(db: DB, empresa: { id: number;
     fichas_emitidas_por_semana: serieFichas,
     fichas_media_4_semanas_anteriores: mediaAnteriores(serieFichas),
     variacao_pct_fichas_valor_vs_media: variacao(serieFichas[0].valor, mediaAnteriores(serieFichas).valor),
-    maiores_fichas_semana: fichasSemana.sort((a, b) => num(b.valor_final) - num(a.valor_final)).slice(0, 5).map(l => ({ numero: l.numero, cliente: l.cliente, evento: l.evento_feira, valor: arred(num(l.valor_final)), status: rotuloStatusP2s(l.status) })),
+    maiores_fichas_semana: fichasSemana.sort((a, b) => num(b.valor_final) - num(a.valor_final)).slice(0, 5).map(l => ({ numero: l.numero, cliente: l.cliente, evento: l.evento_feira, valor: arred(num(l.valor_final)), status: l.status })),
     locacoes_iniciando_proxima_semana: {
       qtd: (fichasProx.data || []).length,
       valor: arred(((fichasProx.data || []) as any[]).reduce((s, l) => s + num(l.valor_final), 0)),
@@ -199,9 +206,10 @@ export async function calcularIndicadoresSemanais(db: DB, empresa: { id: number;
   };
 
   // Fase 4: metas do mês até o fim da semana e projeção de caixa a partir de hoje.
-  const [metas, caixa] = await Promise.all([
+  const [metas, caixa, locacao] = await Promise.all([
     progressoMetasDoMes(db, E, fonte, sem.fim).catch(() => null),
     projetarCaixa(db, empresa, hoje).then(resumoCaixa).catch(() => null),
+    blocoLocacao(db, origem, hoje, falhou).catch(() => null),
   ]);
 
   return {
@@ -209,6 +217,7 @@ export async function calcularIndicadoresSemanais(db: DB, empresa: { id: number;
     empresa,
     metas,
     caixa,
+    locacao,
     semana: sem,
     proxima_semana: prox,
     gerado_em: new Date().toISOString(),

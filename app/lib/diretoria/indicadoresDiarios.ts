@@ -14,9 +14,9 @@
 //   P2S depois das 9h30 de hoje não entra no relatório das 10h.
 // - Os status das fichas são o código cru do P2S (RE, EN, EP, X, A, E, SB, CA).
 import { supabaseAdmin } from '../supabase';
-import { buscarTodasPaginas } from '../paginacao';
 import { progressoMetasDoMes } from './metas';
-import { rotuloStatusP2s } from '../locacao/statusP2s';
+import { fonteDoDiretor, descreverFonte, lerReceber, lerPagar, lerFichas, type FonteDiretor } from './fontes';
+import { blocoLocacao } from './locacao';
 
 type DB = ReturnType<typeof supabaseAdmin>;
 export type ValorQtd = { valor: number; qtd: number };
@@ -83,6 +83,8 @@ export interface IndicadoresDiarios {
   expedicao: Record<string, any>;
   frota: Record<string, any>;
   rh: Record<string, any>;
+  /** Locação do sistema (só depois da virada; antes, só o fiscal de produção) — locacao.ts. */
+  locacao?: Record<string, any> | null;
   metas?: Awaited<ReturnType<typeof progressoMetasDoMes>> | null;
 }
 
@@ -100,16 +102,21 @@ export async function calcularIndicadoresDiarios(db: DB, empresa: { id: number; 
   // se o código subir antes do SQL (empresas_fonte_recebimentos.sql).
   const { data: cadastro } = await db.from('empresas').select('*').eq('id', E).maybeSingle();
   const fonteRecebimentos: FonteRecebimentos = cadastro?.fonte_recebimentos === 'EXTERNA' ? 'EXTERNA' : 'P2S';
+  // Antes ou depois da virada da chave (fontes.ts): de onde vêm contas e fichas.
+  const fonte = await fonteDoDiretor(db, E);
+  const avisoFonte = descreverFonte(fonte);
+  if (avisoFonte) avisos.push(avisoFonte);
   if (fonteRecebimentos === 'EXTERNA') avisos.push('Os recebimentos desta empresa vêm de uma fonte externa, ainda não integrada ao sistema — recebido, a receber e inadimplência ficam fora deste relatório.');
 
-  const [financeiro, comercial, expedicao, frota, rh, metas] = await Promise.all([
-    blocoFinanceiro(db, E, D, T, falhou, fonteRecebimentos),
-    blocoComercial(db, E, D, T, falhou),
+  const [financeiro, comercial, expedicao, frota, rh, metas, locacao] = await Promise.all([
+    blocoFinanceiro(db, E, D, T, falhou, fonteRecebimentos, fonte),
+    blocoComercial(db, E, D, T, falhou, fonte),
     blocoExpedicao(db, E, D, T, falhou),
     blocoFrota(db, E, D, T, falhou),
     blocoRh(db, E, D, T, falhou),
     // Metas do mês até ontem (Fase 4) — sem tabela/metas cadastradas, vem tudo SEM_META.
     progressoMetasDoMes(db, E, fonteRecebimentos, D).catch(() => null),
+    blocoLocacao(db, fonte, T, falhou).catch(e => { falhou('locação', e); return null; }),
   ]);
 
   // Variações prontas — a IA não faz conta, nem de porcentagem.
@@ -120,9 +127,13 @@ export async function calcularIndicadoresDiarios(db: DB, empresa: { id: number; 
   const [cr, cp, fichas] = await Promise.all([
     ultimaSyncOk(db, 'contas_receber'), ultimaSyncOk(db, 'contas_pagar'), ultimaSyncOk(db, 'fichas_reserva'),
   ]);
-  if (!cr && fonteRecebimentos === 'P2S') avisos.push('Contas a Receber ainda não foram sincronizadas do P2S — recebimentos e inadimplência ficam zerados.');
-  const fontes = [['contas a pagar', cp], ['fichas de reserva', fichas]] as [string, string | null][];
-  if (fonteRecebimentos === 'P2S') fontes.unshift(['contas a receber', cr]);
+  // Atraso de sincronização só importa para o que ainda vem do P2S (antes da virada).
+  const finP2s = fonte.financeiro === 'P2S';
+  if (!cr && fonteRecebimentos === 'P2S' && finP2s) avisos.push('Contas a Receber ainda não foram sincronizadas do P2S — recebimentos e inadimplência ficam zerados.');
+  const fontes = [] as [string, string | null][];
+  if (finP2s) fontes.push(['contas a pagar', cp]);
+  if (fonte.fichas === 'P2S') fontes.push(['fichas de reserva', fichas]);
+  if (fonteRecebimentos === 'P2S' && finP2s) fontes.unshift(['contas a receber', cr]);
   for (const [nome, quando] of fontes) {
     if (quando && Date.now() - new Date(quando).getTime() > 26 * 3_600_000) avisos.push(`A última sincronização bem-sucedida de ${nome} com o P2S foi em ${new Date(quando).toLocaleString('pt-BR', { timeZone: FUSO })} — os números dessa área podem estar desatualizados.`);
   }
@@ -140,23 +151,25 @@ export async function calcularIndicadoresDiarios(db: DB, empresa: { id: number; 
     frescor_dados: { contas_receber: quandoBR(cr), contas_pagar: quandoBR(cp), fichas_reserva: quandoBR(fichas) },
     avisos,
     financeiro: financeiroFinal, comercial: comercialFinal, expedicao, frota, rh,
+    locacao,
     metas,
   };
 }
 
 type Falhou = (area: string, e: { message?: string } | null | undefined) => void;
 
-async function blocoFinanceiro(db: DB, E: number, D: string, T: string, falhou: Falhou, fonteRecebimentos: FonteRecebimentos) {
+async function blocoFinanceiro(db: DB, E: number, D: string, T: string, falhou: Falhou, fonteRecebimentos: FonteRecebimentos, fonte: FonteDiretor) {
   const mes = periodosMes(D);
   const vazio = Promise.resolve({ data: [] as any[], error: null });
   const doP2s = fonteRecebimentos === 'P2S';
+  // Contas a receber/pagar pela camada de fontes: espelho do P2S antes da virada, títulos do sistema depois.
   const [recebOntem, recebMes, recebMesAnt, abertos, pagoOntem, pagar7d, opsCriadas, opsPagas, opsPendentes, lotes] = await Promise.all([
-    doP2s ? db.from('financeiro_contas_receber').select('cliente, valor_pago, valor_final, documento, num_documento, evento').eq('empresa_id', E).eq('quitado', true).eq('data_quitacao', D) : vazio,
-    doP2s ? buscarTodasPaginas((de, ate) => db.from('financeiro_contas_receber').select('id, valor_pago, valor_final').eq('empresa_id', E).eq('quitado', true).gte('data_quitacao', mes.inicio).lte('data_quitacao', mes.fim).order('id').range(de, ate)) : vazio,
-    doP2s ? buscarTodasPaginas((de, ate) => db.from('financeiro_contas_receber').select('id, valor_pago, valor_final').eq('empresa_id', E).eq('quitado', true).gte('data_quitacao', mes.inicioAnt).lte('data_quitacao', mes.fimAnt).order('id').range(de, ate)) : vazio,
-    doP2s ? buscarTodasPaginas((de, ate) => db.from('financeiro_contas_receber').select('id, cliente, valor_final, data_vencimento, documento, num_documento, evento, prorrogado').eq('empresa_id', E).eq('quitado', false).order('id').range(de, ate)) : vazio,
-    db.from('financeiro_contas_pagar').select('fornecedor, valor, valor_pago, centro, descricao').eq('empresa_id', E).eq('quitado', true).eq('data_quitacao', D),
-    db.from('financeiro_contas_pagar').select('fornecedor, valor, centro, data_vencimento, descricao').eq('empresa_id', E).eq('quitado', false).gte('data_vencimento', T).lte('data_vencimento', somarDias(T, 7)),
+    doP2s ? lerReceber(db, fonte, { quitado: true, quitacaoEm: D }) : vazio,
+    doP2s ? lerReceber(db, fonte, { quitado: true, quitacaoDe: mes.inicio, quitacaoAte: mes.fim }) : vazio,
+    doP2s ? lerReceber(db, fonte, { quitado: true, quitacaoDe: mes.inicioAnt, quitacaoAte: mes.fimAnt }) : vazio,
+    doP2s ? lerReceber(db, fonte, { quitado: false }) : vazio,
+    lerPagar(db, fonte, { quitado: true, quitacaoEm: D }),
+    lerPagar(db, fonte, { quitado: false, vencDe: T, vencAte: somarDias(T, 7) }),
     db.from('op_ordens_pagamento').select('numero_op, empresa_recebedora, natureza_pagamento, total_geral, data_vencimento, os_evento').eq('empresa_id', E).gte('data_criacao', inicioDia(D)).lt('data_criacao', fimDia(D)),
     db.from('op_ordens_pagamento').select('numero_op, total_geral').eq('empresa_id', E).gte('pago_em', inicioDia(D)).lt('pago_em', fimDia(D)),
     db.from('op_ordens_pagamento').select('numero_op, empresa_recebedora, natureza_pagamento, total_geral, data_vencimento, data_criacao').eq('empresa_id', E).eq('status', 'PENDENTE'),
@@ -241,21 +254,21 @@ async function blocoFinanceiro(db: DB, E: number, D: string, T: string, falhou: 
   };
 }
 
-async function blocoComercial(db: DB, E: number, D: string, T: string, falhou: Falhou) {
+async function blocoComercial(db: DB, E: number, D: string, T: string, falhou: Falhou, fonte: FonteDiretor) {
   const mes = periodosMes(D);
-  const campos = 'numero, cliente, evento_feira, valor_final, data_inicial, data_final, status, vendedor';
+  // Fichas pela camada de fontes: espelho do P2S antes da virada, locacao_fichas_reserva depois.
   const [emitidasOntem, doMes, doMesAnt, iniciando, encerrando, suspensas] = await Promise.all([
-    db.from('fichas_reserva').select(campos).eq('empresa_id', E).eq('data_emissao', D).neq('status', 'CA'),
-    buscarTodasPaginas((de, ate) => db.from('fichas_reserva').select('id, valor_final, status').eq('empresa_id', E).gte('data_emissao', mes.inicio).lte('data_emissao', mes.fim).order('id').range(de, ate)),
-    buscarTodasPaginas((de, ate) => db.from('fichas_reserva').select('id, valor_final, status').eq('empresa_id', E).gte('data_emissao', mes.inicioAnt).lte('data_emissao', mes.fimAnt).order('id').range(de, ate)),
-    db.from('fichas_reserva').select(campos).eq('empresa_id', E).gte('data_inicial', T).lte('data_inicial', somarDias(T, 7)).neq('status', 'CA').order('data_inicial'),
-    db.from('fichas_reserva').select(campos).eq('empresa_id', E).gte('data_final', D).lte('data_final', somarDias(T, 3)).neq('status', 'CA').order('data_final'),
-    db.from('fichas_reserva').select(campos + ', justificativa_suspensao').eq('empresa_id', E).eq('faturamento_suspenso', true).gte('data_final', somarDias(D, -90)),
+    lerFichas(db, fonte, { emissaoEm: D }),
+    lerFichas(db, fonte, { emissaoDe: mes.inicio, emissaoAte: mes.fim, incluirCanceladas: true }),
+    lerFichas(db, fonte, { emissaoDe: mes.inicioAnt, emissaoAte: mes.fimAnt, incluirCanceladas: true }),
+    lerFichas(db, fonte, { inicioDe: T, inicioAte: somarDias(T, 7), ordem: 'data_inicial' }),
+    lerFichas(db, fonte, { fimDe: D, fimAte: somarDias(T, 3), ordem: 'data_final' }),
+    lerFichas(db, fonte, { suspenso: true, fimDe: somarDias(D, -90), incluirCanceladas: true }),
   ]);
   falhou('fichas de reserva', emitidasOntem.error || iniciando.error);
-  const ficha = (l: any) => ({ numero: l.numero, cliente: l.cliente, evento: l.evento_feira, valor: arred(num(l.valor_final)), inicio: l.data_inicial, fim: l.data_final, status: rotuloStatusP2s(l.status), vendedor: l.vendedor });
-  const semCanceladas = (linhas: any[]) => linhas.filter(l => l.status !== 'CA');
-  const porStatus = (linhas: any[]) => linhas.reduce((m: Record<string, number>, l) => { const s = rotuloStatusP2s(l.status); m[s] = (m[s] || 0) + 1; return m; }, {});
+  const ficha = (l: any) => ({ numero: l.numero, cliente: l.cliente, evento: l.evento_feira, valor: arred(num(l.valor_final)), inicio: l.data_inicial, fim: l.data_final, status: l.status, vendedor: l.vendedor });
+  const semCanceladas = (linhas: any[]) => linhas.filter(l => !l.cancelada);
+  const porStatus = (linhas: any[]) => linhas.reduce((m: Record<string, number>, l) => { m[l.status] = (m[l.status] || 0) + 1; return m; }, {});
 
   return {
     fichas_emitidas_ontem: { ...vq(emitidasOntem.data || [], l => num(l.valor_final)), lista: maiores((emitidasOntem.data || []) as any[], l => num(l.valor_final), ficha, 10) },

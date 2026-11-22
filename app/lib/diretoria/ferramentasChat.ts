@@ -20,6 +20,17 @@ import { projetarCaixa } from './caixa';
 import { somarKm } from './km';
 import { calcularIndicadoresPeriodo, periodosMensal, periodosAnual } from './indicadoresPeriodo';
 import { rotuloStatusP2s, rotuloFaturamentoP2s } from '../locacao/statusP2s';
+import { fonteDoDiretor, lerReceber, lerPagar, lerFichas } from './fontes';
+import { blocoLocacao } from './locacao';
+import { agendaOcupacao } from '../locacao/disponibilidade';
+
+// Código de status do P2S (filtro da ferramenta de fichas) → rótulos aceitos
+// depois da virada, quando as fichas vêm do sistema (status próprios).
+const STATUS_P2S_PARA_SISTEMA: Record<string, string[]> = {
+  EP: ['Orçamento'], DR: ['Orçamento'], PR: ['Orçamento'], SB: ['Orçamento'], EN: ['Enviado ao cliente'],
+  A: ['Aprovado', 'Reservada'], X: ['Em locação'], E: ['Finalizada'], RE: ['Perdido'], CA: ['Cancelada'],
+};
+const porData = (campo: string, asc: boolean) => (a: any, b: any) => (asc ? 1 : -1) * String(a[campo] || '').localeCompare(String(b[campo] || '')) || String(a.id).localeCompare(String(b.id));
 
 type DB = ReturnType<typeof supabaseAdmin>;
 
@@ -83,7 +94,14 @@ const FERRAMENTAS = [
       if (emp.fonte_recebimentos === 'EXTERNA') return { aviso: `Os recebimentos da ${emp.nome} vêm de uma fonte externa, ainda não integrada ao sistema — não há contas a receber dela para consultar.` };
       const quitadas = e.situacao === 'QUITADAS';
       const campoData = quitadas ? 'data_quitacao' : 'data_vencimento';
-      const { data, error } = await buscarTodasPaginas((de, ate) => {
+      // Depois da virada da chave: títulos do sistema (fontes.ts), mesmo formato de linha.
+      const origem = await fonteDoDiretor(ctx.db, emp.id);
+      const { data, error } = origem.financeiro === 'SISTEMA'
+        ? await lerReceber(ctx.db, origem, {
+          quitado: quitadas, nome: e.cliente,
+          ...(quitadas ? { quitacaoDe: e.de, quitacaoAte: e.ate } : { vencDe: e.situacao === 'A_VENCER' ? (e.de && e.de > ctx.hoje ? e.de : ctx.hoje) : e.de, vencAte: e.ate, vencAntes: e.situacao === 'VENCIDAS' ? ctx.hoje : undefined }),
+        }).then(r => ({ ...r, data: (r.data as any[]).sort(porData(campoData, !quitadas)) }))
+        : await buscarTodasPaginas((de, ate) => {
         let q = ctx.db.from('financeiro_contas_receber')
           .select('id, cliente, valor_final, valor_pago, data_vencimento, data_quitacao, documento, num_documento, num_parcela, evento, centro_financeiro')
           .eq('empresa_id', emp.id).eq('quitado', quitadas);
@@ -123,7 +141,14 @@ const FERRAMENTAS = [
     rodar: async (e, ctx, emp) => {
       const quitadas = e.situacao === 'QUITADAS';
       const campoData = quitadas ? 'data_quitacao' : 'data_vencimento';
-      const { data, error } = await buscarTodasPaginas((de, ate) => {
+      // Depois da virada da chave: títulos do sistema (fontes.ts), mesmo formato de linha.
+      const origem = await fonteDoDiretor(ctx.db, emp.id);
+      const { data, error } = origem.financeiro === 'SISTEMA'
+        ? await lerPagar(ctx.db, origem, {
+          quitado: quitadas, nome: e.fornecedor,
+          ...(quitadas ? { quitacaoDe: e.de, quitacaoAte: e.ate } : { vencDe: e.de && e.de > ctx.hoje ? e.de : ctx.hoje, vencAte: e.ate }),
+        }).then(r => ({ ...r, data: (r.data as any[]).filter(l => !e.centro || String(l.centro || '').toUpperCase().includes(e.centro.toUpperCase())).sort(porData(campoData, !quitadas)) }))
+        : await buscarTodasPaginas((de, ate) => {
         let q = ctx.db.from('financeiro_contas_pagar')
           .select('id, fornecedor, descricao, centro, sub_centro, valor, valor_pago, data_vencimento, data_quitacao, num_documento')
           .eq('empresa_id', emp.id).eq('quitado', quitadas);
@@ -200,6 +225,25 @@ const FERRAMENTAS = [
       limite: LIMITE,
     }),
     rodar: async (e, ctx, emp) => {
+      // Depois que o P2S congela, as fichas vêm do sistema (fontes.ts): status já por extenso.
+      const origem = await fonteDoDiretor(ctx.db, emp.id);
+      if (origem.fichas === 'SISTEMA') {
+        const cod = e.status?.toUpperCase();
+        const r = await lerFichas(ctx.db, origem, { cliente: e.cliente, emissaoDe: e.emissao_de, emissaoAte: e.emissao_ate, fimDe: e.periodo_de, inicioAte: e.periodo_ate, incluirCanceladas: cod === 'CA' });
+        if (r.error) return { erro: r.error.message };
+        const aceitos = cod ? [...(STATUS_P2S_PARA_SISTEMA[cod] || []), rotuloStatusP2s(cod)] : null;
+        const linhas = r.data.filter(l => (!aceitos || aceitos.includes(l.status)) && (!e.evento || String(l.evento_feira || '').toUpperCase().includes(e.evento.toUpperCase())))
+          .sort((a, b) => String(b.data_inicial || '').localeCompare(String(a.data_inicial || '')));
+        const valorF = (l: any) => num(l.valor_final);
+        return {
+          empresa: emp.nome,
+          total: total(linhas, valorF),
+          por_cliente: agrupar(linhas, l => l.cliente, valorF),
+          por_evento: agrupar(linhas, l => String(l.evento_feira || '').trim(), valorF),
+          por_vendedor: agrupar(linhas, l => l.vendedor, valorF, 10),
+          ...limitar(linhas.map(l => ({ numero: l.numero, cliente: l.cliente, evento: l.evento_feira, valor: arred(valorF(l)), emissao: l.data_emissao, inicio: l.data_inicial, fim: l.data_final, status: l.status, vendedor: l.vendedor })), e.limite),
+        };
+      }
       const { data, error } = await buscarTodasPaginas((de, ate) => {
         let q = ctx.db.from('fichas_reserva')
           .select('id, numero, cliente, evento_feira, valor_final, data_emissao, data_inicial, data_final, status, vendedor, status_faturamento, faturamento_suspenso')
@@ -424,6 +468,46 @@ const FERRAMENTAS = [
       };
     },
   }),
+  ferramenta({
+    nome: 'disponibilidade',
+    descricao: 'Quanto há livre de um equipamento de locação num período, dia a dia: estoque, pico reservado, menor saldo livre e os dias em que falta. Busque pelo nome ou código do equipamento (até 20 equipamentos por consulta; período de até 60 dias). Antes da virada da chave, a agenda inclui reservas de ensaio feitas no sistema — a referência oficial ainda é o P2S.',
+    schema: z.strictObject({ empresa_id: EMPRESA, equipamento: z.string().min(2).describe('Parte do nome ou do código do equipamento (ex.: "TV 55", "PAINEL LED").'), de: DATA, ate: DATA }),
+    rodar: async (e, ctx, emp) => {
+      if (e.ate < e.de) return { erro: 'A data final é anterior à inicial.' };
+      if (Math.round((new Date(`${e.ate}T12:00:00Z`).getTime() - new Date(`${e.de}T12:00:00Z`).getTime()) / 86_400_000) > 60) return { erro: 'Período de no máximo 60 dias.' };
+      // Todas as palavras no nome, em qualquer ordem ("TV 55" acha 'TV LED 55" 4K'); senão, pelo código.
+      const palavras = e.equipamento.replace(/[%_,()]/g, ' ').split(/\s+/).filter(Boolean);
+      let qn = ctx.db.from('produtos').select('id');
+      for (const p of palavras) qn = qn.ilike('nome_item', `%${p}%`);
+      let { data: prods, error } = await qn.limit(20);
+      if (!error && !prods?.length) ({ data: prods, error } = await ctx.db.from('produtos').select('id').ilike('codigo_formatado', like(e.equipamento)).limit(20));
+      if (error) return { erro: error.message };
+      if (!prods?.length) return { empresa: emp.nome, aviso: `Nenhum equipamento encontrado com "${e.equipamento}".` };
+      const agenda = await agendaOcupacao(ctx.db, emp.id, e.de, e.ate, (prods as any[]).map(p => p.id));
+      const origem = await fonteDoDiretor(ctx.db, emp.id);
+      return {
+        empresa: emp.nome, periodo: { de: e.de, ate: e.ate },
+        observacao: origem.fichas === 'P2S' ? 'Fase paralela: a agenda soma as fichas importadas do P2S e as reservas de ensaio feitas no sistema; confirme no P2S antes de prometer ao cliente.' : undefined,
+        equipamentos: agenda.produtos.map(p => {
+          const pico = Math.max(0, ...p.ocupacao);
+          return {
+            equipamento: p.nome, codigo: p.codigo, estoque: p.capacidade, pico_reservado: pico, menor_livre: p.capacidade - pico,
+            dias_com_falta: agenda.dias.filter((_, i) => p.ocupacao[i] > p.capacidade).slice(0, 31),
+          };
+        }).filter(x => x.estoque > 0 || x.pico_reservado > 0),
+      };
+    },
+  }),
+  ferramenta({
+    nome: 'locacao',
+    descricao: 'Situação da locação no sistema hoje: orçamentos em aberto e parados, conversão dos últimos 30 dias, faltas na agenda (14 dias), devoluções atrasadas, a faturar, avarias a cobrar, manutenção, sublocações e fiscal (notas com erro, NF-e para fora de SP sem MDF-e). Antes da virada da chave só o fiscal de produção vale — o resto é ensaio da equipe e vem marcado como inativo.',
+    schema: z.strictObject({ empresa_id: EMPRESA }),
+    rodar: async (_e, ctx, emp) => {
+      const erros: string[] = [];
+      const r = await blocoLocacao(ctx.db, await fonteDoDiretor(ctx.db, emp.id), ctx.hoje, (area, err) => { if (err) erros.push(`${area}: ${err.message || err}`); });
+      return { empresa: emp.nome, ...r, ...(erros.length ? { falhas: erros } : {}) };
+    },
+  }),
 ];
 
 // Definições no formato da API — ordem e conteúdo FIXOS (o histórico da
@@ -432,7 +516,8 @@ const FERRAMENTAS = [
 // conversas de versões anteriores deixam de aceitar perguntas novas (o
 // modelo recusaria o histórico) e a tela pede para abrir uma nova.
 //   1 = Fase 3 (10 ferramentas) · 2 = Fase 4 (+ metas, projeção de caixa, resumo de mês/ano)
-export const VERSAO_FERRAMENTAS = 2;
+//   3 = 2026-11-22 (+ disponibilidade, locação; fontes depois da virada; Haiku 5.5)
+export const VERSAO_FERRAMENTAS = 3;
 export const DEFINICOES_FERRAMENTAS: Anthropic.Beta.BetaTool[] = FERRAMENTAS.map(f => {
   const schema = z.toJSONSchema(f.schema) as Record<string, unknown>;
   delete schema.$schema;
@@ -465,7 +550,7 @@ export function rotuloFerramenta(nome: string, entrada: any, empresas: EmpresaCh
   const rotulos: Record<string, string> = {
     resumo_do_dia: 'Resumo do dia', resumo_da_semana: 'Resumo da semana', contas_a_receber: 'Contas a receber', contas_a_pagar: 'Contas a pagar',
     ordens_de_pagamento: 'Ordens de pagamento', fichas_de_locacao: 'Fichas de locação', expedicao: 'Expedição', frota: 'Frota', rh: 'RH', historico_do_diretor: 'Histórico do diretor',
-    metas: 'Metas', projecao_de_caixa: 'Projeção de caixa', resumo_do_periodo: 'Resumo de mês/ano',
+    metas: 'Metas', projecao_de_caixa: 'Projeção de caixa', resumo_do_periodo: 'Resumo de mês/ano', disponibilidade: 'Disponibilidade', locacao: 'Locação',
   };
   return `${rotulos[nome] || nome}${emp ? ` · ${emp}` : ''}`;
 }

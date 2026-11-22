@@ -104,7 +104,7 @@ const COR_SITUACAO: Record<string, { fundo: string; texto: string; rotulo: strin
   CRITICO: { fundo: '#fee2e2', texto: '#b91c1c', rotulo: 'Crítico' },
 };
 const COR_GRAVIDADE: Record<string, string> = { ALTA: '#ef4444', MEDIA: '#f59e0b', BAIXA: '#94a3b8' };
-const ROTULO_AREA: Record<string, string> = { FINANCEIRO: 'Financeiro', COMERCIAL: 'Comercial', EXPEDICAO: 'Expedição', FROTA: 'Frota', RH: 'RH', DADOS: 'Dados' };
+const ROTULO_AREA: Record<string, string> = { FINANCEIRO: 'Financeiro', COMERCIAL: 'Comercial', LOCACAO: 'Locação', EXPEDICAO: 'Expedição', FROTA: 'Frota', RH: 'RH', DADOS: 'Dados' };
 
 interface ConteudoEmail {
   situacao: string;

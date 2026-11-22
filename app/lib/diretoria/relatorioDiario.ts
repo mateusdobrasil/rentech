@@ -29,7 +29,7 @@ export const RelatorioDiarioSchema = z.object({
 });
 export type ConteudoRelatorioDiario = z.infer<typeof RelatorioDiarioSchema>;
 
-const INSTRUCOES = `Você é o Diretor de uma locadora de equipamentos para eventos e feiras no Brasil (o sistema se chama Rentech WEB). Todo dia você lê os números do dia anterior de UMA empresa do grupo e escreve o relatório diário para o dono.
+export const INSTRUCOES = `Você é o Diretor de uma locadora de equipamentos para eventos e feiras no Brasil (o sistema se chama Rentech WEB). Todo dia você lê os números do dia anterior de UMA empresa do grupo e escreve o relatório diário para o dono.
 
 ${REGRAS_ESCRITA}
 - Destaque o que FOGE do normal ou pede ação: inadimplência nova ou crescendo, cliente grande atrasando, OP pendente há muitos dias ou vencida, material que deveria ter voltado e não voltou, divergência de expedição, veículo fora há muitos dias, prazo de multa/pedágio/documento vencendo, ponto incompleto, rescisão a pagar.
@@ -40,7 +40,7 @@ ${CONTEXTO_DADOS}
 Pendências: você recebe a lista do relatório anterior. Para cada uma, decida pelos números de hoje se continua ABERTA ou foi RESOLVIDA, mantendo id e data "desde". Acrescente as novas que merecem acompanhamento (não transforme todo fato do dia em pendência — só o que precisa ser cobrado até resolver).`;
 
 // Resumo compacto de um relatório anterior, pra dar histórico sem mandar o JSON inteiro de cada dia.
-function resumoHistorico(r: { data_referencia: string; indicadores: IndicadoresDiarios; conteudo: ConteudoRelatorioDiario | null }) {
+export function resumoHistorico(r: { data_referencia: string; indicadores: IndicadoresDiarios; conteudo: ConteudoRelatorioDiario | null }) {
   const f = r.indicadores?.financeiro || {};
   const c = r.indicadores?.comercial || {};
   const e = r.indicadores?.expedicao || {};

@@ -2,8 +2,8 @@
 
 // Aba MDF-e da tela Fiscal (2026-11-21): manifesto da viagem com as NF-e,
 // o veículo da frota e os motoristas (Ficha do Funcionário). Regras em
-// app/lib/fiscal/mdfe.ts. Obrigatório em viagem interestadual; dentro de SP o
-// sistema só sugere.
+// app/lib/fiscal/mdfe.ts. Obrigatório só em viagem para fora de SP; dentro do
+// estado é opcional (regra confirmada pelo usuário em 2026-11-22).
 import { useState, useEffect, useMemo } from 'react';
 import { useToast, useConfirm, usePrompt } from '../../../components/ui/NotificationProvider';
 import { formatarMoeda } from '../../../lib/formatadores';
@@ -114,6 +114,7 @@ export default function MdfeAba({ tok, empresaId, homolog, notaInicial, onNotaUs
   const atualizar = () => setRecarregar(v => v + 1);
   const abertos = (info.mdfes || []).filter((m: any) => m.status === 'AUTORIZADO');
   const velhos = abertos.filter((m: any) => (m.aberto_horas ?? 0) >= 24);
+  const pendentes = (info.notas || []).filter((x: any) => x.uf && x.uf !== 'SP');
 
   function limpar() {
     setSel([]); setVeiculoId(''); setVeic(veicDe(null)); setMotoristas([]); setPercurso([]); setPeso(''); setPesoTocado(false); setDataViagem(''); setInfoAd('');
@@ -183,11 +184,18 @@ export default function MdfeAba({ tok, empresaId, homolog, notaInicial, onNotaUs
         </div>
       )}
 
+      {pendentes.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-xl px-4 py-3">
+          <strong>{pendentes.length} NF-e de viagem para fora de SP sem MDF-e</strong> — obrigatório antes de o caminhão sair:{' '}
+          {pendentes.map((x: any) => `nº ${x.numero} (${OPERACAO[x.operacao] || x.operacao}, ${x.cidade}/${x.uf})`).join('; ')}.
+        </div>
+      )}
+
       <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-black uppercase text-[#0C1D4D]">Manifestos (MDF-e)</h2>
-            <p className="text-xs text-gray-500">Junta as NF-e de uma viagem com o veículo e o motorista. Obrigatório em viagem para outra UF com veículo próprio; dentro de SP é opcional (confirme com o contador).</p>
+            <p className="text-xs text-gray-500">Junta as NF-e de uma viagem com o veículo e o motorista. Obrigatório só em viagem para fora de SP; dentro do estado é opcional.</p>
           </div>
           <div className="flex gap-2">
             <button onClick={atualizar} disabled={carregando} className={`${btn} bg-white border border-[#CBD5E1] text-[#0C1D4D]`}>Atualizar</button>
@@ -275,7 +283,7 @@ export default function MdfeAba({ tok, empresaId, homolog, notaInicial, onNotaUs
                       <td className="p-2"><input type="checkbox" readOnly checked={sel.includes(x.id)} /></td>
                       <td className="p-2 font-bold whitespace-nowrap">{x.numero}<span className="text-gray-400 font-normal"> · {OPERACAO[x.operacao] || x.operacao}</span>{x.fl && <div className="text-[10px] text-gray-400 font-normal">FL {x.fl}</div>}</td>
                       <td className="p-2">{x.cliente}</td>
-                      <td className="p-2 whitespace-nowrap">{x.cidade}/{x.uf}</td>
+                      <td className="p-2 whitespace-nowrap">{x.cidade}/{x.uf}{x.uf && x.uf !== 'SP' && <span className="ml-1 text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">obrigatório</span>}</td>
                       <td className="p-2 text-right">{formatarMoeda(x.valor)}</td>
                       <td className="p-2 text-right">{x.peso ? `${numBR(x.peso, 1)} kg` : '—'}</td>
                     </tr>
@@ -286,8 +294,8 @@ export default function MdfeAba({ tok, empresaId, homolog, notaInicial, onNotaUs
             {sel.length > 0 && (
               <div className={`mt-2 text-xs rounded-lg px-3 py-2 ${ufsCli.length > 1 ? 'bg-red-50 border border-red-200 text-red-700' : interestadual ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-[#F1F5F9] text-gray-600'}`}>
                 {ufsCli.length > 1 ? `As notas marcadas são de UFs diferentes (${ufsCli.join(', ')}) — emita um MDF-e por UF.`
-                  : interestadual ? <><strong>Obrigatório:</strong> viagem {ufIni} → {ufFim} com veículo próprio.</>
-                  : <>Viagem dentro de {ufIni}: o MDF-e é <strong>opcional</strong> pela regra geral — confirme com o contador se SP exige neste caso.</>}
+                  : interestadual ? <><strong>Obrigatório:</strong> viagem {ufIni} → {ufFim}.</>
+                  : <>Viagem dentro de {ufIni}: o MDF-e é <strong>opcional</strong>.</>}
                 {' '}{sel.length} NF-e · {formatarMoeda(valorNotas)}.
               </div>
             )}

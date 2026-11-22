@@ -45,6 +45,15 @@ function log(usuario: string, acao: string, detalhe: string) {
 }
 const falha = (e: any): Resultado => ({ ok: false, erro: e?.message || String(e) });
 
+// NF-e que vai num caminhão (remessa, venda, retorno): MDF-e ativo e se ele é obrigatório (outra UF).
+const OPS_TRANSPORTE = ['REMESSA_LOCACAO', 'RETORNO_LOCACAO', 'VENDA_ATIVO', 'VENDA_MERCADORIA'];
+function situacaoMdfe(x: any) {
+  const ativo = ((x.mdfes || []) as any[]).map(l => l.mdfe?.status).find(s => ['PROCESSANDO', 'AUTORIZADO', 'ENCERRADO'].includes(s)) || null;
+  const uf = String(x.uf_destino || '').toUpperCase();
+  const transporte = x.tipo === 'NFE' && x.status === 'AUTORIZADA' && OPS_TRANSPORTE.includes(x.operacao);
+  return { mdfe_status: ativo, mdfe_obrigatorio: transporte && !!uf && uf !== 'SP', mdfe_pendente: transporte && !!uf && uf !== 'SP' && !ativo };
+}
+
 // ============================================================================
 // PAINEL
 // ============================================================================
@@ -56,7 +65,7 @@ export async function painelFiscalAction(f: { de: string; ate: string }, accessT
     await atualizarProcessando(ctx.db, 20).catch(() => 0);
     const ids = ctx.emissoras.map(e => e.id);
     const { data: notas, error } = await buscarTodasPaginas<any>((d, a) => ctx.db.from('fiscal_notas')
-      .select('id, empresa_id, tipo, operacao, ambiente, status, numero, serie, chave, valor_total, mensagem, criado_em, criado_por, data_emissao, ficha_reserva_id, ficha_locacao_id, fatura_id, nota_referenciada_id, caminho_pdf, caminho_xml, url_consulta, cartas_correcao, motivo_cancelamento, parceiro:parceiros(nome_exibicao, nome_completo), os:locacao_fichas_reserva(id, origem, p2s_numero), fl:locacao_fichas_locacao(numero), fatura:financeiro_faturas(serie, numero)')
+      .select('id, empresa_id, tipo, operacao, ambiente, status, numero, serie, chave, valor_total, mensagem, criado_em, criado_por, data_emissao, ficha_reserva_id, ficha_locacao_id, fatura_id, nota_referenciada_id, caminho_pdf, caminho_xml, url_consulta, cartas_correcao, motivo_cancelamento, parceiro:parceiros(nome_exibicao, nome_completo), os:locacao_fichas_reserva(id, origem, p2s_numero), fl:locacao_fichas_locacao(numero), fatura:financeiro_faturas(serie, numero), uf_destino:payload->>uf_destinatario, mdfes:fiscal_mdfe_notas(mdfe:fiscal_mdfe(status))')
       .in('empresa_id', ids.length ? ids : [0]).gte('criado_em', `${f.de}T00:00:00-03:00`).lte('criado_em', `${f.ate}T23:59:59-03:00`)
       .order('id', { ascending: false }).range(d, a), 1000, 20000);
     if (error) throw error;
@@ -69,7 +78,9 @@ export async function painelFiscalAction(f: { de: string; ate: string }, accessT
           ...x, cliente: x.parceiro ? limpo(x.parceiro.nome_exibicao || x.parceiro.nome_completo) : '—', parceiro: undefined,
           os: x.os ? numeroFicha(x.os) : null, fl: x.fl?.numero || null, fatura: x.fatura ? numeroExibicao(x.fatura) : null,
           tem_pdf: !!x.caminho_pdf, tem_xml: !!x.caminho_xml, caminho_pdf: undefined, caminho_xml: undefined,
-          cce: ((x.cartas_correcao || []) as any[]).length, cartas_correcao: undefined,
+          // MDF-e é obrigatório só quando a carga sai/entra de outra UF (regra confirmada pelo usuário 2026-11-22)
+          ...situacaoMdfe(x), mdfes: undefined,
+          cce:((x.cartas_correcao || []) as any[]).length, cartas_correcao: undefined,
         })),
       },
     };

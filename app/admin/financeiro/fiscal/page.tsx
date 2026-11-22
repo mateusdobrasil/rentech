@@ -314,7 +314,11 @@ function Conteudo() {
                             {x.tem_xml && <button disabled={ocupado} onClick={() => arquivo(x, 'xml')} className={mini}>XML</button>}
                             {x.cce > 0 && <button disabled={ocupado} onClick={() => arquivo(x, 'cce')} className={mini}>CC-e</button>}
                             {x.status === 'AUTORIZADA' && x.operacao === 'REMESSA_LOCACAO' && <button disabled={ocupado} onClick={() => abrirRetorno(x)} className={`${mini} text-[#336699]`}>Retorno</button>}
-                            {x.status === 'AUTORIZADA' && ['REMESSA_LOCACAO', 'RETORNO_LOCACAO', 'VENDA_ATIVO', 'VENDA_MERCADORIA'].includes(x.operacao) && <button disabled={ocupado} onClick={() => { setNotaMdfe(x.id); setAba('mdfe'); }} className={mini} title="Manifesto da viagem com esta NF-e">MDF-e</button>}
+                            {x.status === 'AUTORIZADA' && ['REMESSA_LOCACAO', 'RETORNO_LOCACAO', 'VENDA_ATIVO', 'VENDA_MERCADORIA'].includes(x.operacao) && (
+                              x.mdfe_status ? <span className="text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-md bg-emerald-50 text-emerald-700" title={`MDF-e ${x.mdfe_status.toLowerCase()}`}>✓ MDF-e</span>
+                              : x.mdfe_pendente ? <button disabled={ocupado} onClick={() => { setNotaMdfe(x.id); setAba('mdfe'); }} className={`${mini} bg-amber-50 border-amber-300 text-amber-800`} title={`Viagem para ${x.uf_destino}: MDF-e obrigatório`}>MDF-e obrigatório</button>
+                              : <button disabled={ocupado} onClick={() => { setNotaMdfe(x.id); setAba('mdfe'); }} className={mini} title="Dentro de SP o MDF-e é opcional">MDF-e</button>
+                            )}
                             {x.status === 'AUTORIZADA' && x.tipo === 'NFE' && <button disabled={ocupado} onClick={() => cce(x)} className={mini}>Corrigir</button>}
                             {x.status === 'AUTORIZADA' && <button disabled={ocupado} onClick={() => cancelar(x)} className={`${mini} text-red-700`}>Cancelar</button>}
                           </div>

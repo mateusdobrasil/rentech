@@ -281,9 +281,12 @@ export async function consultarMdfe(db: Db, id: number) {
   return { status: st || m.status, mensagem: st === 'ERRO' ? mensagemFocus(r.corpo) : null };
 }
 
+/** Atualiza os MDF-e ainda em processamento (tela e cron /api/cron/fiscal). Devolve quantos consultou. */
 export async function atualizarMdfeProcessando(db: Db, limite = 20) {
   const { data } = await db.from('fiscal_mdfe').select('id').eq('status', 'PROCESSANDO').order('id').limit(limite);
-  for (const x of (data || []) as any[]) await consultarMdfe(db, x.id).catch(() => null);
+  let ok = 0;
+  for (const x of (data || []) as any[]) if (await consultarMdfe(db, x.id).catch(() => null)) ok++;
+  return ok;
 }
 
 const evento = (m: any, e: Record<string, unknown>) => [...((m.eventos || []) as any[]), { em: new Date().toISOString(), ...e }];

@@ -51,6 +51,10 @@
     {
       "path": "/api/cron/historico-p2s",
       "schedule": "7,22,37,52 3-8 * * *"
+    },
+    {
+      "path": "/api/cron/fiscal",
+      "schedule": "*/10 * * * *"
     }
   ]
 }

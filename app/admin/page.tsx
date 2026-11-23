@@ -119,6 +119,14 @@ const MODULOS_SISTEMA = [
     bgIcon: 'bg-teal-50 text-teal-600'
   },
   {
+    titulo: 'Manuais',
+    descricao: 'Manuais do sistema com as telas reais: locação, inventário, suporte, Diretor (IA), ponto e roteiros de teste.',
+    icone: '📚',
+    link: '/admin/manuais',
+    cor: 'border-sky-500/50 hover:border-sky-500',
+    bgIcon: 'bg-sky-50 text-sky-600'
+  },
+  {
     titulo: 'Parâmetros',
     descricao: 'Controle de acesso, conteúdo do site, integrações, agendamentos, empresas do grupo e log de auditoria.',
     icone: '⚙️',

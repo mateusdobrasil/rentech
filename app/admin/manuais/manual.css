@@ -1,0 +1,45 @@
+/* Leitura dos manuais (/admin/manuais/[slug]) — HTML gerado de docs/manuais. */
+.manual-titulo { font-size: 1.75rem; font-weight: 900; color: #0C1D4D; line-height: 1.2; }
+.manual-data { font-size: 0.75rem; color: #94A3B8; font-weight: 700; margin: 0.25rem 0 1.5rem; }
+
+.manual-conteudo { font-size: 0.95rem; line-height: 1.7; color: #1E293B; }
+.manual-conteudo h2 { font-size: 1.25rem; font-weight: 900; color: #0C1D4D; margin: 2.25rem 0 0.75rem; padding-top: 1rem; border-top: 1px solid #E2E8F0; scroll-margin-top: 6rem; }
+.manual-conteudo h2:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+.manual-conteudo h3 { font-size: 1.05rem; font-weight: 800; color: #0C1D4D; margin: 1.5rem 0 0.5rem; scroll-margin-top: 6rem; }
+.manual-conteudo h4 { font-size: 0.95rem; font-weight: 800; margin: 1.25rem 0 0.5rem; }
+.manual-conteudo p { margin: 0.6rem 0; }
+.manual-conteudo strong { color: #0C1D4D; }
+.manual-conteudo a { color: #336699; font-weight: 600; text-decoration: underline; }
+.manual-conteudo ul, .manual-conteudo ol { margin: 0.6rem 0; padding-left: 1.5rem; }
+.manual-conteudo ul { list-style: disc; }
+.manual-conteudo ol { list-style: decimal; }
+.manual-conteudo li { margin: 0.25rem 0; }
+.manual-conteudo li > ul, .manual-conteudo li > ol { margin: 0.25rem 0; }
+.manual-conteudo input[type='checkbox'] { margin-right: 0.4rem; }
+.manual-conteudo li:has(> input[type='checkbox']) { list-style: none; margin-left: -1.25rem; }
+.manual-conteudo code { font-size: 0.85em; background: #F1F5F9; border-radius: 4px; padding: 0.1rem 0.35rem; }
+.manual-conteudo pre { background: #0F172A; color: #E2E8F0; border-radius: 12px; padding: 1rem; overflow-x: auto; font-size: 0.8rem; }
+.manual-conteudo pre code { background: none; padding: 0; }
+.manual-conteudo blockquote { border-left: 4px solid #BAE6FD; background: #F0F9FF; padding: 0.5rem 1rem; border-radius: 0 8px 8px 0; color: #0369A1; margin: 0.75rem 0; }
+.manual-conteudo hr { border: 0; border-top: 1px solid #E2E8F0; margin: 1.5rem 0; }
+
+.manual-conteudo .tabela { overflow-x: auto; margin: 0.9rem 0; border: 1px solid #E2E8F0; border-radius: 12px; }
+.manual-conteudo table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.manual-conteudo th { background: #F8FAFC; text-align: left; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: #64748B; font-weight: 800; }
+.manual-conteudo th, .manual-conteudo td { padding: 0.55rem 0.75rem; border-bottom: 1px solid #F1F5F9; vertical-align: top; }
+.manual-conteudo tr:last-child td { border-bottom: 0; }
+
+.manual-conteudo .figura { display: block; margin: 1.25rem 0; }
+.manual-conteudo .figura img { display: block; max-width: 100%; height: auto; border: 1px solid #E2E8F0; border-radius: 12px; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08); }
+.manual-conteudo .legenda { display: block; font-size: 0.75rem; color: #64748B; margin-top: 0.4rem; }
+
+/* Imprimir / salvar PDF: só o texto do manual. */
+@media print {
+  body * { visibility: hidden; }
+  .manual-imprimir, .manual-imprimir * { visibility: visible; }
+  .manual-imprimir { position: absolute; left: 0; top: 0; width: 100%; border: 0 !important; box-shadow: none !important; padding: 0 !important; }
+  .manual-nao-imprimir { display: none !important; }
+  .manual-conteudo h2 { break-after: avoid; }
+  .manual-conteudo .figura, .manual-conteudo .tabela { break-inside: avoid; }
+  .manual-conteudo .tabela { overflow: visible; }
+}

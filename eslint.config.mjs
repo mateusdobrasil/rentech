@@ -18,6 +18,8 @@ const eslintConfig = defineConfig([
     "packages/**",
     // Scripts de build Node.js (CommonJS), não fazem parte do bundle da app.
     "scripts/**",
+    // Conteúdo dos manuais, gerado por `npm run manuais` (texto e imagens em base64).
+    "app/admin/manuais/conteudo/**",
   ]),
 ]);
 

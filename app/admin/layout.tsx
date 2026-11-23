@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase';
 import ExigirMFA from './ExigirMFA';
 import { NotificationProvider } from '../components/ui/NotificationProvider';
 import VersaoSistema from '../components/ui/VersaoSistema';
+import { aplicarTemaTela, lerTemaTela, salvarTemaTela, CHAVE_TEMA_TELA } from '../lib/temaTela';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -17,6 +18,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   // sem precisar instrumentar cada page.tsx individualmente.
   const [requerMfa, setRequerMfa] = useState(true); // seguro por padrão até a consulta resolver
   const [mfaCarregado, setMfaCarregado] = useState(false);
+
+  // Tema da tela (Claro/Escuro, escolhido em /admin/conta): vale enquanto o
+  // usuário estiver no /admin — ao sair pra outra área do site (navegação sem
+  // recarregar) o layout desmonta e a tela volta ao normal. Trocar o tema em
+  // outra aba também vale aqui na hora (evento storage).
+  useEffect(() => {
+    aplicarTemaTela(lerTemaTela());
+    const aoMudarEmOutraAba = (e: StorageEvent) => {
+      if (e.key === CHAVE_TEMA_TELA) aplicarTemaTela(lerTemaTela());
+    };
+    window.addEventListener('storage', aoMudarEmOutraAba);
+    return () => {
+      window.removeEventListener('storage', aoMudarEmOutraAba);
+      aplicarTemaTela('claro');
+    };
+  }, []);
 
   useEffect(() => {
     async function checkAuthAndLogAccess() {
@@ -34,6 +51,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         .select('nome')
         .eq('id', session.user.id)
         .single();
+
+      // Tema da tela salvo no perfil (escolhido em /admin/conta) manda: o
+      // navegador só guarda uma cópia pra abrir a página sem piscar. Consulta
+      // separada de propósito — sem a coluna (SQL perfis_usuarios_tema_tela
+      // ainda não rodado) dá erro e só ignora, sem afetar o nome acima.
+      supabase.from('perfis_usuarios').select('tema_tela').eq('id', session.user.id).maybeSingle()
+        .then(({ data, error }) => {
+          if (error || !data?.tema_tela) return;
+          if (!location.pathname.startsWith('/admin')) return; // já saiu do painel
+          salvarTemaTela(data.tema_tela === 'escuro' ? 'escuro' : 'claro');
+        });
 
       const nomeUsuario = perfil?.nome || session.user.email || 'Usuário Desconhecido';
       const dataHoraAtual = new Date().toISOString();

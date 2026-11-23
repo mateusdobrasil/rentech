@@ -49,6 +49,14 @@ const HIDE_NAVBAR_SCRIPT = `
       document.documentElement.classList.add('white-label-hide-navbar');
     }
   } catch (e) {}
+  // Tema escuro do painel (escolhido em /admin/conta — ver app/lib/temaTela.ts),
+  // aplicado aqui pra página já abrir escura, sem piscar clara.
+  try {
+    var p = location.pathname;
+    if ((p === '/admin' || p.indexOf('/admin/') === 0) && localStorage.getItem('rentech_tema') === 'escuro') {
+      document.documentElement.classList.add('tema-escuro');
+    }
+  } catch (e) {}
 `;
 
 export default function RootLayout({

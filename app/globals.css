@@ -24,10 +24,30 @@
   --color-brand-pink-light: #FCE7F3;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* Sem @media (prefers-color-scheme: dark) de propósito: as telas foram todas
+   desenhadas no claro, e seguir o modo escuro do Windows/celular só trocava a
+   cor do texto herdado — campos sem cor própria ficavam branco sobre branco
+   (caso do /admin/financeiro/fiscal, 2026-11-23). O escuro agora é escolha
+   do usuário em /admin/conta — ver html.tema-escuro mais abaixo. */
+
+/* Tema escuro do painel (app/lib/temaTela.ts). Inverte a tela inteira (o
+   hue-rotate mantém azul azul e verde verde, só troca claro por escuro) e
+   desinverte o que não pode mudar: fotos, vídeos, logos, QR code do 2FA,
+   PDFs embutidos e a barra do topo (que já é escura). Só na tela — a
+   impressão continua igual. data-tema-original marca qualquer bloco que deva
+   ficar com as cores de origem. */
+@media screen {
+  html.tema-escuro {
+    filter: invert(1) hue-rotate(180deg) contrast(0.92);
+  }
+
+  html.tema-escuro :is(img, video, canvas, iframe, embed, object, [data-site-navbar], [data-alfalight-header], [data-tema-original]) {
+    filter: invert(1) hue-rotate(180deg);
+  }
+
+  /* dentro de um bloco já desinvertido, não inverte de novo */
+  html.tema-escuro :is([data-site-navbar], [data-alfalight-header], [data-tema-original]) :is(img, video, canvas, iframe, embed, object, [data-tema-original]) {
+    filter: none;
   }
 }
 

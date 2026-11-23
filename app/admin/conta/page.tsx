@@ -7,6 +7,8 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { registrarLogAuditoria } from '../../actions';
 import { Analytics } from "@vercel/analytics/next";
+import { lerTemaTela, salvarTemaTela, type TemaTela } from '../../lib/temaTela';
+import { salvarTemaTelaAction } from './actions';
 
 // Página aberta a QUALQUER usuário autenticado — de propósito não checa
 // parametros_paginas_permissoes (diferente das demais páginas do /admin). Um
@@ -23,6 +25,23 @@ export default function MinhaConta() {
   const [confirmarSenha, setConfirmarSenha] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [feedback, setFeedback] = useState<{ show: boolean; msg: string; type: 'success' | 'error' }>({ show: false, msg: '', type: 'success' });
+
+  // Tema da tela do painel — gravado no perfil do usuário (vale em qualquer
+  // aparelho); o navegador guarda uma cópia pra abrir sem piscar (app/lib/temaTela.ts)
+  const [tema, setTema] = useState<TemaTela>('claro');
+  useEffect(() => { setTema(lerTemaTela()); }, []);
+  const escolherTema = async (novo: TemaTela) => {
+    const anterior = tema;
+    setTema(novo);
+    salvarTemaTela(novo);
+    const { data: { session } } = await supabase.auth.getSession();
+    const r = await salvarTemaTelaAction(novo, session?.access_token || '');
+    if (!r.ok) {
+      // sem o SQL o tema ainda vale neste navegador; outro erro desfaz a troca
+      if (!/falta rodar o SQL/.test(r.erro || '')) { setTema(anterior); salvarTemaTela(anterior); }
+      mostrarFeedback(r.erro || 'Não foi possível salvar o tema.', 'error');
+    }
+  };
 
   // Autenticação em duas etapas (2FA/TOTP) — exigida em páginas marcadas com
   // "requer 2FA" em /admin/parametros/permissoes (ver app/admin/ExigirMFA.tsx
@@ -218,6 +237,43 @@ export default function MinhaConta() {
                   {perfil.permissao}
                 </span>
               )}
+            </div>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-[#E2E8F0] space-y-4">
+            <div className="border-b border-gray-100 pb-2">
+              <h2 className="text-base font-black text-[#0C1D4D] uppercase tracking-wider">Tema da Tela</h2>
+              <p className="text-[11px] text-gray-400 font-bold uppercase mt-0.5">Fica salvo no seu usuário e vale em qualquer aparelho</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {([
+                { valor: 'claro', titulo: '☀️ Claro', fundo: 'bg-[#F0F4F8]', cartao: 'bg-white', linha: 'bg-[#CBD5E1]' },
+                { valor: 'escuro', titulo: '🌙 Escuro', fundo: 'bg-[#0F172A]', cartao: 'bg-[#1E293B]', linha: 'bg-[#475569]' },
+              ] as const).map(op => {
+                const ativo = tema === op.valor;
+                return (
+                  <button
+                    key={op.valor}
+                    type="button"
+                    onClick={() => escolherTema(op.valor)}
+                    aria-pressed={ativo}
+                    className={`rounded-xl border-2 p-3 text-left transition-all ${ativo ? 'border-[#336699] ring-2 ring-[#336699]/30' : 'border-[#E2E8F0] hover:border-[#94A3B8]'}`}
+                  >
+                    {/* miniatura com as cores de origem (não inverte no tema escuro) */}
+                    <div data-tema-original className={`${op.fundo} rounded-lg p-2 mb-2 h-16 flex flex-col gap-1.5`}>
+                      <div className="h-2 w-10 rounded bg-[#0C1D4D]" />
+                      <div className={`${op.cartao} rounded flex-grow p-1.5 flex flex-col gap-1`}>
+                        <div className={`h-1.5 w-3/4 rounded ${op.linha}`} />
+                        <div className={`h-1.5 w-1/2 rounded ${op.linha}`} />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black uppercase tracking-wider text-[#0C1D4D]">{op.titulo}</span>
+                      {ativo && <span className="text-[10px] font-black text-[#336699] uppercase">✓ Em uso</span>}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 

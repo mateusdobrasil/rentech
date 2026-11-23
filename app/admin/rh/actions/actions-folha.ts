@@ -7,6 +7,7 @@ import { supabaseAdmin } from '../../../lib/supabase';
 import { resolverFicha, filtrarPorFuncionario, filtrarFicha, camposVinculo } from '../../../lib/funcionarioRef';
 import { validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { registrarLogAuditoria } from '../../../actions';
+import { alinharPapeisDaFicha } from '../../../lib/cadastros/papeisRh';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -70,6 +71,10 @@ export async function salvarColaboradorAction(payload: {
   // isso independente de qualquer formatação que a tela venha a aplicar.
   if (form.cpf) form.cpf = String(form.cpf).replace(/\D/g, '') || null;
   if (form.celular) form.celular = String(form.celular).replace(/\D/g, '') || null;
+  // Vendedor / parceiro são gravados pelo painel "Papéis comerciais" (grava na
+  // hora) — o formulário pode estar desatualizado e não pode desfazer a marcação.
+  delete form.eh_vendedor;
+  delete form.parceiro_id;
 
   try {
     if (fichaId) {
@@ -91,6 +96,8 @@ export async function salvarColaboradorAction(payload: {
     const refFicha = fichaId
       ? { funcionarioId: fichaId, funcionarioNome: form.nome_completo }
       : (await resolverFicha(db, { funcionarioNome: form.nome_completo }, '')).ref;
+    // desligado = vendedor inativo; CPF mudou = parceiro segue o CPF novo
+    if (refFicha?.funcionarioId) await alinharPapeisDaFicha(db, refFicha.funcionarioId);
 
     const { error: delDep } = await filtrarPorFuncionario(db.from('folha_dependentes').delete(), refFicha);
     if (delDep) throw new Error(`Falha ao limpar dependentes antigos: ${delDep.message}`);

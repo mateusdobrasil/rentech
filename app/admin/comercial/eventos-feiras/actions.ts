@@ -8,6 +8,10 @@
 import { validarAcesso } from '../../../lib/serverAuth';
 import { obterUltimaSincronizacao } from '../../../lib/syncLog';
 import { sincronizarEventosFeirasCore, type SincronizarEventosOpcoes } from './eventosCore';
+import { supabaseAdmin } from '../../../lib/supabase';
+import { registrarLogAuditoria } from '../../../actions';
+import { cadastrosNoSistema } from '../../../lib/cadastros/parceiros';
+import { eventoEditavel, salvarEvento, type DadosEvento } from '../../../lib/cadastros/eventos';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -33,4 +37,36 @@ export async function buscarUltimaSincronizacaoEventosAction(accessToken: string
   if (!acesso.ok) return { ok: false, erro: acesso.message };
   const info = await obterUltimaSincronizacao('eventos_feiras', 'PRODUCAO');
   return { ok: true, info };
+}
+
+// ============================================================================
+// CADASTRO PRÓPRIO (2026-11-23) — regras em app/lib/cadastros/eventos.ts
+// ============================================================================
+export async function contextoCadastroEventoAction(accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  try { return { ok: true, info: { sistemaOrigem: await cadastrosNoSistema(supabaseAdmin()) } }; } catch (e) { return { ok: false, erro: e instanceof Error ? e.message : 'Erro.' }; }
+}
+
+export async function carregarEventoAction(id: string, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  try {
+    const db = supabaseAdmin();
+    const { data, error } = await db.from('eventos_feiras').select('*').eq('id', String(id)).maybeSingle();
+    if (error) throw error;
+    if (!data) return { ok: false, erro: 'Evento não encontrado.' };
+    const e = await eventoEditavel(db, data);
+    return { ok: true, info: { evento: data, editavel: e.editavel, motivo: e.motivo } };
+  } catch (e) { return { ok: false, erro: e instanceof Error ? e.message : 'Erro.' }; }
+}
+
+export async function salvarEventoAction(dados: DadosEvento, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  try {
+    const r = await salvarEvento(supabaseAdmin(), dados);
+    registrarLogAuditoria({ usuario_nome: acesso.perfil.nome, acao: r.novo ? 'CADASTROU EVENTO' : 'ALTEROU EVENTO', setor: 'COMERCIAL', equipamento_nome: `${dados.nome} (${dados.data_inicial})` });
+    return { ok: true, info: r };
+  } catch (e) { return { ok: false, erro: e instanceof Error ? e.message : 'Erro.' }; }
 }

@@ -37,7 +37,9 @@ Faz uma vez, antes das outras partes.
 - [ ] **Saldos:** Estoque → Equipamentos de Locação → Carregar saldos do P2S. Esperado: mensagem com produtos e unidades por empresa.
 - [ ] **Patrimônios:** escolher 2 ou 3 equipamentos caros, mudar para "Por patrimônio", gerar 3 peças em lote de cada e imprimir as etiquetas numa folha A4 3×8. Esperado: etiquetas com QR, número e nome legíveis.
 - [ ] **Kit (opcional):** montar um kit com 2 componentes na aba Kit de um produto.
-- [ ] **Acesso de locação por usuário:** em Parâmetros → Permissões, editar cada vendedor, seção Locação: vendedor do P2S, escopo Carteira ou Todas, limite de desconto e quem aprova desconto. Esperado: um vendedor de teste com escopo Carteira e desconto máximo de 5%.
+- [ ] **Acesso de locação por usuário:** em Parâmetros → Permissões, editar cada vendedor, seção Locação: vendedor (marcado na Ficha do RH), escopo Carteira ou Todas, limite de desconto e quem aprova desconto. Esperado: um vendedor de teste com escopo Carteira e desconto máximo de 5%.
+- [ ] **Vendedores na Ficha do RH:** abrir a ficha de um vendedor em RH → Ficha do Funcionário. Esperado: painel Papéis comerciais com Vendedor marcado. Marcar Vendedor num funcionário de teste e conferir que ele aparece na lista de vendedores de Comercial → Carteira.
+- [ ] **Cadastros próprios:** em Comercial → Parceiros, + Novo cliente / fornecedor com o CNPJ de um cliente que já existe. Esperado: o sistema recusa e mostra o cadastro existente. Cadastrar um evento de teste em Comercial → Eventos e Feiras (+ Novo evento) e conferir que ele aparece no orçamento.
 - [ ] **Parâmetros fiscais:** Financeiro → Fiscal → Parâmetros, conferir ambiente em **Homologação**, CEP de saída do MDF-e e produto predominante. Esperado: nada em Produção.
 - [ ] **Caixa e bancos:** Financeiro → Caixa e Bancos, conferir as contas financeiras e o saldo inicial de cada uma. Esperado: saldo do Itaú igual ao do extrato no dia do saldo inicial.
 

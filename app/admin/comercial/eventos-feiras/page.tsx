@@ -11,6 +11,7 @@ import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import UltimaSincronizacaoInfo from '../../../components/ui/UltimaSincronizacaoInfo';
 import type { UltimaSincronizacao } from '../../../lib/syncLog';
+import FormEvento from './FormEvento';
 
 // ============================================================================
 // TIPOS
@@ -229,6 +230,9 @@ export default function ImportadorEventosFeiras() {
   const [pagina, setPagina] = useState(0);
   const [totalRegistros, setTotalRegistros] = useState(0);
   const [refreshGrid, setRefreshGrid] = useState(0);
+  // Cadastro próprio (2026-11-23): novo/editar evento em FormEvento.
+  const [formEventoAberto, setFormEventoAberto] = useState(false);
+  const [eventoForm, setEventoForm] = useState<string | null>(null);
 
   const [ultimaSync, setUltimaSync] = useState<UltimaSincronizacao | null>(null);
   const [ultimaSyncLoading, setUltimaSyncLoading] = useState(true);
@@ -519,9 +523,12 @@ export default function ImportadorEventosFeiras() {
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
               <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Eventos Cadastrados</h2>
-              <span className="text-xs font-black uppercase tracking-wider text-[#64748B]">
-                {totalRegistros} registro(s)
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-black uppercase tracking-wider text-[#64748B]">
+                  {totalRegistros} registro(s)
+                </span>
+                <button onClick={() => { setEventoForm(null); setFormEventoAberto(true); }} className="bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-4 py-2 rounded-lg font-black uppercase text-[10px] tracking-wider">+ Novo evento</button>
+              </div>
             </div>
 
             <div className="flex flex-col md:flex-row gap-3 mb-4">
@@ -572,7 +579,7 @@ export default function ImportadorEventosFeiras() {
                     </tr>
                   ) : (
                     eventosGrid.map((ev) => (
-                      <tr key={ev.id} className="border-t border-[#E2E8F0] hover:bg-[#F8FAFC]">
+                      <tr key={ev.id} className="border-t border-[#E2E8F0] hover:bg-[#F8FAFC] cursor-pointer" onClick={() => { setEventoForm(ev.id); setFormEventoAberto(true); }}>
                         <td className="p-2 font-bold">{ev.nome}</td>
                         <td className="p-2">{formatarDataBR(ev.data_inicial)}</td>
                         <td className="p-2">{formatarDataBR(ev.data_final)}</td>
@@ -608,6 +615,15 @@ export default function ImportadorEventosFeiras() {
           </div>
         </div>
       </div>
+      {formEventoAberto && (
+        <FormEvento
+          key={eventoForm ?? "novo"}
+          eventoId={eventoForm}
+          accessToken={accessToken}
+          onClose={() => setFormEventoAberto(false)}
+          onSalvo={() => { setFormEventoAberto(false); setRefreshGrid(v => v + 1); }}
+        />
+      )}
     </div>
   );
 }

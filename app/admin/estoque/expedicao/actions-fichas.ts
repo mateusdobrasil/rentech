@@ -411,3 +411,41 @@ export async function conferenciaMontagemAction(evento: string, accessToken: str
     return { ok: false, erro: e.message };
   }
 }
+
+// ============================================================================
+// DADOS DO EVENTO PARA O CHECKLIST (2026-11-23) — endereço, saída e período
+// pelas fichas do sistema (P2S importadas + daqui). Antes vinha só do espelho
+// antigo fichas_reserva, que para de ser alimentado na virada da chave.
+// ============================================================================
+export async function dadosEventoParaChecklistAction(args: { evento_nome: string; evento_p2s_oid?: string | null }, accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  const db = supabaseAdmin();
+  try {
+    let q = db.from('eventos_feiras').select('id');
+    q = args.evento_p2s_oid ? q.eq('p2s_oid', args.evento_p2s_oid) : q.ilike('nome', (args.evento_nome || '').trim());
+    const { data: evs } = await q;
+    const eventoIds = ((evs || []) as { id: string }[]).map(e => e.id);
+    if (!eventoIds.length) return { ok: true, info: null };
+    const hoje = new Date().toISOString().slice(0, 10);
+    let qf = db.from('locacao_fichas_reserva')
+      .select('local_entrega, endereco_estande, data_saida, data_montagem, data_inicio, data_fim, empresa_id')
+      .in('evento_id', eventoIds).in('status', CONFIRMADAS).gte('data_inicio', hoje).order('data_inicio').limit(10);
+    if (ctx.permitidas !== null) qf = qf.in('empresa_id', ctx.permitidas.length ? ctx.permitidas : [0]);
+    const { data, error } = await qf;
+    if (error) throw error;
+    const fichas = (data || []) as { local_entrega: string | null; endereco_estande: string | null; data_saida: string | null; data_montagem: string | null; data_inicio: string | null; data_fim: string | null; empresa_id: number | null }[];
+    if (!fichas.length) return { ok: true, info: null };
+    return {
+      ok: true,
+      info: {
+        endereco: fichas.map(f => f.local_entrega || f.endereco_estande).find(Boolean) || null,
+        dataEntrega: fichas.map(f => f.data_saida || f.data_montagem).find(Boolean) || null,
+        inicio: fichas[0].data_inicio || null, fim: fichas[0].data_fim || null,
+        empresaId: fichas.map(f => f.empresa_id).find(v => v != null) ?? null,
+      },
+    };
+  } catch (e) {
+    return { ok: false, erro: e instanceof Error ? e.message : 'Erro.' };
+  }
+}

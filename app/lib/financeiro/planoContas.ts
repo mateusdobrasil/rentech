@@ -111,3 +111,47 @@ export async function naturezaSublocacao(db: Db, textoItens: string): Promise<st
   }
   return melhor?.natureza ?? null;
 }
+
+// ============================================================================
+// PLANO DE CONTAS PRÓPRIO (2026-11-23) — centro e sub-centro criados AQUI, para
+// depois da virada (o P2S deixa de ser consultado). Ganham um identificador
+// próprio "SIS:..." no campo p2s_oid: a importação do P2S (upsert por p2s_oid)
+// nunca os toca, e a classificação das naturezas continua igual. Cada sub-centro
+// novo vira uma natureza da OP já classificada, como os importados.
+// ============================================================================
+const idSistema = (tipo: 'C' | 'S') => `SIS:${tipo}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+export async function criarCentroLocal(db: Db, d: { codigo: string; nome: string; tipo: 'P' | 'R' }) {
+  const codigo = limpo(d.codigo).replace(/\D/g, ''), nome = limpo(d.nome).toUpperCase();
+  if (!codigo || !nome) throw new Error('Informe o código (número) e o nome do centro.');
+  const nomeP2s = `${codigo.padStart(2, '0')} - ${nome}`;
+  const { data: dup } = await db.from('financeiro_centros').select('id').or(`codigo.eq.${codigo},nome_p2s.ilike.${nomeP2s.replace(/[,()%]/g, ' ')}`).limit(1);
+  if (dup?.length) throw new Error('Já existe um centro com este código ou nome.');
+  const { data, error } = await db.from('financeiro_centros').insert({ p2s_oid: idSistema('C'), codigo, nome, nome_p2s: nomeP2s, tipo: d.tipo === 'R' ? 'R' : 'P', em_desuso: false, sincronizado_em: new Date().toISOString() }).select('id, p2s_oid, nome_p2s').single();
+  if (error) throw error;
+  return data as { id: number; p2s_oid: string; nome_p2s: string };
+}
+
+export async function criarSubcentroLocal(db: Db, d: { centroOid: string; codigo: string; nome: string }) {
+  const { data: c, error: eC } = await db.from('financeiro_centros').select('id, p2s_oid, nome, nome_p2s, codigo').eq('p2s_oid', d.centroOid).maybeSingle();
+  if (eC) throw eC;
+  if (!c) throw new Error('Centro não encontrado.');
+  const codigo = limpo(d.codigo), nome = limpo(d.nome).toUpperCase();
+  if (!/^\d+(\.\d+)*$/.test(codigo) || !nome) throw new Error('Informe o código (ex.: 6.4) e o nome do sub-centro.');
+  const nomeP2s = `${codigo} ${nome}`;
+  const { data: dup } = await db.from('financeiro_subcentros').select('id').eq('centro_id', c.id).or(`codigo.eq.${codigo},nome_p2s.ilike.${nomeP2s.replace(/[,()%]/g, ' ')}`).limit(1);
+  if (dup?.length) throw new Error('Já existe um sub-centro com este código ou nome neste centro.');
+  const { data: s, error } = await db.from('financeiro_subcentros').insert({ p2s_oid: idSistema('S'), centro_id: c.id, codigo, nome, nome_p2s: nomeP2s, em_desuso: false, sincronizado_em: new Date().toISOString() }).select('id, p2s_oid, nome_p2s').single();
+  if (error) throw error;
+  // natureza da OP já classificada (mesmo formato das importadas)
+  const natureza = nomeNaturezaDoSubcentro(c.nome, nomeP2s);
+  const { data: existe } = await db.from('op_naturezas_pagamento').select('id').eq('natureza', natureza).maybeSingle();
+  if (!existe) {
+    const { error: eN } = await db.from('op_naturezas_pagamento').insert({
+      natureza, origem: 'MANUAL', subcentro_id: s.id, tipo_classificacao: 'CUSTO',
+      centro_financeiro_oid: c.p2s_oid, centro_financeiro_nome: c.nome_p2s, subcentro_financeiro_oid: s.p2s_oid, subcentro_financeiro_nome: nomeP2s,
+    });
+    if (eN) throw eN;
+  }
+  return { ...(s as { id: number; p2s_oid: string; nome_p2s: string }), natureza };
+}

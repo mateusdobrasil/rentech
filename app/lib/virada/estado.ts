@@ -48,3 +48,28 @@ export async function fichaLocacaoP2sCongelada(db: Db, p2sOid: string): Promise<
   if (data.origem && data.origem !== 'P2S') return true;
   return !!data.empresa_id && (await empresasCongeladas(db)).has(data.empresa_id);
 }
+
+// ============================================================================
+// P2S DESLIGADO (2026-11-23) — quando TODAS as empresas ativas CONCLUÍREM a
+// virada, nada mais chama a API do P2S em produção (rotinas, botões, buscas):
+// app/lib/p2s.ts recusa a chamada com MSG_P2S_DESLIGADO. É na conclusão, não no
+// congelamento: a migração da segunda empresa ainda consulta o P2S.
+// ============================================================================
+export const MSG_P2S_DESLIGADO = 'P2S desligado: todas as empresas concluíram a virada da chave — o sistema não consulta mais o PrimeStart.';
+let cacheDesligado: { valor: boolean; ate: number } | null = null;
+
+export async function p2sDesligado(db: Db): Promise<boolean> {
+  if (cacheDesligado && cacheDesligado.ate > Date.now()) return cacheDesligado.valor;
+  const [{ data: emps, error: e1 }, { data: virada, error: e2 }] = await Promise.all([
+    db.from('empresas').select('id').eq('ativo', true),
+    db.from('parametros_virada').select('empresa_id, etapa'),
+  ]);
+  let valor = false;
+  if (!e1 && !e2) {
+    const concluidas = new Set(((virada || []) as { empresa_id: number; etapa: string }[]).filter(v => v.etapa === 'CONCLUIDA').map(v => v.empresa_id));
+    const ativas = ((emps || []) as { id: number }[]).map(e => e.id);
+    valor = ativas.length > 0 && ativas.every(id => concluidas.has(id));
+  }
+  cacheDesligado = { valor, ate: Date.now() + 60_000 };
+  return valor;
+}

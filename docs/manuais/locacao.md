@@ -10,7 +10,7 @@ As telas deste manual são do sistema real. Elas mostram um ciclo de exemplo fei
 
 | Etapa | Quem faz | Onde fica | O que muda |
 | --- | --- | --- | --- |
-| 1. Cliente | Comercial | Comercial → Parceiros e Carteira | Cliente vem do cadastro de parceiros; a carteira define o vendedor |
+| 1. Cliente | Comercial | Comercial → Parceiros e Carteira | Cliente é um parceiro do cadastro (novo pelo sistema ou vindo do P2S); a carteira define o vendedor |
 | 2. Pedido e orçamento | Comercial | Locações → Orçamentos e Reservas | Ficha nasce como Orçamento, com preço pela tabela |
 | 3. Aprovação e reserva | Comercial | Mesma ficha → Aprovar e reservar | Equipamentos ficam reservados na agenda |
 | 4. Saída do material | Operação | Locações → Fichas de Locação (ou Expedição) | Ficha de Locação FL-xxxxx/A; OS assinada na tela |
@@ -22,11 +22,15 @@ A ficha muda de status sozinha conforme a operação anda: Orçamento → Enviad
 
 ## 1. Cliente
 
-O cliente da ficha é um parceiro do cadastro, e hoje esse cadastro vem do P2S. O sistema ainda não tem tela de "novo cliente": cliente novo é cadastrado no P2S e chega aqui pela sincronização.
+O cliente da ficha é um parceiro do cadastro. Ele pode ser cadastrado aqui ou vir do P2S.
 
 **Onde fica:** Comercial → Parceiros. A busca aceita nome, CNPJ, CPF ou cidade.
 
-**Quando chega:** a sincronização roda sozinha às 11h e às 17h. Para não esperar, use o botão **Sincronizar agora** na mesma tela.
+**Cliente novo:** botão **+ Novo cliente / fornecedor**. O CNPJ ou CPF é a chave: o sistema não deixa cadastrar o mesmo documento duas vezes. **Buscar na Receita** preenche os dados pelo CNPJ, e o CEP preenche o endereço. O passo a passo está no manual Cadastros do sistema.
+
+**Cliente do P2S:** enquanto o P2S for oficial, o cadastro que veio de lá é só leitura aqui (altere no P2S). A sincronização roda às 11h e às 17h; para não esperar, use **Sincronizar agora**. Se o mesmo CPF/CNPJ for cadastrado nos dois lugares, a sincronização junta num cadastro só.
+
+**Funcionário como cliente:** marque Cliente no painel Papéis comerciais da Ficha do RH. O CPF da ficha é a chave.
 
 **O que conferir antes do orçamento:**
 
@@ -34,7 +38,7 @@ O cliente da ficha é um parceiro do cadastro, e hoje esse cadastro vem do P2S. 
 - **Endereço:** cidade e UF aparecem na ficha; a UF decide se a nota fiscal precisa de MDF-e (saída de SP).
 - **E-mail:** é com ele que o cliente entra no Portal do Cliente.
 
-**Carteira do vendedor:** cada cliente pode ter um vendedor responsável (Comercial → Carteira). O vendedor só vê e atende os clientes da carteira dele. Um cliente sem carteira entra na carteira do vendedor da primeira ficha salva.
+**Carteira do vendedor:** cada cliente pode ter um vendedor responsável (Comercial → Carteira, ou no próprio cadastro do cliente). Quem é vendedor é marcado na Ficha do RH (painel Papéis comerciais). O vendedor só vê e atende os clientes da carteira dele. Um cliente sem carteira entra na carteira do vendedor da primeira ficha salva.
 
 **Portal do Cliente:** o cliente entra em /cliente com o e-mail do cadastro e um código de 6 dígitos, que chega por e-mail e vale 10 minutos. Lá ele vê propostas, reservas e histórico, e pode pedir orçamento (próxima seção).
 
@@ -57,7 +61,7 @@ Todo pedido vira uma Ficha de Reserva (FR), que é a OS da locação. Ela nasce 
 
 ### Montar o orçamento
 
-1. **Cliente e evento:** cliente (obrigatório), evento ou feira (opcional), contato, telefone, e-mail, local de entrega e estande.
+1. **Cliente e evento:** cliente (obrigatório), evento ou feira (opcional; evento novo é cadastrado em Comercial → Eventos e Feiras, botão + Novo evento), contato, telefone, e-mail, local de entrega e estande.
 2. **Comercial:** empresa (Rentech ou Alfa Light), modalidade, vendedor da comissão, validade, condição e forma de pagamento.
    - **Por diária:** preço pelas faixas de dias da tabela.
    - **Período fechado:** a tabela sugere e o vendedor ajusta o valor do evento.
@@ -335,7 +339,7 @@ Para cada equipamento, mostra estoque, número de locações, utilização, rece
 
 **O que acontece com os testes antes da virada?** Antes de congelar o P2S, o Administrador usa **Limpar o ensaio** (Parâmetros → Virada da chave, Passo 1). Ele cancela as fichas, títulos, notas, avarias e OS de manutenção de teste, para não sujarem a agenda nem o financeiro.
 
-**Cliente novo não aparece na busca.** Cadastre no P2S e clique em Sincronizar agora em Comercial → Parceiros, ou espere a sincronização das 11h ou das 17h. Se ele estiver na carteira de outro vendedor, só esse vendedor (ou quem vê todas) consegue atendê-lo.
+**Cliente novo não aparece na busca.** Cadastre em Comercial → Parceiros (+ Novo cliente / fornecedor). Se ele foi cadastrado no P2S, clique em Sincronizar agora ou espere a sincronização das 11h ou das 17h. Se ele estiver na carteira de outro vendedor, só esse vendedor (ou quem vê todas) consegue atendê-lo.
 
 **O cliente não recebe o código do Portal.** O e-mail dele precisa estar no cadastro da empresa. O código vale 10 minutos.
 

@@ -1332,7 +1332,7 @@ export default function GestaoPermissoes() {
                   <>
                     {!acessoLocConfigurado && <p className="text-[10px] text-amber-700 font-bold uppercase leading-tight">Ainda não configurado — valendo o padrão de vendedor (só a carteira; sem vendedor ligado não vê fichas).</p>}
                     <div>
-                      <span className="block text-[10px] font-black text-[#64748B] uppercase mb-1">Vendedor (P2S) deste usuário</span>
+                      <span className="block text-[10px] font-black text-[#64748B] uppercase mb-1">Vendedor deste usuário (marcado na Ficha do RH)</span>
                       <select className="w-full p-2.5 bg-white border-2 border-[#CBD5E1] rounded-xl text-sm font-bold text-[#0A2A4A]"
                         value={acessoLoc.vendedor_id ?? ''} onChange={e => setAcessoLoc({ ...acessoLoc, vendedor_id: e.target.value ? Number(e.target.value) : null })}>
                         <option value="">— Nenhum —</option>

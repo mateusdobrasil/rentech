@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import { registrarLogAuditoria, sincronizarEstoqueEmLocacao } from '../../../actions';
 import { finalizarFichasLocacaoPorEventoAction } from './actions';
-import { itensFichasDoEventoAction, sincronizarFichaLocacaoDoChecklistAction } from './actions-fichas';
+import { itensFichasDoEventoAction, sincronizarFichaLocacaoDoChecklistAction, dadosEventoParaChecklistAction } from './actions-fichas';
 import ConferenciaQR from './ConferenciaQR';
 import PainelOsSeparar, { type OsSeparar } from './PainelOsSeparar';
 import PainelSublocacaoExpedicao from './PainelSublocacaoExpedicao';
@@ -671,6 +671,21 @@ export default function ChecklistCargaRetorno() {
     // não passou" (data_inicial >= hoje) é aplicado aqui, e o período do checklist
     // passa a considerar a data_inicial/data_final da própria ficha.
     (async () => {
+      // 1) Fichas do sistema (P2S importadas + daqui) — o que vale depois da virada (2026-11-23)
+      const doSistema = await dadosEventoParaChecklistAction({ evento_nome: ev.nome, evento_p2s_oid: ev.p2s_oid }, accessToken);
+      if (doSistema.ok && doSistema.info) {
+        const d = doSistema.info;
+        setCamposManuais(prev => ({
+          ...prev,
+          local: d.endereco || prev.local,
+          data_entrega: d.dataEntrega || prev.data_entrega,
+          periodo_inicio: d.inicio || prev.periodo_inicio,
+          periodo_fim: d.fim || prev.periodo_fim,
+        }));
+        if (d.empresaId != null) setChecklistEmpresaId(d.empresaId);
+        return;
+      }
+      // 2) Reserva: espelho antigo do P2S (fichas_reserva), enquanto ele existir
       const hojeISO = new Date().toISOString().slice(0, 10);
       let query = supabase
         .from('fichas_reserva')

@@ -22,6 +22,7 @@
 //   mandou (documento é um "recorte"), mas EXISTEM de verdade como
 //   atributos (int ref) na classe real — confirmados por teste direto.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { cadastrosNoSistema } from '../../../lib/cadastros/parceiros';
 import { consultarObjetos, buscarObjeto, criterio, p2sParaData, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
 import { registrarSincronizacao } from '../../../lib/syncLog';
 
@@ -114,6 +115,10 @@ export interface SincronizarEventosOpcoes {
 // upload manual.
 export async function sincronizarEventosFeirasCore(opcoes: SincronizarEventosOpcoes = {}): Promise<Resultado> {
   const ambiente = opcoes.ambiente || 'PRODUCAO';
+  // Depois da virada (todas as empresas congeladas) o cadastro de eventos é do sistema.
+  if (await cadastrosNoSistema(supabaseAdmin())) {
+    return { ok: true, info: { processados: 0, totalEncontradas: 0, aviso: 'Os cadastros já são do sistema (virada da chave): a sincronização de eventos com o P2S está desligada.' } };
+  }
   const diasRetroativos = opcoes.diasRetroativos ?? 60;
   const iniciadoEm = new Date();
 

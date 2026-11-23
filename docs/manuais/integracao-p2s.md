@@ -48,7 +48,7 @@ O ciclo de vida fica sincronizado:
 
 ## Escrita: classificação financeira automática
 
-A natureza do pagamento é cadastrada uma vez no sistema, com o centro de custo ou receita. Centros e sub-centros (TCustomCentroCusto e TCustomSubCentroCusto) são lidos ao vivo da API, então o cadastro do ERP continua sendo a fonte da verdade. A classificação (TCustomClassificacaoPagtoRec) é gravada como objeto filho da Conta a Pagar, ligada pela referência PagamentoRecebimento.
+A natureza do pagamento é cadastrada uma vez no sistema, com o centro de custo ou receita. Centros e sub-centros (TCustomCentroCusto e TCustomSubCentroCusto) vêm do ERP, que continua sendo a fonte da verdade até a virada. O que faltar pode ser criado no sistema (OP → Natureza & Classificação Financeira), e cada sub-centro novo já vira uma natureza classificada. A classificação (TCustomClassificacaoPagtoRec) é gravada como objeto filho da Conta a Pagar, ligada pela referência PagamentoRecebimento.
 
 Cada OP chega ao ERP com a classificação contábil certa, sem retrabalho do Financeiro. Se a natureza não tiver classificação, a conta é criada do mesmo jeito.
 
@@ -75,6 +75,20 @@ Serve para contas lançadas só no PrimeStart e pagas direto no banco, fora do f
 | Leitura | Lê ao vivo no PrimeStart as Contas a Pagar em aberto, consultadas por valor |
 | Leitura | Cruza com os pagamentos efetivados no Itaú, inclusive os feitos fora do sistema |
 | Escrita | Casa valor e favorecido; uma pessoa confirma a quitação (mesmo MarcarComoQuitado) |
+
+## Depois da virada da chave
+
+A integração foi feita para ser desligada empresa por empresa, sem perder dado:
+
+| Momento | O que muda |
+| --- | --- |
+| Antes da virada | O sistema já cadastra clientes, fornecedores, produtos, eventos e centros. Quando o mesmo cadastro chega do ERP (CPF/CNPJ, código do produto, nome + data do evento), o daqui é adotado, sem duplicar. |
+| Todas as empresas congeladas | O sistema vira a origem dos cadastros: a sincronização de cadastros para e tudo passa a ser editado aqui. |
+| Todas as empresas concluídas | A ligação com o PrimeStart desliga de vez em Produção: as rotinas automáticas param e qualquer chamada avisa "P2S desligado". |
+
+Antes de a última empresa concluir, a migração das OS da outra empresa ainda usa a API, por isso o desligamento só acontece no fim.
+
+Vendedores passam a ser marcados na Ficha do RH. O cadastro de vendedor do ERP continua sendo o mesmo registro (ligado à ficha pelo CPF), então carteira, comissões e fichas não mudam.
 
 ## Monitoramento e ambientes
 

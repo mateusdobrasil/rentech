@@ -36,6 +36,7 @@ import { supabaseAdmin } from '../../../lib/supabase';
 import { consultarObjetos, buscarObjeto, criterio, p2sParaData, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
 import { obterCursorIncremental, registrarSincronizacao, calcularProximoCursor, cursorParaSerialP2s } from '../../../lib/syncLog';
 import { prepararGravacaoP2s, cadastrosNoSistema } from '../../../lib/cadastros/parceiros';
+import { aplicarVendedoresDoRh } from '../../../lib/cadastros/papeisRh';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -335,6 +336,10 @@ export interface SincronizarColaboradoresOpcoes {
 
 export async function sincronizarColaboradoresCore(opcoes: SincronizarColaboradoresOpcoes = {}): Promise<Resultado> {
   const ambiente = opcoes.ambiente || 'PRODUCAO';
+  // Depois da virada: vendedores vêm da Ficha do RH (papeisRh.ts) — nada a buscar no P2S.
+  if (await cadastrosNoSistema(supabaseAdmin())) {
+    return { ok: true, info: { processados: 0, totalEncontradas: 0, aviso: 'Os cadastros já são do sistema (virada da chave): vendedores vêm da Ficha do RH.' } };
+  }
   const iniciadoEm = new Date();
   const cursor = await obterCursorIncremental('colaboradores', ambiente);
 
@@ -441,6 +446,8 @@ export async function sincronizarColaboradoresCore(opcoes: SincronizarColaborado
       if (error) throw new Error(error.message);
       processados += lote.length;
     }
+    // A Ficha do RH manda em quem é vendedor (e na situação): reaplica por cima do P2S.
+    await aplicarVendedoresDoRh(db);
 
     await registrarSincronizacao({
       integracao: 'colaboradores', ambiente, tipo: cursor ? 'incremental' : 'completa',

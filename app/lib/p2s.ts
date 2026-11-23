@@ -38,6 +38,8 @@
 // mesmo dia. As env vars sem sufixo (P2S_API_HOST etc.) são tratadas como as
 // credenciais de PRODUCAO (o host real do cliente).
 import { Buffer } from 'node:buffer';
+import { supabaseAdmin } from './supabase';
+import { p2sDesligado, MSG_P2S_DESLIGADO } from './virada/estado';
 
 export type AmbienteP2s = 'SANDBOX' | 'PRODUCAO';
 
@@ -171,6 +173,8 @@ function authHeader(ambiente: AmbienteP2s): string {
 interface RespostaP2s<T> { status: number; ok: boolean; data: T | null; textoErro?: string; }
 
 async function chamar<T>(ambiente: AmbienteP2s, path: string, init: { method: string; body?: unknown; query?: Record<string, string | undefined> }): Promise<RespostaP2s<T>> {
+  // Depois que todas as empresas concluem a virada, produção não é mais chamada (estado.ts).
+  if (ambiente === 'PRODUCAO' && await p2sDesligado(supabaseAdmin())) throw new Error(MSG_P2S_DESLIGADO);
   const url = new URL(baseUrl(ambiente) + path);
   if (init.query) {
     for (const [k, v] of Object.entries(init.query)) if (v !== undefined && v !== '') url.searchParams.set(k, v);

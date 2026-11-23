@@ -336,15 +336,31 @@ export async function painelFinanceiroAction(accessToken: string): Promise<Resul
       }
     }
 
+    // Empresa que já virou a chave (financeiro na fonte SISTEMA): as contas em aberto
+    // vêm dos títulos daqui — as do espelho do P2S que valiam migraram como título e
+    // as antigas ficaram só no histórico (2026-11-23).
+    const { data: fontesData } = await db.from('financeiro_parametros').select('empresa_id, fonte');
+    const naFonteSistema = ((fontesData || []) as { empresa_id: number; fonte: string }[])
+      .filter(x => x.fonte === 'SISTEMA' && (!empresasPermitidas || empresasPermitidas.includes(x.empresa_id))).map(x => x.empresa_id);
+    const foraDoEspelho = naFonteSistema.length ? `(${naFonteSistema.join(',')})` : null;
+
     let contasPagar: { vencidas: ValorQtd; vencendo7d: ValorQtd } | null = null;
     if (acessoContas.ok) {
       // Cópia sincronizada do PrimeStart — mesma leitura da tela de Contas a Pagar
-      const linhas = await buscarTodas<any>((de, ate) => db.from('financeiro_contas_pagar')
-        .select('valor, data_vencimento').eq('quitado', false).lte('data_vencimento', em7Dias).range(de, ate));
+      const linhas = await buscarTodas<any>((de, ate) => {
+        let q = db.from('financeiro_contas_pagar').select('valor, data_vencimento').eq('quitado', false).lte('data_vencimento', em7Dias);
+        if (foraDoEspelho) q = q.not('empresa_id', 'in', foraDoEspelho);
+        return q.range(de, ate);
+      });
       contasPagar = { vencidas: vazio(), vencendo7d: vazio() };
       for (const c of linhas) {
         const venc = String(c.data_vencimento).slice(0, 10);
         somar(venc < hoje ? contasPagar.vencidas : contasPagar.vencendo7d, c.valor);
+      }
+      if (naFonteSistema.length) {
+        const titulos = await buscarTodas<{ valor: number; vencimento: string }>((de, ate) => db.from('financeiro_titulos_pagar').select('valor, vencimento')
+          .in('empresa_id', naFonteSistema).eq('status', 'ABERTO').lte('vencimento', em7Dias).range(de, ate));
+        for (const t of titulos) somar(String(t.vencimento).slice(0, 10) < hoje ? contasPagar.vencidas : contasPagar.vencendo7d, t.valor);
       }
     }
 
@@ -357,12 +373,18 @@ export async function painelFinanceiroAction(accessToken: string): Promise<Resul
         let q = db.from('financeiro_contas_receber').select('valor_final, data_vencimento, empresa_id')
           .eq('quitado', false).gte('data_vencimento', umAno).lte('data_vencimento', em7Dias).range(de, ate);
         if (empresasPermitidas) q = q.in('empresa_id', empresasPermitidas.length ? empresasPermitidas : [0]);
+        if (foraDoEspelho) q = q.not('empresa_id', 'in', foraDoEspelho);
         return q;
       });
       contasReceber = { vencidas: vazio(), vencendo7d: vazio() };
       for (const c of linhas) {
         const venc = String(c.data_vencimento).slice(0, 10);
         somar(venc < hoje ? contasReceber.vencidas : contasReceber.vencendo7d, c.valor_final);
+      }
+      if (naFonteSistema.length) {
+        const titulos = await buscarTodas<{ valor: number; vencimento: string }>((de, ate) => db.from('financeiro_titulos_receber').select('valor, vencimento')
+          .in('empresa_id', naFonteSistema).eq('status', 'ABERTO').gte('vencimento', umAno).lte('vencimento', em7Dias).range(de, ate));
+        for (const t of titulos) somar(String(t.vencimento).slice(0, 10) < hoje ? contasReceber.vencidas : contasReceber.vencendo7d, t.valor);
       }
     }
 

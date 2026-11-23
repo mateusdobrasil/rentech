@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, Fragment } from 'react';
+import PlanoContasProprio from './PlanoContasProprio';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import { useAcessoRota } from '../useAcessoRota';
@@ -209,6 +210,8 @@ export default function NaturezasPagamentoPage() {
             {importando ? 'Importando...' : '⬇ Importar do P2S'}
           </button>
         </div>
+
+        {perfil && <PlanoContasProprio accessToken={perfil.accessToken} onMudou={carregar} />}
 
         <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Filtrar por natureza, centro ou sub-centro…"
           className="w-full mb-3 p-2.5 border border-[#CBD5E1] rounded-lg text-sm outline-none focus:border-[#336699] text-[#0A2A4A] bg-white" />

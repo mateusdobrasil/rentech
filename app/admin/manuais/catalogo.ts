@@ -39,6 +39,11 @@ export const MANUAIS: ManualCatalogo[] = [
     fonte: 'docs/manuais/locacao.md',
   },
   {
+    slug: 'cadastros', titulo: 'Cadastros do sistema', grupo: 'SISTEMA', icone: '🗂️', atualizadoEm: '2026-11-23',
+    descricao: 'Clientes e fornecedores, produtos, eventos, plano de contas e os papéis comerciais na Ficha do RH, com as regras antes e depois da virada.',
+    fonte: 'docs/manuais/cadastros.md',
+  },
+  {
     slug: 'inventario-estoque', titulo: 'Inventário de Estoque', grupo: 'SISTEMA', icone: '📦', atualizadoEm: '2026-11-23',
     descricao: 'Passo a passo da contagem do depósito: abrir o inventário, contar por quantidade, ler os patrimônios, conferir as divergências e aplicar.',
     fonte: 'docs/manuais/inventario-estoque.md',
@@ -65,13 +70,13 @@ export const MANUAIS: ManualCatalogo[] = [
     pdf: 'docs/Manual - Ponto via WhatsApp.pdf',
   },
   {
-    slug: 'roteiro-testes-locacao', titulo: 'Roteiro de testes da locação', grupo: 'TESTES', icone: '✅', atualizadoEm: '2026-11-22',
+    slug: 'roteiro-testes-locacao', titulo: 'Roteiro de testes da locação', grupo: 'TESTES', icone: '✅', atualizadoEm: '2026-11-23',
     descricao: 'As 12 partes que precisam estar aprovadas antes da virada da chave, com as regras da fase paralela.',
     fonte: 'docs/manuais/roteiro-testes-locacao.md',
   },
   {
-    slug: 'integracao-p2s', titulo: 'Integração Rentech + PrimeStart via API', grupo: 'TECNICO', icone: '🔌', atualizadoEm: '2026-11-12',
-    descricao: 'O que o sistema lê e escreve no PrimeStart: sincronizações, OP para Conta a Pagar, baixas, devolução e conciliação.',
+    slug: 'integracao-p2s', titulo: 'Integração Rentech + PrimeStart via API', grupo: 'TECNICO', icone: '🔌', atualizadoEm: '2026-11-23',
+    descricao: 'O que o sistema lê e escreve no PrimeStart: sincronizações, OP para Conta a Pagar, baixas, devolução, conciliação e o desligamento depois da virada.',
     fonte: 'docs/manuais/integracao-p2s.md', restrito: SO_GESTAO,
   },
   {

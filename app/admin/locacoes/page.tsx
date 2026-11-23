@@ -117,18 +117,18 @@ export default function LocacoesHub() {
             });
           }
 
-          if (linksAutorizados.has('/admin/locacoes/fichas-reserva')) {
+          if (linksAutorizados.has('/admin/locacoes/reservas')) {
             cartoes.push({
-              chave: 'andamento', titulo: 'Em Andamento (P2S)', icone: '🎬',
+              chave: 'andamento', titulo: 'Em Andamento', icone: '🎬',
               valor: painelLoading ? '—' : `${painel?.fichasEmAndamento ?? 0}`,
               sub: 'fichas com evento acontecendo hoje',
-              destaque: false, link: '/admin/locacoes/fichas-reserva'
+              destaque: false, link: '/admin/locacoes/reservas'
             });
             cartoes.push({
-              chave: 'proximas', titulo: 'Começam em 7 Dias (P2S)', icone: '📅',
+              chave: 'proximas', titulo: 'Começam em 7 Dias', icone: '📅',
               valor: painelLoading ? '—' : `${painel?.fichasProximos7Dias ?? 0}`,
               sub: 'fichas com início na próxima semana',
-              destaque: (painel?.fichasProximos7Dias ?? 0) > 0, link: '/admin/locacoes/fichas-reserva'
+              destaque: (painel?.fichasProximos7Dias ?? 0) > 0, link: '/admin/locacoes/reservas'
             });
           }
 

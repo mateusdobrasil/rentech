@@ -14,7 +14,7 @@ import { registrarLogAuditoria } from '../../actions';
 import { supabaseAdmin } from '../../lib/supabase';
 import { validarAcesso, validarAcessoAlgumaRota } from '../../lib/serverAuth';
 import { consultarObjetos, criterioRef, type AmbienteP2s } from '../../lib/p2s';
-import { importarPlanoContasP2s } from '../../lib/financeiro/planoContas';
+import { importarPlanoContasP2s, criarCentroLocal, criarSubcentroLocal } from '../../lib/financeiro/planoContas';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -189,4 +189,29 @@ export async function listarSubCentrosFinanceirosP2sAction(payload: { centroOid:
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
+}
+
+// ============================================================================
+// PLANO DE CONTAS PRÓPRIO (2026-11-23) — centro/sub-centro criados aqui
+// (app/lib/financeiro/planoContas.ts). Depois da virada é o único caminho.
+// ============================================================================
+export async function criarCentroFinanceiroAction(payload: { codigo: string; nome: string; tipo: 'P' | 'R' }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoGestao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  try {
+    const c = await criarCentroLocal(supabaseAdmin(), payload);
+    registrarLogAuditoria({ usuario_nome: acesso.perfil.nome, acao: 'CRIOU CENTRO FINANCEIRO', setor: 'OP', equipamento_nome: c.nome_p2s });
+    return { ok: true, info: c };
+  } catch (e) { return { ok: false, erro: e instanceof Error ? e.message : 'Erro.' }; }
+}
+
+export async function criarSubcentroFinanceiroAction(payload: { centroOid: string; codigo: string; nome: string }, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcessoGestao(accessToken);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+  try {
+    const s = await criarSubcentroLocal(supabaseAdmin(), payload);
+    registrarLogAuditoria({ usuario_nome: acesso.perfil.nome, acao: 'CRIOU SUB-CENTRO FINANCEIRO', setor: 'OP', equipamento_nome: `${s.nome_p2s} → natureza ${s.natureza}` });
+    revalidatePath('/admin');
+    return { ok: true, info: s };
+  } catch (e) { return { ok: false, erro: e instanceof Error ? e.message : 'Erro.' }; }
 }

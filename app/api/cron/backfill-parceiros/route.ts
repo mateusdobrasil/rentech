@@ -21,6 +21,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { consultarObjetos, criterio } from '../../../lib/p2s';
 import { gravarParceirosP2s } from '../../../admin/comercial/parceiros/parceirosCore';
+import { cadastrosNoSistema } from '../../../lib/cadastros/parceiros';
 
 export const maxDuration = 300;
 
@@ -33,6 +34,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Acesso Não Autorizado' }, { status: 401 });
   }
   const db = supabaseAdmin();
+  // Depois da virada o cadastro de parceiros é do sistema: nada a buscar no P2S.
+  if (await cadastrosNoSistema(db)) return NextResponse.json({ ok: true, executado: false, motivo: 'Cadastros já são do sistema (virada da chave).' });
   const { data: estado } = await db.from('integracoes_backfill').select('*').eq('integracao', 'parceiros').maybeSingle();
   if (!estado) return NextResponse.json({ ok: true, executado: false, motivo: 'Sem registro em integracoes_backfill (rode .sql/Pendentes/integracoes_backfill_parceiros.sql).' });
   if (estado.concluido) return NextResponse.json({ ok: true, executado: false, motivo: 'Carga completa já concluída.' });

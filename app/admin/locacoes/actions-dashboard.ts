@@ -1,9 +1,9 @@
 'use server';
 
 // app/admin/locacoes/actions-dashboard.ts
-// Painel do hub Locações (/admin/locacoes). Enquanto a Ficha de Reserva
-// própria (locacao_fichas_reserva) não entra em uso, os números vêm do
-// espelho do P2S (fichas_reserva) — mesmo dado que a tela de fichas mostra.
+// Painel do hub Locações (/admin/locacoes). Tudo de locacao_fichas_reserva —
+// fichas daqui + as do P2S importadas (2026-11-23: saiu do espelho antigo
+// fichas_reserva, que para de ser alimentado na virada da chave).
 import { supabaseAdmin } from '../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas } from '../../lib/serverAuth';
 import { hojeISO, somarDias } from '../../lib/locacao/datas';
@@ -25,17 +25,19 @@ export async function painelLocacoesAction(accessToken: string): Promise<Resulta
     const hoje = hojeISO();
     const em7dias = somarDias(hoje, 7);
 
-    let emAndamento = db.from('fichas_reserva').select('id', { count: 'exact', head: true })
-      .lte('data_inicial', hoje).gte('data_final', hoje);
-    let proximos7 = db.from('fichas_reserva').select('id', { count: 'exact', head: true })
-      .gt('data_inicial', hoje).lte('data_inicial', em7dias);
+    const CONFIRMADAS = ['APROVADO', 'RESERVADA', 'EM_LOCACAO', 'FINALIZADA'];
+    let emAndamento = db.from('locacao_fichas_reserva').select('id', { count: 'exact', head: true })
+      .in('status', CONFIRMADAS).lte('data_inicio', hoje).gte('data_fim', hoje);
+    let proximos7 = db.from('locacao_fichas_reserva').select('id', { count: 'exact', head: true })
+      .in('status', CONFIRMADAS).gt('data_inicio', hoje).lte('data_inicio', em7dias);
     if (filtroEmpresa) {
       emAndamento = emAndamento.or(filtroEmpresa);
       proximos7 = proximos7.or(filtroEmpresa);
     }
 
     // Fichas próprias (locacao_fichas_reserva) — empresa_id é obrigatório lá.
-    let orcAbertos = db.from('locacao_fichas_reserva').select('valor_total').in('status', ['ORCAMENTO', 'ENVIADO', 'APROVADO']);
+    // só evento futuro: o P2S tem centenas de orçamentos antigos nunca fechados
+    let orcAbertos = db.from('locacao_fichas_reserva').select('valor_total').in('status', ['ORCAMENTO', 'ENVIADO']).gte('data_inicio', hoje);
     let reservas7 = db.from('locacao_fichas_reserva').select('id', { count: 'exact', head: true })
       .eq('status', 'RESERVADA').gte('data_inicio', hoje).lte('data_inicio', em7dias);
     if (empresasPermitidas) {

@@ -13,6 +13,7 @@ import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
+import PapeisComerciais from './PapeisComerciais';
 
 // Utilitários
 const formatarMesAnoBR = (mesAnoIso: string) => {
@@ -110,6 +111,8 @@ export default function FuncionarioPage() {
   const router = useRouter();
   const { usuarioAtual, emailUsuario, permissaoBruta, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
   const toast = useToast();
+  // CPF como está gravado: cliente/fornecedor usa o CPF salvo como chave do parceiro
+  const [cpfSalvo, setCpfSalvo] = useState('');
   const confirm = useConfirm();
 
   const [loading, setLoading] = useState(false);
@@ -268,6 +271,7 @@ export default function FuncionarioPage() {
       cpf: funcData.cpf ? maskCpf(funcData.cpf) : funcData.cpf,
       celular: funcData.celular ? maskCelular(funcData.celular) : funcData.celular,
     });
+    setCpfSalvo(String(funcData.cpf || '').replace(/[^0-9]/g, ''));
 
     setFotoPreviewUrl('');
     if (funcData.foto_path) {
@@ -348,6 +352,7 @@ export default function FuncionarioPage() {
       const nomeSalvo: string = res.info?.nome || form.nome_completo;
       toast(res.info?.renomeado ? `Ficha guardada. Nome alterado para ${nomeSalvo} — documentos, benefícios, holerites e ponto acompanharam.` : "Ficha guardada com sucesso!", 'success');
       setForm(f => ({ ...f, nome_completo: nomeSalvo }));
+      setCpfSalvo(String(form.cpf || '').replace(/[^0-9]/g, ''));
       setSnapshotFicha(JSON.stringify({ form: { ...form, nome_completo: nomeSalvo }, dependentes, movimentacoes }));
       carregarListaFuncionarios();
       if (funcionarioSelecionado === 'NOVO' || funcionarioSelecionado !== nomeSalvo) setFuncionarioSelecionado(nomeSalvo);
@@ -658,6 +663,9 @@ export default function FuncionarioPage() {
                         <input type="checkbox" id="pode_dirigir" checked={form.pode_dirigir} onChange={e => setForm({...form, pode_dirigir: e.target.checked})} className="w-4 h-4" />
                         <label htmlFor="pode_dirigir" className="text-[11px] font-bold text-gray-600 uppercase">🚗 Pode dirigir veículos da frota (libera o Checklist de Veículos no Portal)</label>
                       </div>
+                      {form.id && accessToken && (
+                        <PapeisComerciais key={form.id + '-' + cpfSalvo} funcionarioId={form.id} accessToken={accessToken} cpfAlterado={String(form.cpf || '').replace(/[^0-9]/g, '') !== cpfSalvo} />
+                      )}
                       {form.pode_dirigir && (
                         <div className="col-span-2 grid grid-cols-3 gap-3 bg-white p-2.5 rounded-lg border border-indigo-100">
                           <div className="col-span-3 text-[9px] font-black text-gray-500 uppercase">🪪 CNH — usada na indicação do condutor de multas</div>

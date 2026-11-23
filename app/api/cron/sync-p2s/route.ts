@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { atualizarStatusEventos } from '../../../lib/cadastros/eventos';
+import { p2sDesligado } from '../../../lib/virada/estado';
 import { supabaseAdmin } from '../../../lib/supabase';
 // Importa a lógica de negócio direto dos arquivos *Core.ts (sem "use
 // server"), não das actions.ts — esta rotina roda sem sessão de usuário
@@ -53,22 +55,24 @@ export async function GET(request: Request) {
     return NextResponse.json({ success: true, executado: false, motivo: 'Rotina desativada (ou card ainda não criado) em /admin/parametros/agendamentos.' });
   }
 
-  const integracoes: { nome: string; fn: () => Promise<any> }[] = [
-    { nome: 'produtos', fn: () => sincronizarProdutosCore() },
-    { nome: 'parceiros', fn: () => sincronizarParceirosCore() },
-    { nome: 'colaboradores', fn: () => sincronizarColaboradoresCore() },
-    { nome: 'fichas_reserva', fn: () => sincronizarFichasReservaCore() },
+  const integracoes: { nome: string; p2s?: boolean; fn: () => Promise<any> }[] = [
+    { nome: 'produtos', p2s: true, fn: () => sincronizarProdutosCore() },
+    { nome: 'parceiros', p2s: true, fn: () => sincronizarParceirosCore() },
+    { nome: 'colaboradores', p2s: true, fn: () => sincronizarColaboradoresCore() },
+    { nome: 'fichas_reserva', p2s: true, fn: () => sincronizarFichasReservaCore() },
     // Fichas do P2S → locacao_fichas_reserva (somente leitura) + agenda de
     // disponibilidade. Depois de parceiros/produtos, que ela usa pelo p2s_oid.
-    { nome: 'locacao_fichas_p2s', fn: () => importarFichasP2sCore(db) },
-    { nome: 'eventos_feiras', fn: () => sincronizarEventosFeirasCore() },
-    { nome: 'contas_pagar', fn: () => sincronizarContasPagarCore() },
-    { nome: 'contas_receber', fn: () => sincronizarContasReceberCore() },
+    { nome: 'locacao_fichas_p2s', p2s: true, fn: () => importarFichasP2sCore(db) },
+    { nome: 'eventos_feiras', p2s: true, fn: () => sincronizarEventosFeirasCore() },
+    { nome: 'contas_pagar', p2s: true, fn: () => sincronizarContasPagarCore() },
+    { nome: 'contas_receber', p2s: true, fn: () => sincronizarContasReceberCore() },
     // Ficha de Locação própria (sem P2S): o que não voltou no prazo segue
     // ocupando a agenda até hoje + dias de retorno.
     { nome: 'locacao_atrasos', fn: () => estenderAtrasos(db) },
+    // Status dos eventos pela data (Futuro / Em Execução / Finalizado) — sem P2S
+    { nome: 'eventos_status', fn: () => atualizarStatusEventos(db) },
     // Plano de contas (centros/sub-centros) → naturezas da OP (2026-11-20)
-    { nome: 'plano_contas', fn: () => importarPlanoContasP2s(db) },
+    { nome: 'plano_contas', p2s: true, fn: () => importarPlanoContasP2s(db) },
     // Caixa e Bancos: contas pagas/recebidas do P2S → movimentos (depois de contas a pagar/receber)
     { nome: 'caixa_movimentos', fn: () => sincronizarMovimentosP2s(db) },
     // Contas a pagar próprio: vencimentos das recorrentes (45 dias) e títulos das OPs
@@ -77,7 +81,10 @@ export async function GET(request: Request) {
   ];
 
   const resultados: Record<string, any> = {};
+  // Todas as empresas concluíram a virada: o que lê o P2S é pulado (app/lib/virada/estado.ts).
+  const desligado = await p2sDesligado(db);
   for (const integ of integracoes) {
+    if (desligado && integ.p2s) { resultados[integ.nome] = { ok: true, pulado: 'P2S desligado (virada concluída)' }; continue; }
     try {
       resultados[integ.nome] = await integ.fn();
     } catch (e: any) {

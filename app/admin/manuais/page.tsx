@@ -3,7 +3,7 @@
 // Hub Manuais (2026-11-23): todos os manuais do sistema num lugar só, lidos
 // dentro do Rentech WEB (os documentos originais ficam no Claude, privados).
 // Catálogo em ./catalogo.ts; manual restrito só aparece para quem pode abrir.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from '@vercel/analytics/next';
 import { usePageAccess } from '../../components/hooks/usePageAccess';
@@ -17,6 +17,10 @@ export default function ManuaisHub() {
   const router = useRouter();
   const { usuarioAtual, permissaoNormalizada, authLoading, acessoNegado, erro, tentarNovamente } = usePageAccess({ rota: '/admin/manuais' });
   const [busca, setBusca] = useState('');
+
+  // O card fica no fim do Painel: sem isso a lista abria com a rolagem da
+  // página anterior (mostrando o fim). Sobe para o topo quando a lista aparece.
+  useEffect(() => { if (!authLoading) window.scrollTo(0, 0); }, [authLoading]);
 
   const visiveis = useMemo(() => {
     const q = normalizar(busca.trim());

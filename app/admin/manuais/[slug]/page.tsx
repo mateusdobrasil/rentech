@@ -33,6 +33,13 @@ export default function LerManual() {
     return () => { vivo = false; };
   }, [accessToken, manual]);
 
+  // Abre no início do manual (não na rolagem da lista), salvo link com #seção.
+  useEffect(() => {
+    if (!conteudo) return;
+    const alvo = window.location.hash ? document.getElementById(decodeURIComponent(window.location.hash.slice(1))) : null;
+    if (alvo) alvo.scrollIntoView(); else window.scrollTo(0, 0);
+  }, [conteudo]);
+
   // PDF em base64 → link de arquivo para o leitor e o botão de baixar.
   const urlPdf = useMemo(() => {
     if (!conteudo?.pdf) return null;

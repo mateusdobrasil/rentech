@@ -24,6 +24,7 @@ import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../
 import { buscarTodasPaginas } from '../../../lib/paginacao';
 import { registrarLogAuditoria } from '../../../actions';
 import { consultarObjetos, criterioRef, type ObjetoP2s } from '../../../lib/p2s';
+import { empresasCongeladas } from '../../../lib/virada/estado';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -536,7 +537,11 @@ export async function cargaSaldosP2sAction(accessToken: string): Promise<Resulta
   if ('erro' in ctx) return { ok: false, erro: ctx.erro };
   const db = supabaseAdmin();
   try {
-    const empresas = await empresasVisiveis(ctx.permitidas);
+    // Empresa que já virou a chave: o saldo vem do inventário da virada — o P2S não
+    // sobrescreve mais nada (2026-11-23).
+    const congeladas = await empresasCongeladas(db);
+    const empresas = (await empresasVisiveis(ctx.permitidas)).filter(e => !congeladas.has(e.id));
+    if (!empresas.length) return { ok: false, erro: 'As empresas já viraram a chave: o saldo agora vem do inventário, não do P2S.' };
     const nomesEst = await nomesEstoquesP2s();
     const { data: produtos, error } = await buscarTodasPaginas<any>((de, ate) => db.from('produtos')
       .select('id, p2s_oid, nome_item').eq('habilitado_para_locacao', true).eq('flag_em_desuso', false)

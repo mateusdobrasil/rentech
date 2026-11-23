@@ -47,7 +47,7 @@ export default function InventarioPage() {
   const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess();
 
   // lista
-  const [empresas, setEmpresas] = useState<{ id: number; nome: string }[]>([]);
+  const [empresas, setEmpresas] = useState<{ id: number; nome: string; congelada?: boolean }[]>([]);
   const [categoriasDisp, setCategoriasDisp] = useState<string[]>([]);
   const [locaisDisp, setLocaisDisp] = useState<string[]>([]);
   const [inventarios, setInventarios] = useState<Inventario[]>([]);
@@ -497,7 +497,9 @@ export default function InventarioPage() {
           <input type="checkbox" checked={marcarExtraviados} onChange={e => setMarcarExtraviados(e.target.checked)} className="mt-1" />
           <span>Marcar como <strong>EXTRAVIADO</strong> os patrimônios <strong>ativos</strong> não lidos de produtos sem nada em locação (não são marcados os de produtos com peças em locação — podem estar com cliente — nem os em manutenção — podem estar no conserto).</span>
         </label>
-        <p className="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-3">Fase paralela: enquanto o P2S for oficial, "Carregar saldos do P2S" (Equipamentos de Locação) sobrescreve o local PRINCIPAL. O inventário vale de vez na virada.</p>
+        {inv && !empresas.find(e => e.id === inv.empresa_id)?.congelada && (
+          <p className="text-xs bg-red-50 border border-red-200 text-red-800 rounded-lg p-3"><strong>Fase paralela — isto é ensaio.</strong> Enquanto {nomeEmpresa(inv.empresa_id)} não virar a chave, o que está com cliente pelo P2S <strong>não aparece em &quot;em locação&quot;</strong>: concluir agora tira esses itens do saldo, e &quot;Carregar saldos do P2S&quot; sobrescreve o local PRINCIPAL depois. O inventário que vale é o da virada (Parâmetros › Virada da chave, Passo 4), aberto depois de migrar as OS.</p>
+        )}
       </Modal>
     </div>
   );

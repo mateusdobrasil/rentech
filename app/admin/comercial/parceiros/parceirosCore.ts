@@ -35,6 +35,7 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { consultarObjetos, buscarObjeto, criterio, p2sParaData, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
 import { obterCursorIncremental, registrarSincronizacao, calcularProximoCursor, cursorParaSerialP2s } from '../../../lib/syncLog';
+import { prepararGravacaoP2s, cadastrosNoSistema } from '../../../lib/cadastros/parceiros';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -219,10 +220,13 @@ export async function gravarParceirosP2s(ambiente: AmbienteP2s, objetos: ObjetoP
   });
 
   const db = supabaseAdmin();
+  // Cadastro próprio (2026-11-23): adota pelo CPF/CNPJ o cadastro feito aqui e,
+  // depois que o sistema vira a origem, não sobrescreve nada (ver cadastros/parceiros.ts).
+  const { paraUpsert, adotados } = await prepararGravacaoP2s(db, registros);
   const TAMANHO_LOTE = 250;
-  let processados = 0;
-  for (let i = 0; i < registros.length; i += TAMANHO_LOTE) {
-    const lote = registros.slice(i, i + TAMANHO_LOTE);
+  let processados = adotados;
+  for (let i = 0; i < paraUpsert.length; i += TAMANHO_LOTE) {
+    const lote = paraUpsert.slice(i, i + TAMANHO_LOTE);
     const { error } = await db.from('parceiros').upsert(lote, { onConflict: 'p2s_oid' });
     if (error) throw new Error(error.message);
     processados += lote.length;
@@ -250,6 +254,10 @@ export interface SincronizarParceirosOpcoes {
 
 export async function sincronizarParceirosCore(opcoes: SincronizarParceirosOpcoes = {}): Promise<Resultado> {
   const ambiente = opcoes.ambiente || 'PRODUCAO';
+  // Depois da virada (todas as empresas congeladas) o cadastro é do sistema.
+  if (await cadastrosNoSistema(supabaseAdmin())) {
+    return { ok: true, info: { processados: 0, totalEncontradas: 0, aviso: 'Os cadastros já são do sistema (virada da chave): a sincronização de parceiros com o P2S está desligada.' } };
+  }
   const iniciadoEm = new Date();
   const cursorData = await obterCursorIncremental('parceiros', ambiente);
 

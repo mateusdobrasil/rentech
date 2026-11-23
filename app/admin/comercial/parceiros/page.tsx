@@ -9,6 +9,8 @@ import { Analytics } from "@vercel/analytics/next";
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import UltimaSincronizacaoInfo from '../../../components/ui/UltimaSincronizacaoInfo';
+import FormParceiro from './FormParceiro';
+import { contextoCadastroParceiroAction } from './actions-cadastro';
 import type { UltimaSincronizacao } from '../../../lib/syncLog';
 
 interface ParceiroGrid {
@@ -23,6 +25,7 @@ interface ParceiroGrid {
   telefone1: string | null;
   flag_cliente: boolean;
   flag_fornecedor: boolean;
+  origem: string | null;
 }
 
 interface ContatoItem { nome: string | null; cargo: string | null; departamento: string | null; telefone: string | null; email: string | null; principal: boolean; }
@@ -87,6 +90,12 @@ export default function ParceirosPage() {
   const [pagina, setPagina] = useState(0);
   const [totalRegistros, setTotalRegistros] = useState(0);
   const [refreshGrid, setRefreshGrid] = useState(0);
+  // Cadastro próprio (2026-11-23): novo/editar/carteira em FormParceiro.
+  // atalho vindo de outras telas (ex.: ficha de reserva): /admin/comercial/parceiros?novo=1
+  const [formAberto, setFormAberto] = useState(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('novo') === '1');
+  const [formId, setFormId] = useState<number | null>(null);
+  const [cadCtx, setCadCtx] = useState<{ sistemaOrigem: boolean; vendedores: { id: number; nome: string }[] }>({ sistemaOrigem: false, vendedores: [] });
+  const abrirCadastro = (id: number | null) => { setFormId(id); setFormAberto(true); };
 
   const [parceiroSelecionado, setParceiroSelecionado] = useState<ParceiroCompleto | null>(null);
   const [detalheLoading, setDetalheLoading] = useState(false);
@@ -102,6 +111,13 @@ export default function ParceirosPage() {
   };
 
   useEffect(() => {
+    if (authLoading || acessoNegado || !accessToken) return;
+    let vivo = true;
+    contextoCadastroParceiroAction(accessToken).then(r => { if (vivo && r.ok) setCadCtx(r.info); });
+    return () => { vivo = false; };
+  }, [authLoading, acessoNegado, accessToken]);
+
+  useEffect(() => {
     if (authLoading || acessoNegado || abaAtiva !== 'parceiros') return;
     carregarUltimaSyncParceiros();
   }, [authLoading, acessoNegado, abaAtiva]);
@@ -115,16 +131,20 @@ export default function ParceirosPage() {
 
       let query = supabase
         .from('parceiros')
-        .select('id, codigo_parceiro, nome_exibicao, nome_completo, cnpj, cpf, cidade1, estado1, telefone1, flag_cliente, flag_fornecedor', { count: 'exact' })
+        .select('id, codigo_parceiro, nome_exibicao, nome_completo, cnpj, cpf, cidade1, estado1, telefone1, flag_cliente, flag_fornecedor, origem', { count: 'exact' })
         .order('codigo_parceiro', { ascending: true })
         .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
 
       if (filtroTipo === 'cliente') query = query.eq('flag_cliente', true);
       else if (filtroTipo === 'fornecedor') query = query.eq('flag_fornecedor', true);
 
-      if (filtroTexto.trim()) {
-        const termo = `%${filtroTexto.trim()}%`;
-        query = query.or(`nome_exibicao.ilike.${termo},nome_completo.ilike.${termo},cnpj.ilike.${termo},cpf.ilike.${termo},cidade1.ilike.${termo}`);
+      // Vírgula e parênteses quebram o filtro do PostgREST ("CLIENTE (X)" não achava nada).
+      const texto = filtroTexto.replace(/[%_,()]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (texto) {
+        const termo = `%${texto}%`;
+        const digitos = texto.replace(/\D/g, '');
+        const porDoc = digitos.length >= 5 ? `,cnpj_digitos.ilike.%${digitos}%,cpf_digitos.ilike.%${digitos}%` : '';
+        query = query.or(`nome_exibicao.ilike.${termo},nome_completo.ilike.${termo},cnpj.ilike.${termo},cpf.ilike.${termo},cidade1.ilike.${termo}${porDoc}`);
       }
 
       const { data, error, count } = await query;
@@ -322,16 +342,24 @@ export default function ParceirosPage() {
             <>
               <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
                 <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Sincronizar via API</h2>
-                <p className="text-xs text-[#64748B] mb-4">
-                  Puxa parceiros (clientes e fornecedores) direto do PrimeStart (produção) — dados cadastrais, contatos e endereços. A base é grande, então a sincronização pagina por código e pode levar alguns minutos.
-                </p>
-                <button
-                  onClick={sincronizarViaApi}
-                  disabled={sincronizando}
-                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-bold uppercase text-xs tracking-wider transition-colors"
-                >
-                  {sincronizando ? 'Sincronizando...' : '🔄 Sincronizar agora'}
-                </button>
+                {cadCtx.sistemaOrigem ? (
+                  <p className="text-xs text-[#64748B] mb-2">
+                    Desde a virada da chave os cadastros são do sistema: clientes e fornecedores novos são cadastrados aqui e a sincronização com o PrimeStart está desligada.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-xs text-[#64748B] mb-4">
+                      Puxa parceiros (clientes e fornecedores) direto do PrimeStart (produção) — dados cadastrais, contatos e endereços. Enquanto o P2S for oficial ele manda no cadastro; o que foi cadastrado aqui é unido ao do P2S pelo CPF/CNPJ quando chegar de lá.
+                    </p>
+                    <button
+                      onClick={sincronizarViaApi}
+                      disabled={sincronizando}
+                      className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-bold uppercase text-xs tracking-wider transition-colors"
+                    >
+                      {sincronizando ? 'Sincronizando...' : '🔄 Sincronizar agora'}
+                    </button>
+                  </>
+                )}
                 <UltimaSincronizacaoInfo info={ultimaSyncParceiros} carregando={ultimaSyncParceirosLoading} />
               </div>
 
@@ -344,9 +372,12 @@ export default function ParceirosPage() {
               <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
                   <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Parceiros</h2>
-                  <span className="text-xs font-black uppercase tracking-wider text-[#64748B]">
-                    {totalRegistros} registro(s)
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-black uppercase tracking-wider text-[#64748B]">
+                      {totalRegistros} registro(s)
+                    </span>
+                    <button onClick={() => abrirCadastro(null)} className="bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-4 py-2 rounded-lg font-black uppercase text-[10px] tracking-wider">+ Novo cliente / fornecedor</button>
+                  </div>
                 </div>
 
                 <div className="flex flex-col md:flex-row gap-3 mb-4">
@@ -399,9 +430,13 @@ export default function ParceirosPage() {
                         </tr>
                       ) : (
                         parceirosGrid.map((p) => (
-                          <tr key={p.id} className="border-t border-[#E2E8F0] hover:bg-[#F8FAFC] cursor-pointer" onClick={() => abrirDetalhe(p.id)}>
+                          <tr key={p.id} className="border-t border-[#E2E8F0] hover:bg-[#F8FAFC] cursor-pointer" onClick={() => abrirCadastro(p.id)}>
                             <td className="p-2 font-mono">{p.codigo_parceiro ?? '—'}</td>
-                            <td className="p-2 font-bold">{p.nome_exibicao || p.nome_completo || '—'}</td>
+                            <td className="p-2 font-bold">
+                              {p.nome_exibicao || p.nome_completo || '—'}
+                              {p.origem === 'SISTEMA' && <span className="ml-2 text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-sky-100 text-sky-700">sistema</span>}
+                              <button onClick={e => { e.stopPropagation(); abrirDetalhe(p.id); }} title="Ver todos os campos" className="ml-2 text-[10px] text-gray-400 hover:text-[#336699]">🔍</button>
+                            </td>
                             <td className="p-2">{p.cnpj || p.cpf || '—'}</td>
                             <td className="p-2">{p.cidade1 ? `${p.cidade1}${p.estado1 ? '/' + p.estado1 : ''}` : '—'}</td>
                             <td className="p-2">{p.telefone1 || '—'}</td>
@@ -659,6 +694,16 @@ export default function ParceirosPage() {
           </div>
         </div>
       )}
+
+      {formAberto && <FormParceiro
+        key={formId ?? 'novo'}
+        aberto={formAberto}
+        parceiroId={formId}
+        accessToken={accessToken}
+        vendedores={cadCtx.vendedores}
+        onClose={() => setFormAberto(false)}
+        onSalvo={() => { setFormAberto(false); setRefreshGrid(v => v + 1); }}
+      />}
     </div>
   );
 }

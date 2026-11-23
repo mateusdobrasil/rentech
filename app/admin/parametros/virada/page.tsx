@@ -1,7 +1,7 @@
 "use client";
 
 // Virada da chave (2026-11-21): tira o P2S de cena empresa por empresa.
-// 1 Preparar (checklist + última leitura) → 2 Congelar → 3 OS → 4 Receber → 5 Pagar → 6 Concluir.
+// 1 Preparar (checklist + última leitura) → 2 Congelar → 3 OS → 4 Inventário da virada → 5 Contas (receber e pagar) → 6 Concluir.
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { Analytics } from "@vercel/analytics/next";
@@ -262,7 +262,21 @@ export default function ViradaPage() {
               )}
             </Passo>
 
-            <Passo n={4} titulo="Contas em aberto: data de corte" feito={!!est.resultado_receber && !!est.resultado_pagar} ativo={etapa === 'CONGELADA' && (!est.resultado_receber || !est.resultado_pagar)}>
+            <Passo n={4} titulo="Inventário da virada" feito={!!info?.inventario?.valido} ativo={etapa === 'CONGELADA' && !!est.resultado_os && !info?.inventario?.valido}>
+              <p className="text-xs text-gray-600">Contagem completa do estoque de {empresa?.nome}, <strong>depois de migrar as OS</strong>: só então o que está com cliente aparece como &quot;em locação&quot; e o saldo novo fica certo (contado no depósito + em locação). Abra um inventário de <strong>todos os locais e todas as categorias</strong>, conte, confira as divergências e conclua. Passo a passo em <Link href="/admin/manuais/inventario-virada" className="text-[#336699] font-bold hover:underline">Manuais › Inventário da virada</Link>.</p>
+              {info?.inventario?.valido ? (
+                <p className="text-xs mt-2 text-emerald-700 font-bold">✔ {info.inventario.valido.nome} concluído em {quando(info.inventario.valido.concluido_em)} por {info.inventario.valido.concluido_por}.</p>
+              ) : (
+                <>
+                  {!est.resultado_os && <p className="text-xs mt-2 text-gray-500">Disponível depois do Passo 3.</p>}
+                  {info?.inventario?.abertoAntesDaMigracao && <p className="text-xs mt-2 text-red-700 font-bold">⚠ Há um inventário completo aberto ANTES da migração das OS: ele não enxerga o que está com cliente. Cancele e abra outro.</p>}
+                  {info?.inventario?.aberto && !info?.inventario?.abertoAntesDaMigracao && <p className="text-xs mt-2 text-amber-800 font-bold">Em andamento: {info.inventario.aberto.nome} (aberto em {quando(info.inventario.aberto.criado_em)}).</p>}
+                </>
+              )}
+              {etapa === 'CONGELADA' && !!est.resultado_os && <Link href="/admin/estoque/inventario" className={`${btn} inline-block mt-3 bg-[#0C1D4D] text-white`}>Abrir o Inventário</Link>}
+            </Passo>
+
+            <Passo n={5} titulo="Contas em aberto: data de corte" feito={!!est.resultado_receber && !!est.resultado_pagar} ativo={etapa === 'CONGELADA' && (!est.resultado_receber || !est.resultado_pagar)}>
               <p className="text-xs text-gray-600">O P2S tem muita conta antiga &quot;em aberto&quot; que nunca foi baixada lá. Só migra o que <strong>vence a partir da data abaixo</strong> (o resto fica no histórico do P2S). Veja a prévia por ano antes de gravar.</p>
               <label className="text-xs inline-flex items-center gap-2 mt-3"><span className="font-black uppercase text-gray-500 text-[11px]">Migrar o que vence a partir de</span>
                 <input type="date" value={desde} disabled={etapa === 'CONCLUIDA'} onChange={e => { setDesde(e.target.value); setPrevias(p => ({ ...p, receber: null, pagar: null })); }} className="border border-[#E2E8F0] rounded-lg px-3 py-2 text-sm bg-white" />
@@ -285,7 +299,7 @@ export default function ViradaPage() {
               </div>
             </Passo>
 
-            <Passo n={5} titulo="Concluir" feito={etapa === 'CONCLUIDA'} ativo={etapa === 'CONGELADA' && !!est.resultado_os && !!est.resultado_receber && !!est.resultado_pagar}>
+            <Passo n={6} titulo="Concluir" feito={etapa === 'CONCLUIDA'} ativo={etapa === 'CONGELADA' && !!est.resultado_os && !!info?.inventario?.valido && !!est.resultado_receber && !!est.resultado_pagar}>
               <p className="text-xs text-gray-600">Liga o <strong>Financeiro na fonte Sistema</strong> (baixas geram movimento no caixa) e a <strong>Nota de Débito na série oficial</strong> (continua do último nº do P2S).</p>
               {etapa === 'CONCLUIDA' && <p className="text-xs mt-2 text-emerald-700 font-bold">✔ Virada concluída em {quando(est.concluida_em)} por {est.concluida_por}.</p>}
               {etapa === 'CONGELADA' && <button disabled={!!ocupado} onClick={() => executar('concluir', 'Concluir a virada', `${empresa?.nome} passa a operar só pelo sistema.`)} className={`${btn} bg-emerald-700 text-white mt-3`}>Concluir a virada</button>}

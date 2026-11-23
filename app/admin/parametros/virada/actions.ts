@@ -13,7 +13,7 @@ import { sincronizarContasReceberCore } from '../../financeiro/contas-receber/co
 import { sincronizarContasPagarCore } from '../../financeiro/contas-pagar/contasPagarCore';
 import { fontesDasEmpresas } from '../../../lib/financeiro/caixa';
 import {
-  estadoVirada, checklistVirada, salvarConfirmacoes, migrarOs, finalizadasDesdePadrao, migrarContasReceber, migrarContasPagar, congelar, descongelar, concluir,
+  estadoVirada, checklistVirada, inventarioDaVirada, salvarConfirmacoes, migrarOs, finalizadasDesdePadrao, migrarContasReceber, migrarContasPagar, congelar, descongelar, concluir,
 } from '../../../lib/virada/virada';
 import { previaEnsaio, limparEnsaio, CATEGORIAS_ENSAIO, type CategoriaEnsaio } from '../../../lib/virada/ensaio';
 
@@ -44,11 +44,12 @@ export async function painelViradaAction(empresaId: number | null, accessToken: 
     }));
     const id = empresaId && empresas.some(e => e.id === empresaId) ? empresaId : empresas[0]?.id;
     if (!id) return { ok: true, info: { empresas: estados } };
-    const [estado, checklist, fiscal] = await Promise.all([
+    const [estado, checklist, fiscal, inventario] = await Promise.all([
       estadoVirada(ctx.db, id), checklistVirada(ctx.db, id),
       ctx.db.from('fiscal_parametros').select('ativo, ambiente, regime, lucro_presumido_desde').eq('empresa_id', id).maybeSingle(),
+      inventarioDaVirada(ctx.db, id),
     ]);
-    return { ok: true, info: { empresas: estados, empresaId: id, estado, checklist, fiscal: fiscal.data || null, contasDesdePadrao: estado.contas_desde || somarDias(hojeISO(), -90), finalizadasDesdePadrao: finalizadasDesdePadrao() } };
+    return { ok: true, info: { empresas: estados, empresaId: id, estado, checklist, inventario, fiscal: fiscal.data || null, contasDesdePadrao: estado.contas_desde || somarDias(hojeISO(), -90), finalizadasDesdePadrao: finalizadasDesdePadrao() } };
   } catch (e) { return falha(e); }
 }
 

@@ -13,10 +13,13 @@ export interface OpcaoBusca { id: number | string; nome: string; detalhe?: strin
 export async function buscarClientes(db: Db, texto: string): Promise<OpcaoBusca[]> {
   const t = limpar(texto);
   if (t.length < 2) return [];
+  // nome, ou CPF/CNPJ quando a busca tem dígitos (cadastro próprio, 2026-11-23)
+  const digitos = t.replace(/\D/g, '');
+  const porDoc = digitos.length >= 5 ? `,cnpj_digitos.ilike.%${digitos}%,cpf_digitos.ilike.%${digitos}%` : '';
   const { data, error } = await db.from('parceiros')
     .select('id, nome_exibicao, nome_completo, cidade1, estado1, telefone1, email1')
     .eq('flag_cliente', true)
-    .or(`nome_exibicao.ilike.%${t}%,nome_completo.ilike.%${t}%`)
+    .or(`nome_exibicao.ilike.%${t}%,nome_completo.ilike.%${t}%${porDoc}`)
     .order('nome_exibicao').limit(30);
   if (error) throw error;
   return (data || []).map((p: any) => ({

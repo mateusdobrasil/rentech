@@ -76,6 +76,31 @@ export const CONFIRMACOES_MANUAIS: { chave: string; titulo: string; dica: string
   { chave: 'backup_p2s', titulo: 'Exportação/backup do P2S guardado', dica: 'Para consulta futura, fora do sistema.' },
 ];
 
+// ============================================================================
+// INVENTÁRIO DA VIRADA (2026-11-23)
+// O inventário desconta o que está EM LOCAÇÃO no sistema (alocações LOCADO) e
+// conclui com saldo = contado + em locação. As fichas do P2S só viram LOCADO na
+// migração das OS (Passo 3) — então o inventário que vale para a virada é um
+// COMPLETO (todos os locais e categorias) ABERTO depois da migração. Concluído
+// antes disso, o que estava com cliente sumiria do saldo.
+// ============================================================================
+export async function inventarioDaVirada(db: Db, empresaId: number) {
+  const est = await estadoVirada(db, empresaId);
+  const desde: string | null = est.resultado_os?.em || null;
+  const { data, error } = await db.from('estoque_inventarios').select('id, nome, status, local, categorias, criado_em, concluido_em, concluido_por')
+    .eq('empresa_id', empresaId).in('status', ['ABERTO', 'CONCLUIDO']).order('criado_em', { ascending: false }).limit(30);
+  if (error) throw error;
+  const lista = (data || []) as { id: number; nome: string; status: string; local: string | null; categorias: string[] | null; criado_em: string; concluido_em: string | null; concluido_por: string | null }[];
+  const completo = (i: (typeof lista)[number]) => !i.local && !(i.categorias || []).length;
+  const depois = (i: (typeof lista)[number]) => !!desde && i.criado_em >= desde;
+  return {
+    desde,
+    valido: lista.find(i => i.status === 'CONCLUIDO' && completo(i) && depois(i)) || null,
+    aberto: lista.find(i => i.status === 'ABERTO') || null,
+    abertoAntesDaMigracao: lista.some(i => i.status === 'ABERTO' && completo(i) && !depois(i)),
+  };
+}
+
 export async function checklistVirada(db: Db, empresaId: number) {
   const hoje = hojeISO();
   // Ensaio da fase paralela (ensaio.ts): só faz sentido antes de congelar — depois, o que nasce no sistema já é real.
@@ -83,7 +108,7 @@ export async function checklistVirada(db: Db, empresaId: number) {
   const ensaio = etapa === 'PREPARACAO' ? await previaEnsaio(db, empresaId).catch(() => null) : null;
   const pendEnsaio = ensaio ? ensaio.filter(c => c.chave !== 'caixa').reduce((s, c) => s + c.qtd, 0) : 0;
   const [inv, contas, fiscal, regras, prods, ultimaFicha] = await Promise.all([
-    db.from('estoque_inventarios').select('id, status, criado_em').eq('empresa_id', empresaId).eq('status', 'CONCLUIDO').order('criado_em', { ascending: false }).limit(1),
+    inventarioDaVirada(db, empresaId),
     db.from('financeiro_contas').select('id, nome, saldo_inicial, data_saldo_inicial').eq('empresa_id', empresaId).eq('ativa', true),
     db.from('fiscal_parametros').select('ativo, ambiente, nfse_item_lista_servico, nfse_aliquota').eq('empresa_id', empresaId).maybeSingle(),
     db.from('comercial_comissao_vendedores').select('vendedor_id, pct_locacao, ativo'),
@@ -94,12 +119,11 @@ export async function checklistVirada(db: Db, empresaId: number) {
   if (fiscal.data?.ativo) {
     try { const r = await focus('PRODUCAO', 'GET', '/v2/nfe/teste-virada-inexistente'); tokenOk = r.http === 404; } catch { tokenOk = false; }
   }
-  const ultInv = ((inv.data || []) as any[])[0];
   const semValor = ((prods.data || []) as any[]).filter(p => !(n(p.valor_indenizacao) > 0) && !(n(p.custo_reposicao) > 0)).length;
   const regrasAtivas = ((regras.data || []) as any[]).filter(r => r.ativo && n(r.pct_locacao) > 0).length;
   const ultimaLeitura = ((ultimaFicha.data || []) as any[])[0]?.p2s_sincronizado_em || null;
   const itens = [
-    { chave: 'inventario', titulo: 'Inventário de estoque concluído', ok: !!ultInv, detalhe: ultInv ? `último concluído em ${String(ultInv.criado_em).slice(0, 10).split('-').reverse().join('/')}` : 'nenhum inventário concluído — o saldo do P2S não é confiável', link: '/admin/estoque/inventario' },
+    { chave: 'inventario', titulo: 'Inventário da virada combinado (data, equipe, etiquetas)', ok: etapa === 'PREPARACAO' ? null : !!inv.valido, detalhe: etapa === 'PREPARACAO' ? 'é feito no dia, DEPOIS de migrar as OS (Passo 4) — veja o roteiro em Manuais' : inv.valido ? `concluído em ${String(inv.valido.concluido_em || '').slice(0, 10).split('-').reverse().join('/')}` : 'pendente (Passo 4)', link: '/admin/manuais/inventario-virada' },
     { chave: 'contas', titulo: 'Contas de Caixa e Bancos criadas', ok: ((contas.data || []) as any[]).length > 0, detalhe: `${((contas.data || []) as any[]).length} conta(s) ativa(s)`, link: '/admin/financeiro/caixa' },
     { chave: 'leitura', titulo: 'Última leitura do P2S recente', ok: !!ultimaLeitura && ultimaLeitura.slice(0, 10) >= somarDias(hoje, -1), detalhe: ultimaLeitura ? `fichas lidas em ${new Date(ultimaLeitura).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}` : 'nunca', link: null },
     { chave: 'comissao', titulo: 'Regras de comissão preenchidas', ok: regrasAtivas > 0, detalhe: `${regrasAtivas} vendedor(es) com % de locação`, link: '/admin/comercial/comissoes' },
@@ -428,6 +452,8 @@ export async function concluir(db: Db, empresaId: number, usuario: string) {
   if (est.etapa !== 'CONGELADA') throw new Error('Congele e migre antes de concluir.');
   const faltam = [!est.resultado_os && 'OS', !est.resultado_receber && 'contas a receber', !est.resultado_pagar && 'contas a pagar'].filter(Boolean);
   if (faltam.length) throw new Error(`Falta migrar: ${faltam.join(', ')}.`);
+  const inv = await inventarioDaVirada(db, empresaId);
+  if (!inv.valido) throw new Error('Falta o inventário da virada (Passo 4): um inventário completo — todos os locais e categorias — aberto DEPOIS de migrar as OS e concluído.');
   const { error } = await db.from('financeiro_parametros').upsert({ empresa_id: empresaId, fonte: 'SISTEMA', atualizado_em: new Date().toISOString(), atualizado_por: usuario }, { onConflict: 'empresa_id' });
   if (error) throw error;
   await registrar(db, empresaId, usuario, 'CONCLUIU A VIRADA', 'Financeiro na fonte SISTEMA; Nota de Débito na série oficial', { etapa: 'CONCLUIDA' as EtapaVirada, concluida_em: new Date().toISOString(), concluida_por: usuario });

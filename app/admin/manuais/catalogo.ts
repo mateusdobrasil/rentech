@@ -39,9 +39,14 @@ export const MANUAIS: ManualCatalogo[] = [
     fonte: 'docs/manuais/locacao.md',
   },
   {
-    slug: 'inventario-estoque', titulo: 'Inventário de Estoque', grupo: 'SISTEMA', icone: '📦', atualizadoEm: '2026-11-19',
+    slug: 'inventario-estoque', titulo: 'Inventário de Estoque', grupo: 'SISTEMA', icone: '📦', atualizadoEm: '2026-11-23',
     descricao: 'Passo a passo da contagem do depósito: abrir o inventário, contar por quantidade, ler os patrimônios, conferir as divergências e aplicar.',
     fonte: 'docs/manuais/inventario-estoque.md',
+  },
+  {
+    slug: 'inventario-virada', titulo: 'Inventário da virada', grupo: 'SISTEMA', icone: '🔑', atualizadoEm: '2026-11-23',
+    descricao: 'Roteiro do dia da virada: a ordem certa (depois de migrar as OS), a preparação, a contagem completa e o que muda no estoque depois.',
+    fonte: 'docs/manuais/inventario-virada.md',
   },
   {
     slug: 'suporte-chamados', titulo: 'Suporte e Chamados', grupo: 'SISTEMA', icone: '🎧', atualizadoEm: '2026-11-17',

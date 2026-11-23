@@ -13,6 +13,7 @@
 //  - Atenção na fase paralela: "Carregar saldos do P2S" sobrescreve o local
 //    PRINCIPAL — o inventário vale de verdade na virada.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { empresasCongeladas } from '../../../lib/virada/estado';
 import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { buscarTodasPaginas } from '../../../lib/paginacao';
 import { registrarLogAuditoria } from '../../../actions';
@@ -58,10 +59,11 @@ export async function listarInventariosAction(accessToken: string): Promise<Resu
       : { data: [] };
     const { data: cats } = await db.from('produtos').select('categoria_nome').eq('habilitado_para_locacao', true).eq('flag_em_desuso', false);
     const { data: locais } = ids.length ? await db.from('locacao_saldos').select('local').in('empresa_id', ids) : { data: [] };
+    const congeladas = await empresasCongeladas(db);
     return {
       ok: true,
       info: {
-        empresas,
+        empresas: empresas.map(e => ({ ...e, congelada: congeladas.has(e.id) })),
         categorias: [...new Set((cats || []).map((c: any) => c.categoria_nome).filter(Boolean))].sort(),
         locais: [...new Set((locais || []).map((l: any) => l.local).filter(Boolean))].sort(),
         inventarios: (invs || []).map((i: any) => ({

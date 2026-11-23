@@ -764,8 +764,11 @@ export default function EditorFichaPage() {
               <h2 className="text-sm font-black text-[#0C1D4D] uppercase tracking-wider">Cliente e evento</h2>
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
-                  <label className={labelCls}>Cliente *</label>
-                  <CampoBusca placeholder="Buscar cliente..." buscar={buscarClientes} valor={cliente} desabilitado={!editavel}
+                  <div className="flex justify-between items-baseline gap-2">
+                    <label className={labelCls}>Cliente *</label>
+                    {editavel && <a href="/admin/comercial/parceiros?novo=1" target="_blank" rel="noopener" className="text-[10px] font-black uppercase text-[#336699] hover:underline">+ cadastrar cliente novo</a>}
+                  </div>
+                  <CampoBusca placeholder="Buscar cliente por nome, CNPJ ou CPF..." buscar={buscarClientes} valor={cliente} desabilitado={!editavel}
                     onEscolher={o => {
                       setCliente(o); setAlterado(true);
                       const ex = (o.extra || {}) as any;

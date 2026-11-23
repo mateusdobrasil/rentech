@@ -10,6 +10,8 @@ import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import UltimaSincronizacaoInfo from '../../../components/ui/UltimaSincronizacaoInfo';
 import type { UltimaSincronizacao } from '../../../lib/syncLog';
+import FormProduto, { type CatalogoCategorias } from './FormProduto';
+import { contextoCadastroProdutoAction } from './actions-cadastro';
 
 interface ProdutoGrid {
   id: number;
@@ -23,6 +25,7 @@ interface ProdutoGrid {
   habilitado_para_locacao: boolean;
   habilitado_para_venda: boolean;
   peso_unitario: number | null;
+  origem: string | null;
 }
 
 interface PrecoItem { tabela: string | null; preco: number | null; }
@@ -69,6 +72,18 @@ export default function ProdutosPage() {
   const [pagina, setPagina] = useState(0);
   const [totalRegistros, setTotalRegistros] = useState(0);
   const [refreshGrid, setRefreshGrid] = useState(0);
+  // Cadastro próprio (2026-11-23): novo/editar em FormProduto (montado só quando abre).
+  const [formAberto, setFormAberto] = useState(false);
+  const [formId, setFormId] = useState<number | null>(null);
+  const [cadCtx, setCadCtx] = useState<CatalogoCategorias & { sistemaOrigem: boolean }>({ sistemaOrigem: false, categorias: [], marcas: [] });
+  const abrirCadastro = (id: number | null) => { setFormId(id); setFormAberto(true); };
+
+  useEffect(() => {
+    if (authLoading || acessoNegado || !accessToken) return;
+    let vivo = true;
+    contextoCadastroProdutoAction(accessToken).then(r => { if (vivo && r.ok) setCadCtx(r.info); });
+    return () => { vivo = false; };
+  }, [authLoading, acessoNegado, accessToken, refreshGrid]);
 
   const [produtoSelecionado, setProdutoSelecionado] = useState<ProdutoCompleto | null>(null);
   const [detalheLoading, setDetalheLoading] = useState(false);
@@ -97,15 +112,17 @@ export default function ProdutosPage() {
 
       let query = supabase
         .from('produtos')
-        .select('id, codigo, codigo_formatado, nome_item, categoria_nome, marca_nome, modelo, unidade, habilitado_para_locacao, habilitado_para_venda, peso_unitario', { count: 'exact' })
-        .order('codigo', { ascending: true })
+        .select('id, codigo, codigo_formatado, nome_item, categoria_nome, marca_nome, modelo, unidade, habilitado_para_locacao, habilitado_para_venda, peso_unitario, origem', { count: 'exact' })
+        .order('codigo_formatado', { ascending: true })
         .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
 
       if (filtroDisponibilidade === 'locacao') query = query.eq('habilitado_para_locacao', true);
       else if (filtroDisponibilidade === 'venda') query = query.eq('habilitado_para_venda', true);
 
-      if (filtroTexto.trim()) {
-        const termo = `%${filtroTexto.trim()}%`;
+      // vírgula e parênteses quebram o filtro do PostgREST
+      const texto = filtroTexto.replace(/[%_,()]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (texto) {
+        const termo = `%${texto}%`;
         query = query.or(`nome_item.ilike.${termo},codigo_formatado.ilike.${termo},marca_nome.ilike.${termo},categoria_nome.ilike.${termo},modelo.ilike.${termo}`);
       }
 
@@ -198,16 +215,24 @@ export default function ProdutosPage() {
 
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
             <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Sincronizar via API</h2>
-            <p className="text-xs text-[#64748B] mb-4">
-              Puxa o catálogo inteiro de produtos direto do PrimeStart (produção) — todos os atributos, inclusive preços por tabela e estoque por local. Sem tela de upload manual — essa integração é só via API.
-            </p>
-            <button
-              onClick={sincronizarViaApi}
-              disabled={sincronizando}
-              className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-bold uppercase text-xs tracking-wider transition-colors"
-            >
-              {sincronizando ? 'Sincronizando...' : '🔄 Sincronizar agora'}
-            </button>
+            {cadCtx.sistemaOrigem ? (
+              <p className="text-xs text-[#64748B] mb-2">
+                Desde a virada da chave o catálogo é do sistema: produtos novos são cadastrados aqui e a sincronização com o PrimeStart está desligada.
+              </p>
+            ) : (
+              <>
+                <p className="text-xs text-[#64748B] mb-4">
+                  Puxa o catálogo de produtos direto do PrimeStart (produção). Enquanto o P2S for oficial ele manda no cadastro; o produto cadastrado aqui é unido ao do P2S (mesmo código ou mesmo nome) quando chegar de lá.
+                </p>
+                <button
+                  onClick={sincronizarViaApi}
+                  disabled={sincronizando}
+                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-bold uppercase text-xs tracking-wider transition-colors"
+                >
+                  {sincronizando ? 'Sincronizando...' : '🔄 Sincronizar agora'}
+                </button>
+              </>
+            )}
             <UltimaSincronizacaoInfo info={ultimaSync} carregando={ultimaSyncLoading} />
           </div>
 
@@ -220,9 +245,12 @@ export default function ProdutosPage() {
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
               <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider">Produtos</h2>
-              <span className="text-xs font-black uppercase tracking-wider text-[#64748B]">
-                {totalRegistros} registro(s)
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-black uppercase tracking-wider text-[#64748B]">
+                  {totalRegistros} registro(s)
+                </span>
+                <button onClick={() => abrirCadastro(null)} className="bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-4 py-2 rounded-lg font-black uppercase text-[10px] tracking-wider">+ Novo produto</button>
+              </div>
             </div>
 
             <div className="flex flex-col md:flex-row gap-3 mb-4">
@@ -276,9 +304,13 @@ export default function ProdutosPage() {
                     </tr>
                   ) : (
                     produtosGrid.map((p) => (
-                      <tr key={p.id} className="border-t border-[#E2E8F0] hover:bg-[#F8FAFC] cursor-pointer" onClick={() => abrirDetalhe(p.id)}>
+                      <tr key={p.id} className="border-t border-[#E2E8F0] hover:bg-[#F8FAFC] cursor-pointer" onClick={() => abrirCadastro(p.id)}>
                         <td className="p-2 font-mono">{p.codigo_formatado || p.codigo || '—'}</td>
-                        <td className="p-2 font-bold">{p.nome_item || '—'}</td>
+                        <td className="p-2 font-bold">
+                          {p.nome_item || '—'}
+                          {p.origem === 'SISTEMA' && <span className="ml-2 text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-sky-100 text-sky-700">sistema</span>}
+                          <button onClick={e => { e.stopPropagation(); abrirDetalhe(p.id); }} title="Ver todos os campos" className="ml-2 text-[10px] text-gray-400 hover:text-[#336699]">🔍</button>
+                        </td>
                         <td className="p-2">{p.categoria_nome || '—'}</td>
                         <td className="p-2">{p.marca_nome || '—'}</td>
                         <td className="p-2">{p.modelo || '—'}</td>
@@ -390,6 +422,17 @@ export default function ProdutosPage() {
             )}
           </div>
         </div>
+      )}
+
+      {formAberto && (
+        <FormProduto
+          key={formId ?? 'novo'}
+          produtoId={formId}
+          accessToken={accessToken}
+          catalogo={cadCtx}
+          onClose={() => setFormAberto(false)}
+          onSalvo={() => { setFormAberto(false); setRefreshGrid(v => v + 1); }}
+        />
       )}
     </div>
   );

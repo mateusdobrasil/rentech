@@ -8,7 +8,8 @@ O processo tem cinco passos: abrir, contar os produtos por quantidade, ler os pa
 - **Quando usar:** no inventário completo da virada do P2S e em contagens parciais (um local ou algumas categorias).
 - **O que está com cliente não é contado.** Na abertura, o sistema anota o que está em locação naquele momento. No depósito, espera-se encontrar o saldo menos o que está em locação.
 - **Dois tipos de produto:** os de **quantidade** (cabos, estruturas etc.), em que se digita quantos há, e os de **patrimônio** (cada peça tem QR ou número), em que se lê peça por peça.
-- **Fase paralela com o P2S:** enquanto o P2S for o sistema oficial, a carga "Carregar saldos do P2S" (em Equipamentos de Locação) sobrescreve o local PRINCIPAL. O inventário vale de vez na virada.
+- **Fase paralela com o P2S:** enquanto o P2S for o sistema oficial, o que está com cliente pelo P2S não aparece como "em locação" e a carga "Carregar saldos do P2S" (em Equipamentos de Locação) sobrescreve o local PRINCIPAL. Inventário feito agora é ensaio.
+- **Inventário da virada:** tem roteiro próprio (Manuais → Inventário da virada). Ele é feito depois de migrar as OS, no Passo 4 da Virada da chave.
 - **Concluir não tem volta pela tela.** Faça os testes num inventário e **cancele** em vez de concluir.
 
 ## Passo 1 — Abrir o inventário
@@ -105,10 +106,4 @@ Na dúvida sobre os extraviados, deixe a caixa desmarcada: dá para procurar as 
 | Muitos patrimônios não lidos | Confira se estão com cliente, no conserto ou em outro local antes de marcar como extraviados. |
 | Concluí um teste sem querer | Avise o administrador do sistema: o ajuste só é desfeito direto no banco. |
 
-**Dicas para o inventário completo da virada do P2S:**
-
-- Combine um horário sem expedição nem retorno de material, e abra o inventário só quando a equipe estiver pronta para contar.
-- Divida a equipe por categorias ou corredores, cada um no seu celular, todos no mesmo inventário.
-- Deixe a **Contagem cega** ligada durante a contagem; desligue só na conferência.
-- Antes de concluir, exporte o **Excel** e guarde: é o registro do inventário.
-- Depois da virada, o P2S deixa de sobrescrever os saldos e o inventário passa a valer de vez.
+**Inventário completo da virada do P2S:** siga o roteiro em Manuais → Inventário da virada. A ordem é obrigatória: congelar o P2S, migrar as OS e só então abrir o inventário (todos os locais e categorias).

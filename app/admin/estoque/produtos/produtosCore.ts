@@ -12,6 +12,8 @@
 // os comentários deste arquivo cobrem só o que foi movido pra cá.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { consultarObjetos, buscarObjeto, criterio, p2sParaData, type AmbienteP2s, type ObjetoP2s } from '../../../lib/p2s';
+import { prepararGravacaoProdutosP2s } from '../../../lib/cadastros/produtos';
+import { cadastrosNoSistema } from '../../../lib/cadastros/parceiros';
 import { obterCursorIncremental, registrarSincronizacao, calcularProximoCursor, cursorParaSerialP2s } from '../../../lib/syncLog';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
@@ -70,6 +72,10 @@ export interface SincronizarProdutosOpcoes {
 
 export async function sincronizarProdutosCore(opcoes: SincronizarProdutosOpcoes = {}): Promise<Resultado> {
   const ambiente = opcoes.ambiente || 'PRODUCAO';
+  // Depois da virada (todas as empresas congeladas) o cadastro de produtos é do sistema.
+  if (await cadastrosNoSistema(supabaseAdmin())) {
+    return { ok: true, info: { processados: 0, totalEncontradas: 0, aviso: 'Os cadastros já são do sistema (virada da chave): a sincronização de produtos com o P2S está desligada.' } };
+  }
   const iniciadoEm = new Date();
   const cursor = await obterCursorIncremental('produtos', ambiente);
 
@@ -248,10 +254,12 @@ export async function sincronizarProdutosCore(opcoes: SincronizarProdutosOpcoes 
     });
 
     const db = supabaseAdmin();
+    // Cadastro próprio (2026-11-23): adota o produto feito aqui (mesmo código ou nome).
+    const { paraUpsert, adotados } = await prepararGravacaoProdutosP2s(db, registros);
     const TAMANHO_LOTE = 250;
-    let processados = 0;
-    for (let i = 0; i < registros.length; i += TAMANHO_LOTE) {
-      const lote = registros.slice(i, i + TAMANHO_LOTE);
+    let processados = adotados;
+    for (let i = 0; i < paraUpsert.length; i += TAMANHO_LOTE) {
+      const lote = paraUpsert.slice(i, i + TAMANHO_LOTE);
       const { error } = await db.from('produtos').upsert(lote, { onConflict: 'p2s_oid' });
       if (error) throw new Error(error.message);
       processados += lote.length;

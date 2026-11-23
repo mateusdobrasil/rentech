@@ -15,6 +15,7 @@ import { fontesDasEmpresas } from '../../../lib/financeiro/caixa';
 import {
   estadoVirada, checklistVirada, salvarConfirmacoes, migrarOs, finalizadasDesdePadrao, migrarContasReceber, migrarContasPagar, congelar, descongelar, concluir,
 } from '../../../lib/virada/virada';
+import { previaEnsaio, limparEnsaio, CATEGORIAS_ENSAIO, type CategoriaEnsaio } from '../../../lib/virada/ensaio';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 const ROTA = '/admin/parametros/virada';
@@ -109,5 +110,30 @@ export async function executarViradaAction(empresaId: number, passo: 'congelar' 
     else return { ok: false, erro: 'Passo inválido.' };
     log(u, `VIRADA DA CHAVE: ${passo.toUpperCase()}`, `empresa ${empresaId}`);
     return { ok: true, info };
+  } catch (e) { return falha(e); }
+}
+
+// ============================================================================
+// LIMPAR O ENSAIO (2026-11-22) — antes de congelar; regras em app/lib/virada/ensaio.ts
+// ============================================================================
+export async function previaEnsaioAction(empresaId: number, accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  try {
+    const previa = await previaEnsaio(ctx.db, empresaId);
+    return { ok: true, info: { previa, categorias: CATEGORIAS_ENSAIO } };
+  } catch (e) { return falha(e); }
+}
+
+export async function limparEnsaioAction(empresaId: number, categorias: CategoriaEnsaio[], accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  const validas = new Set(CATEGORIAS_ENSAIO.map(c => c.chave));
+  const escolhidas = (categorias || []).filter(c => validas.has(c));
+  if (!escolhidas.length) return { ok: false, erro: 'Marque o que limpar.' };
+  try {
+    const r = await limparEnsaio(ctx.db, empresaId, escolhidas, ctx.perfil.nome);
+    log(ctx.perfil.nome, 'VIRADA DA CHAVE: LIMPOU O ENSAIO', `empresa ${empresaId}: ${Object.entries(r.feito).map(([k, q]) => `${k} ${q}`).join(', ')}`);
+    return { ok: true, info: r };
   } catch (e) { return falha(e); }
 }

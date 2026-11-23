@@ -272,7 +272,9 @@ export default function FichaLocacaoPage() {
   };
 
   const btn = 'text-[10px] md:text-xs font-black uppercase tracking-wider px-4 py-2.5 rounded-lg shadow-sm disabled:opacity-40 transition-colors';
-  const selo = f.status === 'F'
+  const selo = f.status === 'C'
+    ? <span className="text-[10px] font-black px-2.5 py-1 rounded-full uppercase bg-gray-100 text-gray-400 line-through">Cancelada (ensaio)</span>
+    : f.status === 'F'
     ? <span className="text-[10px] font-black px-2.5 py-1 rounded-full uppercase bg-gray-200 text-gray-600">Finalizada</span>
     : r?.atrasada ? <span className="text-[10px] font-black px-2.5 py-1 rounded-full uppercase bg-red-100 text-red-700">Atrasada</span>
       : !f.data_saida && propria ? <span className="text-[10px] font-black px-2.5 py-1 rounded-full uppercase bg-cyan-100 text-cyan-700">Aguardando saída</span>

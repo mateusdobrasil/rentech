@@ -15,6 +15,7 @@ import { numeroFicha } from '../locacao/fichaNumero';
 import { focus } from '../fiscal/focus';
 import { sincronizarParceirosPorOidsCore } from '../../admin/comercial/parceiros/parceirosCore';
 import type { EtapaVirada } from './estado';
+import { previaEnsaio } from './ensaio';
 
 type Db = ReturnType<typeof supabaseAdmin>;
 const n = (v: unknown) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
@@ -77,6 +78,10 @@ export const CONFIRMACOES_MANUAIS: { chave: string; titulo: string; dica: string
 
 export async function checklistVirada(db: Db, empresaId: number) {
   const hoje = hojeISO();
+  // Ensaio da fase paralela (ensaio.ts): só faz sentido antes de congelar — depois, o que nasce no sistema já é real.
+  const etapa = (await estadoVirada(db, empresaId)).etapa;
+  const ensaio = etapa === 'PREPARACAO' ? await previaEnsaio(db, empresaId).catch(() => null) : null;
+  const pendEnsaio = ensaio ? ensaio.filter(c => c.chave !== 'caixa').reduce((s, c) => s + c.qtd, 0) : 0;
   const [inv, contas, fiscal, regras, prods, ultimaFicha] = await Promise.all([
     db.from('estoque_inventarios').select('id, status, criado_em').eq('empresa_id', empresaId).eq('status', 'CONCLUIDO').order('criado_em', { ascending: false }).limit(1),
     db.from('financeiro_contas').select('id, nome, saldo_inicial, data_saldo_inicial').eq('empresa_id', empresaId).eq('ativa', true),
@@ -98,6 +103,7 @@ export async function checklistVirada(db: Db, empresaId: number) {
     { chave: 'contas', titulo: 'Contas de Caixa e Bancos criadas', ok: ((contas.data || []) as any[]).length > 0, detalhe: `${((contas.data || []) as any[]).length} conta(s) ativa(s)`, link: '/admin/financeiro/caixa' },
     { chave: 'leitura', titulo: 'Última leitura do P2S recente', ok: !!ultimaLeitura && ultimaLeitura.slice(0, 10) >= somarDias(hoje, -1), detalhe: ultimaLeitura ? `fichas lidas em ${new Date(ultimaLeitura).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}` : 'nunca', link: null },
     { chave: 'comissao', titulo: 'Regras de comissão preenchidas', ok: regrasAtivas > 0, detalhe: `${regrasAtivas} vendedor(es) com % de locação`, link: '/admin/comercial/comissoes' },
+    { chave: 'ensaio', titulo: 'Ensaio da fase paralela limpo', ok: etapa !== 'PREPARACAO' || (!!ensaio && pendEnsaio === 0), detalhe: etapa !== 'PREPARACAO' ? 'feito antes do congelamento' : !ensaio ? 'não consegui contar' : pendEnsaio ? `${pendEnsaio} item(ns) de teste ainda ativos — use Limpar o ensaio, abaixo` : 'nenhum item de teste ativo', link: null },
     { chave: 'valor_bem', titulo: 'Valor do bem nos equipamentos (remessa, retorno, reposição)', ok: semValor === 0, detalhe: `${semValor} equipamento(s) de locação sem valor de indenização nem custo de reposição`, link: '/admin/estoque/equipamentos' },
     ...(fiscal.data?.ativo ? [
       { chave: 'fiscal', titulo: 'Fiscal: código de serviço e alíquota do ISS', ok: !!fiscal.data.nfse_item_lista_servico && fiscal.data.nfse_aliquota !== null, detalhe: fiscal.data.nfse_item_lista_servico ? `serviço ${fiscal.data.nfse_item_lista_servico} · ISS ${fiscal.data.nfse_aliquota ?? '—'}%` : 'faltam (Fiscal › Parâmetros)', link: '/admin/financeiro/fiscal' },

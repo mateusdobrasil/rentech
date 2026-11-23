@@ -72,6 +72,8 @@ export default function FichasLocacaoPage() {
   const paginas = dados ? Math.max(1, Math.ceil(dados.total / dados.porPagina)) : 1;
   const selo = (f: Linha) => {
     if (f.status === 'F') return <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-gray-200 text-gray-600">Finalizada</span>;
+    // C = cancelada na limpeza do ensaio da Virada da Chave (2026-11-22)
+    if (f.status === 'C') return <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-gray-100 text-gray-400 line-through">Cancelada (ensaio)</span>;
     if (f.atrasada) return <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-red-100 text-red-700">Atrasada</span>;
     if (f.origem === 'SISTEMA' && !f.saida) return <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-cyan-100 text-cyan-700">Aguardando saída</span>;
     return <span className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase bg-violet-100 text-violet-700">Em locação</span>;

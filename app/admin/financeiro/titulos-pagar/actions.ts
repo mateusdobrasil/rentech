@@ -175,3 +175,79 @@ export async function definirFonteAction(empresaId: number, fonte: 'P2S' | 'SIST
   log(ctx.perfil.nome, 'MUDOU A FONTE DO FINANCEIRO', `empresa ${empresaId} → ${fonte}`);
   return { ok: true };
 }
+
+// ============================================================================
+// ANEXOS (2026-11-22) — boleto, nota, comprovante. Bucket privado
+// financeiro-anexos (.sql/Executados/financeiro_anexos_contas_pagar.sql, rodado 2026-11-23);
+// upload direto do navegador por URL assinada (sem 413 no servidor) e leitura
+// por URL assinada de 30 min. Caminho: <empresa>/<título>/<arquivo>.
+// Conta de OP mostra também os anexos da OP (só leitura).
+// ============================================================================
+const BUCKET_ANEXOS = 'financeiro-anexos';
+const LIMITE_ANEXO_MB = 20;
+const prefixoAnexo = (t: { empresa_id: number; id: number }) => `${t.empresa_id}/${t.id}/`;
+const nomeDoCaminho = (c: string) => c.split('/').pop()!.replace(/^\d+-[a-z0-9]{6}-/, '');
+
+async function tituloComAnexos(ctx: Ctx, id: number) {
+  const { data } = await ctx.db.from('financeiro_titulos_pagar').select('id, empresa_id, anexos, op_id').eq('id', id).maybeSingle();
+  return data && empresaPermitida(ctx.permitidas, data.empresa_id) ? data as { id: number; empresa_id: number; anexos: string[] | null; op_id: string | null } : null;
+}
+
+export async function urlUploadAnexoPagarAction(tituloId: number, nomeArquivo: string, tamanho: number, accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  const t = await tituloComAnexos(ctx, Number(tituloId));
+  if (!t) return { ok: false, erro: 'Conta não encontrada.' };
+  if (Number(tamanho) > LIMITE_ANEXO_MB * 1024 * 1024) return { ok: false, erro: `Arquivo acima de ${LIMITE_ANEXO_MB} MB.` };
+  const nome = (nomeArquivo || 'arquivo').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-80) || 'arquivo';
+  const caminho = `${prefixoAnexo(t)}${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${nome}`;
+  const { data, error } = await ctx.db.storage.from(BUCKET_ANEXOS).createSignedUploadUrl(caminho);
+  if (error) return { ok: false, erro: /not found/i.test(error.message) ? 'Falta criar o bucket de anexos (.sql/Pendentes/financeiro_anexos_contas_pagar.sql).' : error.message };
+  return { ok: true, info: { caminho, token: data.token, bucket: BUCKET_ANEXOS } };
+}
+
+export async function confirmarAnexoPagarAction(tituloId: number, caminho: string, accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  const t = await tituloComAnexos(ctx, Number(tituloId));
+  if (!t) return { ok: false, erro: 'Conta não encontrada.' };
+  if (!String(caminho).startsWith(prefixoAnexo(t)) || caminho.includes('..')) return { ok: false, erro: 'Anexo inválido.' };
+  const anexos = [...new Set([...(t.anexos || []), caminho])];
+  const { error } = await ctx.db.from('financeiro_titulos_pagar').update({ anexos, atualizado_em: new Date().toISOString() }).eq('id', t.id);
+  if (error) return { ok: false, erro: error.message };
+  log(ctx.perfil.nome, 'ANEXOU ARQUIVO NA CONTA A PAGAR', `#${t.id} ${nomeDoCaminho(caminho)}`);
+  return { ok: true };
+}
+
+export async function anexosTituloPagarAction(tituloId: number, accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  const t = await tituloComAnexos(ctx, Number(tituloId));
+  if (!t) return { ok: false, erro: 'Conta não encontrada.' };
+  const caminhos = t.anexos || [];
+  let anexos: { caminho: string; nome: string; url: string | null }[] = [];
+  if (caminhos.length) {
+    const { data } = await ctx.db.storage.from(BUCKET_ANEXOS).createSignedUrls(caminhos, 1800);
+    anexos = caminhos.map((c, i) => ({ caminho: c, nome: nomeDoCaminho(c), url: data?.[i]?.signedUrl || null }));
+  }
+  let daOp: { nome: string; url: string }[] = [];
+  if (t.op_id) {
+    const { data: op } = await ctx.db.from('op_ordens_pagamento').select('numero_op, file_url, file_urls').eq('id', t.op_id).maybeSingle();
+    const urls = [...new Set([...(Array.isArray(op?.file_urls) ? op.file_urls : []), ...(op?.file_url ? [op.file_url] : [])])].filter(Boolean) as string[];
+    daOp = urls.map((u, i) => ({ nome: `OP ${op?.numero_op ?? ''} · anexo ${i + 1}`, url: u }));
+  }
+  return { ok: true, info: { anexos, daOp } };
+}
+
+export async function removerAnexoPagarAction(tituloId: number, caminho: string, accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  const t = await tituloComAnexos(ctx, Number(tituloId));
+  if (!t) return { ok: false, erro: 'Conta não encontrada.' };
+  if (!(t.anexos || []).includes(caminho)) return { ok: false, erro: 'Anexo não encontrado.' };
+  const { error } = await ctx.db.from('financeiro_titulos_pagar').update({ anexos: (t.anexos || []).filter(c => c !== caminho), atualizado_em: new Date().toISOString() }).eq('id', t.id);
+  if (error) return { ok: false, erro: error.message };
+  await ctx.db.storage.from(BUCKET_ANEXOS).remove([caminho]);
+  log(ctx.perfil.nome, 'REMOVEU ANEXO DA CONTA A PAGAR', `#${t.id} ${nomeDoCaminho(caminho)}`);
+  return { ok: true };
+}

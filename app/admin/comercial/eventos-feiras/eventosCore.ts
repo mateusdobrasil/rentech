@@ -70,6 +70,39 @@ function statusPorData(dataInicial: number, dataFinal: number, hojeSerial: numbe
   return 'Futuro';
 }
 
+// Converte objetos TCustomEvento do P2S em linhas de eventos_feiras (sync diário,
+// carga do histórico e busca sob demanda na importação de fichas — 2026-11-22).
+export async function converterEventosP2s(ambiente: AmbienteP2s, objetos: ObjetoP2s[], hojeSerial = Math.floor((Date.now() - Date.UTC(1899, 11, 30)) / 86_400_000)) {
+  const mapaNomes = await resolverNomes(ambiente, objetos.flatMap(o => [
+    refOuNull(o.LocalEventoPadrao), refOuNull(o.TipoEvento), refOuNull(o.ColaboradorResponsavel),
+    refOuNull(o.Promotor), refOuNull(o.Montadora),
+  ]));
+
+  return objetos.map(o => {
+    const localOid = refOuNull(o.LocalEventoPadrao);
+    const tipoOid = refOuNull(o.TipoEvento);
+    const colaboradorOid = refOuNull(o.ColaboradorResponsavel);
+    const promotorOid = refOuNull(o.Promotor);
+    const montadoraOid = refOuNull(o.Montadora);
+    const dataInicialNum = Number(o.DataInicial) || 0;
+    const dataFinalNum = Number(o.DataFinal) || 0;
+    return {
+      nome: String(o.Nome || '').trim(),
+      p2s_oid: o.oid,
+      data_inicial: paraDataISO(dataInicialNum),
+      data_final: paraDataISO(dataFinalNum),
+      tipo_evento: tipoOid ? (mapaNomes.get(tipoOid) || null) : null,
+      local: (localOid ? mapaNomes.get(localOid) : null) || (String(o.Local || '').trim() || null),
+      status: statusPorData(dataInicialNum, dataFinalNum, hojeSerial),
+      colaborador_responsavel: colaboradorOid ? (mapaNomes.get(colaboradorOid) || null) : null,
+      promotor: promotorOid ? (mapaNomes.get(promotorOid) || null) : null,
+      montadora: montadoraOid ? (mapaNomes.get(montadoraOid) || null) : null,
+      observacoes: String(o.Observacoes || '').trim() || null,
+      updated_at: new Date().toISOString(),
+    };
+  }).filter(r => r.nome);
+}
+
 export interface SincronizarEventosOpcoes {
   ambiente?: AmbienteP2s;
   diasRetroativos?: number;
@@ -109,34 +142,7 @@ export async function sincronizarEventosFeirasCore(opcoes: SincronizarEventosOpc
       return { ok: true, info: { processados: 0, totalEncontradas: 0 } };
     }
 
-    const mapaNomes = await resolverNomes(ambiente, resultado.objectlist.flatMap(o => [
-      refOuNull(o.LocalEventoPadrao), refOuNull(o.TipoEvento), refOuNull(o.ColaboradorResponsavel),
-      refOuNull(o.Promotor), refOuNull(o.Montadora),
-    ]));
-
-    const registrosBrutos = resultado.objectlist.map(o => {
-      const localOid = refOuNull(o.LocalEventoPadrao);
-      const tipoOid = refOuNull(o.TipoEvento);
-      const colaboradorOid = refOuNull(o.ColaboradorResponsavel);
-      const promotorOid = refOuNull(o.Promotor);
-      const montadoraOid = refOuNull(o.Montadora);
-      const dataInicialNum = Number(o.DataInicial) || 0;
-      const dataFinalNum = Number(o.DataFinal) || 0;
-      return {
-        nome: String(o.Nome || '').trim(),
-        p2s_oid: o.oid,
-        data_inicial: paraDataISO(dataInicialNum),
-        data_final: paraDataISO(dataFinalNum),
-        tipo_evento: tipoOid ? (mapaNomes.get(tipoOid) || null) : null,
-        local: (localOid ? mapaNomes.get(localOid) : null) || (String(o.Local || '').trim() || null),
-        status: statusPorData(dataInicialNum, dataFinalNum, hojeSerial),
-        colaborador_responsavel: colaboradorOid ? (mapaNomes.get(colaboradorOid) || null) : null,
-        promotor: promotorOid ? (mapaNomes.get(promotorOid) || null) : null,
-        montadora: montadoraOid ? (mapaNomes.get(montadoraOid) || null) : null,
-        observacoes: String(o.Observacoes || '').trim() || null,
-        updated_at: new Date().toISOString(),
-      };
-    }).filter(r => r.nome);
+    const registrosBrutos = await converterEventosP2s(ambiente, resultado.objectlist, hojeSerial);
 
     // upsert por p2s_oid — identificador estável do PrimeStart (a tabela tem
     // índice único em p2s_oid, além do (nome, data_inicial) herdado da

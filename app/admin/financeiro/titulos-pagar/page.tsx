@@ -15,6 +15,7 @@ import {
   painelPagarAction, buscarFornecedoresPagarAction, salvarTituloAction, baixarTituloAction, estornarTituloAction, cancelarTituloPagarAction,
   salvarRecorrenciaAction, definirFonteAction,
 } from './actions';
+import AnexosConta from './AnexosConta';
 
 // Contas a Pagar próprio + Recorrentes + OP (Financeiro completo, 2026-11-20).
 const FORMAS = ['BOLETO', 'TRANSFERÊNCIA', 'PIX', 'DÉBITO AUTOMÁTICO', 'CARTÃO', 'DINHEIRO'];
@@ -44,6 +45,7 @@ export default function TitulosPagarPage() {
   const [form, setForm] = useState<any>(null);         // título
   const [baixa, setBaixa] = useState<any>(null);
   const [rec, setRec] = useState<any>(null);           // recorrência
+  const [anexosDe, setAnexosDe] = useState<any>(null);  // conta com a janela de anexos aberta
   const [fornBusca, setFornBusca] = useState('');
   const [fornAchados, setFornAchados] = useState<any[]>([]);
 
@@ -230,6 +232,7 @@ export default function TitulosPagarPage() {
                                 : vencida ? <span className="text-red-600 font-bold">vencida</span> : <span className="text-gray-600">em aberto</span>}
                           </td>
                           <td className="p-3 whitespace-nowrap text-right space-x-2">
+                            <button onClick={() => setAnexosDe(x)} title="Anexos (boleto, nota, comprovante)" className={`text-[10px] font-black ${(x.anexos || []).length || x.op_id ? 'text-[#336699]' : 'text-gray-300 hover:text-[#336699]'}`}>📎{(x.anexos || []).length ? ` ${x.anexos.length}` : ''}</button>
                             {x.status === 'ABERTO' && x.origem !== 'OP' && <button onClick={() => abrirBaixa(x)} className="text-[10px] font-black text-white bg-[#047857] px-3 py-1.5 rounded-lg">Pagar</button>}
                             {x.status === 'ABERTO' && x.origem === 'OP' && <span className="text-[10px] text-gray-400">paga pela OP</span>}
                             {x.status === 'ABERTO' && x.origem !== 'OP' && <button onClick={() => abrirTitulo(x)} className="text-[10px] font-black text-[#336699]">editar</button>}
@@ -308,6 +311,8 @@ export default function TitulosPagarPage() {
           </div>
         )}
       </Modal>
+
+      <AnexosConta titulo={anexosDe} accessToken={accessToken as string} onClose={() => setAnexosDe(null)} onMudou={() => setRecarregar(v => v + 1)} />
 
       <Modal open={!!baixa} onClose={() => setBaixa(null)} title="💸 Pagar conta" headerColor="#047857"
         footer={<div className="flex justify-end gap-2"><button onClick={() => setBaixa(null)} className={`${btn} bg-white border border-[#E2E8F0]`}>Cancelar</button><button disabled={ocupado} onClick={salvarBaixa} className={`${btn} bg-[#047857] text-white`}>Confirmar pagamento</button></div>}>

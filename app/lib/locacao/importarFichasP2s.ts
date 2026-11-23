@@ -32,6 +32,7 @@ import type { LinhaEmpresa } from '../empresa';
 import { periodoAlocacao, daterangeInclusivo, diasInclusivos, somarDias } from './datas';
 import { empresasCongeladas } from '../virada/estado';
 import { sincronizarParceirosPorOidsCore } from '../../admin/comercial/parceiros/parceirosCore';
+import { garantirEventosPorOid } from './eventosP2s';
 
 type Db = ReturnType<typeof supabaseAdmin>;
 
@@ -116,6 +117,9 @@ async function importarSemTrava(db: Db, opcoes: OpcoesImportacao): Promise<Resul
   const itensDe = (f: ObjetoP2s) => (Array.isArray(f.Itens) ? f.Itens : []) as any[];
   const extrasDe = (f: ObjetoP2s) => (Array.isArray(f.ExtrasOrcados) ? f.ExtrasOrcados : []) as any[];
 
+  // Evento que ainda não está aqui (antigo, ou criado depois do último sync de eventos): busca
+  // no P2S antes de mapear — sem isso a ficha ficava sem evento (eventosP2s.ts, 2026-11-22).
+  await garantirEventosPorOid(db, ambiente, fichas.map(f => ref(f.Evento)).filter((x): x is string => !!x)).catch(() => 0);
   const [parceiros, produtos, eventos, vendedores, centros, { data: empresasData }] = await Promise.all([
     mapaPorP2sOid(db, 'parceiros', 'id', fichas.map(f => ref(f.Parceiro)).filter((x): x is string => !!x)),
     mapaPorP2sOid(db, 'produtos', 'id, nome_item, dias_preparo, dias_retorno', fichas.flatMap(f => itensDe(f).map(i => ref(i.ItemEstoque))).filter((x): x is string => !!x)),

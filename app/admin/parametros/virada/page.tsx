@@ -10,7 +10,7 @@ import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 import { formatarMoeda } from '../../../lib/formatadores';
-import { painelViradaAction, salvarConferenciaAction, lerP2sAgoraAction, simularViradaAction, executarViradaAction } from './actions';
+import { painelViradaAction, salvarConferenciaAction, lerP2sAgoraAction, simularViradaAction, executarViradaAction, previaEnsaioAction, limparEnsaioAction } from './actions';
 
 const ROTA = '/admin/parametros/virada';
 const ETAPA: Record<string, { rot: string; cls: string }> = {
@@ -67,6 +67,9 @@ export default function ViradaPage() {
   const [desde, setDesde] = useState('');
   const [finDesde, setFinDesde] = useState('');
   const [previas, setPrevias] = useState<Record<string, any>>({});
+  // Limpar o ensaio (2026-11-22): prévia por categoria + o que está marcado.
+  const [ensaio, setEnsaio] = useState<{ previa: any[]; categorias: any[] } | null>(null);
+  const [marcadas, setMarcadas] = useState<Record<string, boolean>>({});
 
   const carregar = useCallback(async (id: number | null) => {
     if (!accessToken) return;
@@ -111,6 +114,22 @@ export default function ViradaPage() {
     const r = await rodar(`prev-${parte}`, () => simularViradaAction(empresaId!, parte, parte === 'os' ? finDesde : desde, tok));
     if (r) setPrevias(p => ({ ...p, [parte]: r.info }));
   };
+  const verEnsaio = async () => {
+    const r = await rodar('ensaio-prev', () => previaEnsaioAction(empresaId!, tok));
+    if (r) { setEnsaio(r.info); setMarcadas(Object.fromEntries(r.info.categorias.map((c: any) => [c.chave, c.padrao]))); }
+  };
+  const limparEnsaio = async () => {
+    const escolhidas = Object.keys(marcadas).filter(k => marcadas[k]);
+    const total = (ensaio?.previa || []).filter((p: any) => marcadas[p.chave]).reduce((s: number, p: any) => s + p.qtd, 0);
+    if (!escolhidas.length || !total) { toast('Nada marcado para limpar.', 'info'); return; }
+    if (!(await confirmar({ title: 'Limpar o ensaio', message: `${empresa?.nome}: ${total} item(ns) de teste serão cancelados${marcadas.caixa ? ' (e os lançamentos de caixa feitos à mão, EXCLUÍDOS)' : ''}. Tudo fica no histórico. Continuar?`, confirmLabel: 'Limpar' }))) return;
+    const r = await rodar('ensaio-limpar', () => limparEnsaioAction(empresaId!, escolhidas as any, tok));
+    if (r) {
+      const n = Object.values(r.info.feito as Record<string, number>).reduce((s, q) => s + q, 0);
+      toast(r.info.erros.length ? `${n} item(ns) limpos; ${r.info.erros.length} com erro: ${r.info.erros.slice(0, 2).join('; ')}` : `Ensaio limpo: ${n} item(ns).`, r.info.erros.length ? 'error' : 'success');
+      await verEnsaio(); carregar(empresaId);
+    }
+  };
   const executar = async (passo: 'congelar' | 'descongelar' | 'os' | 'receber' | 'pagar' | 'concluir', titulo: string, mensagem: string) => {
     if (!(await confirmar({ title: titulo, message: mensagem, confirmLabel: titulo }))) return;
     const r = await rodar(`exec-${passo}`, () => executarViradaAction(empresaId!, passo, (passo === 'os' ? finDesde : desde) || null, tok), `${titulo}: feito.`);
@@ -132,7 +151,7 @@ export default function ViradaPage() {
 
         <div className="flex flex-wrap gap-2">
           {(info?.empresas || []).map((e: any) => (
-            <button key={e.id} onClick={() => { setPrevias({}); carregar(e.id); }} className={`px-4 py-2 rounded-xl border-2 text-xs font-black uppercase tracking-wider ${e.id === empresaId ? 'border-[#0C1D4D] bg-white' : 'border-[#E2E8F0] bg-white/60'}`}>
+            <button key={e.id} onClick={() => { setPrevias({}); setEnsaio(null); carregar(e.id); }} className={`px-4 py-2 rounded-xl border-2 text-xs font-black uppercase tracking-wider ${e.id === empresaId ? 'border-[#0C1D4D] bg-white' : 'border-[#E2E8F0] bg-white/60'}`}>
               <span className={`px-2 py-0.5 rounded ${corSeloEmpresa(e.id)}`}>{e.nome}</span>
               <span className={`ml-2 px-2 py-0.5 rounded-full text-[9px] ${ETAPA[e.etapa]?.cls}`}>{ETAPA[e.etapa]?.rot}</span>
             </button>
@@ -174,6 +193,39 @@ export default function ViradaPage() {
                       <button key={q} disabled={!!ocupado} onClick={() => ler(q, rot)} className={`${btn} bg-white border border-[#CBD5E1] text-[#0C1D4D] hover:bg-gray-50`}>{ocupado === `ler-${q}` ? 'Lendo…' : rot}</button>
                     ))}
                   </div>
+                </div>
+              )}
+              {etapa === 'PREPARACAO' && (
+                <div className="mt-4 border-t border-[#F1F5F9] pt-3">
+                  <p className="text-[11px] font-black uppercase text-gray-500 mb-1">Limpar o ensaio (antes de congelar)</p>
+                  <p className="text-xs text-gray-500 mb-2">O que a equipe criou nas telas novas durante a fase paralela é teste: sem limpar, reserva de teste ocupa a agenda e título de teste entra no DRE e no fluxo de caixa depois da virada. Nada é apagado: é cancelado e fica no histórico. OPs, checklists da Expedição e notas fiscais não são tocados.</p>
+                  {!ensaio ? (
+                    <button disabled={!!ocupado} onClick={verEnsaio} className={`${btn} bg-white border border-[#CBD5E1] text-[#0C1D4D] hover:bg-gray-50`}>{ocupado === 'ensaio-prev' ? 'Contando…' : 'Ver o que é ensaio'}</button>
+                  ) : (
+                    <>
+                      <div className="overflow-x-auto border border-[#E2E8F0] rounded-xl">
+                        <table className="w-full text-xs">
+                          <thead className="bg-[#F8FAFC]"><tr className="text-left text-[10px] font-black uppercase text-gray-500"><th className="p-2 w-8"></th><th className="p-2">O quê</th><th className="p-2 text-right">Itens</th><th className="p-2 text-right">Valor</th><th className="p-2">O que acontece</th></tr></thead>
+                          <tbody>{ensaio.categorias.map((c: any) => {
+                            const p = ensaio.previa.find((x: any) => x.chave === c.chave) || { qtd: 0, valor: null, exemplos: [] };
+                            return (
+                              <tr key={c.chave} className={`border-t border-[#F1F5F9] ${p.qtd ? '' : 'text-gray-400'}`}>
+                                <td className="p-2"><input type="checkbox" disabled={!p.qtd} checked={!!marcadas[c.chave] && !!p.qtd} onChange={e => setMarcadas(m => ({ ...m, [c.chave]: e.target.checked }))} /></td>
+                                <td className="p-2 font-bold">{c.titulo}{p.exemplos?.length > 0 && <div className="text-[10px] text-gray-400 font-normal">{p.exemplos.join(' · ')}</div>}</td>
+                                <td className="p-2 text-right font-bold">{p.qtd}</td>
+                                <td className="p-2 text-right">{p.valor ? formatarMoeda(p.valor) : '—'}</td>
+                                <td className={`p-2 ${c.chave === 'caixa' ? 'text-red-700' : 'text-gray-500'}`}>{c.acao}</td>
+                              </tr>
+                            );
+                          })}</tbody>
+                        </table>
+                      </div>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        <button disabled={!!ocupado} onClick={limparEnsaio} className={`${btn} bg-[#0C1D4D] text-white`}>{ocupado === 'ensaio-limpar' ? 'Limpando…' : 'Limpar o ensaio'}</button>
+                        <button disabled={!!ocupado} onClick={verEnsaio} className={`${btn} bg-white border border-[#CBD5E1] text-[#0C1D4D]`}>{ocupado === 'ensaio-prev' ? 'Contando…' : 'Contar de novo'}</button>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </Passo>

@@ -4,6 +4,8 @@
 
 Os cadastros que vinham do P2S agora também podem ser feitos no próprio sistema: clientes e fornecedores, produtos, eventos e feiras, e o plano de contas (centros e sub-centros). Quem é vendedor passa a ser marcado na Ficha do RH.
 
+As telas deste manual são do sistema real, em 23/11/2026, com cadastros fictícios (CLIENTE EXEMPLO e FUNCIONARIO EXEMPLO). Os formulários de produto e evento foram preenchidos só para a foto, sem salvar.
+
 | Cadastro | Onde fica | Botão | Chave contra duplicado |
 | --- | --- | --- | --- |
 | Clientes e fornecedores | Comercial → Parceiros | + Novo cliente / fornecedor | CPF ou CNPJ |
@@ -23,7 +25,9 @@ O P2S continua oficial até a virada da chave. Por isso a regra muda conforme a 
 
 ## Clientes e fornecedores
 
-**Onde fica:** Comercial → Parceiros, botão **+ Novo cliente / fornecedor**. Clicar num parceiro da lista abre o mesmo formulário para editar.
+**Onde fica:** Comercial → Parceiros, botão **+ Novo cliente / fornecedor**. Clicar num parceiro da lista abre o mesmo formulário para editar. O selo SISTEMA marca o cadastro feito aqui.
+
+![Comercial → Parceiros: a lista com o botão + Novo cliente / fornecedor](img/cadastros/01-parceiros.png)
 
 1. **Tipo:** Pessoa jurídica ou Pessoa física, e os papéis (cliente, fornecedor, transportadora).
 2. **CNPJ ou CPF:** é a chave do cadastro. Se já existir um cadastro com o mesmo documento, o sistema não salva e mostra o nome e o código do que já existe.
@@ -32,7 +36,13 @@ O P2S continua oficial até a virada da chave. Por isso a regra muda conforme a 
 5. **Telefones e e-mails:** o e-mail principal (ou o de um contato) é com o que o cliente entra no Portal do Cliente.
 6. **Contatos e outros endereços** (entrega, cobrança): botões **+ Contato** e **+ Endereço**.
 7. **Situação:** Ativo ou Bloqueado. Bloquear pede o motivo.
+![Novo cliente: os dados vieram da Receita pelo CNPJ e o endereço pelo CEP](img/cadastros/02-novo-cliente.png)
+
 8. **Carteira do vendedor:** o vendedor responsável pelo cliente. O vendedor só vê e atende os clientes da carteira dele; sem carteira, o cliente entra na carteira de quem fizer a primeira ficha.
+
+**CNPJ ou CPF repetido:** o sistema não salva e diz qual cadastro já usa o documento.
+
+![CNPJ já cadastrado: o sistema recusa e mostra o cadastro existente](img/cadastros/03-duplicado.png)
 
 ## Produtos e equipamentos
 
@@ -47,6 +57,8 @@ O P2S continua oficial até a virada da chave. Por isso a regra muda conforme a 
 - **Valor de indenização:** é o que se cobra no extravio. O custo de reposição fica ao lado.
 - **Nota fiscal:** NCM, origem da mercadoria e peso.
 
+![Novo produto: o código 01.01.0026 foi gerado pela subcategoria](img/cadastros/04-novo-produto.png)
+
 Saldos, patrimônios e kits continuam em Estoque → Equipamentos de Locação; o preço, em Locações → Tabelas de Preço.
 
 ## Eventos e feiras
@@ -56,6 +68,8 @@ Saldos, patrimônios e kits continuam em Estoque → Equipamentos de Locação; 
 - **Nome do evento** e **Data inicial** são obrigatórios. Nome + data inicial não pode repetir.
 - **Data final, local, montadora, promotor, tipo e responsável** completam o cadastro.
 - **Status:** Futuro, Em Execução ou Finalizado segue as datas sozinho e é recalculado todo dia.
+
+![Novo evento / feira](img/cadastros/05-novo-evento.png)
 
 O evento cadastrado aqui já aparece no orçamento da locação e na Expedição, que sugere endereço e datas pelas fichas do sistema.
 
@@ -67,11 +81,17 @@ O evento cadastrado aqui já aparece no orçamento da locação e na Expedição
 - **Novo sub-centro:** escolha o centro, informe o código (ex.: 6.4) e o nome.
 - Cada sub-centro novo já vira uma **natureza da OP classificada**, pronta para usar na Ordem de Pagamento.
 
+![OP → Natureza & Classificação Financeira: painel de centros e sub-centros aberto](img/cadastros/06-plano-contas.png)
+
 Antes da virada, centros e sub-centros continuam vindo do P2S. Crie aqui só o que faltar no P2S.
 
 ## Vendedor, cliente e fornecedor na Ficha do RH
 
 **Onde fica:** RH → Ficha do Funcionário, aba Essencial, painel **💼 Papéis comerciais** (abaixo de "Pode dirigir"). O painel aparece depois que a ficha é salva pela primeira vez. Cada marcação **grava na hora**, sem depender do botão Salvar.
+
+![Ficha do RH com o painel Papéis comerciais: vendedor e cliente marcados](img/cadastros/07-ficha-rh.png)
+
+Abaixo das caixas, o painel mostra o cadastro de vendedor ligado (número e origem) e o parceiro achado pelo CPF.
 
 **Vendedor.** Marcar liga a ficha ao cadastro de vendedor: o que já existe no P2S (pelo CPF, ou pelo nome quando não há CPF) ou um novo, criado pelo sistema. Carteira, comissões, fichas e o acesso usuário → vendedor usam esse cadastro.
 

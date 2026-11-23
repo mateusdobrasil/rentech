@@ -141,7 +141,8 @@ export default function ParceirosPage() {
       // Vírgula e parênteses quebram o filtro do PostgREST ("CLIENTE (X)" não achava nada).
       const texto = filtroTexto.replace(/[%_,()]/g, ' ').replace(/\s+/g, ' ').trim();
       if (texto) {
-        const termo = `%${texto}%`;
+        // espaço = qualquer coisa no meio: "EXEMPLO MANUAL" acha "EXEMPLO (MANUAL)"
+        const termo = `%${texto.replace(/ /g, '%')}%`;
         const digitos = texto.replace(/\D/g, '');
         const porDoc = digitos.length >= 5 ? `,cnpj_digitos.ilike.%${digitos}%,cpf_digitos.ilike.%${digitos}%` : '';
         query = query.or(`nome_exibicao.ilike.${termo},nome_completo.ilike.${termo},cnpj.ilike.${termo},cpf.ilike.${termo},cidade1.ilike.${termo}${porDoc}`);

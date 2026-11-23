@@ -64,10 +64,9 @@ export const MANUAIS: ManualCatalogo[] = [
     fonte: 'docs/manuais/diretor-ia.md', restrito: SO_GESTAO, // mesma audiência da tela /admin/diretoria
   },
   {
-    slug: 'ponto-whatsapp', titulo: 'Ponto via WhatsApp', grupo: 'SISTEMA', icone: '🕒', atualizadoEm: '2026-07-12',
-    descricao: 'Registro de ponto, justificativa de batida esquecida e abono pelo WhatsApp, o painel do RH e a segurança do registro (NSR e hash).',
-    aviso: 'Versão de julho de 2026. Depois dela entraram a opção Folga e os lembretes de ponto incompleto.',
-    pdf: 'docs/Manual - Ponto via WhatsApp.pdf',
+    slug: 'ponto-whatsapp', titulo: 'Ponto via WhatsApp', grupo: 'SISTEMA', icone: '🕒', atualizadoEm: '2026-11-23',
+    descricao: 'Registro, justificativa, abono e folga pelo WhatsApp, lembretes do dia seguinte, Portal e app, painel do RH e dos gestores, e a segurança do registro.',
+    fonte: 'docs/manuais/ponto-whatsapp.md',
   },
   {
     slug: 'roteiro-testes-locacao', titulo: 'Roteiro de testes da locação', grupo: 'TESTES', icone: '✅', atualizadoEm: '2026-11-23',
@@ -83,6 +82,12 @@ export const MANUAIS: ManualCatalogo[] = [
     slug: 'emissor-fiscal', titulo: 'Emissor fiscal para a locação', grupo: 'TECNICO', icone: '🧾', atualizadoEm: '2026-11-17',
     descricao: 'Recomendação do emissor de notas e os pontos para confirmar com a contabilidade.',
     fonte: 'docs/manuais/emissor-fiscal.md', restrito: SO_GESTAO,
+  },
+  {
+    slug: 'ponto-whatsapp-2026-07', titulo: 'Ponto via WhatsApp (julho de 2026)', grupo: 'ANTIGO', icone: '🕒', atualizadoEm: '2026-07-12',
+    descricao: 'Primeira versão do manual do ponto, com a implantação e a referência de arquivos.',
+    pdf: 'docs/Manual - Ponto via WhatsApp.pdf', restrito: SO_GESTAO,
+    aviso: 'Versão de julho de 2026, antes da folga, dos lembretes, do turno noturno, do Portal e do app. Para o dia a dia, use o manual Ponto via WhatsApp atual.',
   },
   {
     slug: 'rentech-web-2026-07', titulo: 'Manual Rentech WEB (julho de 2026)', grupo: 'ANTIGO', icone: '📘', atualizadoEm: '2026-07-12',

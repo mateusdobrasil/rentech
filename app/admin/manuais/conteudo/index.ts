@@ -11,5 +11,6 @@ export const CONTEUDO: Record<string, () => Promise<ConteudoManual>> = {
   "roteiro-testes-locacao": () => import("./roteiro-testes-locacao"),
   "integracao-p2s": () => import("./integracao-p2s"),
   "emissor-fiscal": () => import("./emissor-fiscal"),
+  "ponto-whatsapp-2026-07": () => import("./ponto-whatsapp-2026-07"),
   "rentech-web-2026-07": () => import("./rentech-web-2026-07"),
 };

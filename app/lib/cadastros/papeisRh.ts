@@ -16,6 +16,13 @@ import { cadastroEditavel, salvarParceiro, cpfValido, formatarCpf } from './parc
 
 type Db = ReturnType<typeof supabaseAdmin>;
 const dig = (v: unknown) => String(v ?? '').replace(/\D/g, '');
+// a ficha guarda só os dígitos do celular; o cadastro de parceiro mostra formatado
+const formatarFone = (v: unknown) => {
+  const d = dig(v);
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return d || null;
+};
 const norm = (v: unknown) => String(v ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
 
 interface Funcionario { id: string; nome_completo: string; cpf: string | null; celular: string | null; email: string | null; ativo: boolean; eh_vendedor: boolean; parceiro_id: number | null; cep: string | null; cidade: string | null; endereco: string | null; numero: string | null; complemento: string | null; bairro: string | null }
@@ -66,7 +73,7 @@ export async function definirVendedor(db: Db, funcionarioId: string, vendedor: b
       const { data: novo, error } = await db.from('colaboradores').insert({
         p2s_oid: null, origem: 'SISTEMA', funcionario_id: f.id, natureza: 'F',
         nome_completo: f.nome_completo.toUpperCase(), nome_exibicao: f.nome_completo.toUpperCase(),
-        cpf: cpf.length === 11 ? formatarCpf(cpf) : null, telefone1: f.celular, email1: f.email,
+        cpf: cpf.length === 11 ? formatarCpf(cpf) : null, telefone1: formatarFone(f.celular), email1: f.email,
         status_colaborador: f.ativo ? 'A' : 'I', flag_vendedor_rep: true, updated_at: new Date().toISOString(),
       }).select('id').single();
       if (error) throw new Error(error.message);
@@ -100,7 +107,7 @@ export async function definirPapelParceiro(db: Db, funcionarioId: string, papel:
       natureza: 'F', documento: cpf, nome_completo: f.nome_completo, nome_exibicao: f.nome_completo,
       flag_cliente: papel === 'cliente', flag_fornecedor: papel === 'fornecedor', flag_transportadora: false, status_parceiro: 'A',
       cep1: f.cep, endereco1: f.endereco, numero1: f.numero, complemento1: f.complemento, bairro1: f.bairro, cidade1: f.cidade,
-      telefone1: f.celular, email1: f.email, contatos: [], enderecos: [],
+      telefone1: formatarFone(f.celular), email1: f.email, contatos: [], enderecos: [],
       observacoes: 'Cadastro criado a partir da Ficha do RH.',
     }, usuario);
     parceiroId = r.id;

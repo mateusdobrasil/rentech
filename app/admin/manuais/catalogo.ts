@@ -44,6 +44,11 @@ export const MANUAIS: ManualCatalogo[] = [
     fonte: 'docs/manuais/cadastros.md',
   },
   {
+    slug: 'relatorios', titulo: 'Relatórios do sistema', grupo: 'SISTEMA', icone: '📊', atualizadoEm: '2026-11-24',
+    descricao: 'Todos os relatórios por área (Gestão e vendas, RH, Financeiro, Operacional e Diretoria), o que cada um mostra e o link para abrir.',
+    fonte: 'docs/manuais/relatorios.md',
+  },
+  {
     slug: 'inventario-estoque', titulo: 'Inventário de Estoque', grupo: 'SISTEMA', icone: '📦', atualizadoEm: '2026-11-23',
     descricao: 'Passo a passo da contagem do depósito: abrir o inventário, contar por quantidade, ler os patrimônios, conferir as divergências e aplicar.',
     fonte: 'docs/manuais/inventario-estoque.md',

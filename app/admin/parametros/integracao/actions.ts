@@ -8,6 +8,7 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { segredo } from '../../../lib/cofre/segredos';
 import { certificadoA1PorCnpj } from '../../../lib/cofre/certificado';
+import { configConsignado } from '../../../lib/cofre/consignado';
 import { enviarComProvedor, type ProvedorWhatsApp } from '../../../lib/whatsapp';
 import { enviarWhatsAppMetaTemplate } from '../../../lib/metaWhatsapp';
 import { statusCredenciaisP2s, testarConexao as testarConexaoP2s, type AmbienteP2s } from '../../../lib/p2s';
@@ -160,15 +161,16 @@ export async function statusItauApiAction(accessToken: string): Promise<Resultad
 export async function statusGovBrConsignadoAction(accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
-  const certConsignado = await certificadoA1PorCnpj(process.env.GOVBR_CONSIGNADO_CNPJ || '');
+  const cfgConsignado = await configConsignado();
+  const certConsignado = await certificadoA1PorCnpj(cfgConsignado.cnpj);
 
   return {
     ok: true,
     info: {
-      cnpjConfigurado: !!process.env.GOVBR_CONSIGNADO_CNPJ,
+      cnpjConfigurado: !!cfgConsignado.cnpj,
       certificadoConfigurado: !!(certConsignado?.pfxBase64 || process.env.GOVBR_CONSIGNADO_CERT_PFX_PATH),
       senhaConfigurado: !!(certConsignado?.senha || process.env.GOVBR_CONSIGNADO_CERT_SENHA),
-      ambiente: (process.env.GOVBR_CONSIGNADO_AMBIENTE || 'homologacao').toLowerCase(),
+      ambiente: cfgConsignado.ambiente,
     }
   };
 }

@@ -253,6 +253,10 @@ export async function salvarCredencialAction(payload: { empresaId: number | null
   let valor = String(payload.valor ?? '');
   if (c.campo.tipo !== 'arquivo') valor = valor.trim();
   if (!valor) return { ok: false, erro: 'Informe o valor.' };
+  if (c.campo.nome === 'GOVBR_CONSIGNADO_AMBIENTE') {
+    valor = valor.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (valor !== 'producao' && valor !== 'homologacao') return { ok: false, erro: 'Ambiente: escreva producao ou homologacao.' };
+  }
   if (valor.length > 200_000) return { ok: false, erro: 'Valor grande demais.' };
   if (c.campo.tipo === 'arquivo') {
     // arquivo chega em base64; PEM/KEY precisa ser texto "-----BEGIN"

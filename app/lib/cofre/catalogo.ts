@@ -42,6 +42,11 @@ export const SERVICOS_COFRE: ServicoCofre[] = [
     ],
   },
   {
+    id: 'CONSIGNADO', titulo: 'Consignado GOV.BR (Dataprev)', icone: '💳', escopo: 'EMPRESA',
+    usadoEm: 'Consulta diária do Crédito do Trabalhador com o CNPJ e o certificado A1 desta empresa. Preencher aqui liga a consulta para esta empresa.',
+    campos: [{ nome: 'GOVBR_CONSIGNADO_AMBIENTE', rotulo: 'Ambiente', tipo: 'texto', ajuda: 'Escreva producao ou homologacao.' }],
+  },
+  {
     id: 'FOCUS_NFE', titulo: 'Focus NFe (notas fiscais)', icone: '🧾', escopo: 'EMPRESA',
     usadoEm: 'Emissão de NF-e, NFS-e e MDF-e.',
     campos: [

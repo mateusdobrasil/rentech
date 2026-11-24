@@ -55,13 +55,16 @@ export default function RelatorioColaboradores({ accessToken, filtroEmpresa, nom
   const toast = useToast();
   const [carregando, setCarregando] = useState(true);
   const [linhas, setLinhas] = useState<LinhaColaborador[]>([]);
+  // salário e benefícios só para quem acessa o Financeiro (decidido no servidor)
+  const [podeVerValores, setPodeVerValores] = useState(false);
 
   const [situacao, setSituacao] = useState<FiltroSituacao>('EM_QUADRO');
   const [departamento, setDepartamento] = useState('TODOS');
   const [contrato, setContrato] = useState('TODOS');
   const [busca, setBusca] = useState('');
   const [verContato, setVerContato] = useState(true);
-  const [verRemuneracao, setVerRemuneracao] = useState(true);
+  const [marcouRemuneracao, setVerRemuneracao] = useState(true);
+  const verRemuneracao = podeVerValores && marcouRemuneracao;
   const [exportando, setExportando] = useState(false);
 
   useEffect(() => {
@@ -71,7 +74,7 @@ export default function RelatorioColaboradores({ accessToken, filtroEmpresa, nom
     relatorioColaboradoresAction(accessToken)
       .then(r => {
         if (!vivo) return;
-        if (r.ok) setLinhas(r.info.linhas || []);
+        if (r.ok) { setLinhas(r.info.linhas || []); setPodeVerValores(!!r.info.verRemuneracao); }
         else toast('Colaboradores: ' + (r.erro || 'não foi possível carregar.'), 'error');
       })
       .catch(e => vivo && toast('Colaboradores: ' + e.message, 'error'))
@@ -189,7 +192,7 @@ export default function RelatorioColaboradores({ accessToken, filtroEmpresa, nom
       <div className="bg-white p-4 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col sm:flex-row justify-between items-center gap-4 mb-4 no-print print:hidden">
         <div>
           <h2 className="text-lg font-black text-[#7C3AED] uppercase tracking-wider">👥 Relatório de Colaboradores</h2>
-          <p className="text-sm text-[#64748B]">Ficha cadastral, contato e remuneração de cada colaborador — situação de hoje, não depende do mês selecionado acima.</p>
+          <p className="text-sm text-[#64748B]">Ficha cadastral, contato{podeVerValores ? ' e remuneração' : ''} de cada colaborador — situação de hoje, não depende do mês selecionado acima.{!carregando && !podeVerValores && ' Salário e benefícios aparecem só para quem tem acesso ao Financeiro.'}</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <button onClick={onVoltar} className="text-[#64748B] font-bold text-sm hover:text-[#0C1D4D] transition-colors flex items-center gap-2">⬅ Relatório Completo</button>
@@ -227,7 +230,9 @@ export default function RelatorioColaboradores({ accessToken, filtroEmpresa, nom
         />
         <div className="flex items-center gap-4 text-xs font-black uppercase tracking-wider text-[#334155]">
           <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={verContato} onChange={e => setVerContato(e.target.checked)} /> Contato</label>
-          <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={verRemuneracao} onChange={e => setVerRemuneracao(e.target.checked)} /> Salário e benefícios</label>
+          {podeVerValores && (
+            <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={marcouRemuneracao} onChange={e => setVerRemuneracao(e.target.checked)} /> Salário e benefícios</label>
+          )}
         </div>
       </div>
 

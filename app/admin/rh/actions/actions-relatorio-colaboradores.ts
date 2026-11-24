@@ -8,12 +8,17 @@
 // Montado no servidor: salário e benefícios são dado sensível, e a restrição
 // por empresa sai do perfil de quem pede (obterEmpresasPermitidas), nunca de
 // um valor vindo da tela.
+//
+// Salário, diária, benefícios e bônus só saem para quem também tem acesso ao
+// Financeiro (rota /admin/financeiro, com o 2FA dela) — decisão de 2026-11-24.
+// O perfil RH vê a lista, a situação e o contato, sem valores.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { validarAcesso, obterEmpresasPermitidas } from '../../../lib/serverAuth';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
 const ROTA = '/admin/rh/relatorios';
+const ROTA_VALORES = '/admin/financeiro';
 
 export type SituacaoColaborador = 'ATIVO' | 'FERIAS' | 'AFASTADO' | 'DESLIGADO';
 
@@ -70,18 +75,22 @@ export async function relatorioColaboradoresAction(accessToken: string): Promise
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     const hoje = hojeISO();
     const mesAtual = hoje.slice(0, 7);
+    // valores só para quem acessa o Financeiro; sem isso nem são consultados
+    const verRemuneracao = (await validarAcesso(accessToken, ROTA_VALORES)).ok;
+    const nada = Promise.resolve({ data: [] as any[], error: null });
 
     let qFuncs = db.from('folha_funcionarios').select(
       'id, nome_completo, cpf, empresa_id, cargo, departamento, tipo_contrato, data_admissao, data_desligamento, data_nascimento, ativo, ' +
-      'celular, email, cep, cidade, endereco, numero, complemento, bairro, salario_folha, salario_contrato, valor_diaria'
+      'celular, email, cep, cidade, endereco, numero, complemento, bairro' +
+      (verRemuneracao ? ', salario_folha, salario_contrato, valor_diaria' : '')
     ).order('nome_completo');
     if (empresasPermitidas) qFuncs = qFuncs.in('empresa_id', empresasPermitidas);
 
     const [funcsRes, benRes, tiposRes, bonusRes, feriasRes, afastRes, tiposAfastRes] = await Promise.all([
       qFuncs,
-      db.from('folha_beneficios').select('funcionario_id, funcionario_nome, tipo_id, valor_mensal, modalidade, qtd_dias').eq('ativo', true),
-      db.from('folha_beneficio_tipos').select('id, nome'),
-      db.from('folha_bonus').select('funcionario_id, funcionario_nome, descricao, valor, mes_referencia, mes_fim').eq('recorrencia', 'MENSAL'),
+      !verRemuneracao ? nada : db.from('folha_beneficios').select('funcionario_id, funcionario_nome, tipo_id, valor_mensal, modalidade, qtd_dias').eq('ativo', true),
+      !verRemuneracao ? nada : db.from('folha_beneficio_tipos').select('id, nome'),
+      !verRemuneracao ? nada : db.from('folha_bonus').select('funcionario_id, funcionario_nome, descricao, valor, mes_referencia, mes_fim').eq('recorrencia', 'MENSAL'),
       db.from('folha_ferias').select('funcionario_id, funcionario_nome, data_inicio_gozo, data_fim_gozo, status')
         .lte('data_inicio_gozo', hoje).gte('data_fim_gozo', hoje),
       db.from('folha_afastamentos').select('funcionario_id, funcionario_nome, tipo_id, data_inicio, data_fim, status')
@@ -177,7 +186,7 @@ export async function relatorioColaboradoresAction(accessToken: string): Promise
       };
     });
 
-    return { ok: true, info: { linhas, geradoEm: hoje } };
+    return { ok: true, info: { linhas, geradoEm: hoje, verRemuneracao } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

@@ -10,7 +10,7 @@
 // - `dias_semana` continua valendo.
 // O corpo do e-mail é montado aqui (HTML + texto), com o relatório completo —
 // o campo `mensagem` do card não é usado por estas rotinas.
-import nodemailer from 'nodemailer';
+import { transporteSmtp } from '../cofre/smtp';
 import { supabaseAdmin } from '../supabase';
 
 type DB = ReturnType<typeof supabaseAdmin>;
@@ -61,20 +61,15 @@ export async function enviarPeloCard(db: DB, chaveCard: string, hojeISO: string,
   const comEmail = ((pessoas || []) as { nome_completo: string; email: string | null }[]).filter(p => (p.email || '').includes('@'));
   const semEmail = nomes.filter(n => !comEmail.some(p => p.nome_completo === n));
   if (!comEmail.length) return nao(`Não enviado: ${semEmail.join(', ')} sem e-mail na Ficha do Funcionário.`);
-  if (!process.env.SMTP_HOST || !process.env.SMTP_USER) return nao('Não enviado: SMTP não configurado no servidor.');
-
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT) || 465,
-    secure: Number(process.env.SMTP_PORT) === 465,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
+  const smtp = await transporteSmtp();
+  if (!smtp) return nao('Não enviado: e-mail (SMTP) não configurado em Parâmetros → Empresas → Sistema → Credenciais.');
+  const { transporter } = smtp;
 
   let enviados = 0;
   const falhas: string[] = [];
   for (const p of comEmail) {
     try {
-      await transporter.sendMail({ from: `"Diretor (IA) · Rentech" <${process.env.SMTP_USER}>`, to: p.email!, subject: email.assunto, text: email.texto, html: email.html });
+      await transporter.sendMail({ from: `"Diretor (IA) · Rentech" <${smtp.remetente}>`, to: p.email!, subject: email.assunto, text: email.texto, html: email.html });
       enviados++;
     } catch (e: any) {
       falhas.push(`${p.nome_completo} (${e?.message || 'erro'})`);

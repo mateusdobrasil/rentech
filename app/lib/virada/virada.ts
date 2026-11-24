@@ -117,7 +117,7 @@ export async function checklistVirada(db: Db, empresaId: number) {
   ]);
   let tokenOk: boolean | null = null;
   if (fiscal.data?.ativo) {
-    try { const r = await focus('PRODUCAO', 'GET', '/v2/nfe/teste-virada-inexistente'); tokenOk = r.http === 404; } catch { tokenOk = false; }
+    try { const r = await focus('PRODUCAO', 'GET', '/v2/nfe/teste-virada-inexistente', undefined, empresaId); tokenOk = r.http === 404; } catch { tokenOk = false; }
   }
   const semValor = ((prods.data || []) as any[]).filter(p => !(n(p.valor_indenizacao) > 0) && !(n(p.custo_reposicao) > 0)).length;
   const regrasAtivas = ((regras.data || []) as any[]).filter(r => r.ativo && n(r.pct_locacao) > 0).length;

@@ -28,12 +28,12 @@ export async function dadosAfdAction(accessToken: string): Promise<Resultado<Dad
     const permitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
     const { data: emps, error } = await db.from('empresas').select('id, razao_social, nome, nome_curto, cnpj, ativo').order('id');
     if (error) throw new Error(error.message);
-    const empresas = (emps || [])
+    const empresas = await Promise.all((emps || [])
       .filter(e => e.ativo !== false && empresaPermitida(permitidas, e.id) && dig(e.cnpj).length === 14)
-      .map(e => {
-        const cert = certificadoDaEmpresa(e.cnpj);
+      .map(async e => {
+        const cert = await certificadoDaEmpresa(e.cnpj);
         return { id: e.id, nome: e.nome_curto || e.nome || e.razao_social, cnpj: dig(e.cnpj), certificado: cert ? { titular: cert.titular, validoAte: cert.validoAte } : null };
-      });
+      }));
     return { ok: true, info: { parametros: await lerParametrosAfd(db), empresas, coletores: COLETORES_AFD } };
   } catch (e) {
     return { ok: false, erro: (e as Error).message };

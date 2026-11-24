@@ -237,7 +237,7 @@ export async function carregarPainelMultasAction(accessToken: string): Promise<R
     const empresas = ((empresasRes.data || []) as { id: number; nome: string }[])
       .filter(e => !auth.empresasPermitidas || auth.empresasPermitidas.includes(e.id));
 
-    return { ok: true, info: { veiculos, debitos, consultas, empresas, provedorConfigurado: provedorConfigurado(), certificado, leituraConfigurada: leituraConfigurada(), prefeituraSpConfigurada: prefeituraSpConfigurada(), pedagios, pedagiosDisponivel, privilegiado: auth.privilegiado } };
+    return { ok: true, info: { veiculos, debitos, consultas, empresas, provedorConfigurado: await provedorConfigurado(), certificado, leituraConfigurada: await leituraConfigurada(), prefeituraSpConfigurada: await prefeituraSpConfigurada(), pedagios, pedagiosDisponivel, privilegiado: auth.privilegiado } };
   } catch (e) {
     return { ok: false, erro: e instanceof Error ? e.message : String(e) };
   }

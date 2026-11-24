@@ -11,6 +11,7 @@
 // proteção contra POSTs arbitrários vindos da internet.
 import { NextRequest, NextResponse } from 'next/server';
 import { enviarWhatsApp } from '../../../lib/zapi';
+import { segredo } from '../../../lib/cofre/segredos';
 import { resolverProvedor } from '../../../lib/whatsapp';
 import { processarMensagemPontoWhatsApp, type AnexoWhatsApp } from '../../../lib/pontoWhatsapp';
 
@@ -36,7 +37,8 @@ function extrairMensagem(body: any): { telefone: string | null; texto: string; m
 export async function POST(req: NextRequest) {
   try {
     const token = req.nextUrl.searchParams.get('token');
-    if (!process.env.ZAPI_WEBHOOK_SECRET || token !== process.env.ZAPI_WEBHOOK_SECRET) {
+    const segredoWebhook = await segredo('ZAPI_WEBHOOK_SECRET');
+    if (!segredoWebhook || token !== segredoWebhook) {
       return NextResponse.json({ ok: false, erro: 'Token inválido.' }, { status: 401 });
     }
 

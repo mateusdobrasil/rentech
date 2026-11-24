@@ -45,6 +45,7 @@ import { randomUUID } from 'crypto';
 import https from 'node:https';
 import fs from 'node:fs';
 import { supabaseAdmin } from './supabase';
+import { segredo } from './cofre/segredos';
 
 export type AmbienteItau = 'SANDBOX' | 'PRODUCAO';
 
@@ -102,11 +103,12 @@ interface CertificadoCliente { cert: Buffer; key: Buffer; }
 // ecoa o certificado de volta no header x-itau-client-cert, mas rejeita a
 // combinação). Por isso o certificado também é por ambiente, como
 // credenciaisAmbiente.
-function carregarCertificadoCliente(ambiente: AmbienteItau): CertificadoCliente | null {
+// Base64 vem do cofre da empresa (Parâmetros → Empresas → Credenciais) ou da Vercel.
+async function carregarCertificadoCliente(ambiente: AmbienteItau): Promise<CertificadoCliente | null> {
   const sufixo = ambiente === 'SANDBOX' ? 'SANDBOX' : 'PRODUCAO';
-  const certBase64 = process.env[`ITAU_API_CERT_PEM_BASE64_${sufixo}`];
+  const certBase64 = await segredo(`ITAU_API_CERT_PEM_BASE64_${sufixo}`);
   const certPath = process.env[`ITAU_API_CERT_PEM_PATH_${sufixo}`];
-  const keyBase64 = process.env[`ITAU_API_CERT_KEY_BASE64_${sufixo}`];
+  const keyBase64 = await segredo(`ITAU_API_CERT_KEY_BASE64_${sufixo}`);
   const keyPath = process.env[`ITAU_API_CERT_KEY_PATH_${sufixo}`];
   if (!(certBase64 || certPath) || !(keyBase64 || keyPath)) return null;
   try {
@@ -122,18 +124,18 @@ function carregarCertificadoCliente(ambiente: AmbienteItau): CertificadoCliente 
 // próprio client_id/client_secret (confirmado: as credenciais de sandbox
 // vieram com um client_id diferente do de produção) — por isso essas duas
 // variáveis têm sufixo por ambiente, diferente de "client_id" sozinho.
-function credenciaisAmbiente(ambiente: AmbienteItau): { clientId?: string; clientSecret?: string } {
+async function credenciaisAmbiente(ambiente: AmbienteItau): Promise<{ clientId?: string; clientSecret?: string }> {
   const sufixo = ambiente === 'SANDBOX' ? 'SANDBOX' : 'PRODUCAO';
   return {
-    clientId: process.env[`ITAU_API_CLIENT_ID_${sufixo}`],
-    clientSecret: process.env[`ITAU_API_CLIENT_SECRET_${sufixo}`],
+    clientId: await segredo(`ITAU_API_CLIENT_ID_${sufixo}`),
+    clientSecret: await segredo(`ITAU_API_CLIENT_SECRET_${sufixo}`),
   };
 }
 
-export function credenciaisItauConfiguradas(ambiente: AmbienteItau): boolean {
-  const { clientId, clientSecret } = credenciaisAmbiente(ambiente);
+export async function credenciaisItauConfiguradas(ambiente: AmbienteItau): Promise<boolean> {
+  const { clientId, clientSecret } = await credenciaisAmbiente(ambiente);
   const precisaCertificado = AMBIENTES_QUE_EXIGEM_CERTIFICADO.includes(ambiente);
-  return !!(clientId && clientSecret && (!precisaCertificado || carregarCertificadoCliente(ambiente)));
+  return !!(clientId && clientSecret && (!precisaCertificado || await carregarCertificadoCliente(ambiente)));
 }
 
 interface TokenCache { token: string; expiraEm: number; }
@@ -152,11 +154,12 @@ async function obterToken(ambiente: AmbienteItau): Promise<string> {
   if (cache && cache.expiraEm > Date.now() + 30_000) return cache.token;
 
   const tokenUrl = process.env.ITAU_API_TOKEN_URL || TOKEN_URL_PADRAO[ambiente];
-  const { clientId, clientSecret } = credenciaisAmbiente(ambiente);
+  const { clientId, clientSecret } = await credenciaisAmbiente(ambiente);
   if (!clientId || !clientSecret) {
     throw new Error(`Credenciais da API do Itaú não configuradas no servidor para o ambiente ${ambiente} (ITAU_API_CLIENT_ID_${ambiente} / ITAU_API_CLIENT_SECRET_${ambiente}).`);
   }
-  if (AMBIENTES_QUE_EXIGEM_CERTIFICADO.includes(ambiente) && !carregarCertificadoCliente(ambiente)) {
+  const certificadoToken = await carregarCertificadoCliente(ambiente);
+  if (AMBIENTES_QUE_EXIGEM_CERTIFICADO.includes(ambiente) && !certificadoToken) {
     throw new Error(`Certificado cliente (mTLS) não configurado no servidor para o ambiente ${ambiente} — obrigatório até para gerar token nesse ambiente.`);
   }
 
@@ -164,7 +167,7 @@ async function obterToken(ambiente: AmbienteItau): Promise<string> {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret }).toString(),
-    cliente: carregarCertificadoCliente(ambiente),
+    cliente: certificadoToken,
   });
   if (status < 200 || status >= 300 || !data?.access_token) {
     const erro: any = new Error(`Falha ao autenticar na API do Itaú (HTTP ${status}): ${data?.error_description || data?.error || data?.mensagem || 'resposta inválida'}`);
@@ -185,8 +188,8 @@ async function obterToken(ambiente: AmbienteItau): Promise<string> {
 // Especificação Técnica ("A informação que deve ser usada nesse campo é o
 // client_id") — não existe
 // um apikey separado.
-function apiKey(ambiente: AmbienteItau): string {
-  const { clientId } = credenciaisAmbiente(ambiente);
+async function apiKey(ambiente: AmbienteItau): Promise<string> {
+  const { clientId } = await credenciaisAmbiente(ambiente);
   if (!clientId) throw new Error(`ITAU_API_CLIENT_ID_${ambiente} (usado também como x-itau-apikey) não configurado no servidor.`);
   return clientId;
 }
@@ -238,7 +241,7 @@ async function chamarApi(
   ambiente: AmbienteItau, path: string,
   init: { method?: string; body?: string; query?: Record<string, string | undefined> } = {}
 ): Promise<{ status: number; ok: boolean; data: any }> {
-  const cliente = carregarCertificadoCliente(ambiente);
+  const cliente = await carregarCertificadoCliente(ambiente);
   if (!cliente && AMBIENTES_QUE_EXIGEM_CERTIFICADO.includes(ambiente)) {
     throw new Error(`Certificado cliente (mTLS) não configurado no servidor para o ambiente ${ambiente} — faltam ITAU_API_CERT_PEM_BASE64_${ambiente} e/ou ITAU_API_CERT_KEY_BASE64_${ambiente}. Veja solicitarCertificadoItau().`);
   }
@@ -261,7 +264,7 @@ async function chamarApi(
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`,
-      'x-itau-apikey': apiKey(ambiente),
+      'x-itau-apikey': await apiKey(ambiente),
       'x-itau-flowID': 'FOLHA_PIX',
       'x-itau-correlationID': randomUUID(),
     },
@@ -555,7 +558,7 @@ export async function contextoEnvioItau(): Promise<{ ok: true; ambiente: Ambient
   if (!integ) return { ok: false, erro: 'Integração com o Itaú não encontrada (ver Integrações).' };
   if (!integ.ativo) return { ok: false, erro: 'A integração com o Itaú não está ativa (ver Integrações → ⚙ Configurar).' };
   const ambiente: AmbienteItau = integ.ambiente === 'PRODUCAO' ? 'PRODUCAO' : 'SANDBOX';
-  if (!credenciaisItauConfiguradas(ambiente)) {
+  if (!(await credenciaisItauConfiguradas(ambiente))) {
     return { ok: false, erro: `Credenciais da API do Itaú não configuradas no servidor para o ambiente ${ambiente}.` };
   }
   return { ok: true, ambiente };

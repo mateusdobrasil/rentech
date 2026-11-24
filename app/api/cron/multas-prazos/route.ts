@@ -27,7 +27,7 @@ export async function GET(request: Request) {
 
   const { data: card } = await db.from('parametros_automacoes').select('ativo').eq('chave', CHAVE_CARD_CONTROLE).maybeSingle();
   if (!card || card.ativo === false) return NextResponse.json({ success: true, executado: false, motivo: 'Rotina desativada em Agendamentos e Disparos.' });
-  if (!provedorConfigurado()) return NextResponse.json({ success: false, executado: false, motivo: 'Infosimples sem token/certificado configurado.' });
+  if (!(await provedorConfigurado())) return NextResponse.json({ success: false, executado: false, motivo: 'Infosimples sem token/certificado configurado.' });
   const cert = await validadeCertificadoA1();
   if (cert && cert.diasRestantes < 0) return NextResponse.json({ success: false, executado: false, motivo: 'Certificado A1 vencido.' });
 

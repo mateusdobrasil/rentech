@@ -1,13 +1,15 @@
 // Envio de WhatsApp via Z-API. Uso exclusivo em código de servidor
 // (Server Actions / Route Handlers) — nunca importar em componentes client.
 
+import { segredo } from './cofre/segredos';
+
 export async function enviarWhatsApp(celular: string, mensagem: string): Promise<{ ok: boolean; erro?: string }> {
-  const ZAPI_INSTANCE = process.env.ZAPI_INSTANCE;
-  const ZAPI_TOKEN = process.env.ZAPI_TOKEN;
-  const ZAPI_CLIENT_TOKEN = process.env.API_CLIENT_TOKEN;
+  const ZAPI_INSTANCE = await segredo('ZAPI_INSTANCE');
+  const ZAPI_TOKEN = await segredo('ZAPI_TOKEN');
+  const ZAPI_CLIENT_TOKEN = await segredo('API_CLIENT_TOKEN');
 
   if (!ZAPI_INSTANCE || !ZAPI_TOKEN) {
-    return { ok: false, erro: 'Credenciais da Z-API não configuradas nas variáveis de ambiente.' };
+    return { ok: false, erro: 'Credenciais da Z-API não configuradas (Parâmetros → Empresas → Sistema → Credenciais).' };
   }
 
   const celularLimpo = (celular || '').replace(/\D/g, '');

@@ -1205,7 +1205,7 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
       return { ok: false, erro: 'A integração com o Itaú ainda não está ativa. Ative em Integrações → ⚙ Configurar antes de enviar. O lote está salvo e pode ser exportado.' };
     }
     const ambienteItau: 'SANDBOX' | 'PRODUCAO' = integ.ambiente === 'PRODUCAO' ? 'PRODUCAO' : 'SANDBOX';
-    if (!credenciaisItauConfiguradas(ambienteItau)) {
+    if (!(await credenciaisItauConfiguradas(ambienteItau))) {
       return { ok: false, erro: `Credenciais da API do Itaú não configuradas no servidor para o ambiente ${ambienteItau} (ver Integrações → ⚙ Configurar Itaú). O lote está salvo e pode ser exportado.` };
     }
 

@@ -14,6 +14,7 @@
 // Z-API, que usa um token na própria URL.
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
+import { segredo } from '../../../lib/cofre/segredos';
 import { enviarWhatsAppMeta, resolverMidiaMeta } from '../../../lib/metaWhatsapp';
 import { resolverProvedor } from '../../../lib/whatsapp';
 import { processarMensagemPontoWhatsApp, type AnexoWhatsApp } from '../../../lib/pontoWhatsapp';
@@ -24,14 +25,15 @@ export async function GET(req: NextRequest) {
   const token = req.nextUrl.searchParams.get('hub.verify_token');
   const challenge = req.nextUrl.searchParams.get('hub.challenge');
 
-  if (modo === 'subscribe' && token && process.env.META_WEBHOOK_VERIFY_TOKEN && token === process.env.META_WEBHOOK_VERIFY_TOKEN) {
+  const verifyToken = await segredo('META_WEBHOOK_VERIFY_TOKEN');
+  if (modo === 'subscribe' && token && verifyToken && token === verifyToken) {
     return new NextResponse(challenge || '', { status: 200 });
   }
   return NextResponse.json({ ok: false, erro: 'Verify token inválido.' }, { status: 403 });
 }
 
-function assinaturaValida(corpoBruto: string, assinaturaHeader: string | null): boolean {
-  const appSecret = process.env.META_APP_SECRET;
+async function assinaturaValida(corpoBruto: string, assinaturaHeader: string | null): Promise<boolean> {
+  const appSecret = await segredo('META_APP_SECRET');
   if (!appSecret || !assinaturaHeader) return false;
 
   const esperada = 'sha256=' + crypto.createHmac('sha256', appSecret).update(corpoBruto).digest('hex');
@@ -78,7 +80,7 @@ async function extrairMensagem(value: any): Promise<MensagemMeta | null> {
 export async function POST(req: NextRequest) {
   try {
     const corpoBruto = await req.text();
-    if (!assinaturaValida(corpoBruto, req.headers.get('x-hub-signature-256'))) {
+    if (!(await assinaturaValida(corpoBruto, req.headers.get('x-hub-signature-256')))) {
       return NextResponse.json({ ok: false, erro: 'Assinatura inválida.' }, { status: 401 });
     }
 

@@ -15,6 +15,7 @@ import {
   type ColetorAfd, type RepPAfd,
 } from './afd';
 import { assinarCadesDestacado, infoCertificado, type CertificadoA1 } from './assinaturaCades';
+import { certificadoA1PorCnpj } from '../cofre/certificado';
 
 type Db = ReturnType<typeof supabaseAdmin>;
 const dig = (v: unknown) => String(v ?? '').replace(/\D/g, '');
@@ -29,10 +30,12 @@ export async function lerParametrosAfd(db: Db): Promise<ParametrosAfd> {
   return { inpiRegistro: data?.inpi_registro || '', desenvolvedorDocumento: data?.desenvolvedor_documento || '', coletor: (data?.coletor || '01') as ColetorAfd };
 }
 
-/** Certificado A1 da empresa: o .pfx do ambiente vale se o CNPJ dele for o da empresa. */
-export function certificadoDaEmpresa(cnpjEmpresa: string): { cert: CertificadoA1; titular: string; validoAte: string } | null {
+/** Certificado A1 da empresa: o do cofre da empresa, ou um .pfx da Vercel — vale se o CNPJ dele for o da empresa. */
+export async function certificadoDaEmpresa(cnpjEmpresa: string): Promise<{ cert: CertificadoA1; titular: string; validoAte: string } | null> {
   const e = process.env;
+  const doCofre = await certificadoA1PorCnpj(cnpjEmpresa);
   const opcoes: [string | undefined, string | undefined][] = [
+    [doCofre?.pfxBase64, doCofre?.senha],
     [e.AFD_CERT_PFX_BASE64, e.AFD_CERT_SENHA],
     [e.GOVBR_CONSIGNADO_CERT_PFX_BASE64, e.GOVBR_CONSIGNADO_CERT_SENHA],
     [e.INFOSIMPLES_PFX_BASE64, e.INFOSIMPLES_PFX_SENHA],
@@ -180,7 +183,7 @@ export async function gerarAfd(db: Db, opts: { empresaId: number; inicio: string
   const avisos: string[] = [];
   if (!params.inpiRegistro) avisos.push('Sem o número de registro no INPI: o cabeçalho e o nome do arquivo saem com zeros.');
   if (!linhas.length) avisos.push('Nenhuma marcação desta empresa no período.');
-  const cert = certificadoDaEmpresa(cnpj);
+  const cert = await certificadoDaEmpresa(cnpj);
   let p7s: Buffer | null = null;
   if (cert) p7s = assinarCadesDestacado(txt, cert.cert, agora).p7s;
   else avisos.push('Sem certificado digital (e-CNPJ A1) desta empresa: o .p7s não foi gerado.');

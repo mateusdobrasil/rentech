@@ -120,7 +120,7 @@ async function gravarEEnviar(db: Db, base: {
   if (error) throw error;
   let r;
   try {
-    r = await focus(base.ambiente, 'POST', `/v2/${base.tipo === 'NFE' ? 'nfe' : 'nfse'}?ref=${ref}`, base.payload);
+    r = await focus(base.ambiente, 'POST', `/v2/${base.tipo === 'NFE' ? 'nfe' : 'nfse'}?ref=${ref}`, base.payload, base.empresaId);
   } catch (e: any) {
     // falha de rede: a nota pode ter chegado — fica PROCESSANDO e a consulta resolve
     await db.from('fiscal_notas').update({ mensagem: `Sem resposta da Focus (${e.message}). Consulte de novo em instantes.`, atualizado_em: new Date().toISOString() }).eq('id', nota.id);
@@ -160,9 +160,9 @@ async function aplicarResposta(db: Db, id: number, _amb: AmbienteFiscal, c: any)
 }
 
 export async function consultarNota(db: Db, id: number) {
-  const { data: f } = await db.from('fiscal_notas').select('id, tipo, ambiente, ref, status').eq('id', id).maybeSingle();
+  const { data: f } = await db.from('fiscal_notas').select('id, empresa_id, tipo, ambiente, ref, status').eq('id', id).maybeSingle();
   if (!f) throw new Error('Nota não encontrada.');
-  const r = await focus(f.ambiente, 'GET', `/v2/${f.tipo === 'NFE' ? 'nfe' : 'nfse'}/${f.ref}`);
+  const r = await focus(f.ambiente, 'GET', `/v2/${f.tipo === 'NFE' ? 'nfe' : 'nfse'}/${f.ref}`, undefined, f.empresa_id);
   if (r.http === 404) {
     if (f.status === 'PROCESSANDO') await db.from('fiscal_notas').update({ status: 'ERRO', mensagem: 'A Focus não recebeu esta nota (não encontrada). Emita de novo.', atualizado_em: new Date().toISOString() }).eq('id', id);
     return { status: f.status === 'PROCESSANDO' ? 'ERRO' : f.status, mensagem: 'Nota não encontrada na Focus.' };
@@ -183,10 +183,10 @@ export async function atualizarProcessando(db: Db, limite = 30) {
 export async function cancelarNota(db: Db, id: number, justificativa: string, usuario: string) {
   const j = limpo(justificativa);
   if (j.length < 15 || j.length > 255) throw new Error('A justificativa precisa ter entre 15 e 255 caracteres.');
-  const { data: f } = await db.from('fiscal_notas').select('id, tipo, ambiente, ref, status').eq('id', id).maybeSingle();
+  const { data: f } = await db.from('fiscal_notas').select('id, empresa_id, tipo, ambiente, ref, status').eq('id', id).maybeSingle();
   if (!f) throw new Error('Nota não encontrada.');
   if (f.status !== 'AUTORIZADA') throw new Error('Só nota autorizada pode ser cancelada.');
-  const r = await focus(f.ambiente, 'DELETE', `/v2/${f.tipo === 'NFE' ? 'nfe' : 'nfse'}/${f.ref}`, { justificativa: j });
+  const r = await focus(f.ambiente, 'DELETE', `/v2/${f.tipo === 'NFE' ? 'nfe' : 'nfse'}/${f.ref}`, { justificativa: j }, f.empresa_id);
   if (r.http >= 400 || r.corpo?.status !== 'cancelado') throw new Error(`A ${f.tipo === 'NFE' ? 'SEFAZ' : 'Prefeitura'} não cancelou: ${mensagemFocus(r.corpo)}`);
   await db.from('fiscal_notas').update({
     status: 'CANCELADA', cancelada_em: new Date().toISOString(), cancelada_por: usuario, motivo_cancelamento: j,
@@ -197,10 +197,10 @@ export async function cancelarNota(db: Db, id: number, justificativa: string, us
 export async function cartaCorrecao(db: Db, id: number, correcao: string, usuario: string) {
   const t = limpo(correcao);
   if (t.length < 15 || t.length > 1000) throw new Error('A correção precisa ter entre 15 e 1000 caracteres.');
-  const { data: f } = await db.from('fiscal_notas').select('id, tipo, ambiente, ref, status, cartas_correcao').eq('id', id).maybeSingle();
+  const { data: f } = await db.from('fiscal_notas').select('id, empresa_id, tipo, ambiente, ref, status, cartas_correcao').eq('id', id).maybeSingle();
   if (!f) throw new Error('Nota não encontrada.');
   if (f.tipo !== 'NFE' || f.status !== 'AUTORIZADA') throw new Error('Carta de correção só para NF-e autorizada.');
-  const r = await focus(f.ambiente, 'POST', `/v2/nfe/${f.ref}/carta_correcao`, { correcao: t });
+  const r = await focus(f.ambiente, 'POST', `/v2/nfe/${f.ref}/carta_correcao`, { correcao: t }, f.empresa_id);
   if (r.http >= 400 || r.corpo?.status !== 'autorizado') throw new Error(`Carta de correção recusada: ${mensagemFocus(r.corpo)}`);
   const cartas = [...((f.cartas_correcao || []) as any[]), {
     numero: r.corpo.numero_carta_correcao, correcao: t, em: new Date().toISOString(), por: usuario,
@@ -210,12 +210,12 @@ export async function cartaCorrecao(db: Db, id: number, correcao: string, usuari
 }
 
 export async function arquivoNota(db: Db, id: number, qual: 'pdf' | 'xml' | 'cce') {
-  const { data: f } = await db.from('fiscal_notas').select('ambiente, tipo, numero, caminho_pdf, caminho_xml, caminho_xml_cancelamento, status, cartas_correcao').eq('id', id).maybeSingle();
+  const { data: f } = await db.from('fiscal_notas').select('empresa_id, ambiente, tipo, numero, caminho_pdf, caminho_xml, caminho_xml_cancelamento, status, cartas_correcao').eq('id', id).maybeSingle();
   if (!f) throw new Error('Nota não encontrada.');
   const cce = ((f.cartas_correcao || []) as any[]).at(-1);
   const caminho = qual === 'pdf' ? f.caminho_pdf : qual === 'cce' ? cce?.caminho_pdf : f.caminho_xml;
   if (!caminho) throw new Error(qual === 'pdf' ? 'PDF ainda não disponível.' : qual === 'cce' ? 'Sem carta de correção.' : 'XML ainda não disponível.');
-  const a = await baixarArquivo(f.ambiente, caminho);
+  const a = await baixarArquivo(f.ambiente, caminho, f.empresa_id);
   const nome = `${f.tipo === 'NFE' ? 'nfe' : 'nfse'}-${f.numero || id}${qual === 'cce' ? '-cce' : ''}.${qual === 'xml' ? 'xml' : 'pdf'}`;
   return { ...a, nome };
 }

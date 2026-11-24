@@ -43,7 +43,7 @@ async function resolverContextoItau(perfilId: string, permissaoNormalizada: stri
   }
 
   const ambiente: AmbienteItau = integ.ambiente === 'PRODUCAO' ? 'PRODUCAO' : 'SANDBOX';
-  if (!credenciaisItauConfiguradas(ambiente)) {
+  if (!(await credenciaisItauConfiguradas(ambiente))) {
     return { ok: false, erro: `Credenciais da API do Itaú não configuradas no servidor para o ambiente ${ambiente}.` };
   }
 

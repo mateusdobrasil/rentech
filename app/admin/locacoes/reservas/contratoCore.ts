@@ -7,7 +7,7 @@
 // ao documento: ASSINADO só quando TODOS assinaram (PARCIAL no meio).
 import { supabaseAdmin } from '../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../actions';
-import { autentiqueConsultarDocumento } from '../../../lib/autentique';
+import { autentiqueConsultarDocumento, tokenAutentique } from '../../../lib/autentique';
 import { numeroFichaPorId } from '../../../lib/locacao/fichaNumero';
 import { BUCKET_PROPOSTAS } from './propostaCore';
 import { ROTULO_PAPEL, type AssinanteContrato } from '../../../lib/locacao/assinantesContrato';
@@ -21,7 +21,7 @@ async function historico(db: Db, fichaId: number, usuario: string, acao: string,
 }
 
 async function arquivarAssinado(db: Db, c: { ficha_id: number; versao: number }, url: string | null | undefined): Promise<string | null> {
-  const token = process.env.AUTENTIQUE_API_TOKEN;
+  const token = await tokenAutentique();
   if (!url || !token) return null;
   const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   if (!resp.ok) return null;

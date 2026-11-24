@@ -5,6 +5,7 @@
 //
 // Variável de ambiente: ANTHROPIC_API_KEY. Só roda no servidor.
 import Anthropic from '@anthropic-ai/sdk';
+import { segredo } from '../cofre/segredos';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import { z } from 'zod';
 
@@ -80,8 +81,9 @@ export type ResultadoIA<T> =
   | { ok: false; erro: string };
 
 export async function escreverComIA<S extends z.ZodType>(schema: S, system: string, pedido: string): Promise<ResultadoIA<z.infer<S>>> {
-  if (!process.env.ANTHROPIC_API_KEY) return { ok: false, erro: 'Falta a variável ANTHROPIC_API_KEY no servidor.' };
-  const client = new Anthropic();
+  const apiKey = await segredo('ANTHROPIC_API_KEY');
+  if (!apiKey) return { ok: false, erro: 'Chave do Claude não configurada (Parâmetros → Empresas → Sistema → Credenciais).' };
+  const client = new Anthropic({ apiKey });
   try {
     // Haiku: o raciocínio conta dentro de max_tokens. No teste de 2026-11-22 o
     // diário usou ~15 mil tokens de saída em esforço médio (o padrão do Haiku) e,

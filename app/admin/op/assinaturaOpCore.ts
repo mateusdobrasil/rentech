@@ -9,7 +9,7 @@
 import { revalidatePath } from 'next/cache';
 import { supabaseAdmin } from '../../lib/supabase';
 import { registrarLogAuditoria } from '../../actions';
-import { autentiqueConsultarDocumento } from '../../lib/autentique';
+import { autentiqueConsultarDocumento, tokenAutentique } from '../../lib/autentique';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -22,7 +22,7 @@ export async function finalizarAssinaturaOP(opId: string, autentiqueDocId: strin
   const urlAssinado = doc?.files?.signed || doc?.files?.pades;
   if (!urlAssinado) return; // Autentique ainda não disponibilizou o arquivo — tenta de novo depois
 
-  const token = process.env.AUTENTIQUE_API_TOKEN;
+  const token = await tokenAutentique();
   if (!token) return;
 
   const resp = await fetch(urlAssinado, { headers: { Authorization: `Bearer ${token}` } });

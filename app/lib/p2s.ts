@@ -39,6 +39,7 @@
 // credenciais de PRODUCAO (o host real do cliente).
 import { Buffer } from 'node:buffer';
 import { supabaseAdmin } from './supabase';
+import { resolverSegredo } from './cofre/segredos';
 import { p2sDesligado, MSG_P2S_DESLIGADO } from './virada/estado';
 
 export type AmbienteP2s = 'SANDBOX' | 'PRODUCAO';
@@ -113,18 +114,27 @@ interface CredenciaisP2s { protocolo: string; host?: string; porta?: string; usu
 // funciona, sem configuração nenhuma); PRODUCAO cai pras env vars legadas
 // sem sufixo (P2S_API_HOST etc.), que é o que já está configurado hoje no
 // servidor para o host real do cliente.
-function credenciaisAmbiente(ambiente: AmbienteP2s): CredenciaisP2s {
+// PRODUÇÃO: o cofre Sistema (Parâmetros → Empresas → Credenciais) vence tudo;
+// sem ele, vale a ordem de sempre das env vars.
+async function doCofre(nome: string): Promise<string | undefined> {
+  const r = await resolverSegredo(nome);
+  return r.origem && r.origem !== 'VERCEL' ? r.valor : undefined;
+}
+
+async function credenciaisAmbiente(ambiente: AmbienteP2s): Promise<CredenciaisP2s> {
   const sufixo = `_${ambiente}`;
-  const host = process.env[`P2S_API_HOST${sufixo}`] || (ambiente === 'PRODUCAO' ? process.env.P2S_API_HOST : undefined) || (ambiente === 'SANDBOX' ? SANDBOX_PADRAO.host : undefined);
-  const porta = process.env[`P2S_API_PORTA${sufixo}`] || (ambiente === 'PRODUCAO' ? process.env.P2S_API_PORTA : undefined) || (ambiente === 'SANDBOX' ? SANDBOX_PADRAO.porta : undefined);
-  const usuario = process.env[`P2S_API_USUARIO${sufixo}`] || (ambiente === 'PRODUCAO' ? process.env.P2S_API_USUARIO : undefined) || (ambiente === 'SANDBOX' ? SANDBOX_PADRAO.usuario : undefined);
-  const senha = process.env[`P2S_API_SENHA${sufixo}`] || (ambiente === 'PRODUCAO' ? process.env.P2S_API_SENHA : undefined) || (ambiente === 'SANDBOX' ? SANDBOX_PADRAO.senha : undefined);
-  const protocolo = process.env[`P2S_API_PROTOCOLO${sufixo}`] || process.env.P2S_API_PROTOCOLO || SANDBOX_PADRAO.protocolo;
+  const prod = ambiente === 'PRODUCAO';
+  const cofre = async (nome: string) => (prod ? await doCofre(nome) : undefined);
+  const host = (await cofre('P2S_API_HOST')) || process.env[`P2S_API_HOST${sufixo}`] || (prod ? process.env.P2S_API_HOST : undefined) || (ambiente === 'SANDBOX' ? SANDBOX_PADRAO.host : undefined);
+  const porta = (await cofre('P2S_API_PORTA')) || process.env[`P2S_API_PORTA${sufixo}`] || (prod ? process.env.P2S_API_PORTA : undefined) || (ambiente === 'SANDBOX' ? SANDBOX_PADRAO.porta : undefined);
+  const usuario = (await cofre('P2S_API_USUARIO')) || process.env[`P2S_API_USUARIO${sufixo}`] || (prod ? process.env.P2S_API_USUARIO : undefined) || (ambiente === 'SANDBOX' ? SANDBOX_PADRAO.usuario : undefined);
+  const senha = (await cofre('P2S_API_SENHA')) || process.env[`P2S_API_SENHA${sufixo}`] || (prod ? process.env.P2S_API_SENHA : undefined) || (ambiente === 'SANDBOX' ? SANDBOX_PADRAO.senha : undefined);
+  const protocolo = (await cofre('P2S_API_PROTOCOLO')) || process.env[`P2S_API_PROTOCOLO${sufixo}`] || process.env.P2S_API_PROTOCOLO || SANDBOX_PADRAO.protocolo;
   return { protocolo, host, porta, usuario, senha };
 }
 
-export function credenciaisP2sConfiguradas(ambiente: AmbienteP2s): boolean {
-  const c = credenciaisAmbiente(ambiente);
+export async function credenciaisP2sConfiguradas(ambiente: AmbienteP2s): Promise<boolean> {
+  const c = await credenciaisAmbiente(ambiente);
   return !!(c.host && c.porta && c.usuario && c.senha);
 }
 
@@ -141,8 +151,8 @@ export interface StatusCredenciaisP2s {
   producao: StatusCredenciaisP2sAmbiente;
 }
 
-function statusAmbiente(ambiente: AmbienteP2s): StatusCredenciaisP2sAmbiente {
-  const c = credenciaisAmbiente(ambiente);
+async function statusAmbiente(ambiente: AmbienteP2s): Promise<StatusCredenciaisP2sAmbiente> {
+  const c = await credenciaisAmbiente(ambiente);
   return {
     hostConfigurado: !!c.host, portaConfigurada: !!c.porta,
     usuarioConfigurado: !!c.usuario, senhaConfigurada: !!c.senha,
@@ -150,20 +160,20 @@ function statusAmbiente(ambiente: AmbienteP2s): StatusCredenciaisP2sAmbiente {
   };
 }
 
-export function statusCredenciaisP2s(): StatusCredenciaisP2s {
-  return { sandbox: statusAmbiente('SANDBOX'), producao: statusAmbiente('PRODUCAO') };
+export async function statusCredenciaisP2s(): Promise<StatusCredenciaisP2s> {
+  return { sandbox: await statusAmbiente('SANDBOX'), producao: await statusAmbiente('PRODUCAO') };
 }
 
-function baseUrl(ambiente: AmbienteP2s): string {
-  const c = credenciaisAmbiente(ambiente);
+async function baseUrl(ambiente: AmbienteP2s): Promise<string> {
+  const c = await credenciaisAmbiente(ambiente);
   if (!c.host || !c.porta) {
     throw new Error(`Servidor da API do PrimeStart não configurado para o ambiente ${ambiente} (host/porta ausentes no ambiente do servidor).`);
   }
   return `${c.protocolo}://${c.host}:${c.porta}`;
 }
 
-function authHeader(ambiente: AmbienteP2s): string {
-  const c = credenciaisAmbiente(ambiente);
+async function authHeader(ambiente: AmbienteP2s): Promise<string> {
+  const c = await credenciaisAmbiente(ambiente);
   if (!c.usuario || !c.senha) {
     throw new Error(`Credenciais da API do PrimeStart não configuradas para o ambiente ${ambiente} (usuário/senha ausentes).`);
   }
@@ -175,7 +185,7 @@ interface RespostaP2s<T> { status: number; ok: boolean; data: T | null; textoErr
 async function chamar<T>(ambiente: AmbienteP2s, path: string, init: { method: string; body?: unknown; query?: Record<string, string | undefined> }): Promise<RespostaP2s<T>> {
   // Depois que todas as empresas concluem a virada, produção não é mais chamada (estado.ts).
   if (ambiente === 'PRODUCAO' && await p2sDesligado(supabaseAdmin())) throw new Error(MSG_P2S_DESLIGADO);
-  const url = new URL(baseUrl(ambiente) + path);
+  const url = new URL((await baseUrl(ambiente)) + path);
   if (init.query) {
     for (const [k, v] of Object.entries(init.query)) if (v !== undefined && v !== '') url.searchParams.set(k, v);
   }
@@ -183,7 +193,7 @@ async function chamar<T>(ambiente: AmbienteP2s, path: string, init: { method: st
   try {
     res = await fetch(url.toString(), {
       method: init.method,
-      headers: { 'Content-Type': 'application/json', Authorization: authHeader(ambiente) },
+      headers: { 'Content-Type': 'application/json', Authorization: await authHeader(ambiente) },
       body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
       cache: 'no-store',
     });

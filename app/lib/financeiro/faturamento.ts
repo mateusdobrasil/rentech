@@ -20,7 +20,7 @@ import { hojeISO, somarDias, dataValida } from '../locacao/datas';
 import { numeroFicha } from '../locacao/fichaNumero';
 import { fontesDasEmpresas } from './caixa';
 import { randomBytes } from 'crypto';
-import nodemailer from 'nodemailer';
+import { exigirSmtp } from '../cofre/smtp';
 
 type Db = ReturnType<typeof supabaseAdmin>;
 const n = (v: unknown) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
@@ -236,12 +236,9 @@ export async function enviarFaturaEmail(db: Db, id: number, para: string, pdf: U
     d.conta ? `Dados para pagamento: ${d.conta.nome}${d.conta.banco_codigo ? ` · banco ${d.conta.banco_codigo}` : ''}${d.conta.agencia ? ` · ag. ${d.conta.agencia}` : ''}${d.conta.numero_conta ? ` · c/c ${d.conta.numero_conta}` : ''}` : '',
     `A fatura também pode ser vista neste link: ${linkFatura(f.token_publico)}`, '', `Qualquer dúvida, estamos à disposição.`, empresa,
   ].filter(x => x !== null).join('\n');
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT) || 465, secure: Number(process.env.SMTP_PORT) === 465,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
+  const { transporter, remetente } = await exigirSmtp();
   await transporter.sendMail({
-    from: `"${empresa || 'Financeiro'}" <${process.env.SMTP_USER}>`, to: para, subject: `Nota de Débito ${nf} — ${empresa}${f.serie === 'ENSAIO' ? ' [ENSAIO]' : ''}`, text: texto,
+    from: `"${empresa || 'Financeiro'}" <${remetente}>`, to: para, subject: `Nota de Débito ${nf} — ${empresa}${f.serie === 'ENSAIO' ? ' [ENSAIO]' : ''}`, text: texto,
     attachments: [{ filename: `nota-de-debito-${nf}.pdf`, content: Buffer.from(pdf), contentType: 'application/pdf' }],
   });
   await db.from('financeiro_faturas').update({ enviada_email_em: new Date().toISOString(), enviada_email_para: para }).eq('id', id);

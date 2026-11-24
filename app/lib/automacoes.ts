@@ -3,7 +3,7 @@
 // o canal, a lista de `destinatarios` (vazio = todos os funcionários ativos
 // com celular; com nomes = só eles) e usa o template salvo em `mensagem`,
 // substituindo placeholders {{assim}} — nada disso depende mais de código.
-import nodemailer from 'nodemailer';
+import { transporteSmtp } from './cofre/smtp';
 import { supabaseAdmin } from './supabase';
 import { resolverProvedorAutomacao, enviarComJanela, type ProvedorAutomacao, type TemplateMeta } from './whatsapp';
 import { carregarNomesEmpresas, nomeEmpresaPara } from './empresa';
@@ -283,12 +283,9 @@ async function executarDisparoEmail(db: ReturnType<typeof supabaseAdmin>, automa
     return { disparado: true, disparos: 0, erros: [] };
   }
 
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT) || 465,
-    secure: Number(process.env.SMTP_PORT) === 465,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
+  const smtp = await transporteSmtp();
+  if (!smtp) return { disparado: false, disparos: 0, erros: ['E-mail (SMTP) não configurado.'] };
+  const { transporter } = smtp;
 
   const empresas = await carregarNomesEmpresas(db);
 
@@ -305,7 +302,7 @@ async function executarDisparoEmail(db: ReturnType<typeof supabaseAdmin>, automa
 
     try {
       await transporter.sendMail({
-        from: `"Sistema Rentech" <${process.env.SMTP_USER}>`,
+        from: `"Sistema Rentech" <${smtp.remetente}>`,
         to: f.email,
         subject: assunto || 'Aviso do Sistema Rentech',
         text: texto,

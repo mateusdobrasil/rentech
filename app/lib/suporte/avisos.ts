@@ -10,7 +10,7 @@
 // Os destinatários vêm do chamado (atendentes da área / solicitante) — o campo
 // `destinatarios` do card não se aplica. Fica em lib, SEM 'use server': como
 // Server Action exportada viraria um endpoint pra mandar mensagem pra qualquer um.
-import nodemailer from 'nodemailer';
+import { transporteSmtp } from '../cofre/smtp';
 import { supabaseAdmin } from '../supabase';
 import { resolverProvedorAutomacao, enviarComJanela, type ProvedorAutomacao, type TemplateMeta } from '../whatsapp';
 import { notificarPushParaUsuario } from '../push';
@@ -65,13 +65,8 @@ export async function avisarChamado(a: AvisoChamado): Promise<void> {
     const titulo = a.chamado.titulo.length > 80 ? `${a.chamado.titulo.slice(0, 77)}…` : a.chamado.titulo;
     const modelo = card.mensagem || 'Olá {{primeiro_nome}}! Chamado #{{numero}} — {{titulo}}\n{{evento}}\n\nAbrir: {{link}}';
     const provedor = canais.includes('WhatsApp') ? await resolverProvedorAutomacao((card.provedor_whatsapp as ProvedorAutomacao) || 'PADRAO') : null;
-    const smtpOk = !!(process.env.SMTP_HOST && process.env.SMTP_USER);
-    const transporter = canais.includes('E-mail') && smtpOk ? nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT) || 465,
-      secure: Number(process.env.SMTP_PORT) === 465,
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    }) : null;
+    const smtp = canais.includes('E-mail') ? await transporteSmtp() : null;
+    const transporter = smtp?.transporter ?? null;
 
     let zap = 0, mail = 0;
     for (const p of lista) {
@@ -105,7 +100,7 @@ export async function avisarChamado(a: AvisoChamado): Promise<void> {
       if (transporter && email.includes('@')) {
         try {
           await transporter.sendMail({
-            from: `"Suporte · Rentech" <${process.env.SMTP_USER}>`,
+            from: `"Suporte · Rentech" <${smtp?.remetente}>`,
             to: email,
             subject: `[Chamado #${a.chamado.id}] ${titulo} — ${a.evento}`.slice(0, 180),
             text: `${texto}${a.detalhe ? `\n\n---\n${a.detalhe}` : ''}`,

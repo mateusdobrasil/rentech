@@ -9,6 +9,7 @@
 // integração (DATAPREV/GOV.BR, layout do arquivo, etc.) — os comentários deste
 // arquivo cobrem só o que foi movido pra cá.
 import { supabaseAdmin } from '../../../lib/supabase';
+import { certificadoA1PorCnpj } from '../../../lib/cofre/certificado';
 import { dispararAutomacoesPorEventoWhatsApp, dispararAutomacoesPorEventoEmail } from '../../../lib/automacoes';
 
 export type StatusConsultaConsignado = 'NAO_CONFIGURADO' | 'OK' | 'SEM_CONSIGNACAO' | 'ERRO';
@@ -303,9 +304,10 @@ type ConsultaResultado =
 async function consultarConsignacoesEmpregadorGovBr(competencia: string): Promise<ConsultaResultado> {
   const fs = require('node:fs');
   const cnpj = (process.env.GOVBR_CONSIGNADO_CNPJ || '').replace(/\D/g, '');
-  const pfxBase64 = process.env.GOVBR_CONSIGNADO_CERT_PFX_BASE64;
+  const a1 = await certificadoA1PorCnpj(cnpj);
+  const pfxBase64 = a1?.pfxBase64;
   const pfxPath = process.env.GOVBR_CONSIGNADO_CERT_PFX_PATH;
-  const senha = process.env.GOVBR_CONSIGNADO_CERT_SENHA;
+  const senha = a1?.senha || (pfxPath ? process.env.GOVBR_CONSIGNADO_CERT_SENHA : undefined);
   const ambiente = (process.env.GOVBR_CONSIGNADO_AMBIENTE || 'homologacao').toLowerCase();
 
   if (!cnpj || !senha || (!pfxBase64 && !pfxPath)) {

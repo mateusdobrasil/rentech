@@ -1,15 +1,23 @@
 // lib/autentique.ts
 // Cliente isolado da API GraphQL da Autentique. Roda só no servidor.
-// O token vai em AUTENTIQUE_API_TOKEN (variável de ambiente do servidor).
+// O token (AUTENTIQUE_API_TOKEN) vem do cofre Sistema (Parâmetros → Empresas →
+// Credenciais) ou, sem ele, da Vercel.
 //
 // A API é GraphQL e o upload do PDF usa multipart (spec graphql-multipart-request).
 // Doc: https://docs.autentique.com.br/api
 
+import { segredo } from './cofre/segredos';
+
 const AUTENTIQUE_URL = 'https://api.autentique.com.br/v2/graphql';
 
-function getToken(): string {
-  const token = process.env.AUTENTIQUE_API_TOKEN;
-  if (!token) throw new Error('AUTENTIQUE_API_TOKEN não configurado no ambiente do servidor.');
+/** Token da Autentique (cofre → Vercel); undefined = não configurado. */
+export async function tokenAutentique(): Promise<string | undefined> {
+  return segredo('AUTENTIQUE_API_TOKEN');
+}
+
+async function getToken(): Promise<string> {
+  const token = await tokenAutentique();
+  if (!token) throw new Error('Token da Autentique não configurado: preencha em Parâmetros → Empresas → Sistema → Credenciais.');
   return token;
 }
 
@@ -39,7 +47,7 @@ export interface CriarDocumentoResultado {
 // CRIAR DOCUMENTO com signatário validado por CPF e envio por WhatsApp/e-mail
 // ============================================================================
 export async function autentiqueCriarDocumento(p: CriarDocumentoParams): Promise<CriarDocumentoResultado> {
-  const token = getToken();
+  const token = await getToken();
 
   // Monta o signatário. Prioriza WhatsApp se houver celular; senão e-mail.
   // A validação por CPF vai em configs.cpf (garante que só aquele CPF assina) —
@@ -135,7 +143,7 @@ export async function autentiqueCriarDocumento(p: CriarDocumentoParams): Promise
 // Uso pontual — o webhook é o caminho principal para status.
 // ============================================================================
 export async function autentiqueConsultarDocumento(docId: string) {
-  const token = getToken();
+  const token = await getToken();
 
   const query = `
     query GetDocument($id: UUID!) {
@@ -192,7 +200,7 @@ export async function autentiqueConsultarDocumento(docId: string) {
 // Doc: https://docs.autentique.com.br/api/mutations/editing-a-document
 // ============================================================================
 export async function autentiqueCancelarDocumento(docId: string): Promise<void> {
-  const token = getToken();
+  const token = await getToken();
 
   const query = `
     mutation CancelDocument($id: UUID!, $document: UpdateDocumentInput!) {

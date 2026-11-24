@@ -23,6 +23,8 @@
 
 import { randomBytes, pbkdf2Sync, createCipheriv } from 'node:crypto';
 import { createServer as criarServidorTls, connect as conectarTls } from 'node:tls';
+import { segredo } from './cofre/segredos';
+import { certificadoA1 } from './cofre/certificado';
 
 export type TipoDebito = 'MULTA' | 'IPVA' | 'LICENCIAMENTO' | 'OUTRO';
 
@@ -80,20 +82,20 @@ export function criptografarInfosimples(valor: string, chave: string): string {
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function certificadoA1(): { pfxBase64: string; senha: string; chave: string } | null {
-  const e = process.env;
-  const chave = e.INFOSIMPLES_ENCRYPTION_KEY;
-  const pfxBase64 = e.INFOSIMPLES_PFX_BASE64 || e.GOVBR_CONSIGNADO_CERT_PFX_BASE64;
-  const senha = e.INFOSIMPLES_PFX_SENHA || e.GOVBR_CONSIGNADO_CERT_SENHA;
-  if (!chave || !pfxBase64 || !senha) return null;
-  return { pfxBase64: pfxBase64.replace(/\s/g, ''), senha, chave };
+// Certificado A1 e credenciais: cofre (Parâmetros → Empresas → Credenciais) ou Vercel.
+async function certificadoInfosimples(): Promise<{ pfxBase64: string; senha: string; chave: string } | null> {
+  const chave = await segredo('INFOSIMPLES_ENCRYPTION_KEY');
+  const a1 = await certificadoA1();
+  if (!chave || !a1) return null;
+  return { pfxBase64: a1.pfxBase64, senha: a1.senha, chave };
 }
 
-function loginGovBr(): { par: 'CERT'; cert: string; pass: string } | { par: 'CPF'; cpf: string; senha: string } | null {
-  const a1 = certificadoA1();
+async function loginGovBr(): Promise<{ par: 'CERT'; cert: string; pass: string } | { par: 'CPF'; cpf: string; senha: string } | null> {
+  const a1 = await certificadoInfosimples();
   if (a1) return { par: 'CERT', cert: criptografarInfosimples(a1.pfxBase64, a1.chave), pass: criptografarInfosimples(a1.senha, a1.chave) };
-  const e = process.env;
-  if (e.INFOSIMPLES_DETRAN_SP_CPF && e.INFOSIMPLES_DETRAN_SP_SENHA) return { par: 'CPF', cpf: e.INFOSIMPLES_DETRAN_SP_CPF.replace(/\D/g, ''), senha: e.INFOSIMPLES_DETRAN_SP_SENHA };
+  const cpf = await segredo('INFOSIMPLES_DETRAN_SP_CPF');
+  const senha = await segredo('INFOSIMPLES_DETRAN_SP_SENHA');
+  if (cpf && senha) return { par: 'CPF', cpf: cpf.replace(/\D/g, ''), senha };
   return null;
 }
 
@@ -106,7 +108,7 @@ export interface ValidadeCertificado { titular: string; cnpj: string | null; val
 let cacheValidade: { em: number; chave: string; valor: ValidadeCertificado | null } | null = null;
 
 export async function validadeCertificadoA1(): Promise<ValidadeCertificado | null> {
-  const a1 = certificadoA1();
+  const a1 = await certificadoA1();
   if (!a1) return null;
   const chaveCache = a1.pfxBase64.slice(-32);
   if (cacheValidade && cacheValidade.chave === chaveCache && Date.now() - cacheValidade.em < 3_600_000) return cacheValidade.valor;
@@ -142,13 +144,12 @@ export async function validadeCertificadoA1(): Promise<ValidadeCertificado | nul
   return valor;
 }
 
-function temLoginGovBr(): boolean {
-  const e = process.env;
-  return !!certificadoA1() || !!(e.INFOSIMPLES_DETRAN_SP_CPF && e.INFOSIMPLES_DETRAN_SP_SENHA);
+async function temLoginGovBr(): Promise<boolean> {
+  return !!(await loginGovBr());
 }
 
-export function provedorConfigurado(): boolean {
-  return !!process.env.INFOSIMPLES_TOKEN && temLoginGovBr();
+export async function provedorConfigurado(): Promise<boolean> {
+  return !!(await segredo('INFOSIMPLES_TOKEN')) && await temLoginGovBr();
 }
 
 // ---------------------------------------------------------------------------
@@ -324,11 +325,11 @@ async function consultarInfosimplesDetranSp(placa: string, renavam: string): Pro
     avisos: [], preco: null, siteReceipt: null, resposta: null,
   };
 
-  const token = process.env.INFOSIMPLES_TOKEN;
-  if (!token) return { ...base, ok: false, codigo: null, mensagem: 'Consulta automática não configurada: falta a variável INFOSIMPLES_TOKEN no servidor.' };
+  const token = await segredo('INFOSIMPLES_TOKEN');
+  if (!token) return { ...base, ok: false, codigo: null, mensagem: 'Consulta automática não configurada: falta o token da Infosimples (Parâmetros → Empresas → Credenciais).' };
 
   // Sem login a Infosimples recusa (606) e cobra mesmo assim — barra antes.
-  const login = loginGovBr();
+  const login = await loginGovBr();
   if (!login) return { ...base, ok: false, codigo: null, mensagem: 'Consulta não enviada: falta o login GOV.BR (certificado A1 + INFOSIMPLES_ENCRYPTION_KEY, ou INFOSIMPLES_DETRAN_SP_CPF/SENHA) no servidor — sem ele a Infosimples recusa e cobra a consulta.' };
 
   const params = new URLSearchParams({ token, placa, renavam, timeout: '300' });
@@ -432,8 +433,8 @@ export interface ResultadoChamadaInfosimples {
 
 async function chamarInfosimples(servico: string, campos: Record<string, string>): Promise<ResultadoChamadaInfosimples> {
   const vazio = { servico, dados: [] as Registro[], preco: null, resposta: null };
-  const token = process.env.INFOSIMPLES_TOKEN;
-  if (!token) return { ...vazio, ok: false, codigo: null, mensagem: 'Falta a variável INFOSIMPLES_TOKEN no servidor.' };
+  const token = await segredo('INFOSIMPLES_TOKEN');
+  if (!token) return { ...vazio, ok: false, codigo: null, mensagem: 'Falta o token da Infosimples (Parâmetros → Empresas → Credenciais).' };
 
   const params = new URLSearchParams({ token, timeout: '300', ...campos });
   const controle = new AbortController();
@@ -476,20 +477,20 @@ export interface BoletoPrefeitura {
   vencimento: string | null; valor: number; situacao_divida_ativa: string | null; mensagem: string | null;
 }
 
-function loginPrefeituraSP(): { login: string; senha: string } | null {
-  const e = process.env;
-  const login = soDigitosLocal(e.INFOSIMPLES_PREF_SP_LOGIN || e.INFOSIMPLES_DETRAN_SP_CPF || '');
-  const senha = e.INFOSIMPLES_PREF_SP_LOGIN ? (e.INFOSIMPLES_PREF_SP_SENHA || '') : (e.INFOSIMPLES_DETRAN_SP_SENHA || '');
+async function loginPrefeituraSP(): Promise<{ login: string; senha: string } | null> {
+  const prefLogin = await segredo('INFOSIMPLES_PREF_SP_LOGIN');
+  const login = soDigitosLocal(prefLogin || (await segredo('INFOSIMPLES_DETRAN_SP_CPF')) || '');
+  const senha = prefLogin ? ((await segredo('INFOSIMPLES_PREF_SP_SENHA')) || '') : ((await segredo('INFOSIMPLES_DETRAN_SP_SENHA')) || '');
   return login && senha ? { login, senha } : null;
 }
 
-export function prefeituraSpConfigurada(): boolean {
-  return !!process.env.INFOSIMPLES_TOKEN && !!loginPrefeituraSP();
+export async function prefeituraSpConfigurada(): Promise<boolean> {
+  return !!(await segredo('INFOSIMPLES_TOKEN')) && !!(await loginPrefeituraSP());
 }
 
 export async function consultarBoletosPrefeituraSP(params: { placa: string; renavam: string; aits?: string[] }): Promise<ResultadoChamadaInfosimples & { boletos: BoletoPrefeitura[] }> {
   const servico = 'pref/sp/sao-paulo/multas-guias';
-  const credencial = loginPrefeituraSP();
+  const credencial = await loginPrefeituraSP();
   if (!credencial) {
     return { ok: false, servico, codigo: null, mensagem: 'Busca de boleto da Prefeitura de SP não configurada: falta o CPF/senha GOV.BR (INFOSIMPLES_DETRAN_SP_CPF/_SENHA) no servidor.', preco: null, dados: [], resposta: null, boletos: [] };
   }
@@ -526,7 +527,7 @@ export interface PenalidadeDer { ait: string; np_pdf_url: string | null; situaca
 
 export async function consultarPenalidadesDerSP(params: { renavam: string }): Promise<ResultadoChamadaInfosimples & { penalidades: PenalidadeDer[] }> {
   const servico = 'der/sp/penalidades';
-  const login = loginGovBr();
+  const login = await loginGovBr();
   if (!login) {
     return { ok: false, servico, codigo: null, mensagem: 'Falta o login GOV.BR (certificado A1 + INFOSIMPLES_ENCRYPTION_KEY) no servidor.', preco: null, dados: [], resposta: null, penalidades: [] };
   }
@@ -580,8 +581,8 @@ export interface DetalheInfracaoSenatran {
   site_receipt: string | null;
 }
 
-function camposLoginGovBr(): Record<string, string> | null {
-  const login = loginGovBr();
+async function camposLoginGovBr(): Promise<Record<string, string> | null> {
+  const login = await loginGovBr();
   if (!login) return null;
   return login.par === 'CPF'
     ? { login_cpf: login.cpf, login_senha: login.senha }
@@ -592,7 +593,7 @@ const semValor = (s: string | null) => (s && !/^(n[aã]o dispon[ií]vel|n[aã]o 
 
 export async function consultarInfracoesSenatran(params: { placa: string; cnpj?: string | null }): Promise<ResultadoChamadaInfosimples & { infracoes: InfracaoSenatran[] }> {
   const servico = 'senatran/infracoes';
-  const login = camposLoginGovBr();
+  const login = await camposLoginGovBr();
   if (!login) return { ok: false, servico, codigo: null, mensagem: 'Falta o login GOV.BR (certificado A1) no servidor.', preco: null, dados: [], resposta: null, infracoes: [] };
   const campos: Record<string, string> = { placa: params.placa.replace(/[^A-Za-z0-9]/g, '').toUpperCase(), ...login };
   const cnpj = soDigitosLocal(params.cnpj || '');
@@ -617,7 +618,7 @@ export async function consultarInfracoesSenatran(params: { placa: string; cnpj?:
 
 export async function baixarInfracaoSenatran(params: { chave: string; placa: string; cnpj?: string | null }): Promise<ResultadoChamadaInfosimples & { detalhe: DetalheInfracaoSenatran | null }> {
   const servico = 'senatran/download-infracao';
-  const login = camposLoginGovBr();
+  const login = await camposLoginGovBr();
   if (!login) return { ok: false, servico, codigo: null, mensagem: 'Falta o login GOV.BR (certificado A1) no servidor.', preco: null, dados: [], resposta: null, detalhe: null };
   const campos: Record<string, string> = { chave_infracao: params.chave, placa: params.placa.replace(/[^A-Za-z0-9]/g, '').toUpperCase(), ...login };
   const cnpj = soDigitosLocal(params.cnpj || '');
@@ -673,7 +674,7 @@ function dataHoraBrParaIso(v: unknown): string | null {
 
 export async function consultarPedagiosSenatran(params: { cnpj: string; dataInicio: string; dataFim: string; maxPaginas?: number }): Promise<{ ok: boolean; erro?: string; passagens: PassagemPedagio[]; paginas: number; totalRegistros: number; preco: number; respostas: unknown[]; codigo: number | null }> {
   const servico = 'senatran/pedagio/listagem';
-  const login = camposLoginGovBr();
+  const login = await camposLoginGovBr();
   if (!login) return { ok: false, erro: 'Falta o login GOV.BR (certificado A1) no servidor.', passagens: [], paginas: 0, totalRegistros: 0, preco: 0, respostas: [], codigo: null };
   const maxPaginas = params.maxPaginas ?? 10;
   const passagens: PassagemPedagio[] = [];

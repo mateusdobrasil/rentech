@@ -228,7 +228,7 @@ export async function emitirMdfe(db: Db, a: {
   if (eN) throw eN;
 
   let r;
-  try { r = await focus(ambiente, 'POST', `/v2/mdfe?ref=${ref}`, payload); } catch (e: any) {
+  try { r = await focus(ambiente, 'POST', `/v2/mdfe?ref=${ref}`, payload, a.empresaId); } catch (e: any) {
     await db.from('fiscal_mdfe').update({ mensagem: `Sem resposta da Focus (${e.message}). Consulte de novo em instantes.`, atualizado_em: new Date().toISOString() }).eq('id', m.id);
     return { id: m.id as number, status: 'PROCESSANDO', mensagem: 'Enviado; aguardando a Focus.' };
   }
@@ -271,7 +271,7 @@ async function carregar(db: Db, id: number) {
 
 export async function consultarMdfe(db: Db, id: number) {
   const m = await carregar(db, id);
-  const r = await focus(m.ambiente, 'GET', `/v2/mdfe/${m.ref}`);
+  const r = await focus(m.ambiente, 'GET', `/v2/mdfe/${m.ref}`, undefined, m.empresa_id);
   if (r.http === 404) {
     if (m.status === 'PROCESSANDO') await db.from('fiscal_mdfe').update({ status: 'ERRO', mensagem: 'A Focus não recebeu este MDF-e. Emita de novo.', atualizado_em: new Date().toISOString() }).eq('id', id);
     return { status: m.status === 'PROCESSANDO' ? 'ERRO' : m.status, mensagem: 'MDF-e não encontrado na Focus.' };
@@ -298,7 +298,7 @@ export async function encerrarMdfe(db: Db, id: number, e: { data?: string | null
   const ultimo = ((m.municipios_descarregamento || []) as any[]).at(-1) || {};
   const corpo = { data: e.data || hojeISO(), sigla_uf: UF(e.uf || ultimo.uf || m.uf_fim), nome_municipio: limpo(e.municipio || ultimo.nome) };
   if (!corpo.nome_municipio) throw new Error('Informe o município do encerramento.');
-  const r = await focus(m.ambiente, 'POST', `/v2/mdfe/${m.ref}/encerrar`, corpo);
+  const r = await focus(m.ambiente, 'POST', `/v2/mdfe/${m.ref}/encerrar`, corpo, m.empresa_id);
   const jaEncerrado = r.corpo?.codigo === 'mdfe_ja_encerrado';
   if (!jaEncerrado && (r.http >= 400 || !['encerrado', 'incluido'].includes(r.corpo?.status))) throw new Error(`A SEFAZ não encerrou: ${mensagemFocus(r.corpo)}`);
   await db.from('fiscal_mdfe').update({
@@ -314,7 +314,7 @@ export async function cancelarMdfe(db: Db, id: number, justificativa: string, us
   if (j.length < 15 || j.length > 255) throw new Error('A justificativa precisa ter entre 15 e 255 caracteres.');
   const m = await carregar(db, id);
   if (m.status !== 'AUTORIZADO') throw new Error('Só MDF-e autorizado (e não encerrado) pode ser cancelado.');
-  const r = await focus(m.ambiente, 'DELETE', `/v2/mdfe/${m.ref}`, { justificativa: j });
+  const r = await focus(m.ambiente, 'DELETE', `/v2/mdfe/${m.ref}`, { justificativa: j }, m.empresa_id);
   if (r.http >= 400 || r.corpo?.status !== 'cancelado') throw new Error(`A SEFAZ não cancelou: ${mensagemFocus(r.corpo)}`);
   await db.from('fiscal_mdfe').update({
     status: 'CANCELADO', cancelado_em: new Date().toISOString(), cancelado_por: usuario, motivo_cancelamento: j,
@@ -328,7 +328,7 @@ export async function incluirCondutorMdfe(db: Db, id: number, c: CondutorMdfe, u
   if (m.status !== 'AUTORIZADO') throw new Error('Só dá para incluir motorista em MDF-e autorizado e aberto.');
   const nome = limpo(c.nome).toUpperCase().slice(0, 60), cpf = dig(c.cpf);
   if (nome.length < 2 || !cpfValido(cpf)) throw new Error('Motorista sem nome ou com CPF inválido.');
-  const r = await focus(m.ambiente, 'POST', `/v2/mdfe/${m.ref}/inclusao_condutor`, { nome, cpf });
+  const r = await focus(m.ambiente, 'POST', `/v2/mdfe/${m.ref}/inclusao_condutor`, { nome, cpf }, m.empresa_id);
   if (r.http >= 400 || r.corpo?.status !== 'incluido') throw new Error(`A SEFAZ não incluiu o motorista: ${mensagemFocus(r.corpo)}`);
   await db.from('fiscal_mdfe').update({
     condutores: [...((m.condutores || []) as any[]), { nome, cpf, funcionario_id: c.funcionario_id || null, incluido_depois: true }],
@@ -340,7 +340,7 @@ export async function arquivoMdfe(db: Db, id: number, qual: 'pdf' | 'xml') {
   const m = await carregar(db, id);
   const caminho = qual === 'pdf' ? m.caminho_pdf : m.caminho_xml;
   if (!caminho) throw new Error(qual === 'pdf' ? 'DAMDFE ainda não disponível.' : 'XML ainda não disponível.');
-  const a = await baixarArquivo(m.ambiente, caminho);
+  const a = await baixarArquivo(m.ambiente, caminho, m.empresa_id);
   return { ...a, nome: `mdfe-${m.numero || id}.${qual === 'xml' ? 'xml' : 'pdf'}` };
 }
 

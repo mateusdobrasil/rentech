@@ -9,7 +9,7 @@
 // reservar; faltando equipamento, fica APROVADO e o histórico avisa.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { registrarLogAuditoria } from '../../../actions';
-import { autentiqueConsultarDocumento } from '../../../lib/autentique';
+import { autentiqueConsultarDocumento, tokenAutentique } from '../../../lib/autentique';
 import { reservarFicha } from '../../../lib/locacao/disponibilidade';
 import { numeroFichaPorId } from '../../../lib/locacao/fichaNumero';
 import { avisarOsParaSeparar } from '../../../lib/locacao/avisoExpedicao';
@@ -31,7 +31,7 @@ async function historico(db: Db, fichaId: number, usuario: string, acao: string,
 async function arquivarAssinado(db: Db, proposta: { id: number; ficha_id: number; versao: number }, docId: string): Promise<string | null> {
   const doc = await autentiqueConsultarDocumento(docId);
   const url = doc?.files?.signed || doc?.files?.pades;
-  const token = process.env.AUTENTIQUE_API_TOKEN;
+  const token = await tokenAutentique();
   if (!url || !token) return null;
   const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   if (!resp.ok) return null;

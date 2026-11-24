@@ -3,7 +3,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { registrarLogAuditoria } from '../../actions';
 import { revalidatePath } from 'next/cache';
-import nodemailer from 'nodemailer';
+import { exigirSmtp } from '../../lib/cofre/smtp';
 import { dispararAutomacoesPorEventoWhatsApp } from '../../lib/automacoes';
 import { notificarPush } from '../../lib/push';
 import { normalizarPermissao, ehAltaGestaoOP } from '../../lib/permissoes';
@@ -629,19 +629,11 @@ export async function atualizarOP(opId: string, dadosAtualizados: Partial<NovaOP
 // ============================================================================
 async function enviarEmailOPInterno(op: any, emailSolicitante: string, apenasCopia: boolean = false) {
   try {
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT) || 465,
-      secure: Number(process.env.SMTP_PORT) === 465,
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
-    });
+    const { transporter, remetente } = await exigirSmtp();
 
     // 1. Envio para o Solicitante (Sem o Botão)
     await transporter.sendMail({
-      from: `"Sistema Rentech" <${process.env.SMTP_USER}>`,
+      from: `"Sistema Rentech" <${remetente}>`,
       to: emailSolicitante,
       subject: apenasCopia ? `[Segunda Via] Cópia da OP - OS: ${op.os_numero || 'S/N'}` : `[Cópia] Sua OP foi enviada - OS: ${op.os_numero || 'S/N'}`,
       html: gerarHtmlEmailOP(op, false)
@@ -650,7 +642,7 @@ async function enviarEmailOPInterno(op: any, emailSolicitante: string, apenasCop
     // 2. Envio para o Financeiro (COM o Botão)
     if (!apenasCopia) {
       await transporter.sendMail({
-        from: `"Sistema Rentech" <${process.env.SMTP_USER}>`,
+        from: `"Sistema Rentech" <${remetente}>`,
         to: process.env.FINANCEIRO_EMAIL || 'financeiro@locadorarentech.com.br',
         subject: `[APROVAÇÃO] Nova OP Recebida - OS: ${op.os_numero || 'S/N'}`,
         html: gerarHtmlEmailOP(op, true)

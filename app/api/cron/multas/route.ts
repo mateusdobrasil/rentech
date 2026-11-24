@@ -39,7 +39,7 @@ export async function GET(request: Request) {
   if (!card || card.ativo === false) {
     return NextResponse.json({ success: true, executado: false, motivo: 'Rotina desativada (ou card ainda não criado) em Agendamentos e Disparos.' });
   }
-  if (!provedorConfigurado()) {
+  if (!(await provedorConfigurado())) {
     return NextResponse.json({ success: false, executado: false, motivo: 'Infosimples sem token/certificado configurado.' });
   }
 

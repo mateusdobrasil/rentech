@@ -4,6 +4,8 @@
 // assinatura de retorno para que app/lib/whatsapp.ts possa alternar entre
 // os dois provedores sem os chamadores saberem qual está ativo.
 
+import { segredo } from './cofre/segredos';
+
 const GRAPH_API_VERSION = 'v21.0';
 
 function graphUrl(path: string): string {
@@ -16,8 +18,8 @@ function graphUrl(path: string): string {
 // esse `detalhe` é o que dá pra conferir de fato o que a Meta respondeu
 // (útil pro botão de teste em /admin/integracao).
 export async function enviarWhatsAppMeta(celular: string, mensagem: string): Promise<{ ok: boolean; erro?: string; detalhe?: string }> {
-  const token = process.env.META_WHATSAPP_TOKEN;
-  const phoneNumberId = process.env.META_WHATSAPP_PHONE_NUMBER_ID;
+  const token = await segredo('META_WHATSAPP_TOKEN');
+  const phoneNumberId = await segredo('META_WHATSAPP_PHONE_NUMBER_ID');
 
   if (!token || !phoneNumberId) {
     return { ok: false, erro: 'Credenciais da Meta Cloud API não configuradas nas variáveis de ambiente.' };
@@ -63,8 +65,8 @@ export async function enviarWhatsAppMeta(celular: string, mensagem: string): Pro
 // testar com sub_type "copy_code" — a Meta usa uma URL dinâmica por trás do
 // autofill, não o botão de cupom).
 export async function enviarWhatsAppMetaTemplate(celular: string, nomeTemplate: string, idioma: string, parametros: string[], botaoCodigo?: string): Promise<{ ok: boolean; erro?: string; detalhe?: string }> {
-  const token = process.env.META_WHATSAPP_TOKEN;
-  const phoneNumberId = process.env.META_WHATSAPP_PHONE_NUMBER_ID;
+  const token = await segredo('META_WHATSAPP_TOKEN');
+  const phoneNumberId = await segredo('META_WHATSAPP_PHONE_NUMBER_ID');
 
   if (!token || !phoneNumberId) {
     return { ok: false, erro: 'Credenciais da Meta Cloud API não configuradas nas variáveis de ambiente.' };
@@ -119,8 +121,8 @@ export async function enviarWhatsAppMetaTemplate(celular: string, nomeTemplate: 
 // configurada, o número está sempre "conectado"; aqui só confirmamos que o
 // Phone Number ID e o token são válidos.
 export async function verificarConexaoMeta(): Promise<{ conectado: boolean; detalhe?: string }> {
-  const token = process.env.META_WHATSAPP_TOKEN;
-  const phoneNumberId = process.env.META_WHATSAPP_PHONE_NUMBER_ID;
+  const token = await segredo('META_WHATSAPP_TOKEN');
+  const phoneNumberId = await segredo('META_WHATSAPP_PHONE_NUMBER_ID');
 
   if (!token || !phoneNumberId) {
     return { conectado: false, detalhe: 'Credenciais da Meta Cloud API não configuradas.' };
@@ -146,7 +148,7 @@ export async function verificarConexaoMeta(): Promise<{ conectado: boolean; deta
 // mesmo Bearer token no header — diferente da Z-API, que já entrega uma URL
 // pública direta no payload do webhook.
 export async function resolverMidiaMeta(mediaId: string): Promise<{ url: string; authHeader: string } | null> {
-  const token = process.env.META_WHATSAPP_TOKEN;
+  const token = await segredo('META_WHATSAPP_TOKEN');
   if (!token) return null;
 
   try {

@@ -6,6 +6,8 @@
 // A montagem de lotes de pagamento e geração de arquivos CNAB vive em
 // app/admin/rh/actions/actions-financeiro.ts (tela RH → Financeiro).
 import { supabaseAdmin } from '../../../lib/supabase';
+import { segredo } from '../../../lib/cofre/segredos';
+import { certificadoA1PorCnpj } from '../../../lib/cofre/certificado';
 import { enviarComProvedor, type ProvedorWhatsApp } from '../../../lib/whatsapp';
 import { enviarWhatsAppMetaTemplate } from '../../../lib/metaWhatsapp';
 import { statusCredenciaisP2s, testarConexao as testarConexaoP2s, type AmbienteP2s } from '../../../lib/p2s';
@@ -45,7 +47,7 @@ export async function statusTokenAutentiqueAction(accessToken: string): Promise<
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
-  return { ok: true, info: { configurado: !!process.env.AUTENTIQUE_API_TOKEN } };
+  return { ok: true, info: { configurado: !!(await segredo('AUTENTIQUE_API_TOKEN')) } };
 }
 
 // Estatísticas de uso da integração com a Autentique, para exibir no card e
@@ -92,9 +94,9 @@ export async function statusZapiAction(accessToken: string): Promise<Resultado> 
   return {
     ok: true,
     info: {
-      instanceConfigurado: !!process.env.ZAPI_INSTANCE,
-      tokenConfigurado: !!process.env.ZAPI_TOKEN,
-      clientTokenConfigurado: !!process.env.API_CLIENT_TOKEN,
+      instanceConfigurado: !!(await segredo('ZAPI_INSTANCE')),
+      tokenConfigurado: !!(await segredo('ZAPI_TOKEN')),
+      clientTokenConfigurado: !!(await segredo('API_CLIENT_TOKEN')),
     }
   };
 }
@@ -110,10 +112,10 @@ export async function statusMetaAction(accessToken: string): Promise<Resultado> 
   return {
     ok: true,
     info: {
-      tokenConfigurado: !!process.env.META_WHATSAPP_TOKEN,
-      phoneNumberIdConfigurado: !!process.env.META_WHATSAPP_PHONE_NUMBER_ID,
-      appSecretConfigurado: !!process.env.META_APP_SECRET,
-      verifyTokenConfigurado: !!process.env.META_WEBHOOK_VERIFY_TOKEN,
+      tokenConfigurado: !!(await segredo('META_WHATSAPP_TOKEN')),
+      phoneNumberIdConfigurado: !!(await segredo('META_WHATSAPP_PHONE_NUMBER_ID')),
+      appSecretConfigurado: !!(await segredo('META_APP_SECRET')),
+      verifyTokenConfigurado: !!(await segredo('META_WEBHOOK_VERIFY_TOKEN')),
     }
   };
 }
@@ -136,16 +138,16 @@ export async function statusItauApiAction(accessToken: string): Promise<Resultad
     ok: true,
     info: {
       sandbox: {
-        clientIdConfigurado: !!process.env.ITAU_API_CLIENT_ID_SANDBOX,
-        clientSecretConfigurado: !!process.env.ITAU_API_CLIENT_SECRET_SANDBOX,
-        certificadoConfigurado: !!(process.env.ITAU_API_CERT_PEM_BASE64_SANDBOX || process.env.ITAU_API_CERT_PEM_PATH_SANDBOX),
-        chaveConfigurada: !!(process.env.ITAU_API_CERT_KEY_BASE64_SANDBOX || process.env.ITAU_API_CERT_KEY_PATH_SANDBOX),
+        clientIdConfigurado: !!(await segredo('ITAU_API_CLIENT_ID_SANDBOX')),
+        clientSecretConfigurado: !!(await segredo('ITAU_API_CLIENT_SECRET_SANDBOX')),
+        certificadoConfigurado: !!((await segredo('ITAU_API_CERT_PEM_BASE64_SANDBOX')) || process.env.ITAU_API_CERT_PEM_PATH_SANDBOX),
+        chaveConfigurada: !!((await segredo('ITAU_API_CERT_KEY_BASE64_SANDBOX')) || process.env.ITAU_API_CERT_KEY_PATH_SANDBOX),
       },
       producao: {
-        clientIdConfigurado: !!process.env.ITAU_API_CLIENT_ID_PRODUCAO,
-        clientSecretConfigurado: !!process.env.ITAU_API_CLIENT_SECRET_PRODUCAO,
-        certificadoConfigurado: !!(process.env.ITAU_API_CERT_PEM_BASE64_PRODUCAO || process.env.ITAU_API_CERT_PEM_PATH_PRODUCAO),
-        chaveConfigurada: !!(process.env.ITAU_API_CERT_KEY_BASE64_PRODUCAO || process.env.ITAU_API_CERT_KEY_PATH_PRODUCAO),
+        clientIdConfigurado: !!(await segredo('ITAU_API_CLIENT_ID_PRODUCAO')),
+        clientSecretConfigurado: !!(await segredo('ITAU_API_CLIENT_SECRET_PRODUCAO')),
+        certificadoConfigurado: !!((await segredo('ITAU_API_CERT_PEM_BASE64_PRODUCAO')) || process.env.ITAU_API_CERT_PEM_PATH_PRODUCAO),
+        chaveConfigurada: !!((await segredo('ITAU_API_CERT_KEY_BASE64_PRODUCAO')) || process.env.ITAU_API_CERT_KEY_PATH_PRODUCAO),
       },
     }
   };
@@ -158,13 +160,14 @@ export async function statusItauApiAction(accessToken: string): Promise<Resultad
 export async function statusGovBrConsignadoAction(accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
+  const certConsignado = await certificadoA1PorCnpj(process.env.GOVBR_CONSIGNADO_CNPJ || '');
 
   return {
     ok: true,
     info: {
       cnpjConfigurado: !!process.env.GOVBR_CONSIGNADO_CNPJ,
-      certificadoConfigurado: !!(process.env.GOVBR_CONSIGNADO_CERT_PFX_BASE64 || process.env.GOVBR_CONSIGNADO_CERT_PFX_PATH),
-      senhaConfigurado: !!process.env.GOVBR_CONSIGNADO_CERT_SENHA,
+      certificadoConfigurado: !!(certConsignado?.pfxBase64 || process.env.GOVBR_CONSIGNADO_CERT_PFX_PATH),
+      senhaConfigurado: !!(certConsignado?.senha || process.env.GOVBR_CONSIGNADO_CERT_SENHA),
       ambiente: (process.env.GOVBR_CONSIGNADO_AMBIENTE || 'homologacao').toLowerCase(),
     }
   };
@@ -179,7 +182,7 @@ export async function statusP2sAction(accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
-  return { ok: true, info: statusCredenciaisP2s() };
+  return { ok: true, info: await statusCredenciaisP2s() };
 }
 
 // Testa a conexão de verdade (Basic Auth + rede) fazendo uma consulta leve

@@ -6,6 +6,7 @@
 //
 // Variável de ambiente: ANTHROPIC_API_KEY. Só roda no servidor.
 import Anthropic from '@anthropic-ai/sdk';
+import { segredo } from './cofre/segredos';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import { z } from 'zod';
 
@@ -57,12 +58,13 @@ export type ResultadoLeitura =
 
 const TIPOS_IMAGEM = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
 
-export function leituraConfigurada(): boolean {
-  return !!process.env.ANTHROPIC_API_KEY;
+export async function leituraConfigurada(): Promise<boolean> {
+  return !!(await segredo('ANTHROPIC_API_KEY'));
 }
 
 export async function lerNotificacaoMulta(arquivo: Buffer, mimeType: string): Promise<ResultadoLeitura> {
-  if (!leituraConfigurada()) return { ok: false, erro: 'Leitura automática não configurada: falta a variável ANTHROPIC_API_KEY no servidor.' };
+  const apiKey = await segredo('ANTHROPIC_API_KEY');
+  if (!apiKey) return { ok: false, erro: 'Leitura automática não configurada: falta a chave do Claude (Parâmetros → Empresas → Sistema → Credenciais).' };
 
   const dados = arquivo.toString('base64');
   let blocoArquivo: Anthropic.Beta.BetaContentBlockParam;
@@ -74,7 +76,7 @@ export async function lerNotificacaoMulta(arquivo: Buffer, mimeType: string): Pr
     return { ok: false, erro: `Formato não suportado (${mimeType}). Envie foto (JPG/PNG) ou PDF.` };
   }
 
-  const client = new Anthropic();
+  const client = new Anthropic({ apiKey });
   try {
     const resposta = await client.beta.messages.parse({
       model: MODELO,

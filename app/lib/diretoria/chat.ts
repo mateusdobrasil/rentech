@@ -15,6 +15,7 @@
 //
 // Variável de ambiente: ANTHROPIC_API_KEY. Só roda no servidor.
 import Anthropic from '@anthropic-ai/sdk';
+import { segredo } from '../cofre/segredos';
 import { supabaseAdmin } from '../supabase';
 import { hojeISO } from './indicadoresDiarios';
 import { MODELO_DIRETORIA, custoTokens } from './ia';
@@ -82,7 +83,8 @@ export async function perguntarAoDiretor(
   usuario: { id: string; nome: string },
   entrada: { conversaId: string | null; pergunta: string; empresas: EmpresaChat[]; empresaTelaId: number | null },
 ): Promise<ResultadoPergunta> {
-  if (!process.env.ANTHROPIC_API_KEY) return { ok: false, erro: 'Falta a variável ANTHROPIC_API_KEY no servidor.' };
+  const apiKey = await segredo('ANTHROPIC_API_KEY');
+  if (!apiKey) return { ok: false, erro: 'Chave do Claude não configurada (Parâmetros → Empresas → Sistema → Credenciais).' };
   const pergunta = entrada.pergunta.trim();
   if (!pergunta) return { ok: false, erro: 'Escreva uma pergunta.' };
   if (pergunta.length > 2000) return { ok: false, erro: 'Pergunta longa demais (máximo 2.000 caracteres).' };
@@ -106,7 +108,7 @@ export async function perguntarAoDiretor(
 
   const mensagens: Mensagem[] = [...(conversa?.historico || []), { role: 'user', content: [{ type: 'text', text: `${contexto}\n\n${pergunta}` }] }];
   const ctx = { db, empresas: entrada.empresas, hoje };
-  const client = new Anthropic();
+  const client = new Anthropic({ apiKey });
   const consultas: string[] = [];
   let tokensEntrada = 0, tokensSaida = 0, custoTurno = 0;
   let resposta = '';

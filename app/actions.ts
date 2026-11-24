@@ -1,7 +1,7 @@
 // app/actions.ts
 "use server";
 
-import nodemailer from 'nodemailer';
+import { exigirSmtp } from './lib/cofre/smtp';
 import { createClient } from '@supabase/supabase-js';
 import { revalidatePath } from 'next/cache';
 import { validarAcesso } from './lib/serverAuth';
@@ -28,18 +28,10 @@ export async function enviarOrcamento(formData: FormData) {
       return { success: false, error: 'Preencha os campos obrigatórios.' };
     }
 
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT) || 465,
-      secure: Number(process.env.SMTP_PORT) === 465,
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
-    });
+    const { transporter, remetente } = await exigirSmtp();
 
     const mailOptions = {
-      from: `"Site Rentech" <${process.env.SMTP_USER}>`,
+      from: `"Site Rentech" <${remetente}>`,
       to: 'contato@locadorarentech.com.br',
       replyTo: email,
       subject: `[Novo Orçamento Site] ${tipo} - ${nome}`,

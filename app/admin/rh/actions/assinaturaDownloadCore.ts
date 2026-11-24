@@ -11,7 +11,7 @@
 import { supabaseAdmin } from '../../../lib/supabase';
 import { filtrarPorFuncionario } from '../../../lib/funcionarioRef';
 import { registrarLogAuditoria } from '../../../actions';
-import { autentiqueConsultarDocumento } from '../../../lib/autentique';
+import { autentiqueConsultarDocumento, tokenAutentique } from '../../../lib/autentique';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -54,8 +54,8 @@ export async function baixarAssinado(payload: {
     const urlAssinado = doc?.files?.signed || doc?.files?.pades;
     if (!urlAssinado) return { ok: false, erro: 'A Autentique ainda não disponibilizou o arquivo assinado.' };
 
-    const token = process.env.AUTENTIQUE_API_TOKEN;
-    if (!token) return { ok: false, erro: 'AUTENTIQUE_API_TOKEN não configurado no servidor.' };
+    const token = await tokenAutentique();
+    if (!token) return { ok: false, erro: 'Token da Autentique não configurado (Parâmetros → Empresas → Sistema → Credenciais).' };
 
     const resp = await fetch(urlAssinado, { headers: { Authorization: `Bearer ${token}` } });
     if (!resp.ok) {

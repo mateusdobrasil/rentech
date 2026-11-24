@@ -24,6 +24,7 @@ import { HubErro } from '../../../components/ui/HubStates';
 import { indexarFeriados, ehFeriado, type IndiceFeriados } from '../../../lib/feriados';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
+import ExportarAfd from './ExportarAfd';
 
 interface RegistroDiario {
   id?: string;
@@ -123,6 +124,7 @@ export default function GestaoDePonto() {
   const [ledgerWhatsapp, setLedgerWhatsapp] = useState<RegistroLedger[]>([]);
   const [carregandoLedger, setCarregandoLedger] = useState(false);
   const [abaWhatsapp, setAbaWhatsapp] = useState<'ledger' | 'solicitacoes' | 'historico' | 'folga'>('ledger');
+  const [afdAberto, setAfdAberto] = useState(false);
   const [solicitacoesPendentes, setSolicitacoesPendentes] = useState<SolicitacaoPendente[]>([]);
   const [carregandoSolicitacoes, setCarregandoSolicitacoes] = useState(false);
   const [processandoSolicitacaoId, setProcessandoSolicitacaoId] = useState<number | null>(null);
@@ -1336,6 +1338,9 @@ export default function GestaoDePonto() {
                       <span className="bg-white/25 px-2 py-0.5 rounded-full text-[10px]">{estatisticasWhatsapp.folgasPendentes}</span>
                     )}
                   </button>
+                  <button onClick={() => setAfdAberto(true)} className="w-full bg-white border-2 border-[#CBD5E1] text-[#334155] hover:border-[#0C1D4D] hover:text-[#0C1D4D] font-black uppercase tracking-widest text-xs py-4 rounded-xl transition-colors flex items-center justify-center gap-2">
+                    📄 AFD (PORTARIA 671)
+                  </button>
                 </div>
               </div>
 
@@ -1965,6 +1970,7 @@ export default function GestaoDePonto() {
         )}
 
       </div>
+      {afdAberto && accessToken && <ExportarAfd accessToken={accessToken} mesAno={mesAnoWhatsapp} onClose={() => setAfdAberto(false)} />}
     </div>
   );
 }

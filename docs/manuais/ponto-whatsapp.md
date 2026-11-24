@@ -151,7 +151,33 @@ O registro segue os princípios técnicos da Portaria 671/2021 (REP-P) para ter 
 
 **Atestados:** são dado de saúde (LGPD). Ficam numa pasta privada e só abrem por um link que vale 10 minutos, gerado quando o RH clica em Ver anexo.
 
-**Limite:** isto cobre a integridade técnica do registro. A exportação do AFD (arquivo fonte de dados da Portaria 671) ainda não existe, e o processo completo precisa de validação jurídica e contábil.
+**Limite:** isto cobre a integridade técnica do registro. Faltam o registro do programa no INPI e a validação jurídica e contábil do processo completo.
+
+## AFD para a fiscalização (Portaria 671)
+
+**Onde fica:** RH → Ponto, card "2. Ponto via WhatsApp", botão **📄 AFD (Portaria 671)**.
+
+O AFD (Arquivo Fonte de Dados) é o arquivo que o auditor fiscal pede. Ele traz cada marcação original do WhatsApp, na ordem do NSR, no leiaute oficial versão 004 (Anexo V da Portaria 671).
+
+1. Escolha a **empresa** e o **período**.
+2. **⬇ Gerar AFD** baixa dois arquivos: o .txt e o .p7s com a assinatura digital (e-CNPJ A1 da empresa). O nome segue a Portaria: AFD + número do INPI + CNPJ + REP_P.
+3. **👁 Prévia (não congela)** gera o mesmo arquivo com "_PREVIA" no nome, sem fixar nada. Use para a contabilidade conferir.
+
+| Regra | Como funciona |
+| --- | --- |
+| O que entra | Só as marcações originais. Ajuste manual, abono e dia descartado não entram (são tratamento) |
+| Congelamento | A primeira vez que uma marcação entra num AFD oficial, a linha dela fica fixa (CPF e hash). O mesmo período gera sempre as mesmas linhas |
+| Hash | Cada marcação leva o SHA-256 encadeado ao da anterior, desde a primeira batida |
+| CPF | Vem da Ficha do RH. Sem CPF, o AFD não é gerado e a tela diz de quem falta |
+| Assinatura | Arquivo .p7s (CAdES), com o certificado cujo CNPJ é o da empresa. Sem certificado, sai só o .txt, com aviso |
+
+**Dados do REP-P** (no mesmo modal, botão Editar):
+
+- **Nº de registro no INPI:** vazio até o programa ser registrado; o cabeçalho sai com zeros e a tela avisa.
+- **CNPJ/CPF do desenvolvedor:** vazio = o CNPJ da própria empresa.
+- **Coletor da marcação:** 01 (aplicativo mobile) para o WhatsApp. Mudar vale só para as marcações que ainda não entraram em nenhum AFD.
+
+**Para conferir a assinatura:** envie o .txt e o .p7s ao verificador do ITI (validar.iti.gov.br).
 
 ## Configuração
 
@@ -174,5 +200,7 @@ O registro segue os princípios técnicos da Portaria 671/2021 (REP-P) para ter 
 **Dá para pedir folga ou mandar o atestado sem o WhatsApp?** Sim, pelo Portal do Funcionário, aba Espelho de Ponto: o botão 🏖️ Solicitar folga, e o atestado no pedido de abono do dia.
 
 **Preciso de folga de mais de 30 dias.** Fale com o RH; férias e afastamentos têm tela própria (RH → Férias e Afastamentos).
+
+**O auditor pediu o AFD.** RH → Ponto, botão 📄 AFD (Portaria 671): escolha a empresa e o período e entregue os dois arquivos (.txt e .p7s).
 
 **Abono de meio período.** Pelo WhatsApp o abono é do dia todo. Abono parcial é lançado pelo RH em Gestão de Abonos.

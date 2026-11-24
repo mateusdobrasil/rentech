@@ -65,7 +65,7 @@ export const MANUAIS: ManualCatalogo[] = [
   },
   {
     slug: 'ponto-whatsapp', titulo: 'Ponto via WhatsApp', grupo: 'SISTEMA', icone: '🕒', atualizadoEm: '2026-11-23',
-    descricao: 'Registro, justificativa, abono e folga pelo WhatsApp, lembretes do dia seguinte, Portal e app, painel do RH e dos gestores, e a segurança do registro.',
+    descricao: 'Registro, justificativa, abono e folga pelo WhatsApp, lembretes do dia seguinte, Portal e app, painel do RH e dos gestores, a segurança do registro e o AFD da Portaria 671.',
     fonte: 'docs/manuais/ponto-whatsapp.md',
   },
   {

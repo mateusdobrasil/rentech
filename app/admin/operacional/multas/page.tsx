@@ -1744,8 +1744,12 @@ function Modal({ titulo, onFechar, children, largo }: { titulo: string; onFechar
     return () => window.removeEventListener('keydown', esc);
   }, [onFechar]);
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-start md:items-center justify-center p-3 overflow-y-auto" onClick={onFechar}>
-      <div className={`bg-white rounded-2xl shadow-2xl w-full ${largo ? 'max-w-3xl' : 'max-w-xl'} my-6`} onClick={e => e.stopPropagation()}>
+    // my-auto em vez de items-center: centraliza quando cabe na tela e, quando o
+    // conteúdo é mais alto que a janela, começa no topo e rola inteiro. Com
+    // items-center o excesso saía pelos dois lados e o topo (título, ×) ficava
+    // inalcançável. overscroll-contain: rolar o modal não rola a página de trás.
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-3 overflow-y-auto overscroll-contain" onClick={onFechar}>
+      <div className={`bg-white rounded-2xl shadow-2xl w-full ${largo ? 'max-w-3xl' : 'max-w-xl'} my-auto`} onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center px-5 py-4 border-b border-[#F1F5F9]">
           <h3 className="font-black text-[#0C1D4D] uppercase tracking-wide text-sm">{titulo}</h3>
           <button onClick={onFechar} className="text-gray-400 hover:text-gray-700 text-xl leading-none" aria-label="Fechar">×</button>

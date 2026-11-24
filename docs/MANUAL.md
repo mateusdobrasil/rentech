@@ -58,7 +58,7 @@ O **Rentech Web** é o site institucional + sistema de gestão interna da Rentec
 | Hospedagem | Vercel (com Vercel Cron) |
 | Analytics | Vercel Analytics |
 
-> ⚠️ **Nota técnica importante:** este projeto usa o Next.js 16, que trouxe mudanças de convenção em relação a versões anteriores. Um exemplo já usado no projeto: o middleware não se chama mais `middleware.ts`/`middleware()`, e sim **`proxy.ts`/`proxy()`** (ver seção 5). O arquivo `AGENTS.md` do projeto já alerta qualquer desenvolvedor (humano ou IA) sobre isso.
+> ⚠️ **Nota técnica importante:** este projeto usa o Next.js 16, que trouxe mudanças de convenção em relação a versões anteriores. Um exemplo: o middleware não se chama mais `middleware.ts`/`middleware()`, e sim **`proxy.ts`/`proxy()`** (o projeto não usa nenhum desde 23/11/2026; ver seção 5). O arquivo `AGENTS.md` do projeto já alerta qualquer desenvolvedor (humano ou IA) sobre isso.
 
 ---
 
@@ -143,7 +143,6 @@ app/
 
 components/                  → Componentes de UI compartilhados (Navbar, Carrossel de vídeo, Contato)
 public/                       → Arquivos estáticos (logos, imagens de cases, vídeos)
-proxy.ts                      → Middleware (proteção de rota /admin/op)
 vercel.json                   → Configuração da Vercel (Cron Job)
 docs/MANUAL.md                 → Este manual
 ```
@@ -152,14 +151,14 @@ docs/MANUAL.md                 → Este manual
 
 ## 5. Autenticação e controle de acesso
 
-O login é feito via **Supabase Auth** (e-mail/senha) na página `/login`. Ao autenticar, o sistema grava o cookie `sb-access-token` e registra o acesso no log de auditoria.
+O login é feito via **Supabase Auth** (e-mail/senha) na página `/login` e registra o acesso no log de auditoria. A sessão fica no Supabase (renovada sozinha); não há cookie próprio do sistema.
 
-Existem **duas camadas de proteção**, e é importante entender que elas não são iguais:
+Existem **duas camadas de proteção**:
 
-1. **`proxy.ts` (middleware, roda no edge, antes da página carregar):** protege **apenas** as rotas `/admin/op/*`. Se não houver o cookie de sessão, redireciona para `/login`.
-2. **Verificação no `app/admin/layout.tsx` (roda no navegador, depois da página já ter sido carregada):** protege o restante do `/admin/**` (RH, estoque, permissões, etc.), checando a sessão do Supabase no cliente e redirecionando se não houver sessão.
+1. **No navegador:** `app/admin/layout.tsx` e os hooks das páginas (`usePageAccess`, `useAcessoRota`, `useModuleAccess`) checam a sessão e a permissão da rota e redirecionam para `/login` ou mostram "acesso negado". Serve à navegação, não é a proteção de verdade: o código da página já chegou ao navegador.
+2. **No servidor (a proteção de verdade):** toda server action recebe o token da sessão e valida usuário, permissão da rota e empresa (`app/lib/serverAuth.ts`: `validarAcesso`, `validarAcessoAlgumaRota`, `obterEmpresasPermitidas`). Sem isso nenhum dado é lido nem gravado.
 
-> A camada 2 é mais fraca que a camada 1 porque o código já chegou ao navegador antes da checagem acontecer (ver observação na seção 11).
+> Até 23/11/2026 havia um `proxy.ts` que barrava `/admin/op/*` sem o cookie `sb-access-token` gravado no login. O cookie valia 24h e não se renovava, então quem ficava logado mais de um dia caía no login ao abrir uma OP. Foi removido: as páginas de OP já checam no navegador e as actions no servidor.
 
 ### Níveis de permissão
 
@@ -322,7 +321,7 @@ Apenas `/api/cron/motor` está registrada no `vercel.json` como cron job; as dem
 
 Estas são observações levantadas na revisão, para conhecimento de quem administra o sistema:
 
-1. **Proteção de rota assimétrica**: apenas `/admin/op/*` é protegida no middleware (`proxy.ts`), que roda antes da página carregar. As demais seções do admin (RH, Estoque, Permissões, Conteúdo, etc.) dependem exclusivamente de uma checagem feita **no navegador**, depois que a página já foi enviada. Na prática, o conteúdo da página chega a ser carregado no cliente antes do redirecionamento acontecer. Recomenda-se, se for reforçar a segurança, ampliar o matcher do `proxy.ts` para cobrir todo `/admin/:path*`.
+1. **Checagem de página no navegador**: as telas do admin checam sessão e permissão **no navegador**, depois que a página já foi enviada; o código da tela chega ao cliente antes do redirecionamento. Os **dados** não: toda server action valida o token, a rota e a empresa no servidor (`app/lib/serverAuth.ts`). Um middleware por cookie foi testado em `/admin/op/*` e removido em 23/11/2026, porque o cookie vencia em 24h sem renovar.
 2. **Segredo do webhook de ponto via query string**: `/api/webhooks/zapi-ponto` usa `?token=` na URL como única proteção, já que a Z-API não assina as requisições. Isso é aceitável, mas o token fica potencialmente exposto em logs de acesso — deve ser tratado como segredo e trocado caso vaze.
 3. **Chave de serviço do Supabase (`SUPABASE_SERVICE_ROLE_KEY`)** é a credencial mais sensível do projeto — dá acesso irrestrito ao banco, ignorando as regras de segurança (RLS). É usada apenas em código de servidor (`supabaseAdmin()`), o que está correto; deve **nunca** ser exposta em código que rode no navegador.
 4. Nenhum valor de segredo foi incluído neste manual — apenas nomes de variáveis e finalidade.
@@ -352,7 +351,7 @@ Estas são observações levantadas na revisão, para conhecimento de quem admin
 | **LGPD** | Lei Geral de Proteção de Dados (consentimento coletado no formulário de freelancer) |
 | **Webhook** | URL que um serviço externo (Autentique, Z-API) chama automaticamente quando algo acontece |
 | **Server Action** | Função que roda no servidor, chamada diretamente a partir de um formulário/componente React (recurso do Next.js) |
-| **Middleware / proxy.ts** | Código que roda antes da página, podendo bloquear/redirecionar o acesso |
+| **Middleware / proxy.ts** | Código que roda antes da página, podendo bloquear/redirecionar o acesso (não usado no projeto) |
 
 ---
 

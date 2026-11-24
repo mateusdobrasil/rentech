@@ -17,7 +17,8 @@ import { supabaseAdmin } from '../../lib/supabase';
 import { resolverFuncionarioPortal } from './actions-acesso';
 import { gerarEspelhoPontoPdf } from '../../lib/gerarEspelhoPontoPdf';
 import { montarEspelhoDoMes } from '../lib/espelhoPonto';
-import { existeSolicitacaoPendente, type TipoBatida } from '../../lib/pontoWhatsapp';
+import { existeSolicitacaoPendente, validarPeriodoFolga, formatarPeriodoBR, MAX_DIAS_PERIODO_FOLGA, type TipoBatida } from '../../lib/pontoWhatsapp';
+import { dispararAutomacoesPorEventoWhatsApp } from '../../lib/automacoes';
 import { notificarPush } from '../../lib/push';
 import { filtrarFicha, filtrarPorFuncionario, type RefOuNome } from '../../lib/funcionarioRef';
 import { registrarLogAuditoria } from '../../actions';
@@ -44,8 +45,8 @@ export async function buscarMeuEspelhoPontoAction(accessToken: string, mesRefere
   try {
     const espelho = await montarEspelhoDoMes(db, func, mesReferencia);
     return { ok: true, info: espelho };
-  } catch (e: any) {
-    return { ok: false, erro: e.message };
+  } catch (e) {
+    return { ok: false, erro: (e as Error).message };
   }
 }
 
@@ -67,8 +68,8 @@ export async function baixarMeuEspelhoPontoPdfAction(accessToken: string, mesRef
       empresaNome: espelho.empresaNome,
     });
     return { ok: true, info: { pdfBase64: Buffer.from(bytes).toString('base64') } };
-  } catch (e: any) {
-    return { ok: false, erro: e.message };
+  } catch (e) {
+    return { ok: false, erro: (e as Error).message };
   }
 }
 
@@ -106,8 +107,8 @@ export async function listarMinhasSolicitacoesPontoAction(accessToken: string, m
       .lte('data_referencia', dataFim);
     if (error) throw new Error(error.message);
     return { ok: true, info: (data || []) as MinhaSolicitacaoPonto[] };
-  } catch (e: any) {
-    return { ok: false, erro: e.message };
+  } catch (e) {
+    return { ok: false, erro: (e as Error).message };
   }
 }
 
@@ -173,32 +174,102 @@ export async function solicitarJustificativaBatidaAction(
     }
 
     return { ok: true };
-  } catch (e: any) {
-    return { ok: false, erro: e.message };
+  } catch (e) {
+    return { ok: false, erro: (e as Error).message };
   }
 }
 
-// Cria a solicitação de ABONO_DIA pelo Portal — equivalente ao fluxo ABONAR
-// do WhatsApp, sem o anexo de atestado (o WhatsApp aceita foto/PDF no meio da
-// conversa; aqui o colaborador pode enviar o atestado depois pelo RH/pela
-// própria aba Documentos — não duplicar o upload direto pra Storage aqui por
-// ora). Nunca abona direto: só cria a solicitação PENDENTE.
-export async function solicitarAbonoDiaAction(
-  payload: { dataReferencia: string; motivo: string },
+// Atestado do abono (foto ou PDF): o navegador sobe DIRETO pro Storage privado
+// por um link assinado (server action tem limite de corpo — o mesmo 413 dos
+// documentos), no mesmo bucket do atestado que chega pelo WhatsApp
+// (salvarAnexoAbono em app/lib/pontoWhatsapp.ts). O RH abre pelo "Ver anexo"
+// (urlAnexoSolicitacaoAction), com link de 10 minutos — dado de saúde (LGPD).
+const BUCKET_ATESTADOS = 'documentos-funcionarios';
+const LIMITE_ATESTADO_MB = 10;
+const TIPO_ATESTADO_OK = /^(image\/[a-z0-9.+-]+|application\/pdf)$/i;
+const EXTENSAO_ATESTADO_OK = /\.(jpe?g|png|webp|heic|heif|gif|pdf)$/i;
+
+function slugTexto(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+}
+const prefixoAtestado = (funcionarioNome: string) => `${slugTexto(funcionarioNome)}/atestados-portal/`;
+
+function validarDiaAbono(dataReferencia: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dataReferencia || '')) return 'Data inválida.';
+  if (dataReferencia > hojeIsoSaoPaulo()) return 'Não é possível pedir abono de um dia futuro.';
+  return null;
+}
+
+// 1º passo do envio do atestado: confere o arquivo e o dia (sem pedido
+// pendente, pra não deixar arquivo solto) e devolve o link assinado de upload.
+export async function urlUploadAtestadoAction(
+  payload: { dataReferencia: string; nomeArquivo: string; tamanho: number; tipo: string },
   accessToken: string
 ): Promise<Resultado> {
   const func = await resolverFuncionarioPortal(accessToken);
   if (!func) return { ok: false, erro: ERRO_SESSAO };
 
-  const { dataReferencia, motivo } = payload;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dataReferencia || '')) return { ok: false, erro: 'Data inválida.' };
-  if (dataReferencia > hojeIsoSaoPaulo()) return { ok: false, erro: 'Não é possível pedir abono de um dia futuro.' };
-  if (!motivo?.trim()) return { ok: false, erro: 'Informe o motivo.' };
+  const erroDia = validarDiaAbono(payload.dataReferencia);
+  if (erroDia) return { ok: false, erro: erroDia };
+  const nomeArquivo = String(payload.nomeArquivo || '');
+  if (!TIPO_ATESTADO_OK.test(payload.tipo || '') && !EXTENSAO_ATESTADO_OK.test(nomeArquivo)) return { ok: false, erro: 'Envie uma foto ou um PDF.' };
+  if (!(Number(payload.tamanho) > 0)) return { ok: false, erro: 'O arquivo está vazio.' };
+  if (Number(payload.tamanho) > LIMITE_ATESTADO_MB * 1024 * 1024) return { ok: false, erro: `Arquivo acima de ${LIMITE_ATESTADO_MB} MB.` };
 
   const db = supabaseAdmin();
   try {
+    if (await existeSolicitacaoPendente(db, func, payload.dataReferencia, 'ABONO_DIA', null)) {
+      return { ok: false, erro: 'Você já tem uma solicitação de abono pendente para esse dia. Aguarde a análise.' };
+    }
+    const extensao = (nomeArquivo.includes('.') ? nomeArquivo.split('.').pop() || '' : '').toLowerCase();
+    const nomeBase = slugTexto(nomeArquivo.replace(/\.[^.]+$/, '')).slice(0, 60) || 'atestado';
+    const caminho = `${prefixoAtestado(func.funcionarioNome)}${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${nomeBase}${/^[a-z0-9]{2,5}$/.test(extensao) ? '.' + extensao : ''}`;
+    const { data, error } = await db.storage.from(BUCKET_ATESTADOS).createSignedUploadUrl(caminho);
+    if (error) throw new Error(error.message);
+    return { ok: true, info: { bucket: BUCKET_ATESTADOS, caminho, token: data.token } };
+  } catch (e) {
+    return { ok: false, erro: (e as Error).message };
+  }
+}
+
+// Cria a solicitação de ABONO_DIA pelo Portal — equivalente ao fluxo ABONAR
+// do WhatsApp, com o atestado opcional (já enviado ao Storage por
+// urlUploadAtestadoAction). Nunca abona direto: só cria a solicitação PENDENTE.
+export async function solicitarAbonoDiaAction(
+  payload: { dataReferencia: string; motivo: string; anexo?: { caminho: string; nome: string } | null },
+  accessToken: string
+): Promise<Resultado> {
+  const func = await resolverFuncionarioPortal(accessToken);
+  if (!func) return { ok: false, erro: ERRO_SESSAO };
+
+  const { dataReferencia, motivo, anexo } = payload;
+  const erroDia = validarDiaAbono(dataReferencia);
+  if (erroDia) return { ok: false, erro: erroDia };
+  if (!motivo?.trim()) return { ok: false, erro: 'Informe o motivo.' };
+
+  const db = supabaseAdmin();
+  // o anexo só vale se estiver na pasta do PRÓPRIO funcionário e existir de fato
+  let anexoOk: { caminho: string; nome: string } | null = null;
+  if (anexo?.caminho) {
+    const prefixo = prefixoAtestado(func.funcionarioNome);
+    const caminho = String(anexo.caminho);
+    const arquivo = caminho.slice(prefixo.length);
+    if (!caminho.startsWith(prefixo) || !arquivo || arquivo.includes('/') || caminho.includes('..')) return { ok: false, erro: 'Anexo inválido.' };
+    const { data: achados } = await db.storage.from(BUCKET_ATESTADOS).list(prefixo.slice(0, -1), { search: arquivo, limit: 5 });
+    if (!(achados || []).some(o => o.name === arquivo)) return { ok: false, erro: 'O atestado não chegou. Envie de novo.' };
+    anexoOk = { caminho, nome: String(anexo.nome || 'atestado').slice(0, 120) };
+  }
+  const descartarAnexo = async () => {
+    if (anexoOk) await db.storage.from(BUCKET_ATESTADOS).remove([anexoOk.caminho]).catch(() => {});
+  };
+
+  try {
     const jaExiste = await existeSolicitacaoPendente(db, func, dataReferencia, 'ABONO_DIA', null);
-    if (jaExiste) return { ok: false, erro: 'Você já tem uma solicitação de abono pendente para esse dia. Aguarde a análise.' };
+    if (jaExiste) {
+      await descartarAnexo();
+      return { ok: false, erro: 'Você já tem uma solicitação de abono pendente para esse dia. Aguarde a análise.' };
+    }
 
     const { celular, empresaId } = await celularEEmpresaDoFuncionario(db, func);
     const { error } = await db.from('folha_ponto_whatsapp_solicitacoes').insert({
@@ -210,12 +281,14 @@ export async function solicitarAbonoDiaAction(
       data_referencia: dataReferencia,
       dia_todo: true,
       motivo: motivo.trim(),
+      anexo_path: anexoOk?.caminho || null,
+      anexo_nome: anexoOk?.nome || null,
     });
-    if (error) throw new Error(error.message);
+    if (error) { await descartarAnexo(); throw new Error(error.message); }
 
     await registrarLogAuditoria({
       usuario_nome: `${func.funcionarioNome} (PORTAL)`,
-      acao: `SOLICITAÇÃO DE ABONO: ${func.funcionarioNome} — ${dataReferencia}`,
+      acao: `SOLICITAÇÃO DE ABONO: ${func.funcionarioNome} — ${dataReferencia}${anexoOk ? ' (com anexo)' : ''}`,
       setor: SETOR_AUDITORIA,
     });
 
@@ -226,7 +299,111 @@ export async function solicitarAbonoDiaAction(
     }
 
     return { ok: true };
-  } catch (e: any) {
-    return { ok: false, erro: e.message };
+  } catch (e) {
+    return { ok: false, erro: (e as Error).message };
+  }
+}
+
+// ============================================================================
+// FOLGA pelo Portal — equivalente à opção 4 do WhatsApp (avancarFolgar em
+// app/lib/pontoWhatsapp.ts): mesma regra de período, mesma fila FOLGA_DIA,
+// mesmo aviso aos gestores (automação "Solicitação Folga") e push. Quem aprova
+// é o RH ou o gestor do Operacional; nunca grava abono direto.
+// ============================================================================
+export interface MinhaFolga {
+  id: number;
+  data_referencia: string;
+  data_referencia_fim: string | null;
+  motivo: string;
+  status: 'PENDENTE' | 'APROVADA' | 'REJEITADA';
+  motivo_rejeicao: string | null;
+}
+
+const ERROS_PERIODO_FOLGA: Record<'FORMATO' | 'PASSADO' | 'ORDEM' | 'PERIODO_LONGO', string> = {
+  FORMATO: 'Data inválida.',
+  PASSADO: 'A folga não pode começar no passado.',
+  ORDEM: 'A data final não pode ser antes da inicial.',
+  PERIODO_LONGO: `O período não pode passar de ${MAX_DIAS_PERIODO_FOLGA} dias corridos. Para mais tempo, fale com o RH (férias e afastamentos).`,
+};
+
+export async function solicitarFolgaAction(
+  payload: { inicio: string; fim: string; motivo: string },
+  accessToken: string
+): Promise<Resultado> {
+  const func = await resolverFuncionarioPortal(accessToken);
+  if (!func) return { ok: false, erro: ERRO_SESSAO };
+
+  const inicio = String(payload.inicio || '');
+  const fim = String(payload.fim || '') || inicio;
+  const motivo = String(payload.motivo || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(inicio) || !/^\d{4}-\d{2}-\d{2}$/.test(fim)) return { ok: false, erro: ERROS_PERIODO_FOLGA.FORMATO };
+  const periodo = validarPeriodoFolga(inicio, fim, new Date());
+  if (!periodo.ok) return { ok: false, erro: ERROS_PERIODO_FOLGA[periodo.erro] };
+  if (!motivo) return { ok: false, erro: 'Informe o motivo.' };
+
+  const db = supabaseAdmin();
+  try {
+    if (await existeSolicitacaoPendente(db, func, inicio, 'FOLGA_DIA', null)) {
+      return { ok: false, erro: 'Você já tem uma solicitação de folga pendente começando nessa data. Aguarde a análise.' };
+    }
+
+    const { celular, empresaId } = await celularEEmpresaDoFuncionario(db, func);
+    const { error } = await db.from('folha_ponto_whatsapp_solicitacoes').insert({
+      tipo: 'FOLGA_DIA',
+      funcionario_nome: func.funcionarioNome,
+      ...(func.funcionarioId ? { funcionario_id: func.funcionarioId } : {}),
+      empresa_id: empresaId,
+      celular,
+      data_referencia: inicio,
+      data_referencia_fim: fim,
+      dia_todo: true,
+      motivo,
+    });
+    if (error) throw new Error(error.message);
+
+    const periodoBR = formatarPeriodoBR(inicio, fim);
+    await registrarLogAuditoria({
+      usuario_nome: `${func.funcionarioNome} (PORTAL)`,
+      acao: `SOLICITAÇÃO DE FOLGA: ${func.funcionarioNome} — ${periodoBR}`,
+      setor: SETOR_AUDITORIA,
+    });
+
+    try {
+      await dispararAutomacoesPorEventoWhatsApp('SOLICITACAO_FOLGA', { solicitante: func.funcionarioNome, periodo: periodoBR, motivo });
+    } catch (e) {
+      console.error('Falha ao notificar gestores sobre nova solicitação de folga (Portal):', e);
+    }
+    try {
+      await notificarPush('/mobile/ponto', 'Nova solicitação de folga', `${func.funcionarioNome} pediu folga em ${periodoBR}.`, { tipo: 'ponto' });
+    } catch (e) {
+      console.error('Falha ao notificar aprovadores sobre nova folga (Portal):', e);
+    }
+
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, erro: (e as Error).message };
+  }
+}
+
+// Folgas do PRÓPRIO funcionário: as que ainda não acabaram e as dos últimos
+// 60 dias, pra ele acompanhar o status sem depender do WhatsApp.
+export async function listarMinhasFolgasAction(accessToken: string): Promise<Resultado> {
+  const func = await resolverFuncionarioPortal(accessToken);
+  if (!func) return { ok: false, erro: ERRO_SESSAO };
+
+  const db = supabaseAdmin();
+  try {
+    const desde = new Date(Date.now() - 60 * 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    const { data, error } = await filtrarPorFuncionario(db
+      .from('folha_ponto_whatsapp_solicitacoes')
+      .select('id, data_referencia, data_referencia_fim, motivo, status, motivo_rejeicao'), func)
+      .eq('tipo', 'FOLGA_DIA')
+      .or(`data_referencia_fim.gte.${desde},and(data_referencia_fim.is.null,data_referencia.gte.${desde})`)
+      .order('data_referencia', { ascending: false })
+      .limit(20);
+    if (error) throw new Error(error.message);
+    return { ok: true, info: (data || []) as MinhaFolga[] };
+  } catch (e) {
+    return { ok: false, erro: (e as Error).message };
   }
 }

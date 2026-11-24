@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { buscarMeuEspelhoPontoAction, baixarMeuEspelhoPontoPdfAction, listarMinhasSolicitacoesPontoAction, type MinhaSolicitacaoPonto } from './actions/actions-ponto';
 import JustificarPonto from './JustificarPonto';
+import SolicitarFolga from './SolicitarFolga';
 
 export interface RegistroDia {
   data: string;
@@ -63,7 +64,8 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
   const [erro, setErro] = useState('');
 
   const [solicitacoes, setSolicitacoes] = useState<MinhaSolicitacaoPonto[]>([]);
-  const [diaSelecionado, setDiaSelecionado] = useState<{ dataIso: string; reg: RegistroDia | undefined; falta: boolean } | null>(null);
+  const [folgaAberta, setFolgaAberta] = useState(false);
+  const [diaSelecionado, setDiaSelecionado] =useState<{ dataIso: string; reg: RegistroDia | undefined; falta: boolean } | null>(null);
 
   const carregarSolicitacoes = useCallback(() => {
     listarMinhasSolicitacoesPontoAction(accessToken, mesReferencia).then(res => {
@@ -191,13 +193,21 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
             className="p-2 border border-[#CBD5E1] rounded-lg text-sm font-bold outline-none focus:border-[#336699] bg-[#F8FAFC]"
           />
         </div>
-        <button
-          onClick={baixarPdf}
-          disabled={baixando || carregando}
-          className="text-[10px] md:text-xs font-black bg-[#336699] hover:bg-[#284B8C] disabled:opacity-50 text-white px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase"
-        >
-          {baixando ? 'Gerando...' : '⬇ Baixar PDF'}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setFolgaAberta(true)}
+            className="text-[10px] md:text-xs font-black bg-white hover:bg-[#F8FAFC] border border-[#336699] text-[#336699] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase"
+          >
+            🏖️ Solicitar folga
+          </button>
+          <button
+            onClick={baixarPdf}
+            disabled={baixando || carregando}
+            className="text-[10px] md:text-xs font-black bg-[#336699] hover:bg-[#284B8C] disabled:opacity-50 text-white px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase"
+          >
+            {baixando ? 'Gerando...' : '⬇ Baixar PDF'}
+          </button>
+        </div>
       </div>
 
       {erro && <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-bold px-4 py-3 rounded-lg">{erro}</div>}
@@ -319,6 +329,8 @@ export default function EspelhoPonto({ accessToken }: { accessToken: string }) {
           onEnviado={carregarSolicitacoes}
         />
       )}
+
+      {folgaAberta && <SolicitarFolga accessToken={accessToken} onClose={() => setFolgaAberta(false)} />}
     </div>
   );
 }

@@ -41,7 +41,7 @@ const JANELA_DIAS_RETROATIVOS = 7;
 // FOLGAR é prospectivo (data futura, digitada em texto livre, sem menu
 // numerado) — limite de tamanho do período só pra evitar erro de digitação
 // virar um pedido de meses inteiros sem querer.
-const MAX_DIAS_PERIODO_FOLGA = 30;
+export const MAX_DIAS_PERIODO_FOLGA = 30;
 
 export interface ResultadoPonto {
   mensagem: string;
@@ -178,6 +178,12 @@ function parsePeriodoFolga(texto: string, agora: Date): ResultadoPeriodoFolga {
   const fimIso = partes.length === 2 ? parseDataBR(partes[1]) : inicioIso;
   if (!fimIso) return { ok: false, erro: 'FORMATO' };
 
+  return validarPeriodoFolga(inicioIso, fimIso, agora);
+}
+
+// Regra única do período de folga (WhatsApp e Portal do Funcionário):
+// a partir de hoje, fim >= início e no máximo MAX_DIAS_PERIODO_FOLGA corridos.
+export function validarPeriodoFolga(inicioIso: string, fimIso: string, agora: Date): ResultadoPeriodoFolga {
   if (fimIso < inicioIso) return { ok: false, erro: 'ORDEM' };
   if (inicioIso < dataReferenciaBR(agora)) return { ok: false, erro: 'PASSADO' };
 

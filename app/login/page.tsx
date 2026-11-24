@@ -25,9 +25,9 @@ function LoginForm() {
   // interação em nenhuma página do admin.
   const motivoInatividade = searchParams.get('motivo') === 'inatividade';
 
-  // O rewrite do proxy.ts (host -> ?empresa=alfalight) roda no servidor e não
-  // chega ao cliente porque /login é estático/cacheado na CDN — por isso o
-  // hostname real do navegador é checado direto aqui também. Calculado só
+  // /login é estático/cacheado na CDN, então o servidor não sabe o host — o
+  // domínio da AlfaLight é reconhecido pelo hostname real do navegador (ou
+  // pelo ?empresa=alfalight). Calculado só
   // depois do mount (não durante o render) pra não conflitar com o HTML que
   // o servidor gerou sem saber o host (evita mismatch de hidratação).
   const [isAlfaLight, setIsAlfaLight] = useState(false);
@@ -57,8 +57,6 @@ function LoginForm() {
       }
 
       if (data.session) {
-        document.cookie = `sb-access-token=${data.session.access_token}; path=/; max-age=86400; SameSite=Lax`;
-
         const { data: perfil } = await supabase
           .from('perfis_usuarios')
           .select('nome')

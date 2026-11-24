@@ -9,8 +9,11 @@
 // app/admin/operacional/registro-ponto) — nunca grava o ajuste/abono direto.
 import { useState } from 'react';
 import type { TipoBatida } from '../lib/pontoWhatsapp';
-import { solicitarJustificativaBatidaAction, solicitarAbonoDiaAction, type MinhaSolicitacaoPonto } from './actions/actions-ponto';
+import { solicitarJustificativaBatidaAction, solicitarAbonoDiaAction, urlUploadAtestadoAction, type MinhaSolicitacaoPonto } from './actions/actions-ponto';
+import { supabase } from '../lib/supabase';
 import type { RegistroDia } from './EspelhoPonto';
+
+const LIMITE_ATESTADO_MB = 10;
 
 const CAMPOS = ['entrada_1', 'saida_1', 'entrada_2', 'saida_2'] as const;
 type Campo = (typeof CAMPOS)[number];
@@ -58,6 +61,7 @@ export default function JustificarPonto({ accessToken, dataIso, reg, falta, soli
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState('');
   const [sucesso, setSucesso] = useState(false);
+  const [atestado, setAtestado] = useState<File | null>(null);
 
   const dataBR = dataIso.split('-').reverse().join('/');
   const camposFaltantes = CAMPOS.filter(c => !reg?.[c]);
@@ -88,12 +92,25 @@ export default function JustificarPonto({ accessToken, dataIso, reg, falta, soli
 
   const enviarAbono = async () => {
     if (!motivo.trim()) { setErro('Informe o motivo.'); return; }
+    if (atestado && atestado.size > LIMITE_ATESTADO_MB * 1024 * 1024) { setErro(`O atestado passa de ${LIMITE_ATESTADO_MB} MB. Tire uma foto menor ou envie o PDF.`); return; }
     setEnviando(true); setErro('');
-    const res = await solicitarAbonoDiaAction({ dataReferencia: dataIso, motivo }, accessToken);
-    setEnviando(false);
-    if (!res.ok) { setErro(res.erro || 'Erro ao enviar a solicitação.'); return; }
-    setSucesso(true);
-    onEnviado();
+    try {
+      // atestado: sobe direto pro Storage privado (link assinado) antes de criar o pedido
+      let anexo: { caminho: string; nome: string } | null = null;
+      if (atestado) {
+        const url = await urlUploadAtestadoAction({ dataReferencia: dataIso, nomeArquivo: atestado.name, tamanho: atestado.size, tipo: atestado.type }, accessToken);
+        if (!url.ok) { setErro(url.erro || 'Não foi possível enviar o atestado.'); return; }
+        const { error } = await supabase.storage.from(url.info.bucket).uploadToSignedUrl(url.info.caminho, url.info.token, atestado, { contentType: atestado.type || 'application/octet-stream' });
+        if (error) { setErro('Não foi possível enviar o atestado: ' + error.message); return; }
+        anexo = { caminho: url.info.caminho, nome: atestado.name };
+      }
+      const res = await solicitarAbonoDiaAction({ dataReferencia: dataIso, motivo, anexo }, accessToken);
+      if (!res.ok) { setErro(res.erro || 'Erro ao enviar a solicitação.'); return; }
+      setSucesso(true);
+      onEnviado();
+    } finally {
+      setEnviando(false);
+    }
   };
 
   return (
@@ -194,7 +211,21 @@ export default function JustificarPonto({ accessToken, dataIso, reg, falta, soli
                 className="w-full p-3 border-2 border-[#E2E8F0] rounded-lg text-sm font-medium focus:border-[#336699] outline-none resize-none"
               />
             </div>
-            <p className="text-[11px] text-gray-400">Se tiver atestado ou outro documento, envie pelo WhatsApp do Ponto ou entregue ao RH — o pedido já segue para análise mesmo sem anexo.</p>
+            <div>
+              <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">Atestado (opcional)</label>
+              {atestado ? (
+                <div className="flex items-center justify-between gap-2 p-3 border-2 border-[#E2E8F0] rounded-lg bg-[#F8FAFC]">
+                  <span className="text-xs font-bold text-[#0C1D4D] truncate">📎 {atestado.name}</span>
+                  <button type="button" onClick={() => setAtestado(null)} className="text-[10px] font-black text-red-600 uppercase shrink-0">Remover</button>
+                </div>
+              ) : (
+                <label className="flex items-center justify-center gap-2 p-3 border-2 border-dashed border-[#CBD5E1] rounded-lg text-xs font-bold text-[#336699] cursor-pointer hover:border-[#336699] hover:bg-[#F8FAFC] transition-colors">
+                  📷 Foto ou PDF do atestado
+                  <input type="file" accept="image/*,application/pdf" className="hidden" onChange={e => { setAtestado(e.target.files?.[0] || null); e.target.value = ''; }} />
+                </label>
+              )}
+              <p className="text-[11px] text-gray-400 mt-1">Até {LIMITE_ATESTADO_MB} MB. Só o RH vê o atestado. Sem anexo, o pedido segue para análise do mesmo jeito.</p>
+            </div>
             {erro && <p className="text-xs text-red-600 font-bold">{erro}</p>}
             <div className="flex gap-2 pt-1">
               <button onClick={() => setModo('menu')} className="flex-1 text-[#64748B] font-bold text-xs py-3 rounded-xl border border-[#E2E8F0]">Voltar</button>

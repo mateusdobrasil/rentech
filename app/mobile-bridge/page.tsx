@@ -60,20 +60,17 @@ export default function MobileBridgePage() {
       const mesmaConta = !!accessToken && subClaimDoJwt(accessToken) === existente.session?.user?.id;
       const jaTemSessaoValida = !!existente.session && !!expiraEm && expiraEm * 1000 > Date.now() && mesmaConta;
 
-      let accessTokenAtivo = existente.session?.access_token || null;
-
       if (!jaTemSessaoValida) {
         if (!accessToken || !refreshToken) {
           setErro('Link de acesso inválido: faltam credenciais de sessão.');
           return;
         }
 
-        const { data: novaSessao, error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+        const { error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
         if (error) {
           setErro('Não foi possível validar sua sessão: ' + error.message);
           return;
         }
-        accessTokenAtivo = novaSessao.session?.access_token || accessToken;
       }
 
       // Marca que este navegador é a WebView do app mobile — app/layout.tsx lê
@@ -85,15 +82,6 @@ export default function MobileBridgePage() {
       } catch {
         // localStorage indisponível (raro numa WebView) — segue sem a flag,
         // só não esconde a Navbar
-      }
-
-      // Mesmo cookie que app/login/page.tsx grava no login normal do site —
-      // proxy.ts confere isso pra liberar /admin/op/:path* (o "Ver no
-      // sistema" da tela de OP não aponta pra lá hoje, mas fechar essa
-      // pendência agora custa uma linha e evita surpresa se algum link futuro
-      // apontar pra dentro de /admin/op).
-      if (accessTokenAtivo) {
-        document.cookie = `sb-access-token=${accessTokenAtivo}; path=/; max-age=86400; SameSite=Lax`;
       }
 
       // Hard navigation (não router.push): garante que a página de destino monte

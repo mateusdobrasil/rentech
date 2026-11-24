@@ -314,7 +314,9 @@ export default function ParceirosPage() {
 
       <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex-shrink-0 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 shadow-sm">
         <p className="text-[#0369A1] font-medium text-sm">
-          🤝 <strong>Olá, {usuarioAtual}</strong>. Cadastro sincronizado direto do PrimeStart.
+          🤝 <strong>Olá, {usuarioAtual}</strong>. {cadCtx.sistemaOrigem
+            ? "Os cadastros são do sistema: clientes e fornecedores novos são cadastrados aqui."
+            : "Clientes e fornecedores do PrimeStart (sincronizados às 11h e às 17h) e os cadastrados aqui (selo SISTEMA)."}
         </p>
         <button onClick={() => router.push('/admin/comercial')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
           ⬅ VOLTAR AO HUB
@@ -477,16 +479,24 @@ export default function ParceirosPage() {
             <>
               <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-sm p-6">
                 <h2 className="text-lg font-black text-[#0C1D4D] uppercase tracking-wider mb-1">Sincronizar via API</h2>
-                <p className="text-xs text-[#64748B] mb-4">
-                  Puxa colaboradores direto do PrimeStart (produção) — cadastro completo. Dado sensível: acesso restrito a quem tem permissão própria pra esta aba.
-                </p>
-                <button
-                  onClick={sincronizarColaboradoresViaApi}
-                  disabled={colabSincronizando}
-                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-bold uppercase text-xs tracking-wider transition-colors"
-                >
-                  {colabSincronizando ? 'Sincronizando...' : '🔄 Sincronizar agora'}
-                </button>
+                {cadCtx.sistemaOrigem ? (
+                  <p className="text-xs text-[#64748B] mb-2">
+                    Desde a virada da chave a sincronização com o PrimeStart está desligada. Quem é vendedor é marcado na Ficha do RH (Papéis comerciais).
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-xs text-[#64748B] mb-4">
+                      Puxa colaboradores direto do PrimeStart (produção) — cadastro completo. Quem é vendedor é marcado na Ficha do RH (Papéis comerciais) e a marcação de lá prevalece sobre a do P2S. Dado sensível: acesso restrito a quem tem permissão própria pra esta aba.
+                    </p>
+                    <button
+                      onClick={sincronizarColaboradoresViaApi}
+                      disabled={colabSincronizando}
+                      className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-bold uppercase text-xs tracking-wider transition-colors"
+                    >
+                      {colabSincronizando ? 'Sincronizando...' : '🔄 Sincronizar agora'}
+                    </button>
+                  </>
+                )}
                 <UltimaSincronizacaoInfo info={ultimaSyncColab} carregando={ultimaSyncColabLoading} />
               </div>
 

@@ -8,7 +8,7 @@ O funcionário bate o ponto, justifica uma batida esquecida, pede abono de um di
 | --- | --- | --- |
 | WhatsApp | Funcionário | Registrar ponto, justificar batida, abonar o dia, solicitar folga |
 | Lembretes automáticos | Funcionário | Recebe no dia seguinte o aviso de ponto incompleto ou sem ponto e responde ali mesmo |
-| Portal do Funcionário | Funcionário | Vê o espelho do mês, justifica batida ímpar ou pede abono de falta |
+| Portal do Funcionário | Funcionário | Vê o espelho do mês, justifica batida ímpar, pede abono de falta (com atestado) e solicita folga |
 | App Rentech (Meu Ponto) | Funcionário | Vê o espelho do mês, também sem internet |
 | App Rentech (aba Ponto) | RH e gestores | Aprova ou rejeita solicitações, com aviso por push |
 | RH → Ponto | RH | Ledger, fila de aprovação, lançamento manual, abonos, inconsistências e relatório do mês |
@@ -97,7 +97,11 @@ Respondendo **NÃO**, a conversa termina. Qualquer outra resposta descarta o lem
 - **Dia incompleto (batidas em número ímpar):** Justificar, escolhendo a batida que falta, o horário e o motivo.
 - **Falta (nenhuma batida):** Pedir abono do dia, ou Justificar com qualquer das 4 batidas.
 
-O pedido entra na mesma fila do WhatsApp. O Portal não aceita anexo de atestado nem pedido de folga; para isso, use o WhatsApp.
+No abono, o funcionário pode anexar a **foto ou o PDF do atestado** (até 10 MB). O arquivo vai para a mesma pasta privada dos atestados do WhatsApp e só o RH abre, pelo 📎 Ver anexo.
+
+**🏖️ Solicitar folga** (botão no topo da aba): data, ou data e "Até" para um período, e o motivo. Valem as mesmas regras do WhatsApp: a partir de hoje e até 30 dias corridos. Os gestores recebem o mesmo aviso da automação "Solicitação Folga". Abaixo do formulário, **Minhas folgas** mostra as folgas pedidas nos últimos 60 dias, com o status e o motivo de uma recusa.
+
+Tudo entra na mesma fila do WhatsApp, e a resposta do RH chega pelo WhatsApp.
 
 **App Rentech, Meu Ponto:** o espelho do mês para o colaborador, com trabalhado, abonado e faltas. Funciona sem internet com os dados guardados (Perfil → Baixar para uso offline).
 
@@ -166,6 +170,8 @@ O registro segue os princípios técnicos da Portaria 671/2021 (REP-P) para ter 
 **Esqueci de bater ontem.** Responda o lembrete com o horário, ou use a opção 2) Justificar batida esquecida. Vale para hoje e os 6 dias anteriores.
 
 **Saí depois da meia-noite.** Bata normalmente e escolha 2) Saída (fechando o turno de ontem).
+
+**Dá para pedir folga ou mandar o atestado sem o WhatsApp?** Sim, pelo Portal do Funcionário, aba Espelho de Ponto: o botão 🏖️ Solicitar folga, e o atestado no pedido de abono do dia.
 
 **Preciso de folga de mais de 30 dias.** Fale com o RH; férias e afastamentos têm tela própria (RH → Férias e Afastamentos).
 

@@ -17,6 +17,7 @@ import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 // Motor da folha — o mesmo do holerite (fonte única)
 import { apurarPonto, montarDadosHolerite, mapearRegrasContrato, type Desconto, type Bonus } from '../../../lib/motorFolha';
 import { formatarMoeda } from '../../../lib/formatadores';
+import RelatorioColaboradores from './RelatorioColaboradores';
 
 // ============================================================================
 // UTILITÁRIOS
@@ -194,7 +195,7 @@ export default function RelatoriosRH() {
   const [loading, setLoading] = useState(true);
   const [linhas, setLinhas] = useState<LinhaRelatorio[]>([]);
   const [ordenacao, setOrdenacao] = useState<'nome' | 'liquido' | 'extras' | 'faltas'>('nome');
-  const [modoRelatorio, setModoRelatorio] = useState<'folha' | 'financeiro' | 'beneficios' | 'quadro' | 'compliance'>('folha');
+  const [modoRelatorio, setModoRelatorio] = useState<'folha' | 'financeiro' | 'beneficios' | 'quadro' | 'compliance' | 'colaboradores'>('folha');
   const modoFinanceiro = modoRelatorio === 'financeiro'; // compat com o código existente
   const [beneficiosMes, setBeneficiosMes] = useState<{ diasUteis: number; colunas: string[]; funcionarios: any[]; totaisColuna: Record<string, number>; totalGeral: number }>({ diasUteis: 0, colunas: [], funcionarios: [], totaisColuna: {}, totalGeral: 0 });
 
@@ -630,14 +631,17 @@ export default function RelatoriosRH() {
             <button onClick={() => setModoRelatorio('compliance')} className="bg-teal-600 text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-teal-700 transition-all">
               🪪 Compliance
             </button>
+            <button onClick={() => setModoRelatorio('colaboradores')} className="bg-[#7C3AED] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#6D28D9] transition-all">
+              👥 Colaboradores
+            </button>
             <button onClick={() => window.print()} disabled={linhas.length === 0} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl shadow-md hover:bg-[#284B8C] transition-all disabled:opacity-50">
               🖨️ Imprimir / PDF
             </button>
           </div>
         </div>
 
-        {/* Cabeçalho de impressão */}
-        <div className="hidden print:block mb-4 border-b-2 border-black pb-2">
+        {/* Cabeçalho de impressão — só da folha/financeiro; as outras abas têm o seu */}
+        <div className={`hidden mb-4 border-b-2 border-black pb-2 ${modoRelatorio === 'folha' || modoFinanceiro ? 'print:block' : ''}`}>
           <h1 className="text-xl font-black uppercase">{modoFinanceiro ? 'Relatório Financeiro' : 'Relatório da Folha'} — {formatarMesAnoBR(mesReferencia)}</h1>
           <p className="text-sm">Emitido em {new Date().toLocaleDateString('pt-BR')} • {linhas.length} funcionário(s)</p>
         </div>
@@ -783,6 +787,16 @@ export default function RelatoriosRH() {
               VR e VT não entram aqui — são calculados por dia trabalhado no holerite. Este grid mostra os benefícios fixos. Benefícios por diária = valor × dias úteis trabalhados (proporcional à admissão/desligamento). Mês com {beneficiosMes.diasUteis} dias úteis.
             </p>
           </div>
+        )}
+
+        {/* ==================== COLABORADORES ==================== */}
+        {modoRelatorio === 'colaboradores' && (
+          <RelatorioColaboradores
+            accessToken={accessToken}
+            filtroEmpresa={filtroEmpresa}
+            nomeEmpresa={nomeEmpresa}
+            onVoltar={() => setModoRelatorio('folha')}
+          />
         )}
 
         {/* ==================== QUADRO DE PESSOAL & TURNOVER ==================== */}

@@ -14,6 +14,7 @@ import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import PapeisComerciais from './PapeisComerciais';
+import ExportarFichas from './ExportarFichas';
 
 // Utilitários
 const formatarMesAnoBR = (mesAnoIso: string) => {
@@ -532,6 +533,11 @@ export default function FuncionarioPage() {
                 {funcFiltrados.length} de {funcVisiveis.length} — filtrado
               </p>
             )}
+            <ExportarFichas
+              accessToken={accessToken}
+              listaFiltrada={funcFiltrados}
+              aberto={funcionarioSelecionado && funcionarioSelecionado !== 'NOVO' ? (funcVisiveis.find(f => f.nome_completo === funcionarioSelecionado) || null) : null}
+            />
           </div>
 
           {semEmpresaDefinida.length > 0 && (

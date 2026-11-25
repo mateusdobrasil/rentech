@@ -171,7 +171,7 @@ export default function RelatorioColaboradores({ accessToken, filtroEmpresa, nom
       });
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Colaboradores');
-      const hoje = new Date().toISOString().slice(0, 10);
+      const hoje = new Date().toLocaleDateString('sv-SE'); // AAAA-MM-DD no horário local
       XLSX.writeFile(wb, `colaboradores-${hoje}.xlsx`);
     } catch (e: any) {
       toast('Não foi possível gerar o Excel: ' + e.message, 'error');

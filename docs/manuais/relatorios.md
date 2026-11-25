@@ -12,7 +12,7 @@ Esta página reúne todos os relatórios do sistema, separados por área, com o 
 | Área | Quantos | Onde fica o menu |
 | --- | --- | --- |
 | Gestão e vendas | 12 | Relatórios (no painel principal) |
-| RH | 9 | RH → Relatórios e Dashboards, Ponto e Benefícios |
+| RH | 11 | RH → Relatórios e Dashboards, Ponto, Benefícios, Ficha do Funcionário e Documentos |
 | Financeiro | 2 | Financeiro → Relatórios e Dashboard |
 | Operacional | 4 | Operacional → Relatórios Operacionais e Multas |
 | Diretoria | 5 | Diretor (IA) |
@@ -47,10 +47,12 @@ Os seis primeiros ficam na mesma tela, **RH → Relatórios e Dashboards**. Ela 
 | 🎁 Benefícios | Benefícios calculados do mês por funcionário e por tipo, com os totais. | Botão **Benefícios** | [Abrir](/admin/rh/relatorios) |
 | 🔄 Quadro & Turnover | Quadro atual, admissões e desligamentos dos últimos 12 meses, turnover, tempo médio de casa e distribuição por cargo. | Botão **Quadro & Turnover** | [Abrir](/admin/rh/relatorios) |
 | 🪪 Compliance | Documentos vencidos e vencendo por funcionário, quem está sem documento e a situação das assinaturas do mês. | Botão **Compliance** | [Abrir](/admin/rh/relatorios) |
-| 👥 Colaboradores | Lista de colaboradores com a situação de hoje (ativo, férias, afastado, desligado), cadastro, contato, salário, benefícios e bônus fixos. Filtros por situação, departamento, contrato e busca. **Excel** e PDF. | Botão **Colaboradores** | [Abrir](/admin/rh/relatorios) |
+| 👥 Colaboradores | Lista de colaboradores com a situação de hoje (ativo, férias, afastado, desligado), cadastro e contato. Filtros por situação, departamento, contrato e busca. **Excel** e PDF. Salário, benefícios e bônus fixos aparecem só para quem tem acesso ao Financeiro. | Botão **Colaboradores** | [Abrir](/admin/rh/relatorios) |
 | 🗓️ Benefícios por Mês | Quem recebeu benefício na competência escolhida: o total gerado, a parte Flash e a parte do lote, e a situação de pagamento de cada uma. | Aba **Benefícios por Mês** | [Abrir](/admin/rh/beneficios) |
 | 🕒 Espelho de Ponto | Espelho de ponto eletrônico do colaborador no mês, com as marcações de cada dia, para imprimir e assinar. | Escolha o colaborador e o mês | [Abrir](/admin/rh/ponto) |
 | 🏖️ Férias e Afastamentos | Períodos de férias (disponíveis, agendadas e vencendo) e afastamentos ativos de cada colaborador. | Abre direto | [Abrir](/admin/rh/ferias-afastamentos) |
+| 📗 Exportar fichas (Excel) | Planilha com os dados da Ficha do Funcionário que você escolher: 62 campos em 8 grupos (identificação, dados pessoais, contato, registro, dados bancários, CNH, informações especiais e estrangeiro), mais as abas de Dependentes e Movimentações. Serve para a lista filtrada ou só para o colaborador aberto. **Excel**. | Botão **Exportar Excel**, abaixo dos filtros da lista | [Abrir](/admin/rh/funcionario) |
+| 📗 Documentos e validades (Excel) | Os documentos dos funcionários da lista, com a validade, a situação (vencido, vencendo em até 30 dias, em dia, sem validade) e o prazo. Escolha as categorias e as situações. Aba **Quadro de validades**: funcionário × categoria, mostrando o que falta (FALTA) e documento de categoria com validade enviado sem a data (SEM DATA). Opcional: histórico (ASO antigo, por exemplo) e documentos da empresa. **Excel**. | Aba **Funcionários**, botão **Exportar Excel** ao lado de Categorias | [Abrir](/admin/rh/documentos) |
 
 ## Financeiro
 

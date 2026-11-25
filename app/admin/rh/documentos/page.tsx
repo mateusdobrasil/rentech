@@ -13,6 +13,7 @@ import {
   listarCategoriasDocEmpresaAction, criarCategoriaDocEmpresaAction, uploadDocumentoEmpresaAction, storagePathDocumentoEmpresaAction,
   listarDocumentosEmpresaAction, urlDocumentoEmpresaAction, excluirDocumentoEmpresaAction
 } from '../actions/actions-documentos-empresa';
+import ExportarDocumentos from './ExportarDocumentos';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
@@ -489,7 +490,10 @@ export default function DocumentosPage() {
               </select>
             )}
           </div>
-          <button onClick={() => setMostrarCats(!mostrarCats)} className="text-[10px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-4 py-2.5 rounded-lg uppercase tracking-wider">⚙ Categorias</button>
+          <div className="flex items-center gap-2">
+            <ExportarDocumentos accessToken={accessToken} nomesLista={filtradas.map(l => l.nome)} categorias={categorias} />
+            <button onClick={() => setMostrarCats(!mostrarCats)} className="text-[10px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-4 py-2.5 rounded-lg uppercase tracking-wider">⚙ Categorias</button>
+          </div>
         </div>
 
         {/* Painel de categorias */}

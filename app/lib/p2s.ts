@@ -182,9 +182,11 @@ async function authHeader(ambiente: AmbienteP2s): Promise<string> {
 
 interface RespostaP2s<T> { status: number; ok: boolean; data: T | null; textoErro?: string; }
 
-async function chamar<T>(ambiente: AmbienteP2s, path: string, init: { method: string; body?: unknown; query?: Record<string, string | undefined> }): Promise<RespostaP2s<T>> {
+async function chamar<T>(ambiente: AmbienteP2s, path: string, init: { method: string; body?: unknown; query?: Record<string, string | undefined>; leituraArquivo?: boolean }): Promise<RespostaP2s<T>> {
   // Depois que todas as empresas concluem a virada, produção não é mais chamada (estado.ts).
-  if (ambiente === 'PRODUCAO' && await p2sDesligado(supabaseAdmin())) throw new Error(MSG_P2S_DESLIGADO);
+  // Única exceção: a consulta da cópia completa (app/lib/arquivoP2s.ts) — só leitura,
+  // para a última passada pegar o P2S já parado, antes do cancelamento.
+  if (ambiente === 'PRODUCAO' && !(init.leituraArquivo && init.method === 'POST' && path === '/qpo') && await p2sDesligado(supabaseAdmin())) throw new Error(MSG_P2S_DESLIGADO);
   const url = new URL((await baseUrl(ambiente)) + path);
   if (init.query) {
     for (const [k, v] of Object.entries(init.query)) if (v !== undefined && v !== '') url.searchParams.set(k, v);
@@ -225,6 +227,8 @@ export interface OpcoesConsultaP2s {
   subclasses?: boolean;
   proxy?: boolean;
   order?: string;
+  /** Só a cópia completa (arquivoP2s.ts) usa: lê mesmo com o P2S desligado. */
+  leituraArquivo?: boolean;
 }
 
 // POST /qpo — Query Persistent Objects: busca por critérios (AND entre
@@ -239,6 +243,7 @@ export async function consultarObjetos(ambiente: AmbienteP2s, classname: string,
       order: opcoes.order,
     },
     body: { criterialist },
+    leituraArquivo: opcoes.leituraArquivo,
   });
   if (!resp.ok || !resp.data) {
     throw new Error(`Falha ao consultar ${classname} no PrimeStart (HTTP ${resp.status}): ${resp.textoErro || 'resposta inválida'}`);

@@ -13,7 +13,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "manuais": "npx tsx scripts/gerar-manuais.mts && npx tsx scripts/gerar-mapa-telas.mts"
+    "manuais": "npx tsx scripts/gerar-manuais.mts && npx tsx scripts/gerar-mapa-telas.mts",
+    "arquivo-p2s": "npx tsx scripts/arquivo-p2s.mts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",

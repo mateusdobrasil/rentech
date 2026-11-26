@@ -203,7 +203,9 @@ export default function ProdutosPage() {
 
       <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex-shrink-0 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 shadow-sm">
         <p className="text-[#0369A1] font-medium text-sm">
-          📦 <strong>Olá, {usuarioAtual}</strong>. Catálogo de produtos sincronizado direto do PrimeStart.
+          📦 <strong>Olá, {usuarioAtual}</strong>. {cadCtx.sistemaOrigem
+            ? "O catálogo é do sistema: produtos novos são cadastrados aqui."
+            : "Produtos do PrimeStart (sincronizados às 11h e às 17h) e os cadastrados aqui (selo SISTEMA)."}
         </p>
         <button onClick={() => router.push('/admin/estoque')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
           ⬅ VOLTAR AO HUB

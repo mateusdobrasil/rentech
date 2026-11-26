@@ -61,6 +61,29 @@ O P2S continua oficial até a virada da chave. Por isso a regra muda conforme a 
 
 Saldos, patrimônios e kits continuam em Estoque → Equipamentos de Locação; o preço, em Locações → Tabelas de Preço.
 
+### Três telas, três papéis
+
+| Tela | Para que serve | Vale para reservar? |
+| --- | --- | --- |
+| Estoque → Produtos | O catálogo: o que se aluga ou vende, com código, categoria e dados da nota | É a lista que aparece no orçamento, na ficha e na OS |
+| Estoque → Equipamentos de Locação | Quanto existe de cada produto, por quantidade ou por patrimônio | Sim: a disponibilidade da reserva sai daqui |
+| Estoque → Controle de Estoque | Ficha técnica (peso, consumo, medidas), simulador de videowall e acessórios sugeridos na Expedição | Não |
+
+### Ligar o Controle de Estoque a Produtos
+
+**Onde fica:** Estoque → Controle de Estoque, aba **🔗 Ligar a Produtos**.
+
+Cada equipamento da ficha técnica deve apontar para o produto do catálogo. Assim o primeiro inventário parte de uma lista só, e a Expedição sugere os acessórios também para os itens que vêm da OS.
+
+- **Sugestões:** cada equipamento mostra até 3 produtos de nome parecido, com a nota de semelhança. Verde (80% ou mais) costuma ser o mesmo item; confira os amarelos.
+- **Ligar sugestões fortes:** liga de uma vez os que têm sugestão de 80% ou mais sem empate com a segunda.
+- **Outro produto…:** escolha pelo código ou pelo nome.
+- **＋ Criar produto:** cria o produto com o nome, a categoria e a subcategoria escolhidos e já liga. Só aparece para quem também acessa Estoque → Produtos.
+- **Não é item de locação:** para o que não se aluga (cabo de configuração, material de uso interno).
+- **Desfazer:** volta o item para pendente.
+
+A "qtd antiga" é a contagem que existia no Controle de Estoque. Serve só de referência: a contagem que vale é a do inventário, em Equipamentos de Locação.
+
 ## Eventos e feiras
 
 **Onde fica:** Comercial → Eventos e Feiras, botão **+ Novo evento**. Clicar num evento da lista abre para editar.

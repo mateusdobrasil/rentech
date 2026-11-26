@@ -39,7 +39,7 @@ export const MANUAIS: ManualCatalogo[] = [
     fonte: 'docs/manuais/locacao.md',
   },
   {
-    slug: 'cadastros', titulo: 'Cadastros do sistema', grupo: 'SISTEMA', icone: '🗂️', atualizadoEm: '2026-11-23',
+    slug: 'cadastros', titulo: 'Cadastros do sistema', grupo: 'SISTEMA', icone: '🗂️', atualizadoEm: '2026-11-26',
     descricao: 'Clientes e fornecedores, produtos, eventos, plano de contas e os papéis comerciais na Ficha do RH, com as regras antes e depois da virada.',
     fonte: 'docs/manuais/cadastros.md',
   },

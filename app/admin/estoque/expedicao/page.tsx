@@ -36,7 +36,10 @@ const COR_STATUS: Record<StatusChecklist, string> = {
 };
 
 interface Categoria { id: string; nome: string; }
-interface EquipamentoLeve { id: string; categoria_id: string; nome: string; ativo: boolean; }
+// produto_id: produto do catálogo de locação ligado a este equipamento técnico
+// (Controle de Estoque → Ligar a Produtos) — é por ele que um item da OS acha
+// o equipamento e os acessórios (gatilhos).
+interface EquipamentoLeve { id: string; categoria_id: string; nome: string; ativo: boolean; produto_id?: number | null; }
 
 // Vínculo equipamento/categoria → acessório sugerido (mesma tabela usada em
 // Estoque > Gatilhos/Acessórios e no Simulador de Videowall).
@@ -384,6 +387,9 @@ export default function ChecklistCargaRetorno() {
     open: boolean;
     itemPrincipal: { secao: string; equipamentoId: string; descricao: string; qtd: string; extra: boolean } | null;
     acessorios: AcessorioSugerido[];
+    // true = sugestão depois de "Importar Itens das OS's": os itens já entraram,
+    // a modal só oferece os acessórios dos que estão ligados a um equipamento.
+    posImportacao?: boolean;
   }>({ open: false, itemPrincipal: null, acessorios: [] });
 
   // Modal: Importar Itens das OS's (fichas_reserva.itens do evento do checklist)
@@ -404,7 +410,7 @@ export default function ChecklistCargaRetorno() {
     (async () => {
       const [resCat, resEq, resEventos, resGatilhos, resCategoriaAprendida] = await Promise.all([
         supabase.from('categorias').select('*').order('nome', { ascending: true }),
-        supabase.from('equipamentos').select('id, categoria_id, nome, ativo').order('nome', { ascending: true }),
+        supabase.from('equipamentos').select('*').order('nome', { ascending: true }),
         supabase.from('eventos_feiras').select('nome, local').not('local', 'is', null),
         supabase.from('gatilhos_acessorios').select('id, acessorio_id, acessorio_categoria_id, categoria_alvo_id, equipamento_alvo_id'),
         supabase.from('checklist_item_categoria_aprendida').select('descricao, categoria_id'),
@@ -1111,6 +1117,18 @@ export default function ChecklistCargaRetorno() {
   // acessório no catálogo (ou DIVERSOS, se ele não tiver uma).
   const confirmarSugestaoAcessorios = (incluirAcessorios: boolean) => {
     const principal = modalSugestaoAcessorios.itemPrincipal;
+    // depois da importação da OS: os itens já estão na lista, entram só os acessórios marcados
+    if (!principal && modalSugestaoAcessorios.posImportacao) {
+      if (incluirAcessorios) {
+        adicionarItensNaLista(modalSugestaoAcessorios.acessorios.filter(a => a.selecionado).map(a => ({
+          secao: categorias.find(c => c.id === a.categoriaId)?.nome.toUpperCase() || SECAO_DIVERSOS,
+          equipamento_id: a.id, descricao: a.nome, qtd_prevista: a.qtd,
+          saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null, extra: false, os_numero: null,
+        })));
+      }
+      setModalSugestaoAcessorios({ open: false, itemPrincipal: null, acessorios: [] });
+      return;
+    }
     if (!principal) { setModalSugestaoAcessorios({ open: false, itemPrincipal: null, acessorios: [] }); return; }
 
     const novos: Omit<ChecklistItem, 'id' | 'ordem'>[] = [{
@@ -1338,14 +1356,19 @@ export default function ChecklistCargaRetorno() {
     if (selecionados.length === 0) { setModalImportarOS(false); return; }
 
     let ordemAtual = itens.length > 0 ? Math.max(...itens.map(i => i.ordem)) : 0;
+    // Produto da OS ligado a um equipamento do catálogo técnico: o item ganha o
+    // vínculo (e a seção dele, se nenhuma foi escolhida) e os acessórios desse
+    // equipamento são oferecidos logo depois.
+    const equipamentoDoProduto = (produtoId: number | null | undefined) => (produtoId ? equipamentosAtivos.find(e => e.produto_id === produtoId) || null : null);
     const novos: ChecklistItem[] = selecionados.map(i => {
       ordemAtual += 1;
-      const categoria = categorias.find(c => c.id === i.categoriaId);
+      const eqLigado = equipamentoDoProduto(i.produtoId);
+      const categoria = categorias.find(c => c.id === (i.categoriaId || eqLigado?.categoria_id));
       return {
         id: gerarIdTemporario(),
         ordem: ordemAtual,
         secao: categoria?.nome.toUpperCase() || SECAO_DIVERSOS,
-        equipamento_id: null,
+        equipamento_id: eqLigado?.id ?? null,
         descricao: i.descricao,
         qtd_prevista: i.qtd,
         saida_ok: false, saida_qtd: null, retorno_ok: false, retorno_qtd: null, extra: false,
@@ -1355,6 +1378,20 @@ export default function ChecklistCargaRetorno() {
     });
 
     setItens(prev => [...prev, ...novos]);
+
+    // Acessórios dos itens ligados (sem repetir o que já está na lista)
+    const jaNaLista = new Set([...itens, ...novos].map(i => i.equipamento_id).filter(Boolean));
+    const sugeridos = new Map<string, AcessorioSugerido>();
+    for (const n of novos) {
+      const eq = n.equipamento_id ? equipamentosAtivos.find(e => e.id === n.equipamento_id) : null;
+      if (!eq) continue;
+      for (const a of sugerirAcessorios(eq)) {
+        if (jaNaLista.has(a.id) || sugeridos.has(a.id)) continue;
+        sugeridos.set(a.id, { id: a.id, nome: a.nome, categoriaId: a.categoria_id, selecionado: false, qtd: n.qtd_prevista || '1' });
+      }
+    }
+    if (sugeridos.size) setModalSugestaoAcessorios({ open: true, itemPrincipal: null, acessorios: [...sugeridos.values()], posImportacao: true });
+
     registrarLogAuditoria({
       usuario_nome: usuarioAtual,
       acao: `IMPORTOU ${novos.length} ITEM(NS) DAS OS'S${modoConsolidadoOS ? ' (CONSOLIDADO)' : ''}`,
@@ -2592,12 +2629,14 @@ export default function ChecklistCargaRetorno() {
       {/* ============================================================================ */}
       {/* MODAL: SUGESTÃO DE ACESSÓRIOS (gatilhos_acessorios) */}
       {/* ============================================================================ */}
-      {modalSugestaoAcessorios.open && modalSugestaoAcessorios.itemPrincipal && (
+      {modalSugestaoAcessorios.open && (modalSugestaoAcessorios.itemPrincipal || modalSugestaoAcessorios.posImportacao) && (
         <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
             <div className="bg-[#336699] p-5 text-white flex-shrink-0">
               <h3 className="font-black uppercase tracking-wider text-sm">🧩 Acessórios Sugeridos</h3>
-              <p className="text-[10px] text-blue-100 mt-0.5">Para {modalSugestaoAcessorios.itemPrincipal.descricao}, o estoque tem os seguintes acessórios vinculados:</p>
+              <p className="text-[10px] text-blue-100 mt-0.5">{modalSugestaoAcessorios.itemPrincipal
+                ? <>Para {modalSugestaoAcessorios.itemPrincipal.descricao}, o estoque tem os seguintes acessórios vinculados:</>
+                : <>Os itens importados das OS&apos;s têm estes acessórios vinculados. Marque os que vão junto:</>}</p>
             </div>
 
             <div className="p-6 overflow-y-auto space-y-2 bg-[#F8FAFC]">
@@ -2612,10 +2651,10 @@ export default function ChecklistCargaRetorno() {
 
             <div className="p-5 border-t border-[#E2E8F0] bg-white flex-shrink-0 flex gap-3">
               <button onClick={() => confirmarSugestaoAcessorios(false)} className="flex-1 bg-[#F0F4F8] hover:bg-[#E2E8F0] text-[#0C1D4D] border border-[#CBD5E1] font-black text-xs uppercase tracking-widest py-3 rounded-xl transition-colors">
-                Só o item principal
+                {modalSugestaoAcessorios.posImportacao ? 'Nenhum acessório' : 'Só o item principal'}
               </button>
               <button onClick={() => confirmarSugestaoAcessorios(true)} className="flex-1 bg-[#16A34A] hover:bg-[#15803D] text-white font-black text-xs uppercase tracking-widest py-3 rounded-xl shadow-lg transition-colors">
-                Adicionar com selecionados
+                {modalSugestaoAcessorios.posImportacao ? 'Adicionar selecionados' : 'Adicionar com selecionados'}
               </button>
             </div>
           </div>

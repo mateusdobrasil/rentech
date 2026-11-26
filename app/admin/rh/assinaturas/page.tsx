@@ -18,6 +18,7 @@ import { useToast, useConfirm } from '../../../components/ui/NotificationProvide
 import { supabase } from '../../../lib/supabase';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
+import AssinaturasPorColaborador from './AssinaturasPorColaborador';
 
 interface Assinatura {
   id: number;
@@ -57,7 +58,16 @@ export default function AssinaturasPage() {
   const toast = useToast();
   const confirmar = useConfirm();
   const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
-  const [aba, setAba] = useState<'HOLERITES' | 'RESCISAO'>('HOLERITES');
+  const [aba, setAba] = useState<'HOLERITES' | 'RESCISAO' | 'COLABORADOR'>('HOLERITES');
+  // ?aba=colaborador&funcionario=<id> — atalho "Ver assinaturas" da Ficha do Funcionário
+  const [funcionarioInicial, setFuncionarioInicial] = useState<string | null>(null);
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    if ((p.get('aba') || '').toLowerCase() === 'colaborador') {
+      setFuncionarioInicial(p.get('funcionario'));
+      setAba('COLABORADOR');
+    }
+  }, []);
 
   const [loading, setLoading] = useState(true);
   const [assinaturas, setAssinaturas] = useState<Assinatura[]>([]);
@@ -387,7 +397,7 @@ export default function AssinaturasPage() {
 
       <div className="bg-[#E0F2FE] border-b border-[#BAE6FD] px-4 md:px-8 py-4 flex flex-col sm:flex-row justify-between items-center gap-3 shadow-sm print:hidden">
         <p className="text-[#0369A1] font-medium text-sm">
-          ✍️ <strong>Assinaturas de Holerites</strong>. Acompanhe o status de envio e assinatura via Autentique.
+          ✍️ <strong>Assinaturas do RH</strong>. Holerites, documentos avulsos e rescisões via Autentique — e, em <strong>Por Colaborador</strong>, tudo de uma pessoa num lugar só.
         </p>
         <button onClick={() => router.push('/admin/rh')} className="text-[10px] md:text-xs font-black bg-white hover:bg-blue-50 border border-[#BAE6FD] text-[#0369A1] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
           ⬅ VOLTAR AO RH
@@ -404,7 +414,19 @@ export default function AssinaturasPage() {
           <button onClick={() => setAba('RESCISAO')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${aba === 'RESCISAO' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:bg-gray-50'}`}>
             📤 Rescisão {contagemRescisaoPendentes > 0 && <span className="ml-1 bg-red-500 text-white rounded-full px-1.5 py-0.5 text-[9px]">{contagemRescisaoPendentes}</span>}
           </button>
+          <button onClick={() => setAba('COLABORADOR')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${aba === 'COLABORADOR' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:bg-gray-50'}`}>
+            👤 Por Colaborador
+          </button>
         </div>
+
+        {aba === 'COLABORADOR' && (
+          <AssinaturasPorColaborador
+            accessToken={accessToken}
+            usuarioAtual={usuarioAtual}
+            empresasVisiveis={empresasCatalogoVisivel}
+            funcionarioInicial={funcionarioInicial}
+          />
+        )}
 
         {aba === 'HOLERITES' && (<>
 

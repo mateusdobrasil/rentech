@@ -642,6 +642,11 @@ export default function FuncionarioPage() {
                       <div>
                         <h3 className="font-black text-[#0C1D4D] uppercase tracking-wider">{form.nome_completo || 'Novo Colaborador'}</h3>
                         <span className="text-[10px] text-gray-400 font-bold uppercase">{form.cargo || 'sem cargo'} • {form.tipo_contrato}</span>
+                        {form.id && (
+                          <button type="button" onClick={() => router.push(`/admin/rh/assinaturas?aba=colaborador&funcionario=${form.id}`)} className="block mt-1 text-[10px] font-black text-[#336699] hover:underline uppercase tracking-wider">
+                            ✍️ Ver assinaturas e documentos →
+                          </button>
+                        )}
                       </div>
                     </div>
                     <button onClick={alternarStatusAtivo} className={`text-[10px] px-3 py-1 rounded font-black uppercase tracking-wider transition-colors flex-shrink-0 ${form.ativo ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-green-50 text-green-600 hover:bg-green-100'}`}>

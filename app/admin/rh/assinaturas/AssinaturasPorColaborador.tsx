@@ -14,7 +14,7 @@ import { corSeloEmpresa } from '../../../lib/coresEmpresa';
 import { formatarMoeda, formatarDataBR } from '../../../lib/formatadores';
 import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 
-type Tipo = 'HOLERITE' | 'AVULSO' | 'RESCISAO';
+type Tipo = 'HOLERITE' | 'AVULSO' | 'RESCISAO' | 'DECIMO_TERCEIRO';
 interface Colaborador { id: string; nome: string; cargo: string; empresaId: number | null; ativo: boolean; total: number; assinados: number; pendentes: number; rejeitados: number }
 interface ItemAssinatura {
   id: number; tipo: Tipo; titulo: string; mesReferencia: string; competencia: string | null; rescisaoId: number | null;
@@ -46,6 +46,7 @@ const TIPO: Record<Tipo, { label: string; icone: string }> = {
   HOLERITE: { label: 'Holerite', icone: '💰' },
   AVULSO: { label: 'Documento avulso', icone: '📎' },
   RESCISAO: { label: 'Rescisão (TRCT)', icone: '📤' },
+  DECIMO_TERCEIRO: { label: '13º Salário', icone: '🎄' },
 };
 const SITUACAO_DOC: Record<Documento['situacao'], { label: string; classe: string }> = {
   VENCIDO: { label: 'Vencido', classe: 'bg-red-100 text-red-700 border-red-300' },
@@ -286,9 +287,9 @@ export default function AssinaturasPorColaborador({ accessToken, usuarioAtual, e
             <div className="p-4 border-b border-[#F1F5F9] flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-black text-[#0C1D4D] uppercase tracking-wider">✍️ Enviados para assinatura ({dossie.assinaturas.length})</h3>
               <div className="flex bg-gray-100 p-1 rounded-xl">
-                {(['TODOS', 'HOLERITE', 'AVULSO', 'RESCISAO'] as const).map(t => (
+                {(['TODOS', 'HOLERITE', 'DECIMO_TERCEIRO', 'AVULSO', 'RESCISAO'] as const).map(t => (
                   <button key={t} onClick={() => setFiltroTipo(t)} className={`px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg ${filtroTipo === t ? 'bg-[#0C1D4D] text-white' : 'text-gray-500'}`}>
-                    {t === 'TODOS' ? 'Todos' : t === 'HOLERITE' ? 'Holerites' : t === 'AVULSO' ? 'Avulsos' : 'Rescisão'}
+                    {t === 'TODOS' ? 'Todos' : t === 'HOLERITE' ? 'Holerites' : t === 'DECIMO_TERCEIRO' ? '13º' : t === 'AVULSO' ? 'Avulsos' : 'Rescisão'}
                   </button>
                 ))}
               </div>

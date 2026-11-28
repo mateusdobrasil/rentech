@@ -18,7 +18,7 @@ import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
 import {
   painelDecimoTerceiroAction, fecharDecimoTerceiroLoteAction, reabrirDecimoTerceiroAction,
-  marcarParcela13PagaAction, enviarDecimoTerceiroAssinaturaAction
+  marcarParcela13PagaAction, enviarDecimoTerceiroAssinaturaAction, previaHolerite13Action
 } from '../actions/actions-decimo-terceiro';
 import { urlDocumentoContabilAction } from '../actions/actions-documentos';
 import { listarPdfsContabilidadeAction, processarOcrAwsAction } from '../actions/actions-financeiro';
@@ -82,6 +82,7 @@ export default function DecimoTerceiroPage() {
   const [sandbox, setSandbox] = useState(true);
   const [processando, setProcessando] = useState<string | null>(null); // "{nome}::{acao}"
   const [abrindoDoc, setAbrindoDoc] = useState<string | null>(null); // "{nome}::{mesReferencia}"
+  const [gerandoPrevia, setGerandoPrevia] = useState<string | null>(null); // nome
   const [lendoOcr, setLendoOcr] = useState(false);
   const [ocrFalhas, setOcrFalhas] = useState<string[]>([]);
   // 1ª/2ª parcela digitadas (Via Empresa), por nome — só valem enquanto o 13º
@@ -200,6 +201,9 @@ export default function DecimoTerceiroPage() {
 
   const abertos = linhas.filter(l => !l.fechamento);
   const fechados = linhas.filter(l => l.fechamento);
+  // Teste/Real só vale pro envio de assinatura: aparece junto com o botão
+  // 📤 Assinatura (linha fechada com alguma parcela ainda não paga).
+  const temAssinaturaDisponivel = fechados.some(l => !l.fechamento!.parcela1PagoEm || !l.fechamento!.parcela2PagoEm);
 
   // Aceita "1.500,50", "1500,50" e "1500.50" (com vírgula, o ponto é milhar).
   const numeroDigitado = (s?: string) => {
@@ -221,6 +225,30 @@ export default function DecimoTerceiroPage() {
     const dig = digitadasDe(l.func.nome_completo);
     if (!dig) return l.dados;
     return { ...l.dados, valorBruto: dig.parcela1 + dig.parcela2, parcela1Valor: dig.parcela1, parcela2Valor: dig.parcela2, inssValor: 0, irrfValor: 0 };
+  };
+
+  // Prévia do holerite das 2 parcelas, sem gravar nem enviar: aberto usa os
+  // valores da tela (digitados ou sugeridos); fechado, os congelados.
+  const previaHolerite = async (l: Linha13) => {
+    const nome = l.func.nome_completo;
+    setGerandoPrevia(nome);
+    try {
+      const res = await previaHolerite13Action({
+        ano, funcionarioNome: nome,
+        parcelasDigitadas: l.fechamento ? null : digitadasDe(nome)
+      }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      const bin = atob(res.info.pdfBase64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+      window.open(url, '_blank', 'noopener,noreferrer');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e: any) {
+      toast('Erro ao gerar a prévia: ' + e.message, 'error');
+    } finally {
+      setGerandoPrevia(null);
+    }
   };
 
   // Parcela zerada não entra no fechamento (o servidor também barra).
@@ -370,10 +398,12 @@ export default function DecimoTerceiroPage() {
               {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
             </select>
             <input type="number" value={ano} onChange={e => setAno(Number(e.target.value) || ano)} className="w-24 p-2.5 border border-[#CBD5E1] rounded-xl text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]" />
-            <label className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider cursor-pointer bg-gray-50 px-3 h-[42px] rounded-xl border border-gray-200 select-none">
-              <input type="checkbox" checked={sandbox} onChange={e => setSandbox(e.target.checked)} className="accent-amber-600" />
-              <span className={sandbox ? 'text-amber-600' : 'text-red-600'}>{sandbox ? '🧪 Teste' : '⚠ Real'}</span>
-            </label>
+            {temAssinaturaDisponivel && (
+              <label className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider cursor-pointer bg-gray-50 px-3 h-[42px] rounded-xl border border-gray-200 select-none">
+                <input type="checkbox" checked={sandbox} onChange={e => setSandbox(e.target.checked)} className="accent-amber-600" />
+                <span className={sandbox ? 'text-amber-600' : 'text-red-600'}>{sandbox ? '🧪 Teste' : '⚠ Real'}</span>
+              </label>
+            )}
             <button onClick={fecharTodos} disabled={processando !== null || fechaveis.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-5 py-3.5 rounded-xl shadow-sm hover:bg-[#15803D] transition-all disabled:opacity-50 text-center">
               {processando === 'LOTE::fechar' ? '⏳ Fechando...' : `🔒 Fechar Todos (${fechaveis.length})`}
             </button>
@@ -472,8 +502,11 @@ export default function DecimoTerceiroPage() {
                           )}
                         </td>
                         <td className="p-4">
+                          <button onClick={() => previaHolerite(l)} disabled={gerandoPrevia !== null} className="text-[10px] font-black text-gray-500 uppercase tracking-wider hover:bg-gray-100 px-3 py-1 rounded disabled:opacity-50 border border-gray-200 mb-1.5">
+                            {gerandoPrevia === key ? '⏳' : '👁 Prévia'}
+                          </button>
                           {!l.fechamento ? (
-                            <span className="text-[10px] text-gray-400 font-bold uppercase">Feche para liberar as ações</span>
+                            <span className="text-[10px] text-gray-400 font-bold uppercase block">Feche para liberar as ações</span>
                           ) : (
                             <div className="flex flex-col gap-1.5">
                               <div className="flex gap-1.5 items-center">

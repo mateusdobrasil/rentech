@@ -33,17 +33,19 @@ Cada linha mostra o colaborador, o cargo e o **📄 Salário folha** (o salário
 - Digite **as duas**: com uma só preenchida, a outra conta como zero e a linha não fecha.
 - Campos vazios = vale o valor sugerido (em cinza dentro do campo).
 
+**👁 Prévia:** em cada linha, abre o holerite das duas parcelas (uma por página) com os valores que estão na tela naquele momento, digitados ou sugeridos, sem gravar e sem enviar nada. Use antes do **Fechar Todos** para conferir. Na linha já fechada, mostra os valores congelados.
+
 ## Via Empresa: fechar, assinar e pagar
 
 1. **🔒 Fechar Todos** congela os valores de todas as linhas em aberto. Depois de fechado, mudança de salário ou de dependentes não altera mais nada.
 2. **Valor zerado não fecha:** a linha com a 1ª ou a 2ª parcela em zero aparece como **⛔ Valor zerado** e fica de fora. O aviso ao fechar diz quantas e quais ficaram de fora.
 3. Com a linha fechada, cada parcela tem os botões:
-   - **📤 Assinatura**: gera o recibo da parcela e envia pela Autentique. A ficha precisa ter CPF e celular ou e-mail. Parcela zerada não é enviada.
+   - **📤 Assinatura**: gera o holerite da parcela e envia pela Autentique. A ficha precisa ter CPF e celular ou e-mail. Parcela zerada não é enviada.
    - **✓ Marcar paga**: para pagamento feito fora do lote (TED manual, por exemplo). Dá para desfazer, menos quando foi paga pelo lote.
-4. **🧪 Teste / ⚠ Real:** em Teste (o padrão), o envio para assinatura não gasta documento do plano Autentique. Mude para Real só quando os valores estiverem conferidos.
+4. **🧪 Teste / ⚠ Real:** aparece no topo depois do fechamento, junto com os botões de assinatura. Em Teste (o padrão), o envio para assinatura não gasta documento do plano Autentique. Mude para Real só quando os valores estiverem conferidos.
 5. **↺ Reabrir** pede o motivo e só funciona se nenhuma das parcelas estiver paga. A linha volta ao valor sugerido; digite de novo as parcelas, se for o caso.
 
-**Recibo:** com parcelas digitadas, o recibo mostra só as parcelas, sem linhas de INSS e IRRF.
+**Holerite do 13º:** sai no mesmo modelo do holerite de salário ("Demonstrativo de Pagamento"), um por parcela, com o texto **13º Salário - 1ª parcela** ou **13º Salário - 2ª parcela**. Em Créditos vai a parcela; em Débitos, o INSS e o IRRF da 2ª parcela quando é o valor sugerido. Com parcelas digitadas não há débitos, e o rodapé diz "valores definidos pela empresa". Depois de assinado, o funcionário vê o holerite no Portal com esse mesmo nome.
 
 **Pagamento:** em Financeiro → RH, monte o lote com a fonte **13º Integral — 1ª Parcela** ou **13º Integral — 2ª Parcela** (grupo Avulsos). Cada parcela some do lote depois de paga, e parcela zerada não entra.
 

@@ -23,9 +23,10 @@ const PENDENTES = ['ENVIADO', 'VISUALIZADO', 'PENDENTE'];
 
 const hojeSP = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 
-export type TipoAssinatura = 'HOLERITE' | 'AVULSO' | 'RESCISAO';
+export type TipoAssinatura = 'HOLERITE' | 'AVULSO' | 'RESCISAO' | 'DECIMO_TERCEIRO';
 const tipoDe = (ref: string): TipoAssinatura =>
-  ref.startsWith('RESCISAO-') ? 'RESCISAO' : ref.startsWith('AVULSO-') ? 'AVULSO' : 'HOLERITE';
+  ref.startsWith('RESCISAO-') ? 'RESCISAO' : ref.startsWith('AVULSO-') ? 'AVULSO' : /^13-\d{4}-P[12]$/.test(ref) ? 'DECIMO_TERCEIRO' : 'HOLERITE';
+const titulo13 = (ref: string) => { const m = ref.match(/^13-(\d{4})-P([12])$/); return m ? `13º Salário - ${m[2]}ª parcela ${m[1]}` : '13º Salário'; };
 
 /** Lista de colaboradores para escolher (ativos e desligados), com a contagem de assinaturas. */
 export async function colaboradoresAssinaturaAction(accessToken: string): Promise<Resultado> {
@@ -94,7 +95,7 @@ export async function dossieAssinaturasAction(payload: { funcionarioId: string }
       return {
         id: a.id as number,
         tipo,
-        titulo: tipo === 'HOLERITE' ? `Holerite ${String(a.mes_referencia).split('-').reverse().join('/')}` : (String(a.titulo_avulso || '').trim() || (tipo === 'RESCISAO' ? 'TRCT - Rescisão' : 'Documento avulso')),
+        titulo: tipo === 'HOLERITE' ? `Holerite ${String(a.mes_referencia).split('-').reverse().join('/')}` : tipo === 'DECIMO_TERCEIRO' ? titulo13(String(a.mes_referencia)) : (String(a.titulo_avulso || '').trim() || (tipo === 'RESCISAO' ? 'TRCT - Rescisão' : 'Documento avulso')),
         mesReferencia: a.mes_referencia as string,   // chave das actions de consultar/baixar/cancelar
         competencia,                                    // AAAA-MM (holerite e avulso)
         rescisaoId: tipo === 'RESCISAO' ? Number(String(a.mes_referencia).slice(9)) || null : null,

@@ -26,6 +26,7 @@ import { registrarLogAuditoria } from '../../../actions';
 import { consultarAssinaturaAction, baixarAssinadoAction } from './actions-assinatura';
 import { autentiqueCriarDocumento } from '../../../lib/autentique';
 import { gerarRecibo13Pdf } from '../../../lib/gerarRecibo13Pdf';
+import { mergePdfs } from '../../../lib/mergePdf';
 import { calcular13Integral, calcular13ComParcelasDigitadas, itensCalculo13, type ResultadoCalculo13 } from '../../../lib/calculo13Salario';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
@@ -359,6 +360,88 @@ export async function marcarParcela13PagaAction(payload: {
   }
 }
 
+// Holerite de uma parcela (mesmo modelo do holerite de salário), a partir dos
+// valores do 13º — gravados (fechado) ou ao vivo (prévia antes de fechar).
+interface Valores13 { ano: number; valor_bruto: number; parcela1_valor: number; parcela2_valor: number; inss_valor: number; irrf_valor: number; fechado_em: string | null }
+function pdfParcela13(
+  v: Valores13, parcela: 1 | 2,
+  ficha: { nome: string; cpf: string | null; cargo: string | null; tipoContrato: string | null },
+  empresaNome: string
+): Promise<Uint8Array> {
+  const valorLiquido = parcela === 1 ? Number(v.parcela1_valor) : Number(v.parcela2_valor);
+  // Parcelas digitadas (Via Empresa) têm INSS e IRRF zerados — no cálculo
+  // sugerido o INSS nunca é zero com bruto > 0, então isso basta.
+  const manual = Number(v.inss_valor) === 0 && Number(v.irrf_valor) === 0;
+  // Crédito = a parcela; no cálculo sugerido, a 2ª leva INSS/IRRF como débito
+  // (crédito = bruto − 1ª, e o líquido fecha na 2ª parcela).
+  const creditos = [{
+    descricao: `13º Salário - ${parcela}ª parcela`,
+    valor: (!manual && parcela === 2) ? Number(v.valor_bruto) - Number(v.parcela1_valor) : valorLiquido
+  }];
+  const debitos = (!manual && parcela === 2)
+    ? [
+        { descricao: 'INSS sobre o 13º', valor: Number(v.inss_valor) },
+        { descricao: 'IRRF sobre o 13º', valor: Number(v.irrf_valor) },
+      ].filter(d => d.valor > 0)
+    : [];
+  return gerarRecibo13Pdf({
+    ...ficha, ano: v.ano, parcela, valorLiquido, creditos, debitos, manual,
+    calculadoEm: v.fechado_em, empresaNome
+  });
+}
+
+// ============================================================================
+// PRÉVIA — o holerite das 2 parcelas num PDF só, sem gravar nem enviar nada.
+// Linha fechada usa os valores congelados; em aberto, os da tela (digitados
+// ou o cálculo sugerido), mesma regra do fechamento.
+// ============================================================================
+export async function previaHolerite13Action(payload: {
+  ano: number; funcionarioNome: string;
+  parcelasDigitadas?: { parcela1: number; parcela2: number } | null;
+}, accessToken: string): Promise<Resultado> {
+  const acesso = await validarAcesso(accessToken, ROTA);
+  if (!acesso.ok) return { ok: false, erro: acesso.message };
+
+  const db = supabaseAdmin();
+  const { ano, funcionarioNome, parcelasDigitadas } = payload;
+  try {
+    const { data: f } = await db.from('folha_funcionarios')
+      .select('id, nome_completo, cpf, cargo, tipo_contrato, empresa_id, salario_folha, salario_contrato, data_admissao, data_desligamento')
+      .eq('nome_completo', funcionarioNome).eq('ativo', true).limit(1).maybeSingle();
+    const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    if (!f || !empresaPermitida(empresasPermitidas, f.empresa_id)) return { ok: false, erro: 'Funcionário não encontrado.' };
+
+    const { data: fechado } = await db.from('folha_decimo_terceiro').select('*').eq('funcionario_nome', f.nome_completo).eq('ano', ano).maybeSingle();
+    let v: Valores13;
+    if (fechado) {
+      v = fechado;
+    } else {
+      const salarioBase = f.salario_folha > 0 ? f.salario_folha : f.salario_contrato;
+      const { count } = await db.from('folha_dependentes').select('funcionario_nome', { count: 'exact', head: true }).eq('funcionario_nome', f.nome_completo);
+      const d = parcelasDigitadas
+        ? calcular13ComParcelasDigitadas({
+            parcela1Valor: Number(parcelasDigitadas.parcela1) || 0, parcela2Valor: Number(parcelasDigitadas.parcela2) || 0,
+            salarioBase, dataAdmissao: f.data_admissao, dataDesligamento: f.data_desligamento, ano
+          })
+        : calcular13Integral({ salarioBase, dataAdmissao: f.data_admissao, dataDesligamento: f.data_desligamento, ano, numeroDependentesIrrf: count || 0 });
+      v = { ano, valor_bruto: d.valorBruto, parcela1_valor: d.parcela1Valor, parcela2_valor: d.parcela2Valor, inss_valor: d.inssValor, irrf_valor: d.irrfValor, fechado_em: null };
+    }
+
+    const ficha = { nome: f.nome_completo, cpf: f.cpf || null, cargo: f.cargo || null, tipoContrato: f.tipo_contrato || null };
+    const empresaNome = await nomeEmpresaDoFuncionario(db, f.empresa_id);
+    const paginas: Uint8Array[] = [];
+    for (const parcela of [1, 2] as const) {
+      const valor = parcela === 1 ? Number(v.parcela1_valor) : Number(v.parcela2_valor);
+      if (valor > 0) paginas.push(await pdfParcela13(v, parcela, ficha, empresaNome));
+    }
+    if (paginas.length === 0) return { ok: false, erro: 'As duas parcelas estão zeradas — não há holerite para mostrar.' };
+    const pdf = paginas.length > 1 ? await mergePdfs(paginas) : paginas[0];
+    return { ok: true, info: { pdfBase64: Buffer.from(pdf).toString('base64') } };
+  } catch (e: any) {
+    return { ok: false, erro: e.message };
+  }
+}
+
 // ============================================================================
 // ENVIAR PARA ASSINATURA (Autentique) — uma parcela por vez. Reaproveita a
 // MESMA tabela/integração usada pelos holerites e pela rescisão
@@ -383,7 +466,7 @@ export async function enviarDecimoTerceiroAssinaturaAction(payload: {
     const { data: existente } = await db.from('folha_holerite_assinaturas').select('status').eq('funcionario_nome', r.funcionario_nome).eq('mes_referencia', marcador).maybeSingle();
     if (existente?.status === 'ASSINADO') return { ok: false, erro: 'Esta parcela já foi assinada. Não é possível reenviar.' };
 
-    const { data: func } = await filtrarFicha(db.from('folha_funcionarios').select('cpf, celular, email, cargo, empresa_id'), { funcionarioId: r.funcionario_id, funcionarioNome: r.funcionario_nome }).maybeSingle();
+    const { data: func } = await filtrarFicha(db.from('folha_funcionarios').select('cpf, celular, email, cargo, tipo_contrato, empresa_id'), { funcionarioId: r.funcionario_id, funcionarioNome: r.funcionario_nome }).maybeSingle();
     const cpfLimpo = (func?.cpf || '').replace(/\D/g, '');
     if (cpfLimpo.length !== 11) return { ok: false, erro: `CPF de ${r.funcionario_nome} ausente ou inválido. Preencha o CPF na ficha antes de enviar.` };
     const celularE164 = normalizarCelularBR(func?.celular);
@@ -392,35 +475,10 @@ export async function enviarDecimoTerceiroAssinaturaAction(payload: {
     const nomeEmpresa = await nomeEmpresaDoFuncionario(db, func?.empresa_id ?? r.empresa_id);
     const valorPago = parcela === 1 ? Number(r.parcela1_valor) : Number(r.parcela2_valor);
     if (!(valorPago > 0)) return { ok: false, erro: `A ${parcela}ª parcela de ${r.funcionario_nome} está zerada — reabra, corrija o valor e feche de novo antes de enviar.` };
-    // Parcelas digitadas (Via Empresa) fecham com INSS e IRRF zerados — no
-    // cálculo sugerido o INSS nunca é zero com bruto > 0, então isso basta
-    // pra saber qual recibo montar.
-    const manual = Number(r.inss_valor) === 0 && Number(r.irrf_valor) === 0;
-    const detalhamento = manual
-      ? (parcela === 1
-          ? [{ descricao: '1ª parcela do 13º salário', valor: Number(r.parcela1_valor) }]
-          : [
-              { descricao: '13º salário (1ª + 2ª parcela)', valor: Number(r.valor_bruto) },
-              { descricao: '1ª parcela já paga', valor: Number(r.parcela1_valor) },
-              { descricao: '2ª parcela do 13º salário', valor: Number(r.parcela2_valor) },
-            ])
-      : parcela === 1
-      ? [
-          { descricao: '13º salário integral (bruto)', valor: Number(r.valor_bruto) },
-          { descricao: '1ª parcela — 50% do bruto, sem desconto', valor: Number(r.parcela1_valor) },
-        ]
-      : [
-          { descricao: '13º salário integral (bruto)', valor: Number(r.valor_bruto) },
-          { descricao: '1ª parcela já paga', valor: Number(r.parcela1_valor) },
-          { descricao: 'INSS sobre o 13º (tributação exclusiva)', valor: Number(r.inss_valor) },
-          { descricao: 'IRRF sobre o 13º (tributação exclusiva)', valor: Number(r.irrf_valor) },
-          { descricao: '2ª parcela líquida', valor: Number(r.parcela2_valor) },
-        ];
 
-    const pdfBytes = await gerarRecibo13Pdf({
-      nome: r.funcionario_nome, cpf: func?.cpf || null, cargo: func?.cargo || null,
-      ano: r.ano, parcela, valorPago, detalhamento, calculadoEm: r.fechado_em, empresaNome: nomeEmpresa
-    });
+    const pdfBytes = await pdfParcela13(r, parcela, {
+      nome: r.funcionario_nome, cpf: func?.cpf || null, cargo: func?.cargo || null, tipoContrato: func?.tipo_contrato || null
+    }, nomeEmpresa);
 
     const doc = await autentiqueCriarDocumento({
       nomeDocumento: `13º Salário ${parcela}ª Parcela ${r.ano} — ${r.funcionario_nome}`,

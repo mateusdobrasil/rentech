@@ -34,6 +34,10 @@ interface HoleritePortal {
 
 const fmtData = (d: string | null) => formatarDataBR(d);
 const fmtMesReferencia = (m: string) => {
+  // Marcadores que não são mês: 13º ("13-AAAA-P1") e rescisão ("RESCISAO-<id>").
+  const m13 = m.match(/^13-(\d{4})-P([12])$/);
+  if (m13) return `13º Salário - ${m13[2]}ª parcela ${m13[1]}`;
+  if (m.startsWith('RESCISAO-')) return 'Rescisão';
   const [ano, mes] = m.split('-');
   if (!ano || !mes) return m;
   return new Date(Number(ano), Number(mes) - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });

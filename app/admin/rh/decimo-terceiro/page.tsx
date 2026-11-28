@@ -22,7 +22,6 @@ import {
 } from '../actions/actions-decimo-terceiro';
 import { urlDocumentoContabilAction } from '../actions/actions-documentos';
 import { listarPdfsContabilidadeAction, processarOcrAwsAction } from '../actions/actions-financeiro';
-import { calcularSplit13 } from '../../../lib/calculo13Salario';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm, usePrompt } from '../../../components/ui/NotificationProvider';
@@ -79,9 +78,9 @@ export default function DecimoTerceiroPage() {
   const [abrindoDoc, setAbrindoDoc] = useState<string | null>(null); // "{nome}::{mesReferencia}"
   const [lendoOcr, setLendoOcr] = useState(false);
   const [ocrFalhas, setOcrFalhas] = useState<string[]>([]);
-  // Bruto digitado manualmente (Via Rentech), por nome — só vale enquanto o
-  // 13º ainda está em aberto; some ao fechar (o snapshot já fica congelado).
-  const [brutoDigitado, setBrutoDigitado] = useState<Record<string, string>>({});
+  // 1ª/2ª parcela digitadas (Via Empresa), por nome — só valem enquanto o 13º
+  // está em aberto; somem ao fechar (o snapshot fica congelado).
+  const [parcelasDigitadas, setParcelasDigitadas] = useState<Record<string, { p1: string; p2: string }>>({});
 
   // Empresa (Rentech × AlfaLight) — pedido do usuário (28/11/2026): nunca
   // "ambas", sempre uma escolhida, com Rentech como padrão. Mesmo padrão de
@@ -153,33 +152,34 @@ export default function DecimoTerceiroPage() {
     setLendoOcr(true);
     setOcrFalhas([]);
     try {
-      const mesReferencia = String(ano); // 13º/Férias: mes_referencia = ano
-      const res = await listarPdfsContabilidadeAction({ mesReferencia, tipo: 'DECIMO_TERCEIRO', forcar }, accessToken);
-      if (!res.ok) throw new Error(res.erro);
-
-      const pdfs: { funcionario_nome: string; pdfBase64: string }[] = res.info?.pdfs || [];
-      const cache: { funcionario_nome: string; valor: number }[] = res.info?.cache || [];
-      if (pdfs.length === 0 && cache.length === 0) {
-        toast('Nenhum documento do 13º (contabilidade) importado para este ano.', 'info');
-        return;
-      }
-
+      // Um holerite por parcela: "AAAA-P1" e "AAAA-P2" (ver Separar Holerites).
       const falhas: string[] = [];
-      let lidos = 0;
-      for (let i = 0; i < pdfs.length; i++) {
-        const { funcionario_nome, pdfBase64 } = pdfs[i];
-        try {
-          const r = await processarOcrAwsAction(pdfBase64, 'DECIMO_TERCEIRO', mesReferencia, funcionario_nome, accessToken);
-          if (r.ok && r.valor) lidos++;
-          else falhas.push(`${funcionario_nome}: ${r.erro || 'valor não encontrado no PDF.'}`);
-        } catch {
-          falhas.push(`${funcionario_nome}: falha de conexão.`);
+      let lidos = 0, tentados = 0, emCache = 0;
+      for (const parcela of [1, 2] as const) {
+        const mesReferencia = `${ano}-P${parcela}`;
+        const res = await listarPdfsContabilidadeAction({ mesReferencia, tipo: 'DECIMO_TERCEIRO', forcar }, accessToken);
+        if (!res.ok) throw new Error(res.erro);
+        const pdfs: { funcionario_nome: string; pdfBase64: string }[] = res.info?.pdfs || [];
+        emCache += (res.info?.cache || []).length;
+        for (const { funcionario_nome, pdfBase64 } of pdfs) {
+          tentados++;
+          try {
+            const r = await processarOcrAwsAction(pdfBase64, 'DECIMO_TERCEIRO', mesReferencia, funcionario_nome, accessToken);
+            if (r.ok && r.valor) lidos++;
+            else falhas.push(`${funcionario_nome} (${parcela}ª parcela): ${r.erro || 'valor não encontrado no PDF.'}`);
+          } catch {
+            falhas.push(`${funcionario_nome} (${parcela}ª parcela): falha de conexão.`);
+          }
         }
       }
+      if (tentados === 0 && emCache === 0) {
+        toast('Nenhum holerite do 13º (contabilidade) importado para este ano.', 'info');
+        return;
+      }
       setOcrFalhas(falhas);
-      const msg = pdfs.length === 0
-        ? `${cache.length} valor(es) já lido(s) anteriormente.`
-        : `${lidos} de ${pdfs.length} valor(es) lido(s).${falhas.length ? ` ${falhas.length} falha(s) — confira manualmente.` : ''}`;
+      const msg = tentados === 0
+        ? `${emCache} valor(es) já lido(s) anteriormente.`
+        : `${lidos} de ${tentados} valor(es) lido(s).${falhas.length ? ` ${falhas.length} falha(s) — confira manualmente.` : ''}`;
       toast(msg, falhas.length ? 'error' : 'success');
       carregar(ano, empresaSelecionada!);
     } catch (e: any) {
@@ -189,52 +189,61 @@ export default function DecimoTerceiroPage() {
     }
   };
 
-  // "Via Contabilidade" grava mes_referencia só com o ano ("AAAA", sem mês) —
-  // só o 13º/Férias caem aqui, e não tem mais de um por ano.
-  const mesBR = (iso: string) => { if (!iso.includes('-')) return iso; const [a, m] = iso.split('-'); return `${m}/${a}`; };
-
   useEffect(() => { if (!authLoading && accessToken && empresaSelecionada) carregar(ano, empresaSelecionada); }, [ano, authLoading, accessToken, empresaSelecionada]);
 
   const abertos = linhas.filter(l => !l.fechamento);
   const fechados = linhas.filter(l => l.fechamento);
 
-  // Dados exibidos pra uma linha: congelados se já fechou; senão, recalcula
-  // ao vivo com o bruto digitado (se houver) — sem rodar nada no servidor.
-  const dadosExibidos = (l: Linha13) => {
-    if (l.fechamento) return l.dados;
-    const digitado = Number(brutoDigitado[l.func.nome_completo]?.replace(',', '.'));
-    if (!digitado || digitado <= 0) return l.dados;
-    const split = calcularSplit13(digitado, l.numeroDependentesIrrf);
-    return { ...l.dados, valorBruto: digitado, ...split };
+  // Aceita "1.500,50", "1500,50" e "1500.50" (com vírgula, o ponto é milhar).
+  const numeroDigitado = (s?: string) => {
+    const t = (s || '').trim();
+    return Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t) || 0;
+  };
+  // Parcelas digitadas de uma linha, ou null se nenhuma das duas foi digitada.
+  const digitadasDe = (nome: string) => {
+    const p = parcelasDigitadas[nome];
+    if (!p || (!p.p1.trim() && !p.p2.trim())) return null;
+    return { parcela1: numeroDigitado(p.p1), parcela2: numeroDigitado(p.p2) };
   };
 
-  // Bruto zerado não entra no fechamento (o servidor também barra).
-  const fechaveis = abertos.filter(l => dadosExibidos(l).valorBruto > 0);
+  // Dados exibidos pra uma linha: congelados se já fechou; com parcelas
+  // digitadas, o digitado é o que se paga (sem INSS/IRRF, bruto = 1ª + 2ª);
+  // senão, o cálculo sugerido.
+  const dadosExibidos = (l: Linha13) => {
+    if (l.fechamento) return l.dados;
+    const dig = digitadasDe(l.func.nome_completo);
+    if (!dig) return l.dados;
+    return { ...l.dados, valorBruto: dig.parcela1 + dig.parcela2, parcela1Valor: dig.parcela1, parcela2Valor: dig.parcela2, inssValor: 0, irrfValor: 0 };
+  };
+
+  // Parcela zerada não entra no fechamento (o servidor também barra).
+  const temValor = (l: Linha13) => { const d = dadosExibidos(l); return d.parcela1Valor > 0 && d.parcela2Valor > 0; };
+  const fechaveis = abertos.filter(temValor);
   const zeradosAbertos = abertos.length - fechaveis.length;
 
   const fecharTodos = async () => {
     if (abertos.length === 0) { toast('Todos já estão fechados para este ano.', 'info'); return; }
-    if (fechaveis.length === 0) { toast('Todos os 13º em aberto estão com valor zerado — digite o bruto antes de fechar.', 'error'); return; }
+    if (fechaveis.length === 0) { toast('Todos os 13º em aberto estão com parcela zerada — digite a 1ª e a 2ª parcela antes de fechar.', 'error'); return; }
     const totalBruto = fechaveis.reduce((s, l) => s + dadosExibidos(l).valorBruto, 0);
-    const valoresBrutoOverride: Record<string, number> = {};
+    const valoresParcelasDigitadas: Record<string, { parcela1: number; parcela2: number }> = {};
     fechaveis.forEach(l => {
-      const digitado = Number(brutoDigitado[l.func.nome_completo]?.replace(',', '.'));
-      if (digitado > 0) valoresBrutoOverride[l.func.nome_completo] = digitado;
+      const dig = digitadasDe(l.func.nome_completo);
+      if (dig) valoresParcelasDigitadas[l.func.nome_completo] = dig;
     });
     if (!(await confirmar(
       `Fechar o 13º Salário (Via Rentech) de ${ano} para ${fechaveis.length} funcionário(s)?\n\n` +
       `Total bruto: ${BRL(totalBruto)}\n\n` +
-      (zeradosAbertos > 0 ? `${zeradosAbertos} funcionário(s) com valor zerado ficam de fora.\n\n` : '') +
+      (zeradosAbertos > 0 ? `${zeradosAbertos} funcionário(s) com parcela zerada ficam de fora.\n\n` : '') +
       `Depois de fechado, os valores ficam congelados (não acompanham mudança de salário/dependentes) até reabrir.`
     ))) return;
     setProcessando('LOTE::fechar');
     try {
-      const res = await fecharDecimoTerceiroLoteAction({ ano, nomes: fechaveis.map(l => l.func.nome_completo), usuarioNome: usuarioAtual, valoresBrutoOverride }, accessToken);
+      const res = await fecharDecimoTerceiroLoteAction({ ano, nomes: fechaveis.map(l => l.func.nome_completo), usuarioNome: usuarioAtual, valoresParcelasDigitadas }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       const ignoradosMsg = res.info?.ignorados?.length ? `\n\nIgnorados (já têm parcela paga): ${res.info.ignorados.join(', ')}` : '';
-      const zeradosMsg = res.info?.zerados?.length ? `\n\nNão fechados (valor zerado): ${res.info.zerados.join(', ')}` : '';
+      const zeradosMsg = res.info?.zerados?.length ? `\n\nNão fechados (parcela zerada): ${res.info.zerados.join(', ')}` : '';
       toast(`${res.info?.fechados || 0} fechado(s).${ignoradosMsg}${zeradosMsg}`, 'success');
-      setBrutoDigitado({});
+      setParcelasDigitadas({});
       carregar(ano, empresaSelecionada!);
     } catch (e: any) {
       toast('Erro ao fechar: ' + e.message, 'error');
@@ -327,7 +336,7 @@ export default function DecimoTerceiroPage() {
 
       <div className="bg-[#FEF3C7] border-b border-[#FDE68A] px-4 md:px-8 py-4 flex flex-col sm:flex-row justify-between items-center gap-3 shadow-sm print:hidden">
         <p className="text-[#92400E] font-medium text-sm">
-          🎄 <strong>13º Salário</strong>. Via Rentech: você pode digitar o bruto (ou deixar o cálculo sugerido), fechamos, enviamos p/ assinatura e levamos ao lote PIX. Via Contabilidade: o valor é exatamente o do holerite importado em Separar Holerites — só leitura aqui.
+          🎄 <strong>13º Salário</strong>. Via Empresa: você pode digitar a 1ª e a 2ª parcela (ou deixar o cálculo sugerido), fechamos, enviamos p/ assinatura e levamos ao lote PIX. Via Contabilidade: o valor é exatamente o do holerite importado em Separar Holerites — só leitura aqui.
         </p>
         <button onClick={() => router.push('/admin/rh')} className="text-[10px] md:text-xs font-black bg-white hover:bg-amber-50 border border-[#FDE68A] text-[#92400E] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
           ⬅ VOLTAR AO RH
@@ -414,27 +423,38 @@ export default function DecimoTerceiroPage() {
                           <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase inline-block mt-1 ${corSeloEmpresa(l.func.empresa_id)}`}>🏭 Empresa {l.func.empresa_id ?? '—'}</span>
                         </td>
                         <td className="p-4 text-right tabular-nums">{d.mesesAvos}/12</td>
+                        <td className="p-4 text-right tabular-nums font-bold">{BRL(d.valorBruto)}</td>
+                        <td className="p-4 text-right tabular-nums">
+                          {!l.fechamento ? (
+                            <input
+                              type="text" inputMode="decimal"
+                              value={parcelasDigitadas[key]?.p1 ?? ''}
+                              onChange={e => setParcelasDigitadas(prev => ({ ...prev, [key]: { p1: e.target.value, p2: prev[key]?.p2 ?? '' } }))}
+                              placeholder={BRL(l.dados.parcela1Valor)}
+                              title="Digite o valor a pagar na 1ª parcela (sem INSS/IRRF). Vazio = cálculo sugerido."
+                              className="w-28 p-1.5 border border-[#CBD5E1] rounded-lg text-right text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]"
+                            />
+                          ) : BRL(d.parcela1Valor)}
+                        </td>
+                        <td className="p-4 text-right tabular-nums text-red-600">−{BRL(d.inssValor)}</td>
+                        <td className="p-4 text-right tabular-nums text-red-600">−{BRL(d.irrfValor)}</td>
                         <td className="p-4 text-right tabular-nums font-bold">
                           {!l.fechamento ? (
                             <input
                               type="text" inputMode="decimal"
-                              value={brutoDigitado[key] ?? ''}
-                              onChange={e => setBrutoDigitado(prev => ({ ...prev, [key]: e.target.value }))}
-                              placeholder={BRL(l.dados.valorBruto)}
-                              title="Digite pra substituir o bruto sugerido (calculado do salário cadastrado)"
+                              value={parcelasDigitadas[key]?.p2 ?? ''}
+                              onChange={e => setParcelasDigitadas(prev => ({ ...prev, [key]: { p1: prev[key]?.p1 ?? '', p2: e.target.value } }))}
+                              placeholder={BRL(l.dados.parcela2Valor)}
+                              title="Digite o valor a pagar na 2ª parcela (sem INSS/IRRF). Vazio = cálculo sugerido."
                               className="w-28 p-1.5 border border-[#CBD5E1] rounded-lg text-right text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]"
                             />
-                          ) : BRL(d.valorBruto)}
+                          ) : BRL(d.parcela2Valor)}
                         </td>
-                        <td className="p-4 text-right tabular-nums">{BRL(d.parcela1Valor)}</td>
-                        <td className="p-4 text-right tabular-nums text-red-600">−{BRL(d.inssValor)}</td>
-                        <td className="p-4 text-right tabular-nums text-red-600">−{BRL(d.irrfValor)}</td>
-                        <td className="p-4 text-right tabular-nums font-bold">{BRL(d.parcela2Valor)}</td>
                         <td className="p-4 text-center">
                           {!l.fechamento ? (
-                            d.valorBruto > 0
+                            temValor(l)
                               ? <span className="text-[9px] font-black px-2 py-1 rounded-full uppercase bg-amber-100 text-amber-700">⚠ Em aberto</span>
-                              : <span className="text-[9px] font-black px-2 py-1 rounded-full uppercase bg-red-100 text-red-700" title="Não entra no fechamento enquanto o bruto estiver zerado">⛔ Valor zerado</span>
+                              : <span className="text-[9px] font-black px-2 py-1 rounded-full uppercase bg-red-100 text-red-700" title="Não entra no fechamento enquanto a 1ª ou a 2ª parcela estiver zerada">⛔ Valor zerado</span>
                           ) : (
                             <div className="flex flex-col gap-1 items-center">
                               <span className="text-[9px] font-black px-2 py-1 rounded-full uppercase bg-emerald-100 text-emerald-700">🔒 Fechado</span>
@@ -500,7 +520,7 @@ export default function DecimoTerceiroPage() {
         </div>
 
         <p className="text-[10px] text-gray-400 font-bold tracking-wide mt-2 text-center uppercase">
-          Cálculo: 1ª parcela = 50% do bruto, sem desconto (prazo legal até 30/11) · 2ª parcela = bruto − 1ª parcela − INSS − IRRF, tributação exclusiva sobre o total do 13º (prazo legal até 20/12). Conferir com a contabilidade antes de pagar.
+          Parcelas digitadas: o valor digitado é o que se paga, sem INSS/IRRF (bruto = 1ª + 2ª). Campo vazio = cálculo sugerido: 1ª parcela = 50% do bruto, sem desconto (prazo legal até 30/11) · 2ª parcela = bruto − 1ª parcela − INSS − IRRF (prazo legal até 20/12).
         </p>
 
         <div className="flex flex-wrap items-center justify-between gap-2 pt-4">
@@ -538,7 +558,8 @@ export default function DecimoTerceiroPage() {
                 <thead className="bg-[#F8FAFC] border-b-2 border-[#E2E8F0]">
                   <tr className="text-[10px] uppercase font-black tracking-widest text-[#64748B]">
                     <th className="p-4">Colaborador</th>
-                    <th className="p-4">Documentos importados</th>
+                    <th className="p-4">1ª Parcela</th>
+                    <th className="p-4">2ª Parcela</th>
                     <th className="p-4 text-right">Total (valor do holerite)</th>
                   </tr>
                 </thead>
@@ -552,27 +573,28 @@ export default function DecimoTerceiroPage() {
                           <span className="text-[10px] text-gray-400 font-bold block uppercase mt-0.5">{l.func.cargo || '—'}</span>
                           <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase inline-block mt-1 ${corSeloEmpresa(l.func.empresa_id)}`}>🏭 Empresa {l.func.empresa_id ?? '—'}</span>
                         </td>
-                        <td className="p-4">
-                          {l.documentos.length === 0 ? (
-                            <span className="text-[10px] font-black text-amber-600 uppercase">⚠ Nenhum documento importado ainda</span>
-                          ) : (
-                            <div className="flex flex-col gap-1.5">
-                              {l.documentos.map(d => (
-                                <div key={d.mesReferencia} className="flex items-center gap-2">
-                                  <span className="text-[10px] font-black text-gray-500 uppercase w-16">{mesBR(d.mesReferencia)}</span>
-                                  {d.valorOcr != null ? (
-                                    <span className="text-xs font-bold text-[#0C1D4D] tabular-nums">{BRL(d.valorOcr)}</span>
+                        {([1, 2] as const).map(parcela => {
+                          const ref = `${ano}-P${parcela}`;
+                          const doc = l.documentos.find(x => x.mesReferencia === ref);
+                          return (
+                            <td key={parcela} className="p-4">
+                              {!doc ? (
+                                <span className="text-[10px] font-black text-amber-600 uppercase">⚠ Não importado</span>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  {doc.valorOcr != null ? (
+                                    <span className="text-xs font-bold text-[#0C1D4D] tabular-nums">{BRL(doc.valorOcr)}</span>
                                   ) : (
-                                    <span className="text-[10px] font-black text-amber-600 uppercase">⏳ aguardando leitura do valor</span>
+                                    <span className="text-[10px] font-black text-amber-600 uppercase">⏳ aguardando leitura</span>
                                   )}
-                                  <button onClick={() => verDocumento(key, d.mesReferencia)} disabled={abrindoDoc !== null} className="text-[9px] font-black text-indigo-600 uppercase hover:bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 disabled:opacity-50">
-                                    {abrindoDoc === `${key}::${d.mesReferencia}` ? '...' : '👁 Ver'}
+                                  <button onClick={() => verDocumento(key, ref)} disabled={abrindoDoc !== null} className="text-[9px] font-black text-indigo-600 uppercase hover:bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 disabled:opacity-50">
+                                    {abrindoDoc === `${key}::${ref}` ? '...' : '👁 Ver'}
                                   </button>
                                 </div>
-                              ))}
-                            </div>
-                          )}
-                        </td>
+                              )}
+                            </td>
+                          );
+                        })}
                         <td className="p-4 text-right tabular-nums font-bold">{BRL(l.totalValor)}</td>
                       </tr>
                     );
@@ -584,7 +606,7 @@ export default function DecimoTerceiroPage() {
         </div>
 
         <p className="text-[10px] text-gray-400 font-bold tracking-wide mt-2 text-center uppercase">
-          Via Contabilidade: valor igual ao do holerite importado em /admin/rh/holerite → Separar Holerites (tipo "Décimo Terceiro"). Sem cálculo nosso; o pagamento roda pela fonte "13º Salário (contabilidade)" do lote de /admin/financeiro/rh.
+          Via Contabilidade: valor igual ao do holerite importado em /admin/rh/holerite → Separar Holerites (tipo "Décimo Terceiro", escolhendo a 1ª ou a 2ª parcela). Sem cálculo nosso; o pagamento roda pela fonte "13º Salário (contabilidade)" do lote de /admin/financeiro/rh, escolhendo a parcela.
         </p>
       </div>
     </div>

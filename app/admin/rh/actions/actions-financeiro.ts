@@ -123,15 +123,21 @@ function validarDadosPagamentoItem(item: {
   return null;
 }
 
-// 13º Salário e Férias da contabilidade são gravados em
-// folha_documentos_contabeis com mes_referencia = só o ANO ("AAAA"), não
-// "AAAA-MM" — pedido do usuário 2026-11-28, já que não existe mais de um
-// 13º ou férias por ano. Os outros tipos (ADIANTAMENTO/HOLERITE_MENSAL/
-// RESCISAO_CONTABILIDADE) continuam usando a competência (mês) normalmente.
-// Esta função converte a competência do lote (sempre "AAAA-MM") pra chave
-// certa de busca/gravação conforme o tipo do documento.
-function referenciaDocumento(mesReferencia: string, tipo: string): string {
-  return (tipo === 'DECIMO_TERCEIRO' || tipo === 'FERIAS') ? mesReferencia.slice(0, 4) : mesReferencia;
+// Chave de mes_referencia em folha_documentos_contabeis por tipo (pedidos do
+// usuário de 2026-11-28):
+// - FERIAS: só o ano ("AAAA") — uma por ano.
+// - DECIMO_TERCEIRO: ano + parcela ("AAAA-P1"/"AAAA-P2") — a contabilidade
+//   manda 2 holerites. Quem chama passa a chave já pronta, ou a competência
+//   do lote ("AAAA-MM") + a parcela escolhida. Sem parcela, não adivinha:
+//   devolve a competência como veio e a busca não acha nada.
+// - Demais tipos: a competência ("AAAA-MM") normal.
+function referenciaDocumento(mesReferencia: string, tipo: string, parcela13?: 1 | 2): string {
+  if (tipo === 'FERIAS') return mesReferencia.slice(0, 4);
+  if (tipo === 'DECIMO_TERCEIRO') {
+    if (/^\d{4}-P[12]$/.test(mesReferencia)) return mesReferencia;
+    return parcela13 ? `${mesReferencia.slice(0, 4)}-P${parcela13}` : mesReferencia;
+  }
+  return mesReferencia;
 }
 
 // ============================================================================
@@ -146,6 +152,7 @@ export async function montarLoteSalariosAction(payload: {
   valoresAdiantamento?: Record<string, number>;     // OCR do ADIANTAMENTO
   valoresPagamento?: Record<string, number>;        // OCR do HOLERITE_MENSAL
   valoresDecimoTerceiro?: Record<string, number>;   // OCR do DECIMO_TERCEIRO
+  parcela13Contabilidade?: 1 | 2;                   // qual holerite do 13º (contabilidade) entra no lote
   valoresFerias?: Record<string, number>;           // OCR do FERIAS
   valoresRescisaoContabilidade?: Record<string, number>; // OCR do recibo de rescisão da contabilidade
 }, accessToken: string): Promise<Resultado> {
@@ -215,23 +222,25 @@ export async function montarLoteSalariosAction(payload: {
         }
       });
     }
-    // 13º/Férias da contabilidade: UM documento por ANO (não por mês) —
-    // pedido do usuário 2026-11-28, já que não existe mais de um 13º ou
-    // férias no ano. Separar Holerites grava mes_referencia só com o ano
-    // ("AAAA") pra esses 2 tipos, então aqui casamos pelo ano do mês de
-    // competência escolhido na montagem do lote, não pelo mês exato.
-    if (fontes.includes('DECIMO_TERCEIRO') || fontes.includes('FERIAS')) {
-      const anoRef = referenciaDocumento(mesReferencia, 'DECIMO_TERCEIRO'); // mesma regra pros 2 tipos
-      const { data: docsAno } = await db.from('folha_documentos_contabeis')
-        .select('funcionario_nome, tipo, valor_ocr').eq('mes_referencia', anoRef).in('tipo', ['DECIMO_TERCEIRO', 'FERIAS']);
-      (docsAno || []).forEach(d => {
-        if (d.tipo === 'DECIMO_TERCEIRO') {
-          temDecimoTerceiro.add(d.funcionario_nome);
-          if (d.valor_ocr != null) valorOcrDecimoTerceiroPorNome[d.funcionario_nome] = Number(d.valor_ocr);
-        } else if (d.tipo === 'FERIAS') {
-          temFerias.add(d.funcionario_nome);
-          if (d.valor_ocr != null) valorOcrFeriasPorNome[d.funcionario_nome] = Number(d.valor_ocr);
-        }
+    // 13º/Férias da contabilidade não são por mês (ver referenciaDocumento):
+    // Férias casa pelo ano da competência; o 13º pelo ano + a parcela
+    // escolhida na tela (a contabilidade manda um holerite por parcela, e
+    // cada uma entra num lote próprio — prazos 30/11 e 20/12).
+    if (fontes.includes('DECIMO_TERCEIRO')) {
+      const ref13 = referenciaDocumento(mesReferencia, 'DECIMO_TERCEIRO', payload.parcela13Contabilidade || 1);
+      const { data: docs13 } = await db.from('folha_documentos_contabeis')
+        .select('funcionario_nome, valor_ocr').eq('mes_referencia', ref13).eq('tipo', 'DECIMO_TERCEIRO');
+      (docs13 || []).forEach(d => {
+        temDecimoTerceiro.add(d.funcionario_nome);
+        if (d.valor_ocr != null) valorOcrDecimoTerceiroPorNome[d.funcionario_nome] = Number(d.valor_ocr);
+      });
+    }
+    if (fontes.includes('FERIAS')) {
+      const { data: docsFerias } = await db.from('folha_documentos_contabeis')
+        .select('funcionario_nome, valor_ocr').eq('mes_referencia', referenciaDocumento(mesReferencia, 'FERIAS')).eq('tipo', 'FERIAS');
+      (docsFerias || []).forEach(d => {
+        temFerias.add(d.funcionario_nome);
+        if (d.valor_ocr != null) valorOcrFeriasPorNome[d.funcionario_nome] = Number(d.valor_ocr);
       });
     }
     // RESCISAO_CONTABILIDADE é uma consulta À PARTE, SEM filtro de mês/ano —
@@ -320,11 +329,12 @@ export async function montarLoteSalariosAction(payload: {
       const { data: linhas13 } = await db.from('folha_decimo_terceiro')
         .select('id, funcionario_nome, parcela1_valor, parcela1_pago_em, parcela2_valor, parcela2_pago_em');
       (linhas13 || []).forEach(l => {
-        if (fontes.includes('DECIMO_TERCEIRO_P1') && !l.parcela1_pago_em) {
+        // Parcela zerada nunca entra no lote (fechamentos de antes da trava).
+        if (fontes.includes('DECIMO_TERCEIRO_P1') && !l.parcela1_pago_em && Number(l.parcela1_valor) > 0) {
           decimo13P1PorNome[l.funcionario_nome] = Number(l.parcela1_valor || 0);
           decimo13P1IdPorNome[l.funcionario_nome] = l.id;
         }
-        if (fontes.includes('DECIMO_TERCEIRO_P2') && !l.parcela2_pago_em) {
+        if (fontes.includes('DECIMO_TERCEIRO_P2') && !l.parcela2_pago_em && Number(l.parcela2_valor) > 0) {
           decimo13P2PorNome[l.funcionario_nome] = Number(l.parcela2_valor || 0);
           decimo13P2IdPorNome[l.funcionario_nome] = l.id;
         }

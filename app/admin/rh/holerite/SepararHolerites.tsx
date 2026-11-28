@@ -35,9 +35,12 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, accessTo
   const confirmar = useConfirm();
   const [competencia, setCompetencia] = useState(mesReferencia);
   const [tipo, setTipo] = useState<'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO_CONTABILIDADE'>('ADIANTAMENTO');
-  // 13º e Férias: um documento por ANO (não por mês) — pedido do usuário
-  // 2026-11-28, já que não existe mais de um 13º ou férias no ano.
+  // 13º e Férias não são por mês (pedidos do usuário de 2026-11-28): Férias é
+  // uma por ano; o 13º vem em 2 holerites (1ª e 2ª parcela), gravados como
+  // "AAAA-P1"/"AAAA-P2" — ver referenciaDocumento em actions-financeiro.ts.
   const anoApenas = tipo === 'DECIMO_TERCEIRO' || tipo === 'FERIAS';
+  const [parcela13, setParcela13] = useState<1 | 2>(() => new Date().getMonth() === 11 ? 2 : 1);
+  const referenciaGravacao = tipo === 'DECIMO_TERCEIRO' ? `${competencia}-P${parcela13}` : competencia;
   const [processando, setProcessando] = useState(false);
   const [progresso, setProgresso] = useState('');
   const [paginas, setPaginas] = useState<PaginaSeparada[]>([]);
@@ -211,7 +214,7 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, accessTo
       for (let i = 0; i < itens.length; i++) {
         setProgresso(`Salvando ${i + 1} de ${itens.length}...`);
         const res = await salvarDocumentosContabeisAction({
-          mesReferencia: competencia, tipo, nomeArquivoOrigem: nomeArquivo, importadoPor: usuarioAtual, itens: [itens[i]]
+          mesReferencia: referenciaGravacao, tipo, nomeArquivoOrigem: nomeArquivo, importadoPor: usuarioAtual, itens: [itens[i]]
         }, accessToken);
         if (res.ok) {
           salvos += res.info?.salvos || 0;
@@ -282,6 +285,15 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, accessTo
               <input type="month" value={competencia} onChange={e => setCompetencia(e.target.value)} disabled={paginas.length > 0} className="w-full p-2.5 border border-blue-300 rounded-lg text-sm font-bold bg-white disabled:opacity-50" />
             )}
           </div>
+          {tipo === 'DECIMO_TERCEIRO' && (
+            <div className="flex-1">
+              <label className="block text-[10px] font-black text-blue-700 uppercase mb-1">Parcela</label>
+              <select value={parcela13} onChange={e => setParcela13(Number(e.target.value) as 1 | 2)} disabled={paginas.length > 0} className="w-full p-2.5 border border-blue-300 rounded-lg text-sm font-bold bg-white disabled:opacity-50">
+                <option value={1}>1ª parcela</option>
+                <option value={2}>2ª parcela</option>
+              </select>
+            </div>
+          )}
           {!anoApenas && (
             <>
               <div className="hidden sm:flex items-center pb-3 text-blue-400 font-black">→</div>
@@ -295,7 +307,9 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, accessTo
           )}
           <div className="flex-[2] text-[11px] font-medium text-blue-700 pb-1">
             {anoApenas ? (
-              <>13º/Férias de <strong>{competencia || '—'}</strong> — um documento por ano (sem mês de competência).</>
+              tipo === 'DECIMO_TERCEIRO'
+                ? <>13º de <strong>{competencia || '—'}</strong> — <strong>{parcela13}ª parcela</strong>. Importe a 1ª e a 2ª separadamente; uma não substitui a outra.</>
+                : <>Férias de <strong>{competencia || '—'}</strong> — um documento por ano (sem mês de competência).</>
             ) : (
               <>Competência <strong>{mesBR(competencia) || '—'}</strong> será paga em <strong>{competencia ? mesPagamento(competencia) : '—'}</strong>.</>
             )}

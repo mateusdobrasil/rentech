@@ -226,6 +226,11 @@ export default function FinanceiroPage() {
     const h = new Date(); const c = new Date(h.getFullYear(), h.getMonth() - 1, 1);
     return `${c.getFullYear()}-${String(c.getMonth() + 1).padStart(2, '0')}`;
   });
+  // A contabilidade manda 2 holerites do 13º; cada lote paga UMA parcela.
+  // Documento gravado como "AAAA-P1"/"AAAA-P2" (ano da competência).
+  const [parcela13Contab, setParcela13Contab] = useState<1 | 2>(() => new Date().getMonth() === 11 ? 2 : 1);
+  const ref13Contab = `${mesReferencia.slice(0, 4)}-P${parcela13Contab}`;
+  const refDocumento = (tipo: string) => tipo === 'DECIMO_TERCEIRO' ? ref13Contab : mesReferencia;
   const [itens, setItens] = useState<ItemLote[]>([]);
   const [fontesSel, setFontesSel] = useState<FonteLote[]>([]);
   const [resumoLote, setResumoLote] = useState({
@@ -386,7 +391,7 @@ export default function FinanceiroPage() {
         mesReferencia, fontes: fontesSel, empresaId: empresaSelecionada,
         valoresAdiantamento: valoresAdiant,
         valoresPagamento: valoresPagto,
-        valoresDecimoTerceiro, valoresFerias,
+        valoresDecimoTerceiro, parcela13Contabilidade: parcela13Contab, valoresFerias,
         valoresRescisaoContabilidade: valoresRescisaoContab
       }, accessToken);
       if (!res.ok) throw new Error(res.erro);
@@ -425,7 +430,7 @@ export default function FinanceiroPage() {
     setOcrDebug(null);
 
     try {
-      const res = await listarPdfsContabilidadeAction({ mesReferencia, tipo, forcar }, accessToken);
+      const res = await listarPdfsContabilidadeAction({ mesReferencia: refDocumento(tipo), tipo, forcar }, accessToken);
       if (!res.ok) throw new Error(res.erro);
 
       const pdfs: { funcionario_nome: string; pdfBase64: string }[] = res.info.pdfs;
@@ -454,7 +459,7 @@ export default function FinanceiroPage() {
             // Chamada para a Server Action conectada à AWS Textract — salva o
             // resultado em banco (mesReferencia + funcionario_nome) para não
             // precisar reler este PDF nas próximas vezes.
-            const respostaAws = await processarOcrAwsAction(pdfBase64, tipo, mesReferencia, funcionario_nome, accessToken);
+            const respostaAws = await processarOcrAwsAction(pdfBase64, tipo, refDocumento(tipo), funcionario_nome, accessToken);
 
             if (i === 0 && respostaAws._textoLido) {
               primeiroTexto = `[VALOR CAPTURADO: ${respostaAws.valor ?? 'nenhum'}]\n\n${respostaAws._textoLido}`;
@@ -482,6 +487,7 @@ export default function FinanceiroPage() {
         valoresAdiantamento: tipo === 'ADIANTAMENTO' ? novos : valoresAdiant,
         valoresPagamento: tipo === 'HOLERITE_MENSAL' ? novos : valoresPagto,
         valoresDecimoTerceiro: tipo === 'DECIMO_TERCEIRO' ? novos : valoresDecimoTerceiro,
+        parcela13Contabilidade: parcela13Contab,
         valoresFerias: tipo === 'FERIAS' ? novos : valoresFerias,
         valoresRescisaoContabilidade: tipo === 'RESCISAO_CONTABILIDADE' ? novos : valoresRescisaoContab
       }, accessToken);
@@ -527,7 +533,7 @@ export default function FinanceiroPage() {
     // aqui (quando o OCR automático falha) nunca aparecia lá.
     const tipoDocumento = TIPO_DOCUMENTO_POR_FONTE[fonte];
     if (tipoDocumento && valor > 0) {
-      salvarValorOcrManualAction({ funcionarioNome: nome, mesReferencia, tipo: tipoDocumento, valor }, accessToken)
+      salvarValorOcrManualAction({ funcionarioNome: nome, mesReferencia: refDocumento(tipoDocumento), tipo: tipoDocumento, valor }, accessToken)
         .then(res => { if (!res.ok) toast(`Valor atualizado aqui, mas não foi possível salvar pra prévia do holerite: ${res.erro}`, 'error'); })
         .catch(() => toast('Valor atualizado aqui, mas houve falha de conexão ao salvar pra prévia do holerite.', 'error'));
     }
@@ -676,7 +682,7 @@ export default function FinanceiroPage() {
 
   const gerarLote = async () => {
     if (prontos.length === 0) { toast('Nenhum pagamento pronto para gerar o lote.', 'info'); return; }
-    const sugestao = `${fontesSel.map(f => ROTULO_FONTE[f]).join(' + ')} ${fmtMesBR(mesReferencia)}`;
+    const sugestao = `${fontesSel.map(f => f === 'DECIMO_TERCEIRO' ? `${ROTULO_FONTE[f]} ${parcela13Contab}ª parcela` : ROTULO_FONTE[f]).join(' + ')} ${fmtMesBR(mesReferencia)}`;
     const nome = (await perguntar({ message: `Nome do lote (para identificar no histórico):`, defaultValue: sugestao }));
     if (nome === null) return;
     setSalvandoLote(true);
@@ -1360,6 +1366,19 @@ export default function FinanceiroPage() {
                   <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Competência</label>
                   <input type="month" value={mesReferencia} onChange={e => setMesReferencia(e.target.value)} className="w-full p-2 border border-gray-300 rounded-lg text-sm font-bold bg-[#F8FAFC]" />
                 </div>
+                {fontesSel.includes('DECIMO_TERCEIRO') && (
+                  <div>
+                    <label className="block text-[10px] font-black text-amber-700 uppercase mb-1">13º (contabilidade) — parcela</label>
+                    <select
+                      value={parcela13Contab}
+                      onChange={e => { setParcela13Contab(Number(e.target.value) as 1 | 2); setValoresDecimoTerceiro({}); setItens([]); }}
+                      className="w-full p-2 border border-amber-300 rounded-lg text-sm font-bold bg-amber-50 text-amber-800"
+                    >
+                      <option value={1}>1ª parcela {mesReferencia.slice(0, 4)}</option>
+                      <option value={2}>2ª parcela {mesReferencia.slice(0, 4)}</option>
+                    </select>
+                  </div>
+                )}
                 <button onClick={montarLote} disabled={montando || fontesSel.length === 0 || !empresaSelecionada} title={!empresaSelecionada ? 'Selecione a empresa antes de montar o lote' : ''} className="w-full text-xs font-black bg-[#0C1D4D] hover:bg-[#284B8C] text-white px-5 py-2.5 rounded-lg uppercase tracking-wider disabled:opacity-50">
                   {sincronizandoContasPagar ? '🔄 Sincronizando com o PrimeStart...' : montando ? '⏳ Montando...' : '📥 Montar lote'}
                 </button>

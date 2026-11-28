@@ -33,16 +33,14 @@ export interface ResultadoCalculo13 {
   irrfValor: number;
   parcela2Valor: number;
   calculadoEm: string;
+  manual?: boolean; // parcelas digitadas pelo usuário (sem INSS/IRRF)
 }
 
 export const arredonda = (v: number): number => Math.round((v + Number.EPSILON) * 100) / 100;
 const moeda = (v: number): string => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-// Divide um valor bruto do 13º nas 2 parcelas + INSS/IRRF. Isolado de
-// calcular13Integral pra poder ser chamado também quando o bruto vem
-// DIGITADO pelo usuário (tela "Via Rentech") em vez de calculado a partir
-// do salário cadastrado — nos dois casos o split fiscal é o mesmo.
-export function calcularSplit13(valorBruto: number, numeroDependentesIrrf: number) {
+// Divide um valor bruto do 13º nas 2 parcelas + INSS/IRRF.
+function calcularSplit13(valorBruto: number, numeroDependentesIrrf: number) {
   const parcela1Valor = arredonda(valorBruto * 0.5);
   // INSS e IRRF incidem sobre o BRUTO TOTAL do 13º (tributação exclusiva,
   // igual ao proporcional da rescisão) — não sobre a 2ª parcela isolada.
@@ -76,34 +74,40 @@ export function calcular13Integral(entrada: EntradaCalculo13): ResultadoCalculo1
   };
 }
 
-// Variante "Via Rentech" com o bruto DIGITADO pelo usuário em vez de
-// calculado a partir do salário cadastrado (pedido do usuário, 28/11/2026).
-// Avos seguem informativos (contados pelas datas), mas não determinam mais
-// o bruto — só o split fiscal (INSS/IRRF/parcelas) continua automático.
-export interface EntradaCalculo13BrutoDigitado {
-  valorBruto: number;
+// Variante "Via Empresa" com as 2 parcelas DIGITADAS pelo usuário (pedido de
+// 28/11/2026): o digitado é exatamente o que se paga — sem INSS/IRRF, bruto =
+// 1ª + 2ª. Avos seguem informativos (contados pelas datas).
+export interface EntradaCalculo13ParcelasDigitadas {
+  parcela1Valor: number;
+  parcela2Valor: number;
   salarioBase: number;
   dataAdmissao: string;
   dataDesligamento: string | null;
   ano: number;
-  numeroDependentesIrrf: number;
 }
 
-export function calcular13ComBrutoDigitado(entrada: EntradaCalculo13BrutoDigitado): ResultadoCalculo13 {
-  const { valorBruto, salarioBase, dataAdmissao, dataDesligamento, ano, numeroDependentesIrrf } = entrada;
-  const mesesAvos = calcularMesesAvos(dataAdmissao, dataDesligamento, ano);
-  const brutoArredondado = arredonda(valorBruto);
-  const split = calcularSplit13(brutoArredondado, numeroDependentesIrrf);
-
+export function calcular13ComParcelasDigitadas(entrada: EntradaCalculo13ParcelasDigitadas): ResultadoCalculo13 {
+  const { salarioBase, dataAdmissao, dataDesligamento, ano } = entrada;
+  const parcela1Valor = arredonda(entrada.parcela1Valor);
+  const parcela2Valor = arredonda(entrada.parcela2Valor);
   return {
-    ano, mesesAvos, salarioBase, valorBruto: brutoArredondado, ...split,
-    calculadoEm: new Date().toISOString()
+    ano, mesesAvos: calcularMesesAvos(dataAdmissao, dataDesligamento, ano), salarioBase,
+    valorBruto: arredonda(parcela1Valor + parcela2Valor),
+    parcela1Valor, inssValor: 0, irrfValor: 0, parcela2Valor,
+    calculadoEm: new Date().toISOString(), manual: true
   };
 }
 
 // Itens "tipo recibo" (mesmo formato usado pelo PDF) — útil pra tela e pra
 // auditoria (coluna `dados` de folha_decimo_terceiro).
 export function itensCalculo13(r: ResultadoCalculo13) {
+  if (r.manual) {
+    return [
+      { codigo: 'DECIMO_TERCEIRO_BRUTO', descricao: '13º salário (valores definidos pela empresa)', tipo: 'PROVENTO' as const, valor: r.valorBruto, formula: `${moeda(r.parcela1Valor)} + ${moeda(r.parcela2Valor)}` },
+      { codigo: 'DECIMO_TERCEIRO_PARCELA1', descricao: '1ª parcela (digitada)', tipo: 'INFORMATIVO' as const, valor: r.parcela1Valor, formula: 'Valor digitado' },
+      { codigo: 'DECIMO_TERCEIRO_PARCELA2', descricao: '2ª parcela (digitada, sem INSS/IRRF)', tipo: 'INFORMATIVO' as const, valor: r.parcela2Valor, formula: 'Valor digitado' },
+    ];
+  }
   return [
     { codigo: 'DECIMO_TERCEIRO_BRUTO', descricao: '13º salário integral', tipo: 'PROVENTO' as const, valor: r.valorBruto, formula: `(${moeda(r.salarioBase)} / 12) × ${r.mesesAvos} avo(s)` },
     { codigo: 'DECIMO_TERCEIRO_PARCELA1', descricao: '1ª parcela (50% do bruto, sem desconto)', tipo: 'INFORMATIVO' as const, valor: r.parcela1Valor, formula: `${moeda(r.valorBruto)} × 50%` },

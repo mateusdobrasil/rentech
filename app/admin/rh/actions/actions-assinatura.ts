@@ -393,12 +393,17 @@ async function gerarResumoRecebimentosBytes(
   const dataInicio = `${ano}-${mes}-01`;
   const dataFim = `${ano}-${mes}-${new Date(Number(ano), Number(mes), 0).getDate()}`;
   const cpfDigitos = (p.cpf || '').replace(/\D/g, '');
+  // O 13º da contabilidade é gravado por parcela ("AAAA-P1"/"AAAA-P2"), não
+  // por mês: a 1ª entra no resumo da competência de novembro e a 2ª no de
+  // dezembro (combinado com o usuário em 2026-11-28). Férias é gravada só por
+  // ano, sem mês — não entra no resumo mensal.
+  const ref13 = mes === '11' ? `${ano}-P1` : mes === '12' ? `${ano}-P2` : null;
 
   const [{ data: docs }, { data: ops }] = await Promise.all([
     filtrarPorFuncionario(db.from('folha_documentos_contabeis')
-      .select('tipo, valor_ocr'), { funcionarioId: p.funcionarioId, funcionarioNome })
-      .eq('mes_referencia', mesReferencia)
-      .in('tipo', ['ADIANTAMENTO', 'DECIMO_TERCEIRO', 'FERIAS']),
+      .select('tipo, mes_referencia, valor_ocr'), { funcionarioId: p.funcionarioId, funcionarioNome })
+      .in('mes_referencia', ref13 ? [mesReferencia, ref13] : [mesReferencia])
+      .in('tipo', ['ADIANTAMENTO', 'DECIMO_TERCEIRO']),
     cpfDigitos.length === 11
       ? db.from('op_ordens_pagamento')
         .select('numero_op, natureza_pagamento, os_numero, os_evento, os_cliente, cnpj_cpf_recebedora, cpf_signatario, total_geral, data_vencimento, status, itens')
@@ -408,7 +413,11 @@ async function gerarResumoRecebimentosBytes(
       : Promise.resolve({ data: [] as any[] })
   ]);
   const ocrPorTipo: Record<string, number> = {};
-  (docs || []).forEach(d => { if (d.valor_ocr != null) ocrPorTipo[d.tipo] = Number(d.valor_ocr); });
+  (docs || []).forEach(d => {
+    if (d.valor_ocr == null) return;
+    if (d.tipo === 'ADIANTAMENTO' && d.mes_referencia === mesReferencia) ocrPorTipo.ADIANTAMENTO = Number(d.valor_ocr);
+    if (d.tipo === 'DECIMO_TERCEIRO' && d.mes_referencia === ref13) ocrPorTipo.DECIMO_TERCEIRO = Number(d.valor_ocr);
+  });
 
   const salario: LinhaResumo[] = [];
 
@@ -440,8 +449,7 @@ async function gerarResumoRecebimentosBytes(
     salario.push(linha);
   });
 
-  if ((ocrPorTipo.DECIMO_TERCEIRO || 0) > 0) salario.push({ descricao: '13º salário — holerite da contabilidade', valor: ocrPorTipo.DECIMO_TERCEIRO });
-  if ((ocrPorTipo.FERIAS || 0) > 0) salario.push({ descricao: 'Férias — holerite da contabilidade', valor: ocrPorTipo.FERIAS });
+  if ((ocrPorTipo.DECIMO_TERCEIRO || 0) > 0) salario.push({ descricao: `13º salário (${mes === '11' ? '1ª' : '2ª'} parcela) — holerite da contabilidade`, valor: ocrPorTipo.DECIMO_TERCEIRO });
 
   const opsDoFuncionario: OpResumo[] = (ops || [])
     .filter((o: any) =>

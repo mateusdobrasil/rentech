@@ -121,8 +121,11 @@ function anosCompletos(inicio: string, fim: string): number {
 }
 
 // Conta meses "cheios" (≥15 dias trabalhados no mês) entre duas datas ISO,
-// regra padrão para 13º e férias proporcionais.
-function contarMesesProporcionais(inicio: string, fim: string): number {
+// regra padrão para 13º e férias proporcionais. Exportada: reaproveitada
+// pelo motor do 13º Salário Integral (app/lib/calculo13Salario.ts), que
+// precisa dos mesmos "avos" sobre o ano-calendário em vez da projeção de
+// rescisão.
+export function contarMesesProporcionais(inicio: string, fim: string): number {
   if (fim < inicio) return 0;
   let meses = 0;
   let [ano, mes] = [Number(inicio.slice(0, 4)), Number(inicio.slice(5, 7))];

@@ -79,6 +79,12 @@ const modulosRh = [
     cor: 'bg-red-50 border-red-200 text-red-700', hover: 'hover:border-red-500'
   },
   {
+    titulo: '13º Salário Integral',
+    descricao: 'Cálculo das 2 parcelas (INSS/IRRF) de quem tem direito ao 13º integral, com pagamento e assinatura.',
+    icone: '🎄', link: '/admin/rh/decimo-terceiro',
+    cor: 'bg-amber-50 border-amber-200 text-amber-700', hover: 'hover:border-amber-500'
+  },
+  {
     titulo: 'Relatórios e Dashboards',
     descricao: 'Relatórios financeiros e analíticos.',
     icone: '📊', link: '/admin/rh/relatorios',

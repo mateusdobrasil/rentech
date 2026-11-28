@@ -74,7 +74,7 @@ interface Integracao {
   id: number; parceiro: string; nome_exibicao: string; tipo: string;
   ativo: boolean; ambiente: string; config: any;
 }
-type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO_CONTABILIDADE' | 'RESCISAO' | 'OP' | 'CONTAS_PAGAR';
+type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'DECIMO_TERCEIRO_P1' | 'DECIMO_TERCEIRO_P2' | 'FERIAS' | 'RESCISAO_CONTABILIDADE' | 'RESCISAO' | 'OP' | 'CONTAS_PAGAR';
 
 // Nome de exibição + cores por fonte, centralizados aqui pra não duplicar (o
 // nome de cada fonte aparecia hardcoded em uns 3 lugares diferentes antes).
@@ -83,7 +83,8 @@ type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO
 // gruposExibidos, useState mais abaixo).
 const ROTULO_FONTE: Record<FonteLote, string> = {
   FOLHA: 'Nossa folha', ADIANTAMENTO: 'Adiantamento', PAGAMENTO: 'Pagamento',
-  BENEFICIOS: 'Benefícios', DECIMO_TERCEIRO: '13º Salário', FERIAS: 'Férias',
+  BENEFICIOS: 'Benefícios', DECIMO_TERCEIRO: '13º Salário (contabilidade)', FERIAS: 'Férias',
+  DECIMO_TERCEIRO_P1: '13º Integral — 1ª Parcela', DECIMO_TERCEIRO_P2: '13º Integral — 2ª Parcela',
   RESCISAO_CONTABILIDADE: 'Rescisão (contabilidade)',
   RESCISAO: 'Rescisão', OP: 'Ordem de Pagamento', CONTAS_PAGAR: 'Contas a Pagar (P2S)',
 };
@@ -93,6 +94,8 @@ const COR_FONTE: Record<FonteLote, { chip: string; badge: string; header: string
   PAGAMENTO: { chip: 'bg-purple-50 text-purple-700 border-purple-300', badge: 'bg-purple-100 text-purple-700', header: 'bg-purple-50 border-purple-200 text-purple-800' },
   BENEFICIOS: { chip: 'bg-emerald-50 text-emerald-700 border-emerald-300', badge: 'bg-emerald-100 text-emerald-700', header: 'bg-emerald-50 border-emerald-200 text-emerald-800' },
   DECIMO_TERCEIRO: { chip: 'bg-amber-50 text-amber-700 border-amber-300', badge: 'bg-amber-100 text-amber-700', header: 'bg-amber-50 border-amber-200 text-amber-800' },
+  DECIMO_TERCEIRO_P1: { chip: 'bg-yellow-50 text-yellow-800 border-yellow-300', badge: 'bg-yellow-100 text-yellow-800', header: 'bg-yellow-50 border-yellow-200 text-yellow-900' },
+  DECIMO_TERCEIRO_P2: { chip: 'bg-yellow-50 text-yellow-800 border-yellow-300', badge: 'bg-yellow-100 text-yellow-800', header: 'bg-yellow-50 border-yellow-200 text-yellow-900' },
   FERIAS: { chip: 'bg-cyan-50 text-cyan-700 border-cyan-300', badge: 'bg-cyan-100 text-cyan-700', header: 'bg-cyan-50 border-cyan-200 text-cyan-800' },
   RESCISAO_CONTABILIDADE: { chip: 'bg-rose-50 text-rose-700 border-rose-300', badge: 'bg-rose-100 text-rose-700', header: 'bg-rose-50 border-rose-200 text-rose-800' },
   RESCISAO: { chip: 'bg-red-50 text-red-700 border-red-300', badge: 'bg-red-100 text-red-700', header: 'bg-red-50 border-red-200 text-red-800' },
@@ -117,11 +120,13 @@ const GRUPOS_FONTE: { titulo: string; itens: [FonteLote, string, string][] }[] =
   ] },
   { titulo: 'Avulsos', itens: [
     ['RESCISAO', '📤 Rescisão', COR_FONTE.RESCISAO.chip],
+    ['DECIMO_TERCEIRO_P1', '🎄 13º Integral — 1ª Parcela', COR_FONTE.DECIMO_TERCEIRO_P1.chip],
+    ['DECIMO_TERCEIRO_P2', '🎄 13º Integral — 2ª Parcela', COR_FONTE.DECIMO_TERCEIRO_P2.chip],
     ['OP', '🧾 Ordem de Pagamento', COR_FONTE.OP.chip],
     ['CONTAS_PAGAR', '🏢 Contas a Pagar (P2S)', COR_FONTE.CONTAS_PAGAR.chip],
   ] },
 ];
-const ORDEM_FONTES: FonteLote[] = ['FOLHA', 'ADIANTAMENTO', 'PAGAMENTO', 'BENEFICIOS', 'DECIMO_TERCEIRO', 'FERIAS', 'RESCISAO_CONTABILIDADE', 'RESCISAO', 'OP', 'CONTAS_PAGAR'];
+const ORDEM_FONTES: FonteLote[] = ['FOLHA', 'ADIANTAMENTO', 'PAGAMENTO', 'BENEFICIOS', 'DECIMO_TERCEIRO', 'FERIAS', 'RESCISAO_CONTABILIDADE', 'RESCISAO', 'DECIMO_TERCEIRO_P1', 'DECIMO_TERCEIRO_P2', 'OP', 'CONTAS_PAGAR'];
 
 interface ItemLote {
   funcionario_nome: string; cpf: string; empresa_id: number | null; valor: number; metodo: string;
@@ -129,6 +134,10 @@ interface ItemLote {
   temDoc: boolean;
   origem: string | null;
   rescisaoId: number | null;
+  // Só preenchido nos itens de DECIMO_TERCEIRO_P1/P2 — id da linha em
+  // folha_decimo_terceiro, usado pra marcar parcelaX_pago_em/pago_lote_id
+  // depois do envio (mesmo papel de rescisaoId/opId).
+  decimoTerceiroId: number | null;
   opId: string | null;
   // Só preenchido nos itens de CONTAS_PAGAR (fonte P2S) — id da linha em
   // financeiro_contas_pagar, usado tanto pra salvar os dados de pagamento

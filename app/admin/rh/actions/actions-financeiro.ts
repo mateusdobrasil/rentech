@@ -120,7 +120,7 @@ function validarDadosPagamentoItem(item: {
 // ============================================================================
 // MONTAR LOTE DE PAGAMENTO — 4 fontes selecionáveis por funcionário
 // ============================================================================
-export type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO_CONTABILIDADE' | 'RESCISAO' | 'OP' | 'CONTAS_PAGAR';
+export type FonteLote = 'FOLHA' | 'ADIANTAMENTO' | 'PAGAMENTO' | 'BENEFICIOS' | 'DECIMO_TERCEIRO' | 'DECIMO_TERCEIRO_P1' | 'DECIMO_TERCEIRO_P2' | 'FERIAS' | 'RESCISAO_CONTABILIDADE' | 'RESCISAO' | 'OP' | 'CONTAS_PAGAR';
 
 export async function montarLoteSalariosAction(payload: {
   mesReferencia: string;
@@ -276,6 +276,32 @@ export async function montarLoteSalariosAction(payload: {
       });
     }
 
+    // 13º SALÁRIO INTEGRAL (calculado e pago por nós — ver
+    // actions-decimo-terceiro.ts) — mesmo tratamento de RESCISAO: não
+    // escopado por mês (o 13º é anual), cada parcela some sozinha do lote
+    // depois de paga (parcelaX_pago_em not null), sem precisar de controle
+    // de mês de competência. As duas parcelas são FONTES SEPARADAS porque
+    // são pagas em datas diferentes (1ª até 30/11, 2ª até 20/12) e podem
+    // entrar em lotes distintos.
+    const decimo13P1PorNome: Record<string, number> = {};
+    const decimo13P1IdPorNome: Record<string, number> = {};
+    const decimo13P2PorNome: Record<string, number> = {};
+    const decimo13P2IdPorNome: Record<string, number> = {};
+    if (fontes.includes('DECIMO_TERCEIRO_P1') || fontes.includes('DECIMO_TERCEIRO_P2')) {
+      const { data: linhas13 } = await db.from('folha_decimo_terceiro')
+        .select('id, funcionario_nome, parcela1_valor, parcela1_pago_em, parcela2_valor, parcela2_pago_em');
+      (linhas13 || []).forEach(l => {
+        if (fontes.includes('DECIMO_TERCEIRO_P1') && !l.parcela1_pago_em) {
+          decimo13P1PorNome[l.funcionario_nome] = Number(l.parcela1_valor || 0);
+          decimo13P1IdPorNome[l.funcionario_nome] = l.id;
+        }
+        if (fontes.includes('DECIMO_TERCEIRO_P2') && !l.parcela2_pago_em) {
+          decimo13P2PorNome[l.funcionario_nome] = Number(l.parcela2_valor || 0);
+          decimo13P2IdPorNome[l.funcionario_nome] = l.id;
+        }
+      });
+    }
+
     // ORDEM DE PAGAMENTO — OPs pendentes de baixa (status='PENDENTE'), pra
     // entrarem no mesmo lote bancário das folhas. Diferente das demais
     // fontes, cada OP é um favorecido isolado (não um funcionário) e não
@@ -343,6 +369,8 @@ export async function montarLoteSalariosAction(payload: {
     if (fontes.includes('PAGAMENTO')) temPagamento.forEach(n => nomes.add(n));
     if (fontes.includes('BENEFICIOS')) Object.keys(beneficiosPorNome).forEach(n => nomes.add(n));
     if (fontes.includes('DECIMO_TERCEIRO')) temDecimoTerceiro.forEach(n => nomes.add(n));
+    if (fontes.includes('DECIMO_TERCEIRO_P1')) Object.keys(decimo13P1PorNome).forEach(n => nomes.add(n));
+    if (fontes.includes('DECIMO_TERCEIRO_P2')) Object.keys(decimo13P2PorNome).forEach(n => nomes.add(n));
     if (fontes.includes('FERIAS')) temFerias.forEach(n => nomes.add(n));
     if (fontes.includes('RESCISAO')) Object.keys(rescisaoPorNome).forEach(n => nomes.add(n));
     if (fontes.includes('RESCISAO_CONTABILIDADE')) temRescisaoContabilidade.forEach(n => nomes.add(n));
@@ -408,7 +436,8 @@ export async function montarLoteSalariosAction(payload: {
     const rotuloFonte: Record<FonteLote, string> = {
       FOLHA: 'Nossa folha', ADIANTAMENTO: 'Adiantamento',
       PAGAMENTO: 'Pagamento', BENEFICIOS: 'Benefícios',
-      DECIMO_TERCEIRO: '13º Salário', FERIAS: 'Férias',
+      DECIMO_TERCEIRO: '13º Salário (contabilidade)', FERIAS: 'Férias',
+      DECIMO_TERCEIRO_P1: '13º Integral — 1ª Parcela', DECIMO_TERCEIRO_P2: '13º Integral — 2ª Parcela',
       RESCISAO_CONTABILIDADE: 'Rescisão (contabilidade)', RESCISAO: 'Rescisão',
       OP: 'Ordem de Pagamento', CONTAS_PAGAR: 'Contas a Pagar (P2S)'
     };
@@ -500,7 +529,7 @@ export async function montarLoteSalariosAction(payload: {
       const alertaDados = metodo === 'SEM_DADOS' ? null : validarDadosPagamentoItem({ funcionario_nome: nome, ...bancoInfo });
 
       const resolvido = fontesResolvidas[nome] || { recebeFechamento: true, recebeHolerite: true };
-      const entradas: { fonte: FonteLote; valor: number; temDoc?: boolean; origem?: string; rescisaoId?: number; alerta?: string | null }[] = [];
+      const entradas: { fonte: FonteLote; valor: number; temDoc?: boolean; origem?: string; rescisaoId?: number; decimoTerceiroId?: number; alerta?: string | null }[] = [];
 
       if (fontes.includes('FOLHA') && resolvido.recebeFechamento && folhaPorNome[nome] !== undefined && elegivelNoMes(nome)) {
         entradas.push({ fonte: 'FOLHA', valor: folhaPorNome[nome] });
@@ -532,6 +561,15 @@ export async function montarLoteSalariosAction(payload: {
       if (fontes.includes('FERIAS') && resolvido.recebeHolerite && temFerias.has(nome) && elegivelNoMes(nome)) {
         const valor = valoresFerias[nome] ?? valorOcrFeriasPorNome[nome] ?? 0;
         entradas.push({ fonte: 'FERIAS', valor, temDoc: true });
+      }
+      // 13º Integral — não passa por recebeFechamento/recebeHolerite (é um
+      // cálculo nosso, não um documento da contabilidade) nem por
+      // elegivelNoMes (não é escopado por mês de competência).
+      if (fontes.includes('DECIMO_TERCEIRO_P1') && decimo13P1PorNome[nome] !== undefined) {
+        entradas.push({ fonte: 'DECIMO_TERCEIRO_P1', valor: decimo13P1PorNome[nome], decimoTerceiroId: decimo13P1IdPorNome[nome] });
+      }
+      if (fontes.includes('DECIMO_TERCEIRO_P2') && decimo13P2PorNome[nome] !== undefined) {
+        entradas.push({ fonte: 'DECIMO_TERCEIRO_P2', valor: decimo13P2PorNome[nome], decimoTerceiroId: decimo13P2IdPorNome[nome] });
       }
       // RESCISÃO não passa pela hierarquia recebeFechamento/recebeHolerite —
       // a elegibilidade já foi fixada em tipo_folha='PROPRIO' no momento em
@@ -577,6 +615,7 @@ export async function montarLoteSalariosAction(payload: {
           temDoc: e.temDoc || false,
           origem: e.origem || null,
           rescisaoId: e.rescisaoId || null,
+          decimoTerceiroId: e.decimoTerceiroId || null,
           opId: null,
           contaPagarId: null,
           nota: null,
@@ -742,6 +781,8 @@ export async function montarLoteSalariosAction(payload: {
           PAGAMENTO: itens.filter(i => i.fonte === 'PAGAMENTO').reduce((s, i) => s + i.valor, 0),
           BENEFICIOS: itens.filter(i => i.fonte === 'BENEFICIOS').reduce((s, i) => s + i.valor, 0),
           DECIMO_TERCEIRO: itens.filter(i => i.fonte === 'DECIMO_TERCEIRO').reduce((s, i) => s + i.valor, 0),
+          DECIMO_TERCEIRO_P1: itens.filter(i => i.fonte === 'DECIMO_TERCEIRO_P1').reduce((s, i) => s + i.valor, 0),
+          DECIMO_TERCEIRO_P2: itens.filter(i => i.fonte === 'DECIMO_TERCEIRO_P2').reduce((s, i) => s + i.valor, 0),
           FERIAS: itens.filter(i => i.fonte === 'FERIAS').reduce((s, i) => s + i.valor, 0),
           RESCISAO_CONTABILIDADE: itens.filter(i => i.fonte === 'RESCISAO_CONTABILIDADE').reduce((s, i) => s + i.valor, 0),
           RESCISAO: itens.filter(i => i.fonte === 'RESCISAO').reduce((s, i) => s + i.valor, 0),
@@ -1455,6 +1496,19 @@ export async function enviarLoteAoBancoAction(payload: { loteId: number; dataPag
               .update({ pago_em: new Date().toISOString(), pago_lote_id: payload.loteId })
               .eq('id', item.rescisaoId);
           }
+          // 13º Integral também não é escopado por mês — mesmo raciocínio da
+          // rescisão: sem marcar a parcela como paga aqui, ela reapareceria
+          // no próximo lote e pagaria em dobro.
+          if (item.fonte === 'DECIMO_TERCEIRO_P1' && item.decimoTerceiroId) {
+            await db.from('folha_decimo_terceiro')
+              .update({ parcela1_pago_em: new Date().toISOString(), parcela1_pago_lote_id: payload.loteId })
+              .eq('id', item.decimoTerceiroId);
+          }
+          if (item.fonte === 'DECIMO_TERCEIRO_P2' && item.decimoTerceiroId) {
+            await db.from('folha_decimo_terceiro')
+              .update({ parcela2_pago_em: new Date().toISOString(), parcela2_pago_lote_id: payload.loteId })
+              .eq('id', item.decimoTerceiroId);
+          }
           // OP também não é escopada por mês, mas "Sucesso" aqui é só a API
           // aceitando o PEDIDO — pagamentos SISPAG ainda passam por aprovação
           // manual no Itaú Empresas antes de serem efetivados de verdade (ver
@@ -1892,6 +1946,12 @@ export async function reabrirItemParaReenvioAction(
     // continuariam marcadas como pagas e nunca voltariam a aparecer num lote novo.
     if (item.fonte === 'RESCISAO' && item.rescisaoId) {
       await db.from('folha_rescisoes').update({ pago_em: null, pago_lote_id: null }).eq('id', item.rescisaoId);
+    }
+    if (item.fonte === 'DECIMO_TERCEIRO_P1' && item.decimoTerceiroId) {
+      await db.from('folha_decimo_terceiro').update({ parcela1_pago_em: null, parcela1_pago_lote_id: null }).eq('id', item.decimoTerceiroId);
+    }
+    if (item.fonte === 'DECIMO_TERCEIRO_P2' && item.decimoTerceiroId) {
+      await db.from('folha_decimo_terceiro').update({ parcela2_pago_em: null, parcela2_pago_lote_id: null }).eq('id', item.decimoTerceiroId);
     }
     if (item.fonte === 'OP' && item.opId) {
       await db.from('op_ordens_pagamento').update({ pago_em: null, pago_lote_id: null }).eq('id', item.opId);

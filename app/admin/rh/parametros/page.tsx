@@ -41,6 +41,11 @@ interface RegraRH {
   // meses do ano escolhidos na ficha de cada funcionário (aba Bônus e Descontos
   // do Holerite). Desligado aqui, a opção nem aparece na ficha.
   permite_reducao_sazonal: boolean;
+  // 13º Salário Integral: contrato tem direito ao 13º calculado e PAGO por
+  // nós (ver /admin/rh/decimo-terceiro — 2 parcelas, INSS/IRRF, lote PIX e
+  // assinatura via Autentique). Desligado (padrão) = 13º só pela
+  // contabilidade, mesmo fluxo de sempre (OCR dos PDFs importados).
+  decimo_terceiro_integral: boolean;
 }
 
 interface ItemCatalogo { id: number; nome: string; recebe_fechamento?: boolean | null; recebe_holerite?: boolean | null; }
@@ -100,7 +105,8 @@ export default function ParametrosRH() {
     recebe_holerite: true,
     paga_dias_excedentes: false,
     dias_base_mes: null,
-    permite_reducao_sazonal: false
+    permite_reducao_sazonal: false,
+    decimo_terceiro_integral: false
   };
   
   const [form, setForm] = useState<RegraRH>(formPadrao);
@@ -785,6 +791,18 @@ export default function ParametrosRH() {
                     <input type="checkbox" checked={form.recebe_holerite_contabilidade} onChange={e => setForm({...form, recebe_holerite_contabilidade: e.target.checked})} className="w-4 h-4 flex-shrink-0 accent-[#336699]" />
                     Entra na separação dos PDFs de holerite da contabilidade?
                   </label>
+                </div>
+
+                <div className={`px-4 py-3 ${form.decimo_terceiro_integral ? 'bg-amber-50' : ''}`}>
+                  <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
+                    <input type="checkbox" checked={form.decimo_terceiro_integral} onChange={e => setForm({...form, decimo_terceiro_integral: e.target.checked})} className="w-4 h-4 flex-shrink-0 accent-amber-600" />
+                    13º Salário Integral (calculamos e pagamos o 13º completo)?
+                  </label>
+                  <p className={`text-[9px] font-bold mt-1 uppercase pl-7 ${form.decimo_terceiro_integral ? 'text-amber-600' : 'text-gray-400'}`}>
+                    {form.decimo_terceiro_integral
+                      ? 'Entra em /admin/rh/decimo-terceiro: calculamos as 2 parcelas (INSS/IRRF) e controlamos o pagamento.'
+                      : 'Desmarcado = 13º só pela contabilidade, mesmo fluxo de sempre (OCR dos PDFs importados).'}
+                  </p>
                 </div>
               </div>
               <p className="text-[9px] font-bold text-gray-400 mt-2 uppercase">"Recebe fechamento/holerite" é o padrão do contrato — o cargo e a ficha do funcionário podem sobrescrever isso.</p>

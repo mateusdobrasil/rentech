@@ -11,6 +11,7 @@ import
     cancelarAssinaturaAction
   } from '../actions/actions-assinatura';
 import { listarAssinaturasRescisaoAction } from '../actions/actions-rescisao';
+import { listarAssinaturas13Action } from '../actions/actions-decimo-terceiro';
 import logoColorido from '../../../../app/imgs/logo.png';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
@@ -58,7 +59,7 @@ export default function AssinaturasPage() {
   const toast = useToast();
   const confirmar = useConfirm();
   const { usuarioAtual, emailUsuario, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
-  const [aba, setAba] = useState<'HOLERITES' | 'RESCISAO' | 'COLABORADOR'>('HOLERITES');
+  const [aba, setAba] = useState<'HOLERITES' | 'RESCISAO' | 'DECIMO_TERCEIRO' | 'COLABORADOR'>('HOLERITES');
   // ?aba=colaborador&funcionario=<id> — atalho "Ver assinaturas" da Ficha do Funcionário
   const [funcionarioInicial, setFuncionarioInicial] = useState<string | null>(null);
   useEffect(() => {
@@ -206,6 +207,95 @@ export default function AssinaturasPage() {
   // que já foi enviado, inclusive o que já foi assinado, então usava o
   // selo pra mostrar rescisão pendente mesmo com tudo já assinado.
   const contagemRescisaoPendentes = contagemRescisao.ENVIADO + contagemRescisao.VISUALIZADO;
+
+  // ==========================================================================
+  // ABA 13º SALÁRIO — mesmo mecanismo, marcador sintético "13-{ano}-P{parcela}"
+  // (ver actions-decimo-terceiro.ts). Cada linha é UMA PARCELA (um 13º fechado
+  // pode aparecer como até 2 linhas: 1ª e 2ª parcela, cada uma com seu próprio
+  // envio/status).
+  // ==========================================================================
+  type AssinaturaDecimo13 = Assinatura & { ano13: number | null; parcela13: number | null; decimoTerceiroId: number | null };
+  const [assinaturasDecimo13, setAssinaturasDecimo13] = useState<AssinaturaDecimo13[]>([]);
+  const [loadingDecimo13, setLoadingDecimo13] = useState(true);
+  const [atualizandoDecimo13, setAtualizandoDecimo13] = useState<string | null>(null);
+  const [baixandoDecimo13, setBaixandoDecimo13] = useState<string | null>(null);
+  const [cancelandoDecimo13, setCancelandoDecimo13] = useState<string | null>(null);
+  const [filtroDecimo13, setFiltroDecimo13] = useState<'TODOS' | 'ENVIADO' | 'VISUALIZADO' | 'ASSINADO' | 'REJEITADO' | 'CANCELADO'>('TODOS');
+  const [filtroFuncionarioDecimo13, setFiltroFuncionarioDecimo13] = useState('');
+
+  const carregarDecimo13 = async () => {
+    setLoadingDecimo13(true);
+    try {
+      const res = await listarAssinaturas13Action(accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      setAssinaturasDecimo13(res.info.assinaturas);
+    } catch (e: any) {
+      toast('Erro ao carregar assinaturas do 13º: ' + e.message, 'error');
+    } finally {
+      setLoadingDecimo13(false);
+    }
+  };
+
+  useEffect(() => { if (accessToken) carregarDecimo13(); }, [accessToken]);
+
+  const chaveLinha = (a: AssinaturaDecimo13) => `${a.funcionario_nome}::${a.ano13}::${a.parcela13}`;
+
+  const atualizarStatusDecimo13 = async (a: AssinaturaDecimo13) => {
+    setAtualizandoDecimo13(chaveLinha(a));
+    try {
+      const res = await consultarAssinaturaAction({ funcionarioId: a.funcionario_id ?? null, funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      carregarDecimo13();
+    } catch (e: any) {
+      toast('Erro ao atualizar status: ' + e.message, 'error');
+    } finally {
+      setAtualizandoDecimo13(null);
+    }
+  };
+
+  const cancelarEnvioDecimo13 = async (a: AssinaturaDecimo13) => {
+    if (!(await confirmar(`Cancelar o envio da ${a.parcela13}ª parcela do 13º (${a.ano13}) de ${a.funcionario_nome}?\n\n` +
+      `O link de assinatura deixa de funcionar e o registro fica marcado como CANCELADO (não é apagado).`))) return;
+    setCancelandoDecimo13(chaveLinha(a));
+    try {
+      const res = await cancelarAssinaturaAction({ funcionarioId: a.funcionario_id ?? null, funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia, canceladoPor: usuarioAtual }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      toast('Envio cancelado.', 'success');
+      carregarDecimo13();
+    } catch (e: any) {
+      toast('Erro ao cancelar: ' + e.message, 'error');
+    } finally {
+      setCancelandoDecimo13(null);
+    }
+  };
+
+  const abrirAssinadoDecimo13 = async (a: AssinaturaDecimo13) => {
+    setBaixandoDecimo13(chaveLinha(a));
+    try {
+      const res = await baixarAssinadoAction({ funcionarioId: a.funcionario_id ?? null, funcionarioNome: a.funcionario_nome, mesReferencia: a.mes_referencia }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      window.open(res.info.url, '_blank', 'noopener,noreferrer');
+    } catch (e: any) {
+      toast('Erro ao abrir o documento assinado: ' + e.message, 'error');
+    } finally {
+      setBaixandoDecimo13(null);
+    }
+  };
+
+  const doFuncionarioDecimo13 = (a: AssinaturaDecimo13) => !filtroFuncionarioDecimo13 || a.funcionario_nome === filtroFuncionarioDecimo13;
+  const nomesDecimo13 = useMemo(() => nomesUnicos(assinaturasDecimo13), [assinaturasDecimo13, filtroEmpresa]);
+
+  const filtradasDecimo13 = useMemo(() =>
+    assinaturasDecimo13.filter(daEmpresaEscolhida).filter(doFuncionarioDecimo13).filter(a => filtroDecimo13 === 'TODOS' || a.status === filtroDecimo13),
+    [assinaturasDecimo13, filtroDecimo13, filtroEmpresa, filtroFuncionarioDecimo13]);
+
+  const contagemDecimo13 = useMemo(() => {
+    const daEmpresa = assinaturasDecimo13.filter(daEmpresaEscolhida).filter(doFuncionarioDecimo13);
+    const c = { total: daEmpresa.length, ENVIADO: 0, VISUALIZADO: 0, ASSINADO: 0, REJEITADO: 0, CANCELADO: 0 };
+    daEmpresa.forEach(a => { if (a.status in c) (c as any)[a.status]++; });
+    return c;
+  }, [assinaturasDecimo13, filtroEmpresa, filtroFuncionarioDecimo13]);
+  const contagemDecimo13Pendentes = contagemDecimo13.ENVIADO + contagemDecimo13.VISUALIZADO;
 
   // Upload avulso
   const [mostrarUpload, setMostrarUpload] = useState(false);
@@ -413,6 +503,9 @@ export default function AssinaturasPage() {
           </button>
           <button onClick={() => setAba('RESCISAO')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${aba === 'RESCISAO' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:bg-gray-50'}`}>
             📤 Rescisão {contagemRescisaoPendentes > 0 && <span className="ml-1 bg-red-500 text-white rounded-full px-1.5 py-0.5 text-[9px]">{contagemRescisaoPendentes}</span>}
+          </button>
+          <button onClick={() => setAba('DECIMO_TERCEIRO')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${aba === 'DECIMO_TERCEIRO' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:bg-gray-50'}`}>
+            🎄 13º Salário {contagemDecimo13Pendentes > 0 && <span className="ml-1 bg-red-500 text-white rounded-full px-1.5 py-0.5 text-[9px]">{contagemDecimo13Pendentes}</span>}
           </button>
           <button onClick={() => setAba('COLABORADOR')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${aba === 'COLABORADOR' ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:bg-gray-50'}`}>
             👤 Por Colaborador
@@ -778,6 +871,155 @@ export default function AssinaturasPage() {
                               {a.status === 'ASSINADO' && (
                                 <button onClick={() => abrirAssinadoRescisao(a)} disabled={baixandoRescisao !== null} className="text-[10px] font-black text-green-700 uppercase tracking-wider hover:bg-green-50 px-2.5 py-1.5 rounded-lg border border-green-200 disabled:opacity-50 bg-white transition-colors">
                                   {baixandoRescisao === a.funcionario_nome ? '...' : '⬇ Obter PDF'}
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>)}
+
+        {/* ============================================================================ */}
+        {/* ABA: 13º SALÁRIO — mesmo mecanismo, cada linha é uma parcela */}
+        {/* ============================================================================ */}
+        {aba === 'DECIMO_TERCEIRO' && (<>
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+            <div>
+              <h1 className="text-xl font-black text-[#0C1D4D] uppercase tracking-wider">Assinaturas de 13º Salário</h1>
+              <p className="text-sm text-[#64748B] font-medium mt-1">{contagemDecimo13.total} parcela(s) enviada(s) para assinatura</p>
+            </div>
+            <button onClick={() => router.push('/admin/rh/decimo-terceiro')} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-5 py-3.5 rounded-xl shadow-sm hover:bg-[#284B8C] transition-all text-center">
+              Ir para 13º Salário
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+            {[
+              { k: 'total', lbl: 'Total Enviados', val: contagemDecimo13.total, cor: '#0C1D4D', bg: 'border-t-[#0C1D4D]' },
+              { k: 'ENVIADO', lbl: 'Aguardando', val: contagemDecimo13.ENVIADO, cor: '#4F46E5', bg: 'border-t-[#4F46E5]' },
+              { k: 'VISUALIZADO', lbl: 'Visualizados', val: contagemDecimo13.VISUALIZADO, cor: '#2563EB', bg: 'border-t-[#2563EB]' },
+              { k: 'ASSINADO', lbl: 'Assinados', val: contagemDecimo13.ASSINADO, cor: '#16A34A', bg: 'border-t-[#16A34A]' },
+              { k: 'REJEITADO', lbl: 'Rejeitados', val: contagemDecimo13.REJEITADO, cor: '#DC2626', bg: 'border-t-[#DC2626]' },
+              { k: 'CANCELADO', lbl: 'Cancelados', val: contagemDecimo13.CANCELADO, cor: '#94A3B8', bg: 'border-t-[#94A3B8]' },
+            ].map(c => (
+              <div key={c.k} className={`bg-white rounded-2xl shadow-sm border border-[#E2E8F0] border-t-4 ${c.bg} p-4 text-center`}>
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">{c.lbl}</p>
+                <p className="text-3xl font-black" style={{ color: c.cor }}>{c.val}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex bg-white p-1 rounded-xl border border-[#E2E8F0] w-fit shadow-sm gap-1 flex-wrap">
+              {(['TODOS', 'ENVIADO', 'VISUALIZADO', 'ASSINADO', 'REJEITADO', 'CANCELADO'] as const).map(f => (
+                <button key={f} onClick={() => setFiltroDecimo13(f)} className={`px-4 py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${filtroDecimo13 === f ? 'bg-[#0C1D4D] text-white shadow-sm' : 'text-[#64748B] hover:text-[#0C1D4D] hover:bg-gray-50'}`}>
+                  {f === 'TODOS' ? 'Todos' : STATUS_INFO[f].label}
+                </button>
+              ))}
+            </div>
+            {empresasCatalogoVisivel.length > 1 && (
+              <select
+                value={filtroEmpresa} onChange={e => setFiltroEmpresa(e.target.value)}
+                className="p-2.5 border border-[#E2E8F0] rounded-xl text-xs font-black uppercase tracking-wider bg-white text-[#0C1D4D] shadow-sm cursor-pointer"
+              >
+                <option value="TODAS">🏭 Todas as empresas</option>
+                {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+              </select>
+            )}
+            <select
+              value={filtroFuncionarioDecimo13} onChange={e => setFiltroFuncionarioDecimo13(e.target.value)}
+              className="p-2.5 border border-[#E2E8F0] rounded-xl text-xs font-black uppercase tracking-wider bg-white text-[#0C1D4D] shadow-sm cursor-pointer max-w-full"
+            >
+              <option value="">👤 Todos os colaboradores</option>
+              {(filtroFuncionarioDecimo13 && !nomesDecimo13.includes(filtroFuncionarioDecimo13) ? [filtroFuncionarioDecimo13, ...nomesDecimo13] : nomesDecimo13)
+                .map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+            {filtroFuncionarioDecimo13 && (
+              <button onClick={() => setFiltroFuncionarioDecimo13('')} className="text-[10px] font-black uppercase tracking-wider text-[#64748B] hover:text-red-600 underline">Limpar</button>
+            )}
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden">
+            {loadingDecimo13 ? (
+              <div className="p-16 text-center text-gray-400 font-bold uppercase tracking-wider flex flex-col items-center justify-center gap-3">
+                <div className="w-8 h-8 border-4 border-[#0C1D4D] border-t-transparent rounded-full animate-spin"></div>
+                Buscando registros técnicos...
+              </div>
+            ) : filtradasDecimo13.length === 0 ? (
+              <div className="p-16 text-center text-gray-400 font-bold uppercase tracking-wider">
+                {assinaturasDecimo13.length === 0
+                  ? 'Nenhuma parcela de 13º enviada para assinatura ainda. Envie pela tela de 13º Salário (depois de fechado).'
+                  : 'Nenhuma assinatura com este status.'}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left border-collapse">
+                  <thead className="bg-[#F8FAFC] border-b-2 border-[#E2E8F0]">
+                    <tr className="text-[10px] uppercase font-black tracking-widest text-[#64748B]">
+                      <th className="p-4">Colaborador</th>
+                      <th className="p-4 text-center w-36">Status</th>
+                      <th className="p-4">Enviado em</th>
+                      <th className="p-4">Visualizado em</th>
+                      <th className="p-4">Assinado em</th>
+                      <th className="p-4 text-center w-56">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E2E8F0] font-medium">
+                    {filtradasDecimo13.map(a => {
+                      const info = STATUS_INFO[a.status] || STATUS_INFO.PENDENTE;
+                      return (
+                        <tr key={chaveLinha(a)} className="hover:bg-[#F8FAFC] transition-colors">
+                          <td className="p-4">
+                            <span className="font-black text-[#0C1D4D] text-sm block">{a.funcionario_nome}</span>
+                            <span className="text-[10px] text-gray-400 font-bold block uppercase mt-0.5">13º Salário — {a.parcela13}ª Parcela / {a.ano13}</span>
+                            <span className="text-[10px] text-gray-500 font-medium block mt-0.5">
+                              CPF {a.cpf || '—'}{a.sandbox && <span className="ml-1.5 text-amber-600 font-black bg-amber-50 px-1.5 py-0.5 rounded text-[8px]">AMB. TESTE</span>}
+                            </span>
+                            {empresasCatalogoVisivel.length > 1 && (
+                              <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase inline-block mt-1 ${corSeloEmpresa(a.empresa_id)}`}>
+                                🏭 {nomeEmpresa(a.empresa_id)}
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-4 text-center">
+                            <span className="text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-wider inline-flex items-center gap-1" style={{ color: info.cor, background: info.bg }}>
+                              {info.icone} {info.label}
+                            </span>
+                          </td>
+                          <td className="p-4 text-[11px] text-gray-600">{dataHora(a.enviado_em)}</td>
+                          <td className="p-4 text-[11px] text-gray-600">{dataHora(a.visualizado_em)}</td>
+                          <td className="p-4 text-[11px] text-gray-600">{dataHora(a.assinado_em)}</td>
+                          <td className="p-4 text-center">
+                            <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                              {a.decimoTerceiroId && (
+                                <button onClick={() => router.push('/admin/rh/decimo-terceiro')} className="text-[10px] font-black text-gray-600 uppercase tracking-wider hover:bg-gray-100 px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white transition-colors">
+                                  ↗ 13º Salário
+                                </button>
+                              )}
+                              {a.status !== 'ASSINADO' && a.status !== 'REJEITADO' && a.status !== 'CANCELADO' && (
+                                <button onClick={() => atualizarStatusDecimo13(a)} disabled={atualizandoDecimo13 !== null} className="text-[10px] font-black text-[#336699] uppercase tracking-wider hover:bg-blue-50 px-2.5 py-1.5 rounded-lg disabled:opacity-50 border border-blue-200 bg-white transition-colors">
+                                  {atualizandoDecimo13 === chaveLinha(a) ? '...' : '↻ Consultar'}
+                                </button>
+                              )}
+                              {a.link_assinatura && a.status !== 'ASSINADO' && a.status !== 'CANCELADO' && (
+                                <a href={a.link_assinatura} target="_blank" rel="noopener noreferrer" className="text-[10px] font-black text-indigo-600 uppercase tracking-wider hover:bg-indigo-50 px-2.5 py-1.5 rounded-lg border border-indigo-200 bg-white transition-colors inline-block">
+                                  🔗 Link
+                                </a>
+                              )}
+                              {a.status !== 'ASSINADO' && a.status !== 'CANCELADO' && (
+                                <button onClick={() => cancelarEnvioDecimo13(a)} disabled={cancelandoDecimo13 !== null} className="text-[10px] font-black text-red-600 uppercase tracking-wider hover:bg-red-50 px-2.5 py-1.5 rounded-lg disabled:opacity-50 border border-red-200 bg-white transition-colors">
+                                  {cancelandoDecimo13 === chaveLinha(a) ? '...' : '🚫 Cancelar'}
+                                </button>
+                              )}
+                              {a.status === 'ASSINADO' && (
+                                <button onClick={() => abrirAssinadoDecimo13(a)} disabled={baixandoDecimo13 !== null} className="text-[10px] font-black text-green-700 uppercase tracking-wider hover:bg-green-50 px-2.5 py-1.5 rounded-lg border border-green-200 disabled:opacity-50 bg-white transition-colors">
+                                  {baixandoDecimo13 === chaveLinha(a) ? '...' : '⬇ Obter PDF'}
                                 </button>
                               )}
                             </div>

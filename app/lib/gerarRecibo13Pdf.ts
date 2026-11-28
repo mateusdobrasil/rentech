@@ -1,0 +1,152 @@
+// lib/gerarRecibo13Pdf.ts
+// Gera o recibo de pagamento de uma parcela do 13º Salário Integral, no
+// mesmo padrão visual do holerite/rescisão (gerarReciboPdf.ts/
+// gerarRescisaoPdf.ts) — cabeçalho com logo, dados do colaborador, tabela de
+// detalhamento e assinatura. Um recibo por parcela (1ª ou 2ª).
+//
+// ATENÇÃO: reflete o cálculo estimado pelo sistema (app/lib/calculo13Salario.ts).
+// Conferir com a contabilidade antes de tratar como documento oficial.
+import { PDFDocument, StandardFonts, rgb, PDFFont } from 'pdf-lib';
+import fs from 'fs';
+import path from 'path';
+
+let logoBytesCache: Buffer | null = null;
+function lerLogoBytes(): Buffer {
+  if (!logoBytesCache) {
+    logoBytesCache = fs.readFileSync(path.join(process.cwd(), 'app', 'imgs', 'logo.png'));
+  }
+  return logoBytesCache;
+}
+
+export interface GerarRecibo13PdfParams {
+  nome: string;
+  cpf?: string | null;
+  cargo?: string | null;
+  ano: number;
+  parcela: 1 | 2;
+  valorPago: number;
+  // Linhas informativas do cálculo (bruto, INSS, IRRF etc.) — exibidas como
+  // referência, não entram de novo na soma (valorPago já é o líquido da parcela).
+  detalhamento: { descricao: string; valor: number }[];
+  calculadoEm?: string | null;
+  empresaNome?: string;
+}
+
+const BRL = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// ---- valor por extenso (pt-BR) — mesma lógica de gerarReciboPdf.ts/gerarRescisaoPdf.ts ----
+const U = ['', 'UM', 'DOIS', 'TRÊS', 'QUATRO', 'CINCO', 'SEIS', 'SETE', 'OITO', 'NOVE'];
+const D10 = ['DEZ', 'ONZE', 'DOZE', 'TREZE', 'QUATORZE', 'QUINZE', 'DEZESSEIS', 'DEZESSETE', 'DEZOITO', 'DEZENOVE'];
+const D = ['', '', 'VINTE', 'TRINTA', 'QUARENTA', 'CINQUENTA', 'SESSENTA', 'SETENTA', 'OITENTA', 'NOVENTA'];
+const C = ['', 'CENTO', 'DUZENTOS', 'TREZENTOS', 'QUATROCENTOS', 'QUINHENTOS', 'SEISCENTOS', 'SETECENTOS', 'OITOCENTOS', 'NOVECENTOS'];
+const trio = (n: number): string => {
+  if (n === 0) return ''; if (n === 100) return 'CEM';
+  const c = Math.floor(n / 100), r = n % 100, d = Math.floor(r / 10), u = r % 10; const p: string[] = [];
+  if (c > 0) p.push(C[c]);
+  if (r >= 10 && r <= 19) p.push(D10[r - 10]); else { if (d > 0) p.push(D[d]); if (u > 0) p.push(U[u]); }
+  return p.join(' E ');
+};
+const extenso = (valor: number): string => {
+  const abs = Math.abs(valor || 0); let reais = Math.floor(abs); let cent = Math.round((abs - reais) * 100);
+  if (cent === 100) { reais++; cent = 0; }
+  const mi = Math.floor(reais / 1_000_000), mil = Math.floor((reais % 1_000_000) / 1000), r = reais % 1000; const p: string[] = [];
+  if (mi > 0) p.push(`${trio(mi)} ${mi === 1 ? 'MILHÃO' : 'MILHÕES'}`);
+  if (mil > 0) p.push(mil === 1 ? 'MIL' : `${trio(mil)} MIL`);
+  if (r > 0) p.push(trio(r));
+  let t = p.length ? p.join(' E ') : 'ZERO';
+  t += reais === 1 ? ' REAL' : ' REAIS';
+  if (cent > 0) t += ` E ${trio(cent)} ${cent === 1 ? 'CENTAVO' : 'CENTAVOS'}`;
+  return t;
+};
+
+export async function gerarRecibo13Pdf(p: GerarRecibo13PdfParams): Promise<Uint8Array> {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([595.28, 841.89]); // A4 retrato em pontos
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const { width, height } = page.getSize();
+
+  const preto = rgb(0, 0, 0);
+  const azul = rgb(0.047, 0.114, 0.302);
+  const cinza = rgb(0.4, 0.4, 0.4);
+  const cinzaClaro = rgb(0.93, 0.95, 0.97);
+
+  const M = 40;
+  let y = height - M;
+
+  const txt = (s: string, x: number, yy: number, size = 9, f: PDFFont = font, color = preto) =>
+    page.drawText(s || '', { x, y: yy, size, font: f, color });
+  const txtRight = (s: string, xRight: number, yy: number, size = 9, f: PDFFont = font, color = preto) => {
+    const w = f.widthOfTextAtSize(s || '', size);
+    page.drawText(s || '', { x: xRight - w, y: yy, size, font: f, color });
+  };
+  const linha = (x1: number, yy: number, x2: number, w = 1, color = preto) =>
+    page.drawLine({ start: { x: x1, y: yy }, end: { x: x2, y: yy }, thickness: w, color });
+  const box = (x: number, yy: number, w: number, h: number, color = cinzaClaro) =>
+    page.drawRectangle({ x, y: yy, width: w, height: h, color });
+
+  // ===== Cabeçalho =====
+  const logoImg = await pdf.embedPng(lerLogoBytes());
+  const logoH = 28;
+  const logoW = logoH * (logoImg.width / logoImg.height);
+  page.drawImage(logoImg, { x: M, y: y - 24, width: logoW, height: logoH });
+  txtRight(`RECIBO DE 13º SALÁRIO — ${p.parcela}ª PARCELA / ${p.ano}`, width - M, y - 2, 12, bold, azul);
+  txtRight(`Emissão: ${p.calculadoEm ? new Date(p.calculadoEm).toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR')}`, width - M, y - 18, 9, font, cinza);
+  y -= 34;
+  linha(M, y, width - M, 1.5, preto);
+  y -= 18;
+
+  // ===== Dados do colaborador =====
+  box(M, y - 44, width - 2 * M, 56, cinzaClaro);
+  txt('COLABORADOR', M + 8, y - 4, 7, bold, cinza);
+  txt(p.nome.toUpperCase(), M + 8, y - 16, 11, bold, preto);
+  txt(`Função: ${p.cargo || '—'}`, M + 8, y - 30, 8, font, preto);
+  if (p.cpf) txtRight(`CPF: ${p.cpf}`, width - M - 8, y - 30, 8, font, preto);
+  txtRight(`Ano-base: ${p.ano}`, width - M - 8, y - 42, 8, font, preto);
+  y -= 60;
+
+  // ===== Detalhamento (informativo — referência do cálculo) =====
+  box(M, y - 14, width - 2 * M, 16, azul);
+  txt('DETALHAMENTO DO CÁLCULO', M + 6, y - 10, 9, bold, rgb(1, 1, 1));
+  y -= 20;
+
+  const linhaAltura = 15;
+  p.detalhamento.forEach((item, i) => {
+    const yy = y - i * linhaAltura - 4;
+    if (i % 2 === 1) box(M, yy - 3, width - 2 * M, linhaAltura, rgb(0.97, 0.98, 0.99));
+    txt(item.descricao.toUpperCase(), M + 6, yy, 8);
+    txtRight(BRL(item.valor), width - M - 6, yy, 8);
+  });
+  y -= p.detalhamento.length * linhaAltura + 6;
+
+  const topBorda = y + p.detalhamento.length * linhaAltura + 6 - 2;
+  linha(M, topBorda, width - M, 1, preto);
+  linha(M, y, width - M, 1, preto);
+  y -= 24;
+
+  // ===== Valor desta parcela =====
+  box(M, y - 22, width - 2 * M, 26, azul);
+  txt(`VALOR DESTA ${p.parcela}ª PARCELA`, M + 8, y - 14, 11, bold, rgb(1, 1, 1));
+  txtRight(BRL(p.valorPago), width - M - 8, y - 15, 14, bold, rgb(1, 1, 1));
+  y -= 30;
+  txt(extenso(p.valorPago), M + 2, y, 8, font, cinza);
+  y -= 30;
+
+  // ===== Assinatura =====
+  const xSig = M + 60;
+  linha(xSig, y, width - M - 60, 1, preto);
+  y -= 12;
+  const nomeW = bold.widthOfTextAtSize(p.nome.toUpperCase(), 9);
+  txt(p.nome.toUpperCase(), width / 2 - nomeW / 2, y, 9, bold);
+  y -= 11;
+  const s2 = `Assinatura de Quitação da ${p.parcela}ª Parcela do 13º Salário`;
+  txt(s2, width / 2 - font.widthOfTextAtSize(s2, 7) / 2, y, 7, font, cinza);
+
+  // Rodapé
+  txt(
+    `Documento gerado eletronicamente pelo sistema de folha da ${(p.empresaNome || 'RENTECH').toUpperCase()} — valores calculados por regras gerais da CLT, sujeitos a conferência contábil.`,
+    M, M, 6.5, font, cinza
+  );
+
+  return await pdf.save();
+}

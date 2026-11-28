@@ -14,6 +14,7 @@ import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm } from '../../../components/ui/NotificationProvider';
 import { ehAdministradorGlobal } from '../../../lib/permissoes';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
+import BuscarFeriados from './BuscarFeriados';
 
 interface RegraRH {
   id?: string;
@@ -481,6 +482,13 @@ export default function ParametrosRH() {
             <p className="text-xs text-[#64748B] mb-5">
               Use <strong>Todas as empresas</strong> para feriado nacional ou estadual. Feriado <strong>municipal</strong> deve ficar preso à empresa da cidade — a Rentech fica em São Paulo/SP e a Alfa Light em Osasco/SP, então o feriado de uma cidade não pode zerar a carga de quem trabalha na outra.
             </p>
+
+            {/* BUSCAR (nacionais pela BrasilAPI; estaduais e municipais pela IA) */}
+            <BuscarFeriados
+              accessToken={accessToken}
+              nomeEmpresa={id => (id == null ? 'Todas as empresas' : empresasCatalogo.find(e => e.id === id)?.nome || 'Empresa')}
+              onImportado={carregarFeriados}
+            />
 
             {/* ADICIONAR */}
             <div className="flex flex-col sm:flex-row gap-2 mb-6 bg-amber-50 border border-amber-200 p-4 rounded-xl">

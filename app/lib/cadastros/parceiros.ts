@@ -142,7 +142,7 @@ const emailOk = (e: string) => e.split(/\s*[;,]\s*/).filter(Boolean).every(x => 
 export async function cadastroEditavel(db: Db, parceiro: { origem?: string | null; p2s_oid?: string | null }): Promise<{ editavel: boolean; motivo: string | null }> {
   if (parceiro.origem === 'SISTEMA' && !parceiro.p2s_oid) return { editavel: true, motivo: null };
   if (await cadastrosNoSistema(db)) return { editavel: true, motivo: null };
-  return { editavel: false, motivo: 'Cadastro do P2S: enquanto o P2S for oficial, altere lá; a mudança chega aqui na sincronização (11h e 17h). Aqui dá para mudar a carteira do vendedor.' };
+  return { editavel: false, motivo: 'Cadastro do P2S: enquanto o P2S for oficial, altere lá; a mudança chega aqui na sincronização (11h e 17h). Aqui dá para mudar a carteira do vendedor e o ramo / serviço.' };
 }
 
 /** Outro parceiro com o mesmo CPF/CNPJ (para não duplicar). */

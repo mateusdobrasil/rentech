@@ -114,3 +114,68 @@ export async function consultarCepAction(cep: string, accessToken: string): Prom
   if ('erro' in ctx) return { ok: false, erro: ctx.erro };
   try { return { ok: true, info: await consultarCep(cep) }; } catch (e) { return { ok: false, erro: msg(e) }; }
 }
+
+// ============================================================================
+// RAMO / SERVIÇO (2026-11-27) — .sql/Pendentes/parceiros_ramos.sql
+// Dado nosso (o P2S não tem): vale também para cadastro do P2S, que é só
+// leitura no resto. A lista de ramos cresce pelo próprio formulário.
+// ============================================================================
+const semTabelaRamos = (e: unknown) => /parceiros_ramos|ramos_ids/.test(msg(e));
+const AVISO_SQL_RAMOS = 'Falta rodar o SQL parceiros_ramos.sql para usar o Ramo / serviço.';
+
+export async function listarRamosParceiroAction(accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  try {
+    const { data, error } = await supabaseAdmin().from('parceiros_ramos').select('id, nome').eq('ativo', true).order('nome');
+    if (error) throw error;
+    return { ok: true, info: { ramos: data || [] } };
+  } catch (e) { return { ok: false, erro: semTabelaRamos(e) ? AVISO_SQL_RAMOS : msg(e), info: { semSql: semTabelaRamos(e) } }; }
+}
+
+export async function criarRamoParceiroAction(nome: string, accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  const limpo = String(nome || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  if (limpo.length < 2) return { ok: false, erro: 'Informe o nome do ramo.' };
+  try {
+    const db = supabaseAdmin();
+    // já existe (maiúsculas/minúsculas não importam)? reaproveita e reativa
+    const { data: todos, error: e1 } = await db.from('parceiros_ramos').select('id, nome, ativo');
+    if (e1) throw e1;
+    const igual = (todos || []).find(r => String(r.nome).toLocaleUpperCase('pt-BR') === limpo.toLocaleUpperCase('pt-BR'));
+    if (igual) {
+      if (!igual.ativo) await db.from('parceiros_ramos').update({ ativo: true }).eq('id', igual.id);
+      return { ok: true, info: { id: igual.id, nome: igual.nome } };
+    }
+    const { data, error } = await db.from('parceiros_ramos').insert({ nome: limpo, criado_por: ctx.perfil.nome }).select('id, nome').single();
+    if (error) throw error;
+    registrarLogAuditoria({ usuario_nome: ctx.perfil.nome, acao: 'CRIOU RAMO DE PARCEIRO', setor: 'COMERCIAL', equipamento_nome: limpo });
+    return { ok: true, info: data };
+  } catch (e) { return { ok: false, erro: semTabelaRamos(e) ? AVISO_SQL_RAMOS : msg(e) }; }
+}
+
+/** Grava os ramos de um parceiro (vale também para cadastro do P2S). */
+export async function salvarRamosParceiroAction(parceiroId: number, ramoIds: number[], accessToken: string): Promise<Resultado> {
+  const ctx = await contexto(accessToken);
+  if ('erro' in ctx) return { ok: false, erro: ctx.erro };
+  try {
+    const db = supabaseAdmin();
+    const pedidos = [...new Set((ramoIds || []).map(Number).filter(n => Number.isInteger(n) && n > 0))];
+    let validos: number[] = [];
+    if (pedidos.length) {
+      const { data, error } = await db.from('parceiros_ramos').select('id').in('id', pedidos);
+      if (error) throw error;
+      validos = (data || []).map(r => r.id as number).sort((a, b) => a - b);
+    }
+    const { data: atual, error: e1 } = await db.from('parceiros').select('id, ramos_ids, nome_exibicao, nome_completo').eq('id', Number(parceiroId)).maybeSingle();
+    if (e1) throw e1;
+    if (!atual) return { ok: false, erro: 'Parceiro não encontrado.' };
+    const antes = [...((atual.ramos_ids as number[]) || [])].sort((a, b) => a - b);
+    if (antes.join(',') === validos.join(',')) return { ok: true, info: { mudou: false } };
+    const { error } = await db.from('parceiros').update({ ramos_ids: validos }).eq('id', atual.id);
+    if (error) throw error;
+    registrarLogAuditoria({ usuario_nome: ctx.perfil.nome, acao: 'ALTEROU RAMO DO PARCEIRO', setor: 'COMERCIAL', equipamento_nome: `${atual.nome_exibicao || atual.nome_completo} (#${atual.id}) → ramos ${validos.join(', ') || 'nenhum'}` });
+    return { ok: true, info: { mudou: true } };
+  } catch (e) { return { ok: false, erro: semTabelaRamos(e) ? AVISO_SQL_RAMOS : msg(e) }; }
+}

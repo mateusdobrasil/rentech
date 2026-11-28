@@ -10,7 +10,7 @@ import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import UltimaSincronizacaoInfo from '../../../components/ui/UltimaSincronizacaoInfo';
 import FormParceiro from './FormParceiro';
-import { contextoCadastroParceiroAction } from './actions-cadastro';
+import { contextoCadastroParceiroAction, listarRamosParceiroAction } from './actions-cadastro';
 import type { UltimaSincronizacao } from '../../../lib/syncLog';
 
 interface ParceiroGrid {
@@ -26,6 +26,8 @@ interface ParceiroGrid {
   flag_cliente: boolean;
   flag_fornecedor: boolean;
   origem: string | null;
+  ramos_ids?: number[] | null;
+  contatos?: { nome: string | null; telefone: string | null; principal: boolean }[] | null;
 }
 
 interface ContatoItem { nome: string | null; cargo: string | null; departamento: string | null; telefone: string | null; email: string | null; principal: boolean; }
@@ -87,6 +89,9 @@ export default function ParceirosPage() {
   const [gridErro, setGridErro] = useState('');
   const [filtroTexto, setFiltroTexto] = useState('');
   const [filtroTipo, setFiltroTipo] = useState<'todos' | 'cliente' | 'fornecedor'>('todos');
+  // Ramo / serviço (.sql/Pendentes/parceiros_ramos.sql). Sem o SQL a lista funciona como antes.
+  const [ramosCatalogo, setRamosCatalogo] = useState<{ id: number; nome: string }[] | null>(null);
+  const [filtroRamo, setFiltroRamo] = useState('');
   const [pagina, setPagina] = useState(0);
   const [totalRegistros, setTotalRegistros] = useState(0);
   const [refreshGrid, setRefreshGrid] = useState(0);
@@ -114,6 +119,7 @@ export default function ParceirosPage() {
     if (authLoading || acessoNegado || !accessToken) return;
     let vivo = true;
     contextoCadastroParceiroAction(accessToken).then(r => { if (vivo && r.ok) setCadCtx(r.info); });
+    listarRamosParceiroAction(accessToken).then(r => { if (vivo) setRamosCatalogo(r.ok ? r.info.ramos : null); });
     return () => { vivo = false; };
   }, [authLoading, acessoNegado, accessToken]);
 
@@ -131,12 +137,13 @@ export default function ParceirosPage() {
 
       let query = supabase
         .from('parceiros')
-        .select('id, codigo_parceiro, nome_exibicao, nome_completo, cnpj, cpf, cidade1, estado1, telefone1, flag_cliente, flag_fornecedor, origem', { count: 'exact' })
+        .select(`id, codigo_parceiro, nome_exibicao, nome_completo, cnpj, cpf, cidade1, estado1, telefone1, flag_cliente, flag_fornecedor, origem, contatos${ramosCatalogo ? ', ramos_ids' : ''}`, { count: 'exact' })
         .order('codigo_parceiro', { ascending: true })
         .range(pagina * TAMANHO_PAGINA, pagina * TAMANHO_PAGINA + TAMANHO_PAGINA - 1);
 
       if (filtroTipo === 'cliente') query = query.eq('flag_cliente', true);
       else if (filtroTipo === 'fornecedor') query = query.eq('flag_fornecedor', true);
+      if (ramosCatalogo && filtroRamo) query = query.contains('ramos_ids', [Number(filtroRamo)]);
 
       // Vírgula e parênteses quebram o filtro do PostgREST ("CLIENTE (X)" não achava nada).
       const texto = filtroTexto.replace(/[%_,()]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -153,14 +160,14 @@ export default function ParceirosPage() {
         setGridErro(error.message);
         setParceirosGrid([]);
       } else {
-        setParceirosGrid(data || []);
+        setParceirosGrid((data || []) as unknown as ParceiroGrid[]); // select montado em string (ramos_ids só depois do SQL)
         setTotalRegistros(count || 0);
       }
       setGridLoading(false);
     }, 300);
 
     return () => clearTimeout(handle);
-  }, [authLoading, acessoNegado, abaAtiva, pagina, filtroTipo, filtroTexto, refreshGrid]);
+  }, [authLoading, acessoNegado, abaAtiva, pagina, filtroTipo, filtroTexto, refreshGrid, ramosCatalogo, filtroRamo]);
 
   const sincronizarViaApi = async () => {
     setSincronizando(true);
@@ -400,6 +407,16 @@ export default function ParceirosPage() {
                     <option value="cliente">Clientes</option>
                     <option value="fornecedor">Fornecedores</option>
                   </select>
+                  {ramosCatalogo && ramosCatalogo.length > 0 && (
+                    <select
+                      value={filtroRamo}
+                      onChange={(e) => { setFiltroRamo(e.target.value); setPagina(0); }}
+                      className="border border-[#E2E8F0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#336699]"
+                    >
+                      <option value="">Todos os ramos</option>
+                      {ramosCatalogo.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
+                    </select>
+                  )}
                 </div>
 
                 {gridErro && (
@@ -439,10 +456,24 @@ export default function ParceirosPage() {
                               {p.nome_exibicao || p.nome_completo || '—'}
                               {p.origem === 'SISTEMA' && <span className="ml-2 text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-sky-100 text-sky-700">sistema</span>}
                               <button onClick={e => { e.stopPropagation(); abrirDetalhe(p.id); }} title="Ver todos os campos" className="ml-2 text-[10px] text-gray-400 hover:text-[#336699]">🔍</button>
+                              {ramosCatalogo && (p.ramos_ids || []).length > 0 && (
+                                <span className="flex flex-wrap gap-1 mt-1">
+                                  {(p.ramos_ids || []).map(id => {
+                                    const r = ramosCatalogo.find(x => x.id === id);
+                                    return r ? <span key={id} className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700">{r.nome}</span> : null;
+                                  })}
+                                </span>
+                              )}
                             </td>
                             <td className="p-2">{p.cnpj || p.cpf || '—'}</td>
                             <td className="p-2">{p.cidade1 ? `${p.cidade1}${p.estado1 ? '/' + p.estado1 : ''}` : '—'}</td>
-                            <td className="p-2">{p.telefone1 || '—'}</td>
+                            <td className="p-2">
+                              {p.telefone1 || '—'}
+                              {(() => {
+                                const c = (p.contatos || []).find(x => x.principal) || (p.contatos || [])[0];
+                                return c && (c.nome || c.telefone) ? <span className="block text-[10px] text-gray-500">{[c.nome, c.telefone].filter(Boolean).join(' · ')}</span> : null;
+                              })()}
+                            </td>
                             <td className="p-2">{p.flag_cliente ? <span className="text-green-600 font-bold">Sim</span> : '—'}</td>
                             <td className="p-2">{p.flag_fornecedor ? <span className="text-green-600 font-bold">Sim</span> : '—'}</td>
                           </tr>
@@ -713,7 +744,7 @@ export default function ParceirosPage() {
         accessToken={accessToken}
         vendedores={cadCtx.vendedores}
         onClose={() => setFormAberto(false)}
-        onSalvo={() => { setFormAberto(false); setRefreshGrid(v => v + 1); }}
+        onSalvo={() => { setFormAberto(false); setRefreshGrid(v => v + 1); listarRamosParceiroAction(accessToken).then(r => { if (r.ok) setRamosCatalogo(r.info.ramos); }); }}
       />}
     </div>
   );

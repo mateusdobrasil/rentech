@@ -8,6 +8,7 @@ import Modal from '../../../components/ui/Modal';
 import { useToast } from '../../../components/ui/NotificationProvider';
 import {
   carregarParceiroAction, salvarParceiroAction, salvarCarteiraParceiroAction, consultarCnpjAction, consultarCepAction, verificarDocumentoParceiroAction,
+  listarRamosParceiroAction, criarRamoParceiroAction, salvarRamosParceiroAction,
 } from './actions-cadastro';
 
 interface Contato { nome: string; cargo: string; departamento: string; telefone: string; email: string; principal: boolean }
@@ -56,8 +57,37 @@ export default function FormParceiro({ aberto, parceiroId, accessToken, vendedor
   const [motivo, setMotivo] = useState<string | null>(null);
   const [info, setInfo] = useState<{ codigo: number | null; origem: string; situacao: string | null }>({ codigo: null, origem: 'SISTEMA', situacao: null });
   const [duplicado, setDuplicado] = useState<string | null>(null);
+  // Ramo / serviço (gráfica, engenharia…) — dado nosso, editável até em cadastro do P2S
+  const [ramosCatalogo, setRamosCatalogo] = useState<{ id: number; nome: string }[]>([]);
+  const [ramosAviso, setRamosAviso] = useState<string | null>(null);
+  const [ramos, setRamos] = useState<number[]>([]);
+  const [ramosOriginais, setRamosOriginais] = useState<number[]>([]);
+  const [novoRamo, setNovoRamo] = useState('');
+  const [criandoRamo, setCriandoRamo] = useState(false);
   const fecharRef = useRef(onClose);
   useEffect(() => { fecharRef.current = onClose; }, [onClose]);
+
+  useEffect(() => {
+    if (!aberto) return;
+    let vivo = true;
+    listarRamosParceiroAction(accessToken).then(r => {
+      if (!vivo) return;
+      if (r.ok) { setRamosCatalogo(r.info.ramos); setRamosAviso(null); } else setRamosAviso(r.erro || 'Ramos indisponíveis.');
+    });
+    return () => { vivo = false; };
+  }, [aberto, accessToken]);
+
+  const alternarRamo = (id: number) => setRamos(rs => (rs.includes(id) ? rs.filter(x => x !== id) : [...rs, id]));
+  const adicionarRamo = async () => {
+    if (!novoRamo.trim()) return;
+    setCriandoRamo(true);
+    const r = await criarRamoParceiroAction(novoRamo, accessToken);
+    setCriandoRamo(false);
+    if (!r.ok) { toast(r.erro || 'Não foi possível criar o ramo.', 'error'); return; }
+    setRamosCatalogo(c => (c.some(x => x.id === r.info.id) ? c : [...c, r.info].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))));
+    setRamos(rs => (rs.includes(r.info.id) ? rs : [...rs, r.info.id]));
+    setNovoRamo('');
+  };
 
   useEffect(() => {
     if (!aberto || !parceiroId) return;
@@ -80,6 +110,8 @@ export default function FormParceiro({ aberto, parceiroId, accessToken, vendedor
         vendedor_id: r.info.vendedorId ?? null,
       });
       setEditavel(!!r.info.editavel); setMotivo(r.info.motivo || null);
+      const rs = Array.isArray(p.ramos_ids) ? (p.ramos_ids as number[]) : [];
+      setRamos(rs); setRamosOriginais(rs);
       setInfo({ codigo: p.codigo_parceiro ?? null, origem: p.origem || 'P2S', situacao: null });
     });
     return () => { vivo = false; };
@@ -121,15 +153,25 @@ export default function FormParceiro({ aberto, parceiroId, accessToken, vendedor
     setF(a => ({ ...a, endereco1: c.logradouro || a.endereco1, bairro1: c.bairro || a.bairro1, cidade1: c.cidade || a.cidade1, estado1: c.uf || a.estado1 }));
   };
 
+  const ramosMudaram = [...ramos].sort((a, b) => a - b).join(',') !== [...ramosOriginais].sort((a, b) => a - b).join(',');
   const salvar = async () => {
     setSalvando(true);
     const r = editavel
       ? await salvarParceiroAction({ ...f, id: parceiroId, documento: dig(f.documento) }, accessToken)
-      : await salvarCarteiraParceiroAction(parceiroId!, f.vendedor_id, accessToken);
+      : f.flag_cliente
+        ? await salvarCarteiraParceiroAction(parceiroId!, f.vendedor_id, accessToken)
+        : { ok: true, info: {} } as { ok: boolean; erro?: string; info?: any }; // eslint-disable-line @typescript-eslint/no-explicit-any -- só fornecedor: não há carteira
+    if (!r.ok) { setSalvando(false); toast(r.erro || 'Falha ao salvar.', 'error'); return; }
+    const id = editavel ? r.info.id : parceiroId!;
+    // ramo / serviço: gravado à parte (vale também para cadastro do P2S)
+    if (ramosMudaram && !ramosAviso) {
+      const rr = await salvarRamosParceiroAction(id, ramos, accessToken);
+      if (!rr.ok) toast('Cadastro salvo, mas o ramo não: ' + (rr.erro || 'erro'), 'error');
+      else setRamosOriginais(ramos);
+    }
     setSalvando(false);
-    if (!r.ok) { toast(r.erro || 'Falha ao salvar.', 'error'); return; }
-    toast(editavel ? (parceiroId ? 'Cadastro salvo.' : `Parceiro cadastrado (código ${r.info.codigo}).`) : 'Carteira salva.', 'success');
-    onSalvo(editavel ? r.info.id : parceiroId!);
+    toast(editavel ? (parceiroId ? 'Cadastro salvo.' : `Parceiro cadastrado (código ${r.info.codigo}).`) : 'Salvo.', 'success');
+    onSalvo(id);
   };
 
   const inp = 'w-full border border-[#CBD5E1] rounded-lg px-3 py-2 text-sm disabled:bg-[#F8FAFC] disabled:text-gray-600';
@@ -144,7 +186,7 @@ export default function FormParceiro({ aberto, parceiroId, accessToken, vendedor
         <span className="text-[11px] text-gray-500">{parceiroId ? `Origem: ${info.origem === 'SISTEMA' ? 'cadastro do sistema' : 'P2S'}` : 'Cadastro feito no sistema (origem SISTEMA).'}</span>
         <div className="flex gap-2 justify-end">
           <button onClick={onClose} className="px-4 py-2 rounded-lg text-xs font-black uppercase border border-[#E2E8F0]">Cancelar</button>
-          <button onClick={salvar} disabled={salvando || carregando || (editavel && !!duplicado)} className="px-4 py-2 rounded-lg text-xs font-black uppercase bg-[#0C1D4D] text-white disabled:opacity-50">{salvando ? 'Salvando…' : editavel ? 'Salvar' : 'Salvar carteira'}</button>
+          <button onClick={salvar} disabled={salvando || carregando || (editavel && !!duplicado)} className="px-4 py-2 rounded-lg text-xs font-black uppercase bg-[#0C1D4D] text-white disabled:opacity-50">{salvando ? 'Salvando…' : editavel ? 'Salvar' : (f.flag_cliente ? 'Salvar carteira e ramo' : 'Salvar ramo')}</button>
         </div>
       </div>}>
       {carregando ? <p className="text-sm text-gray-500">Carregando…</p> : (
@@ -188,6 +230,34 @@ export default function FormParceiro({ aberto, parceiroId, accessToken, vendedor
               {f.status_parceiro === 'B' && <div className="md:col-span-4"><label className={lab}>Motivo do bloqueio *</label><input value={f.motivo_bloqueio} disabled={ro} onChange={e => muda({ motivo_bloqueio: e.target.value })} className={inp} /></div>}
             </div>
           </section>
+
+          {(f.flag_fornecedor || f.flag_transportadora || ramos.length > 0) && (
+            <section>
+              <h3 className={sec}>Ramo / serviço</h3>
+              <p className="text-[11px] text-gray-500 -mt-1 mb-2">O que este parceiro faz para nós — serve para achar, por exemplo, todas as gráficas na lista.{ro ? ' Pode ser marcado mesmo em cadastro do P2S.' : ''}</p>
+              {ramosAviso ? (
+                <p className="text-xs rounded-xl border border-amber-300 bg-amber-50 text-amber-800 px-4 py-3">{ramosAviso}</p>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    {ramosCatalogo.map(r => {
+                      const marcado = ramos.includes(r.id);
+                      return (
+                        <button key={r.id} type="button" onClick={() => alternarRamo(r.id)} aria-pressed={marcado}
+                          className={`text-[11px] font-bold px-3 py-1.5 rounded-full border transition-colors ${marcado ? 'bg-[#336699] border-[#336699] text-white' : 'bg-white border-[#CBD5E1] text-gray-600 hover:border-[#336699]'}`}>
+                          {marcado ? '✓ ' : ''}{r.nome}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="flex gap-2 mt-3 max-w-md">
+                    <input value={novoRamo} onChange={e => setNovoRamo(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); adicionarRamo(); } }} placeholder="Outro ramo (ex.: Ar-condicionado)" className={inp} />
+                    <button type="button" onClick={adicionarRamo} disabled={criandoRamo || novoRamo.trim().length < 2} className={btnMini}>{criandoRamo ? '…' : '+ Novo ramo'}</button>
+                  </div>
+                </>
+              )}
+            </section>
+          )}
 
           <section>
             <h3 className={sec}>Endereço principal</h3>

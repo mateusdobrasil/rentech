@@ -21,16 +21,19 @@ import {
   marcarParcela13PagaAction, enviarDecimoTerceiroAssinaturaAction
 } from '../actions/actions-decimo-terceiro';
 import { urlDocumentoContabilAction } from '../actions/actions-documentos';
+import { listarPdfsContabilidadeAction, processarOcrAwsAction } from '../actions/actions-financeiro';
 import { calcularSplit13 } from '../../../lib/calculo13Salario';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm, usePrompt } from '../../../components/ui/NotificationProvider';
 import { corSeloEmpresa } from '../../../lib/coresEmpresa';
+import { supabase } from '../../../lib/supabase';
+import { ehAdministradorGlobal } from '../../../lib/permissoes';
 
 const BRL = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 interface Linha13 {
-  func: { nome_completo: string; cargo: string | null; empresa_id: number | null };
+  func: { nome_completo: string; cargo: string | null; empresa_id: number | null; salario_contrato: number | null };
   dados: {
     ano: number; mesesAvos: number; salarioBase: number; valorBruto: number;
     parcela1Valor: number; inssValor: number; irrfValor: number; parcela2Valor: number; calculadoEm: string;
@@ -64,7 +67,7 @@ export default function DecimoTerceiroPage() {
   const toast = useToast();
   const confirmar = useConfirm();
   const perguntar = usePrompt();
-  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken } = usePageAccess({ nomeFallback: 'Equipe RH' });
+  const { usuarioAtual, authLoading, acessoNegado, erro, tentarNovamente, accessToken, permissaoBruta } = usePageAccess({ nomeFallback: 'Equipe RH' });
 
   const [ano, setAno] = useState(() => new Date().getFullYear());
   const [linhas, setLinhas] = useState<Linha13[]>([]);
@@ -74,14 +77,49 @@ export default function DecimoTerceiroPage() {
   const [sandbox, setSandbox] = useState(true);
   const [processando, setProcessando] = useState<string | null>(null); // "{nome}::{acao}"
   const [abrindoDoc, setAbrindoDoc] = useState<string | null>(null); // "{nome}::{mesReferencia}"
+  const [lendoOcr, setLendoOcr] = useState(false);
+  const [ocrFalhas, setOcrFalhas] = useState<string[]>([]);
   // Bruto digitado manualmente (Via Rentech), por nome — só vale enquanto o
   // 13º ainda está em aberto; some ao fechar (o snapshot já fica congelado).
   const [brutoDigitado, setBrutoDigitado] = useState<Record<string, string>>({});
 
-  const carregar = async (anoRef: number) => {
+  // Empresa (Rentech × AlfaLight) — pedido do usuário (28/11/2026): nunca
+  // "ambas", sempre uma escolhida, com Rentech como padrão. Mesmo padrão de
+  // /admin/financeiro/rh (catálogo + vínculos do usuário via Supabase client),
+  // revalidado no servidor em painelDecimoTerceiroAction.
+  const [empresaSelecionada, setEmpresaSelecionada] = useState<number | null>(null);
+  const [empresasPermitidas, setEmpresasPermitidas] = useState<number[] | null>(null);
+  const [empresasCatalogo, setEmpresasCatalogo] = useState<{ id: number; nome: string }[]>([]);
+
+  useEffect(() => {
+    if (authLoading || acessoNegado) return;
+    async function carregarEmpresas() {
+      const { data: empresasData } = await supabase.from('empresas').select('id, nome').eq('ativo', true).order('nome');
+      setEmpresasCatalogo(empresasData || []);
+      if (ehAdministradorGlobal(permissaoBruta)) { setEmpresasPermitidas(null); return; }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data: vinculos } = await supabase.from('perfis_usuarios_empresas').select('empresa_id').eq('perfil_id', session.user.id);
+      setEmpresasPermitidas((vinculos || []).map(v => v.empresa_id));
+    }
+    carregarEmpresas();
+  }, [authLoading, acessoNegado, permissaoBruta]);
+
+  const empresasCatalogoVisivel = empresasPermitidas === null
+    ? empresasCatalogo
+    : empresasCatalogo.filter(e => empresasPermitidas.includes(e.id));
+
+  // Default Rentech (se visível); senão, trava na única empresa disponível.
+  useEffect(() => {
+    if (empresaSelecionada !== null || empresasCatalogoVisivel.length === 0) return;
+    const rentech = empresasCatalogoVisivel.find(e => e.nome.toUpperCase().includes('RENTECH'));
+    setEmpresaSelecionada(rentech ? rentech.id : empresasCatalogoVisivel[0].id);
+  }, [empresasCatalogoVisivel, empresaSelecionada]);
+
+  const carregar = async (anoRef: number, empresaId: number) => {
     setLoading(true);
     try {
-      const res = await painelDecimoTerceiroAction({ ano: anoRef }, accessToken);
+      const res = await painelDecimoTerceiroAction({ ano: anoRef, empresaId }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setLinhas(res.info.linhas || []);
       setLinhasContabilidade(res.info.linhasContabilidade || []);
@@ -106,11 +144,56 @@ export default function DecimoTerceiroPage() {
     }
   };
 
+  // Lê o valor dos holerites do 13º (contabilidade) direto por aqui — pedido
+  // do usuário 2026-11-28, pra não precisar ir ao Financeiro RH só pra isso.
+  // Mesmo mecanismo (listarPdfsContabilidadeAction + processarOcrAwsAction,
+  // AWS Textract) já usado lá; aqui só recarrega o painel no final, sem
+  // montar lote.
+  const lerValoresContabilidade = async (forcar = false) => {
+    setLendoOcr(true);
+    setOcrFalhas([]);
+    try {
+      const mesReferencia = String(ano); // 13º/Férias: mes_referencia = ano
+      const res = await listarPdfsContabilidadeAction({ mesReferencia, tipo: 'DECIMO_TERCEIRO', forcar }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+
+      const pdfs: { funcionario_nome: string; pdfBase64: string }[] = res.info?.pdfs || [];
+      const cache: { funcionario_nome: string; valor: number }[] = res.info?.cache || [];
+      if (pdfs.length === 0 && cache.length === 0) {
+        toast('Nenhum documento do 13º (contabilidade) importado para este ano.', 'info');
+        return;
+      }
+
+      const falhas: string[] = [];
+      let lidos = 0;
+      for (let i = 0; i < pdfs.length; i++) {
+        const { funcionario_nome, pdfBase64 } = pdfs[i];
+        try {
+          const r = await processarOcrAwsAction(pdfBase64, 'DECIMO_TERCEIRO', mesReferencia, funcionario_nome, accessToken);
+          if (r.ok && r.valor) lidos++;
+          else falhas.push(`${funcionario_nome}: ${r.erro || 'valor não encontrado no PDF.'}`);
+        } catch {
+          falhas.push(`${funcionario_nome}: falha de conexão.`);
+        }
+      }
+      setOcrFalhas(falhas);
+      const msg = pdfs.length === 0
+        ? `${cache.length} valor(es) já lido(s) anteriormente.`
+        : `${lidos} de ${pdfs.length} valor(es) lido(s).${falhas.length ? ` ${falhas.length} falha(s) — confira manualmente.` : ''}`;
+      toast(msg, falhas.length ? 'error' : 'success');
+      carregar(ano, empresaSelecionada!);
+    } catch (e: any) {
+      toast('Erro ao ler os valores: ' + e.message, 'error');
+    } finally {
+      setLendoOcr(false);
+    }
+  };
+
   // "Via Contabilidade" grava mes_referencia só com o ano ("AAAA", sem mês) —
   // só o 13º/Férias caem aqui, e não tem mais de um por ano.
   const mesBR = (iso: string) => { if (!iso.includes('-')) return iso; const [a, m] = iso.split('-'); return `${m}/${a}`; };
 
-  useEffect(() => { if (!authLoading && accessToken) carregar(ano); }, [ano, authLoading, accessToken]);
+  useEffect(() => { if (!authLoading && accessToken && empresaSelecionada) carregar(ano, empresaSelecionada); }, [ano, authLoading, accessToken, empresaSelecionada]);
 
   const abertos = linhas.filter(l => !l.fechamento);
   const fechados = linhas.filter(l => l.fechamento);
@@ -145,7 +228,7 @@ export default function DecimoTerceiroPage() {
       const ignoradosMsg = res.info?.ignorados?.length ? `\n\nIgnorados (já têm parcela paga): ${res.info.ignorados.join(', ')}` : '';
       toast(`${res.info?.fechados || 0} fechado(s).${ignoradosMsg}`, 'success');
       setBrutoDigitado({});
-      carregar(ano);
+      carregar(ano, empresaSelecionada!);
     } catch (e: any) {
       toast('Erro ao fechar: ' + e.message, 'error');
     } finally {
@@ -162,7 +245,7 @@ export default function DecimoTerceiroPage() {
       const res = await reabrirDecimoTerceiroAction({ id: l.fechamento.id, usuarioNome: usuarioAtual, descricao: descricao.trim() }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       toast('Reaberto — os valores voltam a ser calculados ao vivo.', 'success');
-      carregar(ano);
+      carregar(ano, empresaSelecionada!);
     } catch (e: any) {
       toast('Erro ao reabrir: ' + e.message, 'error');
     } finally {
@@ -177,7 +260,7 @@ export default function DecimoTerceiroPage() {
     try {
       const res = await marcarParcela13PagaAction({ id: l.fechamento.id, parcela, pago, usuarioNome: usuarioAtual }, accessToken);
       if (!res.ok) throw new Error(res.erro);
-      carregar(ano);
+      carregar(ano, empresaSelecionada!);
     } catch (e: any) {
       toast('Erro: ' + e.message, 'error');
     } finally {
@@ -198,7 +281,7 @@ export default function DecimoTerceiroPage() {
       const res = await enviarDecimoTerceiroAssinaturaAction({ id: l.fechamento.id, parcela, usuarioNome: usuarioAtual, sandbox }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       toast(`Enviado para assinatura!${res.info?.link ? `\n\nLink: ${res.info.link}` : ''}`, 'success');
-      carregar(ano);
+      carregar(ano, empresaSelecionada!);
     } catch (e: any) {
       toast('Erro ao enviar para assinatura: ' + e.message, 'error');
     } finally {
@@ -254,6 +337,14 @@ export default function DecimoTerceiroPage() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+            <select
+              value={empresaSelecionada ?? ''}
+              onChange={e => setEmpresaSelecionada(e.target.value ? Number(e.target.value) : null)}
+              disabled={empresasCatalogoVisivel.length <= 1}
+              className="p-2.5 border border-[#CBD5E1] rounded-xl text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699] disabled:opacity-70 disabled:cursor-not-allowed"
+            >
+              {empresasCatalogoVisivel.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+            </select>
             <input type="number" value={ano} onChange={e => setAno(Number(e.target.value) || ano)} className="w-24 p-2.5 border border-[#CBD5E1] rounded-xl text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]" />
             <label className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider cursor-pointer bg-gray-50 px-3 h-[42px] rounded-xl border border-gray-200 select-none">
               <input type="checkbox" checked={sandbox} onChange={e => setSandbox(e.target.checked)} className="accent-amber-600" />
@@ -312,6 +403,7 @@ export default function DecimoTerceiroPage() {
                         <td className="p-4">
                           <span className="font-black text-[#0C1D4D] text-sm block">{l.func.nome_completo}</span>
                           <span className="text-[10px] text-gray-400 font-bold block uppercase mt-0.5">{l.func.cargo || '—'}</span>
+                          <span className="text-[10px] text-[#0C1D4D] font-bold block mt-1">📄 Contrato: <span className="tabular-nums">{l.func.salario_contrato ? BRL(Number(l.func.salario_contrato)) : '—'}</span></span>
                           <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase inline-block mt-1 ${corSeloEmpresa(l.func.empresa_id)}`}>🏭 Empresa {l.func.empresa_id ?? '—'}</span>
                         </td>
                         <td className="p-4 text-right tabular-nums">{d.mesesAvos}/12</td>
@@ -402,7 +494,24 @@ export default function DecimoTerceiroPage() {
           Cálculo: 1ª parcela = 50% do bruto, sem desconto (prazo legal até 30/11) · 2ª parcela = bruto − 1ª parcela − INSS − IRRF, tributação exclusiva sobre o total do 13º (prazo legal até 20/12). Conferir com a contabilidade antes de pagar.
         </p>
 
-        <h2 className="text-xs font-black text-[#64748B] uppercase tracking-widest pl-1 pt-4">🏢 Via Contabilidade</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-4">
+          <h2 className="text-xs font-black text-[#64748B] uppercase tracking-widest pl-1">🏢 Via Contabilidade</h2>
+          <div className="flex items-center gap-2">
+            <button onClick={() => lerValoresContabilidade(false)} disabled={lendoOcr || linhasContabilidade.length === 0} className="text-[10px] font-black bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
+              {lendoOcr ? '⏳ Lendo...' : '🔍 Ler valores (OCR)'}
+            </button>
+            <button onClick={() => lerValoresContabilidade(true)} disabled={lendoOcr || linhasContabilidade.length === 0} title="Ignora o valor já salvo e lê os comprovantes de novo" className="text-[10px] font-black bg-white border border-amber-300 text-amber-700 hover:bg-amber-50 px-3 py-2 rounded-lg uppercase tracking-wider disabled:opacity-50">
+              🔄 Reler tudo
+            </button>
+          </div>
+        </div>
+
+        {ocrFalhas.length > 0 && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-xs text-red-700 font-medium space-y-1">
+            <strong className="block uppercase text-[10px] font-black mb-1">⚠ Falhas na leitura — confira manualmente ou digite o valor no documento:</strong>
+            {ocrFalhas.map((f, i) => <div key={i}>{f}</div>)}
+          </div>
+        )}
 
         <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden">
           {loading ? (

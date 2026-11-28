@@ -8,7 +8,7 @@
 // parceiros/bancos vive em app/admin/integracao/actions.ts (tela Integrações).
 import { supabaseAdmin } from '../../../lib/supabase';
 import { resolverFicha, filtrarPorFuncionario } from '../../../lib/funcionarioRef';
-import { validarAcesso, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
+import { validarAcesso, validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
 import { resolverFontesPagamento } from './actions-fontes-pagamento';
 import { extrairTextoPdf, extrairValorLiquido } from '../../../lib/textract';
 import { registrarLogAuditoria } from '../../../actions';
@@ -22,6 +22,12 @@ import { formatarMoeda } from '../../../lib/formatadores';
 import { extrairBoletos, validarBoletosItem, lerRetornoSispag, type RegistroRetornoSispag, type SituacaoRetorno } from '../../../lib/sispagBoletos';
 
 const ROTA = '/admin/financeiro/rh';
+// As 3 actions de OCR de documento (ler PDF, salvar valor manual, listar
+// pendentes) são reaproveitadas por /admin/rh/decimo-terceiro — pedido do
+// usuário 2026-11-28, pra ler o valor do holerite do 13º sem precisar ir ao
+// Financeiro RH. Acesso à página libera os botões dela: aceita a rota de
+// quem chama, não só a do Financeiro.
+const ROTAS_OCR_DOCUMENTOS = [ROTA, '/admin/rh/decimo-terceiro'];
 
 type Resultado = {
   ok: boolean;
@@ -857,7 +863,7 @@ export async function listarElegiveisRescisaoContabilidadeAction(accessToken: st
 export async function processarOcrAwsAction(
   pdfBase64: string, tipo: string, mesReferencia: string | undefined, funcionarioNome: string | undefined, accessToken: string
 ): Promise<Resultado> {
-  const acesso = await validarAcesso(accessToken, ROTA);
+  const acesso = await validarAcessoAlgumaRota(accessToken, ROTAS_OCR_DOCUMENTOS);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   try {
@@ -922,7 +928,7 @@ export async function salvarValorOcrManualAction(payload: {
   tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO_CONTABILIDADE';
   valor: number;
 }, accessToken: string): Promise<Resultado> {
-  const acesso = await validarAcesso(accessToken, ROTA);
+  const acesso = await validarAcessoAlgumaRota(accessToken, ROTAS_OCR_DOCUMENTOS);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
@@ -957,7 +963,7 @@ export async function listarPdfsContabilidadeAction(payload: {
   tipo: 'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO_CONTABILIDADE';
   forcar?: boolean;
 }, accessToken: string): Promise<Resultado> {
-  const acesso = await validarAcesso(accessToken, ROTA);
+  const acesso = await validarAcessoAlgumaRota(accessToken, ROTAS_OCR_DOCUMENTOS);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();

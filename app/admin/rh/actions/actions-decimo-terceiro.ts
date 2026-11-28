@@ -67,26 +67,28 @@ const marcadorAssinatura13 = (ano: number, parcela: 1 | 2) => `13-${ano}-P${parc
 //    Holerites para o ano. Sem cálculo, sem assinatura por aqui — o
 //    pagamento já roda pela fonte "DECIMO_TERCEIRO" do lote de Financeiro RH.
 // ============================================================================
-export async function painelDecimoTerceiroAction(payload: { ano: number }, accessToken: string): Promise<Resultado> {
+export async function painelDecimoTerceiroAction(payload: { ano: number; empresaId: number }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
-  const { ano } = payload;
+  const { ano, empresaId } = payload;
 
   try {
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
+    // Tela exige escolher UMA empresa (Rentech ou AlfaLight) — pedido do
+    // usuário 2026-11-28, "não pode ser ambas". Revalidado aqui, nunca só
+    // filtro de exibição.
+    if (!empresaPermitida(empresasPermitidas, empresaId)) return { ok: false, erro: 'Você não tem permissão para ver o 13º desta empresa.' };
 
     const { data: regras } = await db.from('folha_parametros').select('nome_regra, decimo_terceiro_integral, recebe_holerite_contabilidade');
     const regrasIntegral = new Set((regras || []).filter(r => r.decimo_terceiro_integral === true).map(r => r.nome_regra));
     const regrasContabilidade = new Set((regras || []).filter(r => r.recebe_holerite_contabilidade === true && r.decimo_terceiro_integral !== true).map(r => r.nome_regra));
     const semRegraConfigurada = regrasIntegral.size === 0;
 
-    let qFuncs = db.from('folha_funcionarios')
+    const { data: funcsTodos, error: erroFuncs } = await db.from('folha_funcionarios')
       .select('id, nome_completo, cargo, tipo_contrato, salario_folha, salario_contrato, data_admissao, data_desligamento, cpf, celular, email, empresa_id')
-      .eq('ativo', true).order('nome_completo');
-    if (empresasPermitidas) qFuncs = qFuncs.in('empresa_id', empresasPermitidas);
-    const { data: funcsTodos, error: erroFuncs } = await qFuncs;
+      .eq('ativo', true).eq('empresa_id', empresaId).order('nome_completo');
     if (erroFuncs) throw new Error(erroFuncs.message);
 
     const elegiveis = (funcsTodos || []).filter(f => regrasIntegral.has(f.tipo_contrato));

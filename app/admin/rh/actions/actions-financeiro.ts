@@ -117,6 +117,17 @@ function validarDadosPagamentoItem(item: {
   return null;
 }
 
+// 13º Salário e Férias da contabilidade são gravados em
+// folha_documentos_contabeis com mes_referencia = só o ANO ("AAAA"), não
+// "AAAA-MM" — pedido do usuário 2026-11-28, já que não existe mais de um
+// 13º ou férias por ano. Os outros tipos (ADIANTAMENTO/HOLERITE_MENSAL/
+// RESCISAO_CONTABILIDADE) continuam usando a competência (mês) normalmente.
+// Esta função converte a competência do lote (sempre "AAAA-MM") pra chave
+// certa de busca/gravação conforme o tipo do documento.
+function referenciaDocumento(mesReferencia: string, tipo: string): string {
+  return (tipo === 'DECIMO_TERCEIRO' || tipo === 'FERIAS') ? mesReferencia.slice(0, 4) : mesReferencia;
+}
+
 // ============================================================================
 // MONTAR LOTE DE PAGAMENTO — 4 fontes selecionáveis por funcionário
 // ============================================================================
@@ -185,9 +196,9 @@ export async function montarLoteSalariosAction(payload: {
     const valorOcrDecimoTerceiroPorNome: Record<string, number> = {};
     const valorOcrFeriasPorNome: Record<string, number> = {};
     const valorOcrRescisaoContabPorNome: Record<string, number> = {};
-    if (fontes.includes('ADIANTAMENTO') || fontes.includes('PAGAMENTO') || fontes.includes('DECIMO_TERCEIRO') || fontes.includes('FERIAS')) {
+    if (fontes.includes('ADIANTAMENTO') || fontes.includes('PAGAMENTO')) {
       const { data: docs } = await db.from('folha_documentos_contabeis')
-        .select('funcionario_nome, tipo, valor_ocr').eq('mes_referencia', mesReferencia);
+        .select('funcionario_nome, tipo, valor_ocr').eq('mes_referencia', mesReferencia).in('tipo', ['ADIANTAMENTO', 'HOLERITE_MENSAL']);
       (docs || []).forEach(d => {
         if (d.tipo === 'ADIANTAMENTO') {
           temAdiantamento.add(d.funcionario_nome);
@@ -195,7 +206,20 @@ export async function montarLoteSalariosAction(payload: {
         } else if (d.tipo === 'HOLERITE_MENSAL') {
           temPagamento.add(d.funcionario_nome);
           if (d.valor_ocr != null) valorOcrPagtoPorNome[d.funcionario_nome] = Number(d.valor_ocr);
-        } else if (d.tipo === 'DECIMO_TERCEIRO') {
+        }
+      });
+    }
+    // 13º/Férias da contabilidade: UM documento por ANO (não por mês) —
+    // pedido do usuário 2026-11-28, já que não existe mais de um 13º ou
+    // férias no ano. Separar Holerites grava mes_referencia só com o ano
+    // ("AAAA") pra esses 2 tipos, então aqui casamos pelo ano do mês de
+    // competência escolhido na montagem do lote, não pelo mês exato.
+    if (fontes.includes('DECIMO_TERCEIRO') || fontes.includes('FERIAS')) {
+      const anoRef = referenciaDocumento(mesReferencia, 'DECIMO_TERCEIRO'); // mesma regra pros 2 tipos
+      const { data: docsAno } = await db.from('folha_documentos_contabeis')
+        .select('funcionario_nome, tipo, valor_ocr').eq('mes_referencia', anoRef).in('tipo', ['DECIMO_TERCEIRO', 'FERIAS']);
+      (docsAno || []).forEach(d => {
+        if (d.tipo === 'DECIMO_TERCEIRO') {
           temDecimoTerceiro.add(d.funcionario_nome);
           if (d.valor_ocr != null) valorOcrDecimoTerceiroPorNome[d.funcionario_nome] = Number(d.valor_ocr);
         } else if (d.tipo === 'FERIAS') {
@@ -204,15 +228,14 @@ export async function montarLoteSalariosAction(payload: {
         }
       });
     }
-    // RESCISAO_CONTABILIDADE é uma consulta À PARTE, SEM o filtro de
-    // mes_referencia acima — diferente de ADIANTAMENTO/PAGAMENTO/13º/Férias
-    // (que são de fato mensais), rescisão não é um evento do mês corrente: o
-    // recibo pode ter sido importado num mês de competência qualquer (não
-    // existe "competência" real pra rescisão, é só o campo do formulário de
-    // Separar Holerites). Filtrar por mês fazia o item nunca aparecer se a
-    // competência escolhida na montagem do lote não batesse com a usada na
-    // importação — bug reportado pelo usuário 2026-09-18. Mesmo critério de
-    // "não escopado por mês" já usado pela fonte RESCISAO (nossa) abaixo.
+    // RESCISAO_CONTABILIDADE é uma consulta À PARTE, SEM filtro de mês/ano —
+    // rescisão não é um evento do mês corrente: o recibo pode ter sido
+    // importado num mês de competência qualquer (não existe "competência"
+    // real pra rescisão, é só o campo do formulário de Separar Holerites).
+    // Filtrar por mês fazia o item nunca aparecer se a competência escolhida
+    // na montagem do lote não batesse com a usada na importação — bug
+    // reportado pelo usuário 2026-09-18. Mesmo critério de "não escopado por
+    // mês" já usado pela fonte RESCISAO (nossa) abaixo.
     if (fontes.includes('RESCISAO_CONTABILIDADE')) {
       const { data: docsRescisao } = await db.from('folha_documentos_contabeis')
         .select('funcionario_nome, valor_ocr').eq('tipo', 'RESCISAO_CONTABILIDADE');
@@ -859,7 +882,7 @@ export async function processarOcrAwsAction(
         }
         await filtrarPorFuncionario(db.from('folha_documentos_contabeis')
           .update({ valor_ocr: valor, ocr_processado_em: new Date().toISOString() }), ref)
-          .eq('mes_referencia', mesReferencia)
+          .eq('mes_referencia', referenciaDocumento(mesReferencia, tipo))
           .eq('tipo', tipo);
       }
 
@@ -912,7 +935,7 @@ export async function salvarValorOcrManualAction(payload: {
 
     const { error } = await filtrarPorFuncionario(db.from('folha_documentos_contabeis')
       .update({ valor_ocr: payload.valor, ocr_processado_em: new Date().toISOString() }), ref)
-      .eq('mes_referencia', payload.mesReferencia)
+      .eq('mes_referencia', referenciaDocumento(payload.mesReferencia, payload.tipo))
       .eq('tipo', payload.tipo);
     if (error) throw new Error(error.message);
 
@@ -943,7 +966,7 @@ export async function listarPdfsContabilidadeAction(payload: {
     let q = db
       .from('folha_documentos_contabeis')
       .select('funcionario_nome, tipo, storage_path, valor_ocr')
-      .eq('mes_referencia', payload.mesReferencia)
+      .eq('mes_referencia', referenciaDocumento(payload.mesReferencia, payload.tipo))
       .eq('tipo', payload.tipo);
     if (empresasPermitidas) q = q.or(`empresa_id.is.null,empresa_id.in.(${empresasPermitidas.join(',') || '0'})`);
     const { data: docs } = await q;

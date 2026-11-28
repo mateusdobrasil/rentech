@@ -3,17 +3,21 @@
 // app/admin/rh/actions/actions-decimo-terceiro.ts
 // Tela única do 13º Salário — pedido do usuário (28/11/2026): tudo sobre o
 // 13º fica aqui, integral ou não.
-// - decimo_terceiro_integral=true (Modelo de Contrato): cálculo nosso (2
-//   parcelas, INSS/IRRF), fechar/assinatura Autentique/lote PIX — mesmo
-//   padrão de folha_rescisoes: uma linha por (funcionário, ano), parcelas
-//   rastreadas (pago_em/pago_lote_id próprios), reabrir só antes de qualquer
-//   parcela paga, assinatura reaproveitando folha_holerite_assinaturas com
-//   marcador sintético "13-{ano}-P{parcela}".
-// - recebe_holerite_contabilidade=true (e não integral): só leitura — o
-//   valor é exatamente o do holerite importado em /admin/rh/holerite →
-//   Separar Holerites (folha_documentos_contabeis.valor_ocr, tipo
-//   DECIMO_TERCEIRO). Sem cálculo nosso, sem assinatura por aqui; o
-//   pagamento já roda pela fonte "DECIMO_TERCEIRO" do lote de Financeiro RH.
+// - "Via Rentech" (decimo_terceiro_integral=true no Modelo de Contrato):
+//   cálculo nosso (2 parcelas, INSS/IRRF), fechar/assinatura Autentique/lote
+//   PIX — mesmo padrão de folha_rescisoes: uma linha por (funcionário, ano),
+//   parcelas rastreadas (pago_em/pago_lote_id próprios), reabrir só antes de
+//   qualquer parcela paga, assinatura reaproveitando folha_holerite_assinaturas
+//   com marcador sintético "13-{ano}-P{parcela}". O bruto pode ser DIGITADO
+//   manualmente antes de fechar (valoresBrutoOverride) — quando não digitado,
+//   calcula automático a partir do salário cadastrado; o split fiscal
+//   (INSS/IRRF/parcelas) é sempre automático nos dois casos.
+// - "Via Contabilidade" (recebe_holerite_contabilidade=true e não integral):
+//   só leitura — o valor é exatamente o do holerite importado em
+//   /admin/rh/holerite → Separar Holerites (folha_documentos_contabeis.
+//   valor_ocr, tipo DECIMO_TERCEIRO). Sem cálculo nosso, sem assinatura por
+//   aqui; o pagamento já roda pela fonte "DECIMO_TERCEIRO" do lote de
+//   Financeiro RH.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { filtrarFicha } from '../../../lib/funcionarioRef';
 import { validarAcesso, validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
@@ -21,7 +25,7 @@ import { registrarLogAuditoria } from '../../../actions';
 import { consultarAssinaturaAction, baixarAssinadoAction } from './actions-assinatura';
 import { autentiqueCriarDocumento } from '../../../lib/autentique';
 import { gerarRecibo13Pdf } from '../../../lib/gerarRecibo13Pdf';
-import { calcular13Integral, itensCalculo13, type ResultadoCalculo13 } from '../../../lib/calculo13Salario';
+import { calcular13Integral, calcular13ComBrutoDigitado, itensCalculo13, type ResultadoCalculo13 } from '../../../lib/calculo13Salario';
 
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
@@ -91,9 +95,13 @@ export async function painelDecimoTerceiroAction(payload: { ano: number }, acces
     const linhasContabilidade: any[] = [];
     if (elegiveisContabilidade.length > 0) {
       const nomesContab = elegiveisContabilidade.map(f => f.nome_completo);
+      // mes_referencia = só o ano ("AAAA") pra DECIMO_TERCEIRO/FERIAS — um
+      // documento por ano, pedido do usuário 2026-11-28 (Separar Holerites
+      // grava assim pra esses 2 tipos; ver referenciaDocumento em
+      // actions-financeiro.ts).
       const { data: docs } = await db.from('folha_documentos_contabeis')
         .select('funcionario_nome, mes_referencia, valor_ocr, storage_path')
-        .eq('tipo', 'DECIMO_TERCEIRO').like('mes_referencia', `${ano}-%`).in('funcionario_nome', nomesContab);
+        .eq('tipo', 'DECIMO_TERCEIRO').eq('mes_referencia', String(ano)).in('funcionario_nome', nomesContab);
       const docsPorNome: Record<string, { mesReferencia: string; valorOcr: number | null }[]> = {};
       (docs || []).forEach(d => {
         (docsPorNome[d.funcionario_nome] ||= []).push({ mesReferencia: d.mes_referencia, valorOcr: d.valor_ocr != null ? Number(d.valor_ocr) : null });
@@ -157,6 +165,9 @@ export async function painelDecimoTerceiroAction(payload: { ano: number }, acces
         } : null,
         statusAssinaturaP1: assinaturaPorChave[`${f.nome_completo}::1`] || null,
         statusAssinaturaP2: assinaturaPorChave[`${f.nome_completo}::2`] || null,
+        // Só usado no cliente pra recalcular o split (INSS/IRRF) ao vivo
+        // quando o usuário digita o bruto manualmente, antes de fechar.
+        numeroDependentesIrrf: depsPorNome[f.nome_completo] || 0,
       };
     });
 
@@ -173,12 +184,16 @@ export async function painelDecimoTerceiroAction(payload: { ano: number }, acces
 // ============================================================================
 export async function fecharDecimoTerceiroLoteAction(payload: {
   ano: number; nomes: string[]; usuarioNome: string;
+  // Bruto digitado manualmente na tela (Via Rentech), por nome. Quando
+  // presente (e > 0) substitui o bruto calculado a partir do salário
+  // cadastrado — o split fiscal (INSS/IRRF/parcelas) continua automático.
+  valoresBrutoOverride?: Record<string, number>;
 }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
   if (!acesso.ok) return { ok: false, erro: acesso.message };
 
   const db = supabaseAdmin();
-  const { ano, nomes, usuarioNome } = payload;
+  const { ano, nomes, usuarioNome, valoresBrutoOverride } = payload;
   if (!nomes.length) return { ok: false, erro: 'Nenhum funcionário selecionado.' };
 
   try {
@@ -202,10 +217,16 @@ export async function fecharDecimoTerceiroLoteAction(payload: {
     for (const f of funcs || []) {
       if (bloqueadosPagos.has(f.nome_completo)) { ignorados.push(f.nome_completo); continue; }
       const salarioBase = f.salario_folha > 0 ? f.salario_folha : f.salario_contrato;
-      const dados = calcular13Integral({
-        salarioBase, dataAdmissao: f.data_admissao, dataDesligamento: f.data_desligamento,
-        ano, numeroDependentesIrrf: depsPorNome[f.nome_completo] || 0
-      });
+      const brutoDigitado = valoresBrutoOverride?.[f.nome_completo];
+      const dados = (brutoDigitado != null && brutoDigitado > 0)
+        ? calcular13ComBrutoDigitado({
+            valorBruto: brutoDigitado, salarioBase, dataAdmissao: f.data_admissao, dataDesligamento: f.data_desligamento,
+            ano, numeroDependentesIrrf: depsPorNome[f.nome_completo] || 0
+          })
+        : calcular13Integral({
+            salarioBase, dataAdmissao: f.data_admissao, dataDesligamento: f.data_desligamento,
+            ano, numeroDependentesIrrf: depsPorNome[f.nome_completo] || 0
+          });
       const { error } = await db.from('folha_decimo_terceiro').upsert({
         funcionario_id: f.id, funcionario_nome: f.nome_completo, empresa_id: f.empresa_id, ano,
         meses_avos: dados.mesesAvos, salario_base: dados.salarioBase, valor_bruto: dados.valorBruto,

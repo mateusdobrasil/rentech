@@ -3,11 +3,12 @@
 // app/admin/rh/decimo-terceiro/page.tsx
 // Tela única do 13º Salário (pedido do usuário, 28/11/2026): toda a parte do
 // 13º fica aqui, integral ou não.
-// - "Pagamento Direto (Integral)": Modelo de Contrato com
-//   decimo_terceiro_integral=true. Fechar (congela avos/bruto/INSS/IRRF/
-//   parcelas) → Enviar p/ assinatura cada parcela (Autentique) → marcar paga
-//   (manual ou pelo lote PIX do Financeiro RH, fonte "13º Integral — 1ª/2ª
-//   Parcela").
+// - "Via Rentech": Modelo de Contrato com decimo_terceiro_integral=true. O
+//   bruto pode ser DIGITADO manualmente (pedido do usuário) antes de fechar —
+//   se não digitado, sugere o cálculo automático a partir do salário
+//   cadastrado. Fechar (congela avos/bruto/INSS/IRRF/parcelas) → Enviar p/
+//   assinatura cada parcela (Autentique) → marcar paga (manual ou pelo lote
+//   PIX do Financeiro RH, fonte "13º Integral — 1ª/2ª Parcela").
 // - "Via Contabilidade": Modelo de Contrato com recebe_holerite_contabilidade
 //   =true (e não integral). Só leitura — o valor é exatamente o do holerite
 //   importado em /admin/rh/holerite → Separar Holerites. O pagamento já roda
@@ -20,6 +21,7 @@ import {
   marcarParcela13PagaAction, enviarDecimoTerceiroAssinaturaAction
 } from '../actions/actions-decimo-terceiro';
 import { urlDocumentoContabilAction } from '../actions/actions-documentos';
+import { calcularSplit13 } from '../../../lib/calculo13Salario';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm, usePrompt } from '../../../components/ui/NotificationProvider';
@@ -40,6 +42,7 @@ interface Linha13 {
   } | null;
   statusAssinaturaP1: string | null;
   statusAssinaturaP2: string | null;
+  numeroDependentesIrrf: number;
 }
 
 interface LinhaContabilidade13 {
@@ -71,6 +74,9 @@ export default function DecimoTerceiroPage() {
   const [sandbox, setSandbox] = useState(true);
   const [processando, setProcessando] = useState<string | null>(null); // "{nome}::{acao}"
   const [abrindoDoc, setAbrindoDoc] = useState<string | null>(null); // "{nome}::{mesReferencia}"
+  // Bruto digitado manualmente (Via Rentech), por nome — só vale enquanto o
+  // 13º ainda está em aberto; some ao fechar (o snapshot já fica congelado).
+  const [brutoDigitado, setBrutoDigitado] = useState<Record<string, string>>({});
 
   const carregar = async (anoRef: number) => {
     setLoading(true);
@@ -100,27 +106,45 @@ export default function DecimoTerceiroPage() {
     }
   };
 
-  const mesBR = (iso: string) => { const [a, m] = iso.split('-'); return `${m}/${a}`; };
+  // "Via Contabilidade" grava mes_referencia só com o ano ("AAAA", sem mês) —
+  // só o 13º/Férias caem aqui, e não tem mais de um por ano.
+  const mesBR = (iso: string) => { if (!iso.includes('-')) return iso; const [a, m] = iso.split('-'); return `${m}/${a}`; };
 
   useEffect(() => { if (!authLoading && accessToken) carregar(ano); }, [ano, authLoading, accessToken]);
 
   const abertos = linhas.filter(l => !l.fechamento);
   const fechados = linhas.filter(l => l.fechamento);
 
+  // Dados exibidos pra uma linha: congelados se já fechou; senão, recalcula
+  // ao vivo com o bruto digitado (se houver) — sem rodar nada no servidor.
+  const dadosExibidos = (l: Linha13) => {
+    if (l.fechamento) return l.dados;
+    const digitado = Number(brutoDigitado[l.func.nome_completo]?.replace(',', '.'));
+    if (!digitado || digitado <= 0) return l.dados;
+    const split = calcularSplit13(digitado, l.numeroDependentesIrrf);
+    return { ...l.dados, valorBruto: digitado, ...split };
+  };
+
   const fecharTodos = async () => {
     if (abertos.length === 0) { toast('Todos já estão fechados para este ano.', 'info'); return; }
-    const totalBruto = abertos.reduce((s, l) => s + l.dados.valorBruto, 0);
+    const totalBruto = abertos.reduce((s, l) => s + dadosExibidos(l).valorBruto, 0);
+    const valoresBrutoOverride: Record<string, number> = {};
+    abertos.forEach(l => {
+      const digitado = Number(brutoDigitado[l.func.nome_completo]?.replace(',', '.'));
+      if (digitado > 0) valoresBrutoOverride[l.func.nome_completo] = digitado;
+    });
     if (!(await confirmar(
-      `Fechar o 13º Salário Integral de ${ano} para ${abertos.length} funcionário(s)?\n\n` +
+      `Fechar o 13º Salário (Via Rentech) de ${ano} para ${abertos.length} funcionário(s)?\n\n` +
       `Total bruto: ${BRL(totalBruto)}\n\n` +
       `Depois de fechado, os valores ficam congelados (não acompanham mudança de salário/dependentes) até reabrir.`
     ))) return;
     setProcessando('LOTE::fechar');
     try {
-      const res = await fecharDecimoTerceiroLoteAction({ ano, nomes: abertos.map(l => l.func.nome_completo), usuarioNome: usuarioAtual }, accessToken);
+      const res = await fecharDecimoTerceiroLoteAction({ ano, nomes: abertos.map(l => l.func.nome_completo), usuarioNome: usuarioAtual, valoresBrutoOverride }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       const ignoradosMsg = res.info?.ignorados?.length ? `\n\nIgnorados (já têm parcela paga): ${res.info.ignorados.join(', ')}` : '';
       toast(`${res.info?.fechados || 0} fechado(s).${ignoradosMsg}`, 'success');
+      setBrutoDigitado({});
       carregar(ano);
     } catch (e: any) {
       toast('Erro ao fechar: ' + e.message, 'error');
@@ -213,7 +237,7 @@ export default function DecimoTerceiroPage() {
 
       <div className="bg-[#FEF3C7] border-b border-[#FDE68A] px-4 md:px-8 py-4 flex flex-col sm:flex-row justify-between items-center gap-3 shadow-sm print:hidden">
         <p className="text-[#92400E] font-medium text-sm">
-          🎄 <strong>13º Salário</strong>. Pagamento Direto (Integral): calculamos, fechamos, enviamos p/ assinatura e levamos ao lote PIX. Via Contabilidade: o valor é exatamente o do holerite importado em Separar Holerites — só leitura aqui.
+          🎄 <strong>13º Salário</strong>. Via Rentech: você pode digitar o bruto (ou deixar o cálculo sugerido), fechamos, enviamos p/ assinatura e levamos ao lote PIX. Via Contabilidade: o valor é exatamente o do holerite importado em Separar Holerites — só leitura aqui.
         </p>
         <button onClick={() => router.push('/admin/rh')} className="text-[10px] md:text-xs font-black bg-white hover:bg-amber-50 border border-[#FDE68A] text-[#92400E] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
           ⬅ VOLTAR AO RH
@@ -251,7 +275,7 @@ export default function DecimoTerceiroPage() {
           </div>
         )}
 
-        <h2 className="text-xs font-black text-[#64748B] uppercase tracking-widest pl-1">💰 Pagamento Direto (Integral)</h2>
+        <h2 className="text-xs font-black text-[#64748B] uppercase tracking-widest pl-1">💰 Via Rentech</h2>
 
         <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden">
           {loading ? (
@@ -261,7 +285,7 @@ export default function DecimoTerceiroPage() {
             </div>
           ) : linhas.length === 0 ? (
             <div className="p-16 text-center text-gray-400 font-bold uppercase tracking-wider">
-              Nenhum funcionário elegível ao 13º Integral.
+              Nenhum funcionário elegível ao 13º Via Rentech.
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -282,6 +306,7 @@ export default function DecimoTerceiroPage() {
                 <tbody className="divide-y divide-[#E2E8F0] font-medium">
                   {linhas.map(l => {
                     const key = l.func.nome_completo;
+                    const d = dadosExibidos(l);
                     return (
                       <tr key={key} className="hover:bg-[#F8FAFC] transition-colors align-top">
                         <td className="p-4">
@@ -289,12 +314,23 @@ export default function DecimoTerceiroPage() {
                           <span className="text-[10px] text-gray-400 font-bold block uppercase mt-0.5">{l.func.cargo || '—'}</span>
                           <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase inline-block mt-1 ${corSeloEmpresa(l.func.empresa_id)}`}>🏭 Empresa {l.func.empresa_id ?? '—'}</span>
                         </td>
-                        <td className="p-4 text-right tabular-nums">{l.dados.mesesAvos}/12</td>
-                        <td className="p-4 text-right tabular-nums font-bold">{BRL(l.dados.valorBruto)}</td>
-                        <td className="p-4 text-right tabular-nums">{BRL(l.dados.parcela1Valor)}</td>
-                        <td className="p-4 text-right tabular-nums text-red-600">−{BRL(l.dados.inssValor)}</td>
-                        <td className="p-4 text-right tabular-nums text-red-600">−{BRL(l.dados.irrfValor)}</td>
-                        <td className="p-4 text-right tabular-nums font-bold">{BRL(l.dados.parcela2Valor)}</td>
+                        <td className="p-4 text-right tabular-nums">{d.mesesAvos}/12</td>
+                        <td className="p-4 text-right tabular-nums font-bold">
+                          {!l.fechamento ? (
+                            <input
+                              type="text" inputMode="decimal"
+                              value={brutoDigitado[key] ?? ''}
+                              onChange={e => setBrutoDigitado(prev => ({ ...prev, [key]: e.target.value }))}
+                              placeholder={BRL(l.dados.valorBruto)}
+                              title="Digite pra substituir o bruto sugerido (calculado do salário cadastrado)"
+                              className="w-28 p-1.5 border border-[#CBD5E1] rounded-lg text-right text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]"
+                            />
+                          ) : BRL(d.valorBruto)}
+                        </td>
+                        <td className="p-4 text-right tabular-nums">{BRL(d.parcela1Valor)}</td>
+                        <td className="p-4 text-right tabular-nums text-red-600">−{BRL(d.inssValor)}</td>
+                        <td className="p-4 text-right tabular-nums text-red-600">−{BRL(d.irrfValor)}</td>
+                        <td className="p-4 text-right tabular-nums font-bold">{BRL(d.parcela2Valor)}</td>
                         <td className="p-4 text-center">
                           {!l.fechamento ? (
                             <span className="text-[9px] font-black px-2 py-1 rounded-full uppercase bg-amber-100 text-amber-700">⚠ Em aberto</span>

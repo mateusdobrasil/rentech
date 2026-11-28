@@ -35,12 +35,24 @@ export interface ResultadoCalculo13 {
   calculadoEm: string;
 }
 
-const arredonda = (v: number): number => Math.round((v + Number.EPSILON) * 100) / 100;
+export const arredonda = (v: number): number => Math.round((v + Number.EPSILON) * 100) / 100;
 const moeda = (v: number): string => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-export function calcular13Integral(entrada: EntradaCalculo13): ResultadoCalculo13 {
-  const { salarioBase, dataAdmissao, dataDesligamento, ano, numeroDependentesIrrf } = entrada;
+// Divide um valor bruto do 13º nas 2 parcelas + INSS/IRRF. Isolado de
+// calcular13Integral pra poder ser chamado também quando o bruto vem
+// DIGITADO pelo usuário (tela "Via Rentech") em vez de calculado a partir
+// do salário cadastrado — nos dois casos o split fiscal é o mesmo.
+export function calcularSplit13(valorBruto: number, numeroDependentesIrrf: number) {
+  const parcela1Valor = arredonda(valorBruto * 0.5);
+  // INSS e IRRF incidem sobre o BRUTO TOTAL do 13º (tributação exclusiva,
+  // igual ao proporcional da rescisão) — não sobre a 2ª parcela isolada.
+  const inss = calcularINSS(valorBruto);
+  const irrf = calcularIRRF(valorBruto - inss.valor, numeroDependentesIrrf);
+  const parcela2Valor = arredonda(valorBruto - parcela1Valor - inss.valor - irrf.valor);
+  return { parcela1Valor, inssValor: inss.valor, irrfValor: irrf.valor, parcela2Valor };
+}
 
+function calcularMesesAvos(dataAdmissao: string, dataDesligamento: string | null, ano: number): number {
   const inicioAno = `${ano}-01-01`;
   const fimAno = `${ano}-12-31`;
   // Avos contados só dentro do ano-base: admissão/desligamento fora dele não
@@ -49,20 +61,42 @@ export function calcular13Integral(entrada: EntradaCalculo13): ResultadoCalculo1
   // rescisão de 2027 é que paga o proporcional daquele ano, calculoRescisao.ts).
   const inicioEfetivo = dataAdmissao > inicioAno ? dataAdmissao : inicioAno;
   const fimEfetivo = (dataDesligamento && dataDesligamento < fimAno) ? dataDesligamento : fimAno;
-  const mesesAvos = Math.min(12, Math.max(0, contarMesesProporcionais(inicioEfetivo, fimEfetivo)));
+  return Math.min(12, Math.max(0, contarMesesProporcionais(inicioEfetivo, fimEfetivo)));
+}
 
+export function calcular13Integral(entrada: EntradaCalculo13): ResultadoCalculo13 {
+  const { salarioBase, dataAdmissao, dataDesligamento, ano, numeroDependentesIrrf } = entrada;
+  const mesesAvos = calcularMesesAvos(dataAdmissao, dataDesligamento, ano);
   const valorBruto = arredonda((salarioBase / 12) * mesesAvos);
-  const parcela1Valor = arredonda(valorBruto * 0.5);
-
-  // INSS e IRRF incidem sobre o BRUTO TOTAL do 13º (tributação exclusiva,
-  // igual ao proporcional da rescisão) — não sobre a 2ª parcela isolada.
-  const inss = calcularINSS(valorBruto);
-  const irrf = calcularIRRF(valorBruto - inss.valor, numeroDependentesIrrf);
-  const parcela2Valor = arredonda(valorBruto - parcela1Valor - inss.valor - irrf.valor);
+  const split = calcularSplit13(valorBruto, numeroDependentesIrrf);
 
   return {
-    ano, mesesAvos, salarioBase, valorBruto,
-    parcela1Valor, inssValor: inss.valor, irrfValor: irrf.valor, parcela2Valor,
+    ano, mesesAvos, salarioBase, valorBruto, ...split,
+    calculadoEm: new Date().toISOString()
+  };
+}
+
+// Variante "Via Rentech" com o bruto DIGITADO pelo usuário em vez de
+// calculado a partir do salário cadastrado (pedido do usuário, 28/11/2026).
+// Avos seguem informativos (contados pelas datas), mas não determinam mais
+// o bruto — só o split fiscal (INSS/IRRF/parcelas) continua automático.
+export interface EntradaCalculo13BrutoDigitado {
+  valorBruto: number;
+  salarioBase: number;
+  dataAdmissao: string;
+  dataDesligamento: string | null;
+  ano: number;
+  numeroDependentesIrrf: number;
+}
+
+export function calcular13ComBrutoDigitado(entrada: EntradaCalculo13BrutoDigitado): ResultadoCalculo13 {
+  const { valorBruto, salarioBase, dataAdmissao, dataDesligamento, ano, numeroDependentesIrrf } = entrada;
+  const mesesAvos = calcularMesesAvos(dataAdmissao, dataDesligamento, ano);
+  const brutoArredondado = arredonda(valorBruto);
+  const split = calcularSplit13(brutoArredondado, numeroDependentesIrrf);
+
+  return {
+    ano, mesesAvos, salarioBase, valorBruto: brutoArredondado, ...split,
     calculadoEm: new Date().toISOString()
   };
 }

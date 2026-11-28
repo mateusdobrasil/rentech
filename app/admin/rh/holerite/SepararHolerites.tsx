@@ -35,6 +35,9 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, accessTo
   const confirmar = useConfirm();
   const [competencia, setCompetencia] = useState(mesReferencia);
   const [tipo, setTipo] = useState<'ADIANTAMENTO' | 'HOLERITE_MENSAL' | 'DECIMO_TERCEIRO' | 'FERIAS' | 'RESCISAO_CONTABILIDADE'>('ADIANTAMENTO');
+  // 13º e Férias: um documento por ANO (não por mês) — pedido do usuário
+  // 2026-11-28, já que não existe mais de um 13º ou férias no ano.
+  const anoApenas = tipo === 'DECIMO_TERCEIRO' || tipo === 'FERIAS';
   const [processando, setProcessando] = useState(false);
   const [progresso, setProgresso] = useState('');
   const [paginas, setPaginas] = useState<PaginaSeparada[]>([]);
@@ -240,29 +243,25 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, accessTo
           <button onClick={onFechar} className="text-[10px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-4 py-2 rounded-lg uppercase tracking-wider">⬅ Voltar</button>
         </div>
 
-        {/* Competência (editável) + mês de pagamento (calculado) */}
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4 flex flex-col sm:flex-row items-stretch sm:items-end gap-4">
-          <div className="flex-1">
-            <label className="block text-[10px] font-black text-blue-700 uppercase mb-1">Mês de competência</label>
-            <input type="month" value={competencia} onChange={e => setCompetencia(e.target.value)} disabled={paginas.length > 0} className="w-full p-2.5 border border-blue-300 rounded-lg text-sm font-bold bg-white disabled:opacity-50" />
-          </div>
-          <div className="hidden sm:flex items-center pb-3 text-blue-400 font-black">→</div>
-          <div className="flex-1">
-            <label className="block text-[10px] font-black text-blue-700 uppercase mb-1">Mês de pagamento (automático)</label>
-            <div className="w-full p-2.5 border border-blue-200 rounded-lg text-sm font-black bg-blue-100 text-blue-800">
-              {competencia ? mesPagamento(competencia) : '—'}
-            </div>
-          </div>
-          <div className="flex-[2] text-[11px] font-medium text-blue-700 pb-1">
-            Competência <strong>{mesBR(competencia) || '—'}</strong> será paga em <strong>{competencia ? mesPagamento(competencia) : '—'}</strong>.
-            {paginas.length > 0 && <span className="block text-amber-600 font-bold mt-1">Para trocar a competência, limpe a importação atual.</span>}
-          </div>
-        </div>
-
-        <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-end">
+        {/* Tipo de documento primeiro — decide se competência é mês ou ano */}
+        <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-end mb-4">
           <div className="flex-1">
             <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Tipo de documento</label>
-            <select value={tipo} onChange={e => setTipo(e.target.value as any)} disabled={paginas.length > 0} className="w-full p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-white disabled:opacity-50">
+            <select
+              value={tipo}
+              onChange={e => {
+                const novoTipo = e.target.value as typeof tipo;
+                const novoAnoApenas = novoTipo === 'DECIMO_TERCEIRO' || novoTipo === 'FERIAS';
+                setTipo(novoTipo);
+                setCompetencia(prev => {
+                  if (!prev) return prev;
+                  if (novoAnoApenas) return prev.slice(0, 4);
+                  return prev.length === 4 ? `${prev}-01` : prev;
+                });
+              }}
+              disabled={paginas.length > 0}
+              className="w-full p-2.5 border border-gray-300 rounded-lg text-sm font-bold bg-white disabled:opacity-50"
+            >
               <option value="ADIANTAMENTO">Adiantamento (dia 20)</option>
               <option value="HOLERITE_MENSAL">Holerite de pagamento mensal</option>
               <option value="DECIMO_TERCEIRO">Décimo Terceiro (13º)</option>
@@ -270,6 +269,41 @@ export default function SepararHolerites({ mesReferencia, usuarioAtual, accessTo
               <option value="RESCISAO_CONTABILIDADE">Rescisão (recibo da contabilidade)</option>
             </select>
           </div>
+        </div>
+
+        {/* Competência (editável): ano só pra 13º/Férias (1 por ano), mês +
+            pagamento calculado pros demais tipos */}
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4 flex flex-col sm:flex-row items-stretch sm:items-end gap-4">
+          <div className="flex-1">
+            <label className="block text-[10px] font-black text-blue-700 uppercase mb-1">{anoApenas ? 'Ano' : 'Mês de competência'}</label>
+            {anoApenas ? (
+              <input type="number" value={competencia} onChange={e => setCompetencia(e.target.value)} disabled={paginas.length > 0} className="w-full p-2.5 border border-blue-300 rounded-lg text-sm font-bold bg-white disabled:opacity-50" />
+            ) : (
+              <input type="month" value={competencia} onChange={e => setCompetencia(e.target.value)} disabled={paginas.length > 0} className="w-full p-2.5 border border-blue-300 rounded-lg text-sm font-bold bg-white disabled:opacity-50" />
+            )}
+          </div>
+          {!anoApenas && (
+            <>
+              <div className="hidden sm:flex items-center pb-3 text-blue-400 font-black">→</div>
+              <div className="flex-1">
+                <label className="block text-[10px] font-black text-blue-700 uppercase mb-1">Mês de pagamento (automático)</label>
+                <div className="w-full p-2.5 border border-blue-200 rounded-lg text-sm font-black bg-blue-100 text-blue-800">
+                  {competencia ? mesPagamento(competencia) : '—'}
+                </div>
+              </div>
+            </>
+          )}
+          <div className="flex-[2] text-[11px] font-medium text-blue-700 pb-1">
+            {anoApenas ? (
+              <>13º/Férias de <strong>{competencia || '—'}</strong> — um documento por ano (sem mês de competência).</>
+            ) : (
+              <>Competência <strong>{mesBR(competencia) || '—'}</strong> será paga em <strong>{competencia ? mesPagamento(competencia) : '—'}</strong>.</>
+            )}
+            {paginas.length > 0 && <span className="block text-amber-600 font-bold mt-1">Para trocar, limpe a importação atual.</span>}
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-end">
           <div className="flex-1">
             <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Arquivo PDF da contabilidade</label>
             <input ref={fileRef} type="file" accept="application/pdf" onChange={handleArquivo} disabled={processando || !competencia} className="w-full text-sm file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-[#0C1D4D] file:text-white file:font-bold file:text-xs file:uppercase disabled:opacity-50" />

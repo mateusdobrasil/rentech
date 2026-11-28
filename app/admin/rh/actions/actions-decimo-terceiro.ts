@@ -81,9 +81,12 @@ export async function painelDecimoTerceiroAction(payload: { ano: number; empresa
     // filtro de exibição.
     if (!empresaPermitida(empresasPermitidas, empresaId)) return { ok: false, erro: 'Você não tem permissão para ver o 13º desta empresa.' };
 
-    const { data: regras } = await db.from('folha_parametros').select('nome_regra, decimo_terceiro_integral, recebe_holerite_contabilidade');
-    const regrasIntegral = new Set((regras || []).filter(r => r.decimo_terceiro_integral === true).map(r => r.nome_regra));
-    const regrasContabilidade = new Set((regras || []).filter(r => r.recebe_holerite_contabilidade === true && r.decimo_terceiro_integral !== true).map(r => r.nome_regra));
+    const { data: regras } = await db.from('folha_parametros').select('nome_regra, decimo_terceiro_integral, recebe_holerite_contabilidade, recebe_holerite');
+    // Via Rentech só com "Recebe holerite (contabilidade)?" desmarcado (null
+    // conta como marcado, igual à tela de Parâmetros) — contrato antigo com
+    // as duas marcadas cai na contabilidade, nunca paga o 13º duas vezes.
+    const regrasIntegral = new Set((regras || []).filter(r => r.decimo_terceiro_integral === true && r.recebe_holerite === false).map(r => r.nome_regra));
+    const regrasContabilidade = new Set((regras || []).filter(r => r.recebe_holerite_contabilidade === true && !regrasIntegral.has(r.nome_regra)).map(r => r.nome_regra));
     const semRegraConfigurada = regrasIntegral.size === 0;
 
     const { data: funcsTodos, error: erroFuncs } = await db.from('folha_funcionarios')
@@ -216,6 +219,7 @@ export async function fecharDecimoTerceiroLoteAction(payload: {
 
     let fechados = 0;
     const ignorados: string[] = [];
+    const zerados: string[] = [];
     for (const f of funcs || []) {
       if (bloqueadosPagos.has(f.nome_completo)) { ignorados.push(f.nome_completo); continue; }
       const salarioBase = f.salario_folha > 0 ? f.salario_folha : f.salario_contrato;
@@ -229,6 +233,9 @@ export async function fecharDecimoTerceiroLoteAction(payload: {
             salarioBase, dataAdmissao: f.data_admissao, dataDesligamento: f.data_desligamento,
             ano, numeroDependentesIrrf: depsPorNome[f.nome_completo] || 0
           });
+      // Bruto zerado (sem salário cadastrado, 0 avos ou nada digitado) nunca
+      // é fechado — senão viraria recibo/assinatura/lote de R$ 0,00.
+      if (!(dados.valorBruto > 0)) { zerados.push(f.nome_completo); continue; }
       const { error } = await db.from('folha_decimo_terceiro').upsert({
         funcionario_id: f.id, funcionario_nome: f.nome_completo, empresa_id: f.empresa_id, ano,
         meses_avos: dados.mesesAvos, salario_base: dados.salarioBase, valor_bruto: dados.valorBruto,
@@ -245,7 +252,7 @@ export async function fecharDecimoTerceiroLoteAction(payload: {
       setor: 'RECURSOS HUMANOS / 13º SALÁRIO'
     });
 
-    return { ok: true, info: { fechados, ignorados } };
+    return { ok: true, info: { fechados, ignorados, zerados } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
@@ -366,6 +373,7 @@ export async function enviarDecimoTerceiroAssinaturaAction(payload: {
 
     const nomeEmpresa = await nomeEmpresaDoFuncionario(db, func?.empresa_id ?? r.empresa_id);
     const valorPago = parcela === 1 ? Number(r.parcela1_valor) : Number(r.parcela2_valor);
+    if (!(valorPago > 0)) return { ok: false, erro: `A ${parcela}ª parcela de ${r.funcionario_nome} está zerada — reabra, corrija o valor e feche de novo antes de enviar.` };
     const detalhamento = parcela === 1
       ? [
           { descricao: '13º salário integral (bruto)', valor: Number(r.valor_bruto) },

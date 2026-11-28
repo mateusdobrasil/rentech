@@ -781,7 +781,7 @@ export default function ParametrosRH() {
 
                 <div className="px-4 py-3">
                   <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
-                    <input type="checkbox" checked={form.recebe_holerite} onChange={e => setForm({...form, recebe_holerite: e.target.checked})} className="w-4 h-4 flex-shrink-0 accent-indigo-600" />
+                    <input type="checkbox" checked={form.recebe_holerite} onChange={e => setForm({ ...form, recebe_holerite: e.target.checked, decimo_terceiro_integral: e.target.checked ? false : form.decimo_terceiro_integral })} className="w-4 h-4 flex-shrink-0 accent-indigo-600" />
                     Recebe holerite (contabilidade)?
                   </label>
                 </div>
@@ -793,15 +793,17 @@ export default function ParametrosRH() {
                   </label>
                 </div>
 
-                <div className={`px-4 py-3 ${form.decimo_terceiro_integral ? 'bg-amber-50' : ''}`}>
-                  <label className="flex items-center gap-3 font-bold text-sm text-[#0C1D4D] cursor-pointer">
-                    <input type="checkbox" checked={form.decimo_terceiro_integral} onChange={e => setForm({...form, decimo_terceiro_integral: e.target.checked})} className="w-4 h-4 flex-shrink-0 accent-amber-600" />
-                    13º Salário Integral (calculamos e pagamos o 13º completo)?
+                <div className={`px-4 py-3 ${form.decimo_terceiro_integral ? 'bg-amber-50' : ''} ${form.recebe_holerite ? 'opacity-50' : ''}`}>
+                  <label className={`flex items-center gap-3 font-bold text-sm text-[#0C1D4D] ${form.recebe_holerite ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+                    <input type="checkbox" checked={form.decimo_terceiro_integral} disabled={form.recebe_holerite} onChange={e => setForm({...form, decimo_terceiro_integral: e.target.checked})} className="w-4 h-4 flex-shrink-0 accent-amber-600 disabled:cursor-not-allowed" />
+                    Recebe 13º Salário pela empresa?
                   </label>
                   <p className={`text-[9px] font-bold mt-1 uppercase pl-7 ${form.decimo_terceiro_integral ? 'text-amber-600' : 'text-gray-400'}`}>
-                    {form.decimo_terceiro_integral
-                      ? 'Em /admin/rh/decimo-terceiro, seção "Pagamento Direto": calculamos as 2 parcelas (INSS/IRRF), assinatura e pagamento.'
-                      : 'Desmarcado = 13º pela contabilidade (OCR dos PDFs importados) — aparece em /admin/rh/decimo-terceiro, seção "Via Contabilidade", só leitura.'}
+                    {form.recebe_holerite
+                      ? 'Só habilita com "Recebe holerite (contabilidade)?" desmarcado.'
+                      : form.decimo_terceiro_integral
+                        ? 'Em /admin/rh/decimo-terceiro, seção "Via Rentech": calculamos as 2 parcelas (INSS/IRRF), assinatura e pagamento.'
+                        : 'Desmarcado = 13º pela contabilidade (OCR dos PDFs importados) — aparece em /admin/rh/decimo-terceiro, seção "Via Contabilidade", só leitura.'}
                   </p>
                 </div>
               </div>

@@ -162,6 +162,10 @@ export async function salvarRegraAction(payload: {
     regra.dias_base_mes = null;
   }
 
+  // 13º pela empresa só vale pra contrato que NÃO recebe holerite da
+  // contabilidade — os dois juntos pagariam o 13º duas vezes.
+  if (regra.recebe_holerite !== false) regra.decimo_terceiro_integral = false;
+
   try {
     const estaRenomeando = nomeOriginal !== null && nomeOriginal !== nomeNormalizado;
 

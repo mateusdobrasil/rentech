@@ -208,25 +208,32 @@ export default function DecimoTerceiroPage() {
     return { ...l.dados, valorBruto: digitado, ...split };
   };
 
+  // Bruto zerado não entra no fechamento (o servidor também barra).
+  const fechaveis = abertos.filter(l => dadosExibidos(l).valorBruto > 0);
+  const zeradosAbertos = abertos.length - fechaveis.length;
+
   const fecharTodos = async () => {
     if (abertos.length === 0) { toast('Todos já estão fechados para este ano.', 'info'); return; }
-    const totalBruto = abertos.reduce((s, l) => s + dadosExibidos(l).valorBruto, 0);
+    if (fechaveis.length === 0) { toast('Todos os 13º em aberto estão com valor zerado — digite o bruto antes de fechar.', 'error'); return; }
+    const totalBruto = fechaveis.reduce((s, l) => s + dadosExibidos(l).valorBruto, 0);
     const valoresBrutoOverride: Record<string, number> = {};
-    abertos.forEach(l => {
+    fechaveis.forEach(l => {
       const digitado = Number(brutoDigitado[l.func.nome_completo]?.replace(',', '.'));
       if (digitado > 0) valoresBrutoOverride[l.func.nome_completo] = digitado;
     });
     if (!(await confirmar(
-      `Fechar o 13º Salário (Via Rentech) de ${ano} para ${abertos.length} funcionário(s)?\n\n` +
+      `Fechar o 13º Salário (Via Rentech) de ${ano} para ${fechaveis.length} funcionário(s)?\n\n` +
       `Total bruto: ${BRL(totalBruto)}\n\n` +
+      (zeradosAbertos > 0 ? `${zeradosAbertos} funcionário(s) com valor zerado ficam de fora.\n\n` : '') +
       `Depois de fechado, os valores ficam congelados (não acompanham mudança de salário/dependentes) até reabrir.`
     ))) return;
     setProcessando('LOTE::fechar');
     try {
-      const res = await fecharDecimoTerceiroLoteAction({ ano, nomes: abertos.map(l => l.func.nome_completo), usuarioNome: usuarioAtual, valoresBrutoOverride }, accessToken);
+      const res = await fecharDecimoTerceiroLoteAction({ ano, nomes: fechaveis.map(l => l.func.nome_completo), usuarioNome: usuarioAtual, valoresBrutoOverride }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       const ignoradosMsg = res.info?.ignorados?.length ? `\n\nIgnorados (já têm parcela paga): ${res.info.ignorados.join(', ')}` : '';
-      toast(`${res.info?.fechados || 0} fechado(s).${ignoradosMsg}`, 'success');
+      const zeradosMsg = res.info?.zerados?.length ? `\n\nNão fechados (valor zerado): ${res.info.zerados.join(', ')}` : '';
+      toast(`${res.info?.fechados || 0} fechado(s).${ignoradosMsg}${zeradosMsg}`, 'success');
       setBrutoDigitado({});
       carregar(ano, empresaSelecionada!);
     } catch (e: any) {
@@ -350,8 +357,8 @@ export default function DecimoTerceiroPage() {
               <input type="checkbox" checked={sandbox} onChange={e => setSandbox(e.target.checked)} className="accent-amber-600" />
               <span className={sandbox ? 'text-amber-600' : 'text-red-600'}>{sandbox ? '🧪 Teste' : '⚠ Real'}</span>
             </label>
-            <button onClick={fecharTodos} disabled={processando !== null || abertos.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-5 py-3.5 rounded-xl shadow-sm hover:bg-[#15803D] transition-all disabled:opacity-50 text-center">
-              {processando === 'LOTE::fechar' ? '⏳ Fechando...' : `🔒 Fechar Todos (${abertos.length})`}
+            <button onClick={fecharTodos} disabled={processando !== null || fechaveis.length === 0} className="bg-[#16A34A] text-white font-black uppercase tracking-widest text-xs px-5 py-3.5 rounded-xl shadow-sm hover:bg-[#15803D] transition-all disabled:opacity-50 text-center">
+              {processando === 'LOTE::fechar' ? '⏳ Fechando...' : `🔒 Fechar Todos (${fechaveis.length})`}
             </button>
             <button onClick={() => router.push('/admin/financeiro/rh')} className="bg-[#0C1D4D] text-white font-black uppercase tracking-widest text-xs px-5 py-3.5 rounded-xl shadow-sm hover:bg-[#284B8C] transition-all text-center">
               Ir para Financeiro RH
@@ -361,7 +368,7 @@ export default function DecimoTerceiroPage() {
 
         {semRegraConfigurada && (
           <div className="bg-amber-50 border-2 border-amber-200 rounded-2xl p-5 text-sm text-amber-800 font-medium">
-            ⚠ Nenhum Modelo de Contrato está marcado com "13º Salário Integral" ainda. Configure em{' '}
+            ⚠ Nenhum Modelo de Contrato está marcado com "Recebe 13º Salário pela empresa?" ainda. Configure em{' '}
             <button onClick={() => router.push('/admin/rh/parametros')} className="underline font-bold">/admin/rh/parametros</button>.
           </div>
         )}
@@ -425,7 +432,9 @@ export default function DecimoTerceiroPage() {
                         <td className="p-4 text-right tabular-nums font-bold">{BRL(d.parcela2Valor)}</td>
                         <td className="p-4 text-center">
                           {!l.fechamento ? (
-                            <span className="text-[9px] font-black px-2 py-1 rounded-full uppercase bg-amber-100 text-amber-700">⚠ Em aberto</span>
+                            d.valorBruto > 0
+                              ? <span className="text-[9px] font-black px-2 py-1 rounded-full uppercase bg-amber-100 text-amber-700">⚠ Em aberto</span>
+                              : <span className="text-[9px] font-black px-2 py-1 rounded-full uppercase bg-red-100 text-red-700" title="Não entra no fechamento enquanto o bruto estiver zerado">⛔ Valor zerado</span>
                           ) : (
                             <div className="flex flex-col gap-1 items-center">
                               <span className="text-[9px] font-black px-2 py-1 rounded-full uppercase bg-emerald-100 text-emerald-700">🔒 Fechado</span>

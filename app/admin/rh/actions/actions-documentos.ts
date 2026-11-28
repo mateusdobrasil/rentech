@@ -12,9 +12,10 @@ import { extrairTextoPdf, identificarFuncionarioNoTexto } from '../../../lib/tex
 type Resultado = { ok: boolean; erro?: string; info?: any };
 
 const BUCKET = 'documentos-folha';
-// Usado pela tela de separar holerites da contabilidade em /admin/rh/holerite
-// e pelo mesmo fluxo replicado em /admin/financeiro/rh.
-const ROTAS_PERMITIDAS = ['/admin/rh/holerite', '/admin/financeiro/rh'];
+// Usado pela tela de separar holerites da contabilidade em /admin/rh/holerite,
+// pelo mesmo fluxo replicado em /admin/financeiro/rh, e pela seção "Via
+// Contabilidade" de /admin/rh/decimo-terceiro (só leitura do PDF/valor).
+const ROTAS_PERMITIDAS = ['/admin/rh/holerite', '/admin/financeiro/rh', '/admin/rh/decimo-terceiro'];
 
 async function validarAcessoDocumentos(accessToken: string) {
   return validarAcessoAlgumaRota(accessToken, ROTAS_PERMITIDAS);

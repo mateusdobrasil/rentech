@@ -800,8 +800,8 @@ export default function ParametrosRH() {
                   </label>
                   <p className={`text-[9px] font-bold mt-1 uppercase pl-7 ${form.decimo_terceiro_integral ? 'text-amber-600' : 'text-gray-400'}`}>
                     {form.decimo_terceiro_integral
-                      ? 'Entra em /admin/rh/decimo-terceiro: calculamos as 2 parcelas (INSS/IRRF) e controlamos o pagamento.'
-                      : 'Desmarcado = 13º só pela contabilidade, mesmo fluxo de sempre (OCR dos PDFs importados).'}
+                      ? 'Em /admin/rh/decimo-terceiro, seção "Pagamento Direto": calculamos as 2 parcelas (INSS/IRRF), assinatura e pagamento.'
+                      : 'Desmarcado = 13º pela contabilidade (OCR dos PDFs importados) — aparece em /admin/rh/decimo-terceiro, seção "Via Contabilidade", só leitura.'}
                   </p>
                 </div>
               </div>

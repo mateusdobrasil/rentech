@@ -1,14 +1,17 @@
 "use client";
 
 // app/admin/rh/decimo-terceiro/page.tsx
-// 13º Salário INTEGRAL — só funcionários cujo Modelo de Contrato tem
-// decimo_terceiro_integral=true (configurado em /admin/rh/parametros). Quem
-// não tem essa flag continua no fluxo de sempre (13º "somente contabilidade",
-// OCR dos PDFs importados em /admin/rh/holerite → Separar Holerites).
-//
-// Fluxo por ano: Fechar (congela avos/bruto/INSS/IRRF/parcelas) → Enviar p/
-// assinatura cada parcela (Autentique) → marcar paga (manual ou pelo lote
-// PIX do Financeiro RH, fonte "13º Integral — 1ª/2ª Parcela").
+// Tela única do 13º Salário (pedido do usuário, 28/11/2026): toda a parte do
+// 13º fica aqui, integral ou não.
+// - "Pagamento Direto (Integral)": Modelo de Contrato com
+//   decimo_terceiro_integral=true. Fechar (congela avos/bruto/INSS/IRRF/
+//   parcelas) → Enviar p/ assinatura cada parcela (Autentique) → marcar paga
+//   (manual ou pelo lote PIX do Financeiro RH, fonte "13º Integral — 1ª/2ª
+//   Parcela").
+// - "Via Contabilidade": Modelo de Contrato com recebe_holerite_contabilidade
+//   =true (e não integral). Só leitura — o valor é exatamente o do holerite
+//   importado em /admin/rh/holerite → Separar Holerites. O pagamento já roda
+//   pela fonte "DECIMO_TERCEIRO" do lote de Financeiro RH.
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Analytics } from "@vercel/analytics/next";
@@ -16,6 +19,7 @@ import {
   painelDecimoTerceiroAction, fecharDecimoTerceiroLoteAction, reabrirDecimoTerceiroAction,
   marcarParcela13PagaAction, enviarDecimoTerceiroAssinaturaAction
 } from '../actions/actions-decimo-terceiro';
+import { urlDocumentoContabilAction } from '../actions/actions-documentos';
 import { usePageAccess } from '../../../components/hooks/usePageAccess';
 import { HubErro } from '../../../components/ui/HubStates';
 import { useToast, useConfirm, usePrompt } from '../../../components/ui/NotificationProvider';
@@ -38,6 +42,12 @@ interface Linha13 {
   statusAssinaturaP2: string | null;
 }
 
+interface LinhaContabilidade13 {
+  func: { nome_completo: string; cargo: string | null; empresa_id: number | null };
+  documentos: { mesReferencia: string; valorOcr: number | null }[];
+  totalValor: number;
+}
+
 const SELO_ASSINATURA: Record<string, { label: string; cls: string }> = {
   ENVIADO: { label: '📤 Enviado', cls: 'bg-indigo-100 text-indigo-700' },
   VISUALIZADO: { label: '👁 Visualizado', cls: 'bg-blue-100 text-blue-700' },
@@ -55,10 +65,12 @@ export default function DecimoTerceiroPage() {
 
   const [ano, setAno] = useState(() => new Date().getFullYear());
   const [linhas, setLinhas] = useState<Linha13[]>([]);
+  const [linhasContabilidade, setLinhasContabilidade] = useState<LinhaContabilidade13[]>([]);
   const [loading, setLoading] = useState(true);
   const [semRegraConfigurada, setSemRegraConfigurada] = useState(false);
   const [sandbox, setSandbox] = useState(true);
   const [processando, setProcessando] = useState<string | null>(null); // "{nome}::{acao}"
+  const [abrindoDoc, setAbrindoDoc] = useState<string | null>(null); // "{nome}::{mesReferencia}"
 
   const carregar = async (anoRef: number) => {
     setLoading(true);
@@ -66,13 +78,29 @@ export default function DecimoTerceiroPage() {
       const res = await painelDecimoTerceiroAction({ ano: anoRef }, accessToken);
       if (!res.ok) throw new Error(res.erro);
       setLinhas(res.info.linhas || []);
+      setLinhasContabilidade(res.info.linhasContabilidade || []);
       setSemRegraConfigurada(!!res.info.semRegraConfigurada);
     } catch (e: any) {
-      toast('Erro ao carregar o 13º Integral: ' + e.message, 'error');
+      toast('Erro ao carregar o 13º: ' + e.message, 'error');
     } finally {
       setLoading(false);
     }
   };
+
+  const verDocumento = async (nome: string, mesReferencia: string) => {
+    setAbrindoDoc(`${nome}::${mesReferencia}`);
+    try {
+      const res = await urlDocumentoContabilAction({ funcionarioNome: nome, mesReferencia, tipo: 'DECIMO_TERCEIRO' }, accessToken);
+      if (!res.ok) throw new Error(res.erro);
+      window.open(res.info.url, '_blank');
+    } catch (e: any) {
+      toast('Erro ao abrir o documento: ' + e.message, 'error');
+    } finally {
+      setAbrindoDoc(null);
+    }
+  };
+
+  const mesBR = (iso: string) => { const [a, m] = iso.split('-'); return `${m}/${a}`; };
 
   useEffect(() => { if (!authLoading && accessToken) carregar(ano); }, [ano, authLoading, accessToken]);
 
@@ -185,7 +213,7 @@ export default function DecimoTerceiroPage() {
 
       <div className="bg-[#FEF3C7] border-b border-[#FDE68A] px-4 md:px-8 py-4 flex flex-col sm:flex-row justify-between items-center gap-3 shadow-sm print:hidden">
         <p className="text-[#92400E] font-medium text-sm">
-          🎄 <strong>13º Salário Integral</strong>. Só funcionários cujo Modelo de Contrato marca "13º Integral" em Parâmetros — os demais continuam no 13º da contabilidade (via Holerites → Separar Holerites).
+          🎄 <strong>13º Salário</strong>. Pagamento Direto (Integral): calculamos, fechamos, enviamos p/ assinatura e levamos ao lote PIX. Via Contabilidade: o valor é exatamente o do holerite importado em Separar Holerites — só leitura aqui.
         </p>
         <button onClick={() => router.push('/admin/rh')} className="text-[10px] md:text-xs font-black bg-white hover:bg-amber-50 border border-[#FDE68A] text-[#92400E] px-4 py-2 rounded-lg transition-colors shadow-sm tracking-wider uppercase">
           ⬅ VOLTAR AO RH
@@ -195,8 +223,11 @@ export default function DecimoTerceiroPage() {
       <div className="p-4 md:px-8 pt-6 max-w-[1500px] mx-auto w-full space-y-6">
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E2E8F0] flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
           <div>
-            <h1 className="text-xl font-black text-[#0C1D4D] uppercase tracking-wider">13º Salário Integral — {ano}</h1>
-            <p className="text-sm text-[#64748B] font-medium mt-1">{linhas.length} funcionário(s) elegível(is) • {fechados.length} fechado(s) • {abertos.length} em aberto</p>
+            <h1 className="text-xl font-black text-[#0C1D4D] uppercase tracking-wider">13º Salário — {ano}</h1>
+            <p className="text-sm text-[#64748B] font-medium mt-1">
+              Direto: {linhas.length} elegível(is) • {fechados.length} fechado(s) • {abertos.length} em aberto
+              {linhasContabilidade.length > 0 && <> · Contabilidade: {linhasContabilidade.length} funcionário(s)</>}
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
             <input type="number" value={ano} onChange={e => setAno(Number(e.target.value) || ano)} className="w-24 p-2.5 border border-[#CBD5E1] rounded-xl text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]" />
@@ -219,6 +250,8 @@ export default function DecimoTerceiroPage() {
             <button onClick={() => router.push('/admin/rh/parametros')} className="underline font-bold">/admin/rh/parametros</button>.
           </div>
         )}
+
+        <h2 className="text-xs font-black text-[#64748B] uppercase tracking-widest pl-1">💰 Pagamento Direto (Integral)</h2>
 
         <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden">
           {loading ? (
@@ -331,6 +364,73 @@ export default function DecimoTerceiroPage() {
 
         <p className="text-[10px] text-gray-400 font-bold tracking-wide mt-2 text-center uppercase">
           Cálculo: 1ª parcela = 50% do bruto, sem desconto (prazo legal até 30/11) · 2ª parcela = bruto − 1ª parcela − INSS − IRRF, tributação exclusiva sobre o total do 13º (prazo legal até 20/12). Conferir com a contabilidade antes de pagar.
+        </p>
+
+        <h2 className="text-xs font-black text-[#64748B] uppercase tracking-widest pl-1 pt-4">🏢 Via Contabilidade</h2>
+
+        <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden">
+          {loading ? (
+            <div className="p-16 text-center text-gray-400 font-bold uppercase tracking-wider flex flex-col items-center justify-center gap-3">
+              <div className="w-8 h-8 border-4 border-[#0C1D4D] border-t-transparent rounded-full animate-spin"></div>
+              Carregando...
+            </div>
+          ) : linhasContabilidade.length === 0 ? (
+            <div className="p-16 text-center text-gray-400 font-bold uppercase tracking-wider">
+              Nenhum funcionário com 13º pela contabilidade neste ano.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left border-collapse">
+                <thead className="bg-[#F8FAFC] border-b-2 border-[#E2E8F0]">
+                  <tr className="text-[10px] uppercase font-black tracking-widest text-[#64748B]">
+                    <th className="p-4">Colaborador</th>
+                    <th className="p-4">Documentos importados</th>
+                    <th className="p-4 text-right">Total (valor do holerite)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#E2E8F0] font-medium">
+                  {linhasContabilidade.map(l => {
+                    const key = l.func.nome_completo;
+                    return (
+                      <tr key={key} className="hover:bg-[#F8FAFC] transition-colors align-top">
+                        <td className="p-4">
+                          <span className="font-black text-[#0C1D4D] text-sm block">{l.func.nome_completo}</span>
+                          <span className="text-[10px] text-gray-400 font-bold block uppercase mt-0.5">{l.func.cargo || '—'}</span>
+                          <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase inline-block mt-1 ${corSeloEmpresa(l.func.empresa_id)}`}>🏭 Empresa {l.func.empresa_id ?? '—'}</span>
+                        </td>
+                        <td className="p-4">
+                          {l.documentos.length === 0 ? (
+                            <span className="text-[10px] font-black text-amber-600 uppercase">⚠ Nenhum documento importado ainda</span>
+                          ) : (
+                            <div className="flex flex-col gap-1.5">
+                              {l.documentos.map(d => (
+                                <div key={d.mesReferencia} className="flex items-center gap-2">
+                                  <span className="text-[10px] font-black text-gray-500 uppercase w-16">{mesBR(d.mesReferencia)}</span>
+                                  {d.valorOcr != null ? (
+                                    <span className="text-xs font-bold text-[#0C1D4D] tabular-nums">{BRL(d.valorOcr)}</span>
+                                  ) : (
+                                    <span className="text-[10px] font-black text-amber-600 uppercase">⏳ aguardando leitura do valor</span>
+                                  )}
+                                  <button onClick={() => verDocumento(key, d.mesReferencia)} disabled={abrindoDoc !== null} className="text-[9px] font-black text-indigo-600 uppercase hover:bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 disabled:opacity-50">
+                                    {abrindoDoc === `${key}::${d.mesReferencia}` ? '...' : '👁 Ver'}
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-4 text-right tabular-nums font-bold">{BRL(l.totalValor)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <p className="text-[10px] text-gray-400 font-bold tracking-wide mt-2 text-center uppercase">
+          Via Contabilidade: valor igual ao do holerite importado em /admin/rh/holerite → Separar Holerites (tipo "Décimo Terceiro"). Sem cálculo nosso; o pagamento roda pela fonte "13º Salário (contabilidade)" do lote de /admin/financeiro/rh.
         </p>
       </div>
     </div>

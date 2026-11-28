@@ -1,16 +1,19 @@
 'use server';
 
 // app/admin/rh/actions/actions-decimo-terceiro.ts
-// 13º Salário INTEGRAL — só para funcionários cujo Modelo de Contrato tem
-// folha_parametros.decimo_terceiro_integral = true (configurado em
-// /admin/rh/parametros). Quem não tem essa flag continua no fluxo já
-// existente (13º "somente contabilidade", OCR dos PDFs importados em
-// actions-financeiro.ts / SepararHolerites.tsx — nenhum cálculo nosso).
-//
-// Mesmo padrão de folha_rescisoes: uma linha por (funcionário, ano), duas
-// parcelas rastreadas (pago_em/pago_lote_id próprios), reabrir só antes de
-// qualquer parcela paga, assinatura via Autentique reaproveitando
-// folha_holerite_assinaturas com marcador sintético "13-{ano}-P{parcela}".
+// Tela única do 13º Salário — pedido do usuário (28/11/2026): tudo sobre o
+// 13º fica aqui, integral ou não.
+// - decimo_terceiro_integral=true (Modelo de Contrato): cálculo nosso (2
+//   parcelas, INSS/IRRF), fechar/assinatura Autentique/lote PIX — mesmo
+//   padrão de folha_rescisoes: uma linha por (funcionário, ano), parcelas
+//   rastreadas (pago_em/pago_lote_id próprios), reabrir só antes de qualquer
+//   parcela paga, assinatura reaproveitando folha_holerite_assinaturas com
+//   marcador sintético "13-{ano}-P{parcela}".
+// - recebe_holerite_contabilidade=true (e não integral): só leitura — o
+//   valor é exatamente o do holerite importado em /admin/rh/holerite →
+//   Separar Holerites (folha_documentos_contabeis.valor_ocr, tipo
+//   DECIMO_TERCEIRO). Sem cálculo nosso, sem assinatura por aqui; o
+//   pagamento já roda pela fonte "DECIMO_TERCEIRO" do lote de Financeiro RH.
 import { supabaseAdmin } from '../../../lib/supabase';
 import { filtrarFicha } from '../../../lib/funcionarioRef';
 import { validarAcesso, validarAcessoAlgumaRota, obterEmpresasPermitidas, empresaPermitida } from '../../../lib/serverAuth';
@@ -51,8 +54,14 @@ async function nomeEmpresaDoFuncionario(db: ReturnType<typeof supabaseAdmin>, em
 const marcadorAssinatura13 = (ano: number, parcela: 1 | 2) => `13-${ano}-P${parcela}`;
 
 // ============================================================================
-// PAINEL — elegíveis (regra com decimo_terceiro_integral=true), calculado ao
-// vivo pra quem ainda está aberto, ou o snapshot congelado pra quem já fechou.
+// PAINEL — duas listas no mesmo ano:
+// 1) "linhas" — contrato com decimo_terceiro_integral=true: cálculo nosso
+//    (ao vivo ou snapshot congelado), fechar/assinatura/lote PIX, como antes.
+// 2) "linhasContabilidade" — contrato com recebe_holerite_contabilidade=true
+//    (e NÃO integral): só leitura, valor = exatamente o valor_ocr do
+//    documento DECIMO_TERCEIRO importado em /admin/rh/holerite → Separar
+//    Holerites para o ano. Sem cálculo, sem assinatura por aqui — o
+//    pagamento já roda pela fonte "DECIMO_TERCEIRO" do lote de Financeiro RH.
 // ============================================================================
 export async function painelDecimoTerceiroAction(payload: { ano: number }, accessToken: string): Promise<Resultado> {
   const acesso = await validarAcesso(accessToken, ROTA);
@@ -64,11 +73,10 @@ export async function painelDecimoTerceiroAction(payload: { ano: number }, acces
   try {
     const empresasPermitidas = await obterEmpresasPermitidas(acesso.perfil.id, acesso.perfil.permissaoNormalizada);
 
-    const { data: regras } = await db.from('folha_parametros').select('nome_regra, decimo_terceiro_integral');
+    const { data: regras } = await db.from('folha_parametros').select('nome_regra, decimo_terceiro_integral, recebe_holerite_contabilidade');
     const regrasIntegral = new Set((regras || []).filter(r => r.decimo_terceiro_integral === true).map(r => r.nome_regra));
-    if (regrasIntegral.size === 0) {
-      return { ok: true, info: { linhas: [], semRegraConfigurada: true } };
-    }
+    const regrasContabilidade = new Set((regras || []).filter(r => r.recebe_holerite_contabilidade === true && r.decimo_terceiro_integral !== true).map(r => r.nome_regra));
+    const semRegraConfigurada = regrasIntegral.size === 0;
 
     let qFuncs = db.from('folha_funcionarios')
       .select('id, nome_completo, cargo, tipo_contrato, salario_folha, salario_contrato, data_admissao, data_desligamento, cpf, celular, email, empresa_id')
@@ -78,7 +86,28 @@ export async function painelDecimoTerceiroAction(payload: { ano: number }, acces
     if (erroFuncs) throw new Error(erroFuncs.message);
 
     const elegiveis = (funcsTodos || []).filter(f => regrasIntegral.has(f.tipo_contrato));
-    if (elegiveis.length === 0) return { ok: true, info: { linhas: [] } };
+    const elegiveisContabilidade = (funcsTodos || []).filter(f => regrasContabilidade.has(f.tipo_contrato));
+
+    const linhasContabilidade: any[] = [];
+    if (elegiveisContabilidade.length > 0) {
+      const nomesContab = elegiveisContabilidade.map(f => f.nome_completo);
+      const { data: docs } = await db.from('folha_documentos_contabeis')
+        .select('funcionario_nome, mes_referencia, valor_ocr, storage_path')
+        .eq('tipo', 'DECIMO_TERCEIRO').like('mes_referencia', `${ano}-%`).in('funcionario_nome', nomesContab);
+      const docsPorNome: Record<string, { mesReferencia: string; valorOcr: number | null }[]> = {};
+      (docs || []).forEach(d => {
+        (docsPorNome[d.funcionario_nome] ||= []).push({ mesReferencia: d.mes_referencia, valorOcr: d.valor_ocr != null ? Number(d.valor_ocr) : null });
+      });
+      elegiveisContabilidade.forEach(f => {
+        const documentos = (docsPorNome[f.nome_completo] || []).sort((a, b) => a.mesReferencia.localeCompare(b.mesReferencia));
+        linhasContabilidade.push({
+          func: f, documentos,
+          totalValor: documentos.reduce((s, d) => s + (d.valorOcr || 0), 0)
+        });
+      });
+    }
+
+    if (elegiveis.length === 0) return { ok: true, info: { linhas: [], linhasContabilidade, semRegraConfigurada } };
 
     const nomes = elegiveis.map(f => f.nome_completo);
 
@@ -131,7 +160,7 @@ export async function painelDecimoTerceiroAction(payload: { ano: number }, acces
       };
     });
 
-    return { ok: true, info: { linhas } };
+    return { ok: true, info: { linhas, linhasContabilidade, semRegraConfigurada } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

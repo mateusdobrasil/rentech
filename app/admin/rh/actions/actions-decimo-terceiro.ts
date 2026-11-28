@@ -9,9 +9,10 @@
 //   pago_lote_id próprios), reabrir só antes de qualquer parcela paga,
 //   assinatura reaproveitando folha_holerite_assinaturas com marcador
 //   sintético "13-{ano}-P{parcela}". A 1ª e a 2ª parcela podem ser DIGITADAS
-//   antes de fechar (valoresParcelasDigitadas) — o digitado é o que se paga,
-//   sem INSS/IRRF; sem digitação, vale o cálculo sugerido (salário cadastrado,
-//   avos, INSS/IRRF).
+//   antes de fechar (valoresParcelasDigitadas) — o digitado é o que se paga;
+//   sem digitação, vale o sugerido (salário ÷ 12 × avos, metade em cada
+//   parcela). Nenhum dos dois tem INSS/IRRF. Sem data de admissão na ficha,
+//   não fecha.
 // - "Via Contabilidade" (recebe_holerite_contabilidade=true e não integral):
 //   só leitura — o valor é exatamente o do holerite importado em
 //   /admin/rh/holerite → Separar Holerites (folha_documentos_contabeis.
@@ -144,16 +145,12 @@ export async function painelDecimoTerceiroAction(payload: { ano: number; empresa
 
     const nomes = elegiveis.map(f => f.nome_completo);
 
-    const [{ data: deps }, { data: fechados }, { data: assinaturas }] = await Promise.all([
-      db.from('folha_dependentes').select('funcionario_nome').in('funcionario_nome', nomes),
+    const [{ data: fechados }, { data: assinaturas }] = await Promise.all([
       db.from('folha_decimo_terceiro').select('*').eq('ano', ano).in('funcionario_nome', nomes),
       db.from('folha_holerite_assinaturas').select('funcionario_nome, status, mes_referencia')
         .in('mes_referencia', [marcadorAssinatura13(ano, 1), marcadorAssinatura13(ano, 2)])
         .in('funcionario_nome', nomes)
     ]);
-
-    const depsPorNome: Record<string, number> = {};
-    (deps || []).forEach(d => { depsPorNome[d.funcionario_nome] = (depsPorNome[d.funcionario_nome] || 0) + 1; });
 
     const fechadoPorNome: Record<string, any> = {};
     (fechados || []).forEach(f => { fechadoPorNome[f.funcionario_nome] = f; });
@@ -176,10 +173,7 @@ export async function painelDecimoTerceiroAction(payload: { ano: number; empresa
         };
       } else {
         const salarioBase = f.salario_folha > 0 ? f.salario_folha : f.salario_contrato;
-        dados = calcular13Integral({
-          salarioBase, dataAdmissao: f.data_admissao, dataDesligamento: f.data_desligamento,
-          ano, numeroDependentesIrrf: depsPorNome[f.nome_completo] || 0
-        });
+        dados = calcular13Integral({ salarioBase, dataAdmissao: f.data_admissao, dataDesligamento: f.data_desligamento, ano });
       }
       return {
         func: f, dados,
@@ -190,9 +184,6 @@ export async function painelDecimoTerceiroAction(payload: { ano: number; empresa
         } : null,
         statusAssinaturaP1: assinaturaPorChave[`${f.nome_completo}::1`] || null,
         statusAssinaturaP2: assinaturaPorChave[`${f.nome_completo}::2`] || null,
-        // Só usado no cliente pra recalcular o split (INSS/IRRF) ao vivo
-        // quando o usuário digita o bruto manualmente, antes de fechar.
-        numeroDependentesIrrf: depsPorNome[f.nome_completo] || 0,
       };
     });
 
@@ -229,18 +220,18 @@ export async function fecharDecimoTerceiroLoteAction(payload: {
     const foraDoEscopo = (funcs || []).filter(f => !empresaPermitida(empresasPermitidas, f.empresa_id));
     if (foraDoEscopo.length > 0) return { ok: false, erro: 'Você não tem permissão para fechar o 13º de um ou mais desses funcionários.' };
 
-    const { data: deps } = await db.from('folha_dependentes').select('funcionario_nome').in('funcionario_nome', nomes);
-    const depsPorNome: Record<string, number> = {};
-    (deps || []).forEach(d => { depsPorNome[d.funcionario_nome] = (depsPorNome[d.funcionario_nome] || 0) + 1; });
-
     const { data: existentes } = await db.from('folha_decimo_terceiro').select('funcionario_nome, parcela1_pago_em, parcela2_pago_em').eq('ano', ano).in('funcionario_nome', nomes);
     const bloqueadosPagos = new Set((existentes || []).filter(e => e.parcela1_pago_em || e.parcela2_pago_em).map(e => e.funcionario_nome));
 
     let fechados = 0;
     const ignorados: string[] = [];
     const zerados: string[] = [];
+    const semAdmissao: string[] = [];
     for (const f of funcs || []) {
       if (bloqueadosPagos.has(f.nome_completo)) { ignorados.push(f.nome_completo); continue; }
+      // Sem data de admissão não fecha (pedido do usuário, 2026-11-28): sem ela
+      // os avos contariam o ano inteiro, e o RH precisa completar a ficha.
+      if (!f.data_admissao) { semAdmissao.push(f.nome_completo); continue; }
       const salarioBase = f.salario_folha > 0 ? f.salario_folha : f.salario_contrato;
       const digitadas = valoresParcelasDigitadas?.[f.nome_completo];
       const dados = digitadas
@@ -248,10 +239,7 @@ export async function fecharDecimoTerceiroLoteAction(payload: {
             parcela1Valor: Number(digitadas.parcela1) || 0, parcela2Valor: Number(digitadas.parcela2) || 0,
             salarioBase, dataAdmissao: f.data_admissao, dataDesligamento: f.data_desligamento, ano
           })
-        : calcular13Integral({
-            salarioBase, dataAdmissao: f.data_admissao, dataDesligamento: f.data_desligamento,
-            ano, numeroDependentesIrrf: depsPorNome[f.nome_completo] || 0
-          });
+        : calcular13Integral({ salarioBase, dataAdmissao: f.data_admissao, dataDesligamento: f.data_desligamento, ano });
       // Parcela zerada (sem salário cadastrado, 0 avos ou nada digitado) nunca
       // é fechada — senão viraria recibo/assinatura/lote de R$ 0,00.
       if (!(dados.parcela1Valor > 0) || !(dados.parcela2Valor > 0)) { zerados.push(f.nome_completo); continue; }
@@ -271,7 +259,7 @@ export async function fecharDecimoTerceiroLoteAction(payload: {
       setor: 'RECURSOS HUMANOS / 13º SALÁRIO'
     });
 
-    return { ok: true, info: { fechados, ignorados, zerados } };
+    return { ok: true, info: { fechados, ignorados, zerados, semAdmissao } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }
@@ -417,13 +405,12 @@ export async function previaHolerite13Action(payload: {
       v = fechado;
     } else {
       const salarioBase = f.salario_folha > 0 ? f.salario_folha : f.salario_contrato;
-      const { count } = await db.from('folha_dependentes').select('funcionario_nome', { count: 'exact', head: true }).eq('funcionario_nome', f.nome_completo);
       const d = parcelasDigitadas
         ? calcular13ComParcelasDigitadas({
             parcela1Valor: Number(parcelasDigitadas.parcela1) || 0, parcela2Valor: Number(parcelasDigitadas.parcela2) || 0,
             salarioBase, dataAdmissao: f.data_admissao, dataDesligamento: f.data_desligamento, ano
           })
-        : calcular13Integral({ salarioBase, dataAdmissao: f.data_admissao, dataDesligamento: f.data_desligamento, ano, numeroDependentesIrrf: count || 0 });
+        : calcular13Integral({ salarioBase, dataAdmissao: f.data_admissao, dataDesligamento: f.data_desligamento, ano });
       v = { ano, valor_bruto: d.valorBruto, parcela1_valor: d.parcela1Valor, parcela2_valor: d.parcela2Valor, inss_valor: d.inssValor, irrf_valor: d.irrfValor, fechado_em: null };
     }
 

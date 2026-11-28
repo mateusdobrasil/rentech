@@ -19,17 +19,19 @@ No topo, escolha a **empresa** (Rentech ou Alfa Light; nunca as duas juntas, e a
 
 ## Via Empresa: definir as parcelas
 
-Cada linha mostra o colaborador, o cargo e o **📄 Salário folha** (o salário da folha na ficha, só para consulta), além de avos, bruto, 1ª parcela, INSS, IRRF e 2ª parcela.
+Cada linha mostra o colaborador, o cargo e o **📄 Salário folha** (o salário da folha na ficha, só para consulta), além de avos, bruto, 1ª parcela e 2ª parcela.
 
-**Valor sugerido:** sem digitar nada, a linha mostra o cálculo da CLT:
+**Sem descontos:** a Via Empresa não desconta INSS nem IRRF. O valor de cada parcela é o que se paga.
+
+**Valor sugerido:** sem digitar nada, a linha mostra:
 
 - Bruto = salário ÷ 12 × avos do ano. O salário é o da folha ou, se ele estiver vazio, o do contrato.
-- 1ª parcela = 50% do bruto, sem desconto (prazo legal: 30/11).
-- 2ª parcela = bruto − 1ª parcela − INSS − IRRF (prazo legal: 20/12).
+- 1ª parcela = 50% do bruto (prazo legal: 30/11).
+- 2ª parcela = bruto − 1ª parcela (prazo legal: 20/12).
 
 **Digitar as parcelas:** os campos **1ª Parcela** e **2ª Parcela** aceitam o valor que a empresa vai pagar (ex.: `1.500,50`).
 
-- O valor digitado é **exatamente o que se paga**, sem INSS e sem IRRF. O bruto vira 1ª + 2ª.
+- O valor digitado é **exatamente o que se paga**. O bruto vira 1ª + 2ª.
 - Digite **as duas**: com uma só preenchida, a outra conta como zero e a linha não fecha.
 - Campos vazios = vale o valor sugerido (em cinza dentro do campo).
 
@@ -37,15 +39,17 @@ Cada linha mostra o colaborador, o cargo e o **📄 Salário folha** (o salário
 
 ## Via Empresa: fechar, assinar e pagar
 
-1. **🔒 Fechar Todos** congela os valores de todas as linhas em aberto. Depois de fechado, mudança de salário ou de dependentes não altera mais nada.
-2. **Valor zerado não fecha:** a linha com a 1ª ou a 2ª parcela em zero aparece como **⛔ Valor zerado** e fica de fora. O aviso ao fechar diz quantas e quais ficaram de fora.
+1. **🔒 Fechar Todos** congela os valores de todas as linhas em aberto. Depois de fechado, mudança de salário não altera mais nada.
+2. **O que não fecha** (fica de fora, e o aviso ao fechar diz quantas e quais):
+   - **⛔ Sem data de admissão:** a ficha do funcionário está sem a data de admissão. Sem ela os avos não podem ser contados. Preencha a ficha e feche de novo.
+   - **⛔ Valor zerado:** a 1ª ou a 2ª parcela está em zero.
 3. Com a linha fechada, cada parcela tem os botões:
    - **📤 Assinatura**: gera o holerite da parcela e envia pela Autentique. A ficha precisa ter CPF e celular ou e-mail. Parcela zerada não é enviada.
    - **✓ Marcar paga**: para pagamento feito fora do lote (TED manual, por exemplo). Dá para desfazer, menos quando foi paga pelo lote.
 4. **🧪 Teste / ⚠ Real:** aparece no topo depois do fechamento, junto com os botões de assinatura. Em Teste (o padrão), o envio para assinatura não gasta documento do plano Autentique. Mude para Real só quando os valores estiverem conferidos.
 5. **↺ Reabrir** pede o motivo e só funciona se nenhuma das parcelas estiver paga. A linha volta ao valor sugerido; digite de novo as parcelas, se for o caso.
 
-**Holerite do 13º:** sai no mesmo modelo do holerite de salário ("Demonstrativo de Pagamento"), um por parcela, com o texto **13º Salário - 1ª parcela** ou **13º Salário - 2ª parcela**. Em Créditos vai a parcela; em Débitos, o INSS e o IRRF da 2ª parcela quando é o valor sugerido. Com parcelas digitadas não há débitos, e o rodapé diz "valores definidos pela empresa". Depois de assinado, o funcionário vê o holerite no Portal com esse mesmo nome.
+**Holerite do 13º:** sai no mesmo modelo do holerite de salário ("Demonstrativo de Pagamento"), um por parcela, com o texto **13º Salário - 1ª parcela** ou **13º Salário - 2ª parcela**. Em Créditos vai a parcela; não há débitos, e o rodapé diz "valores definidos pela empresa". Depois de assinado, o funcionário vê o holerite no Portal com esse mesmo nome.
 
 **Pagamento:** em Financeiro → RH, monte o lote com a fonte **13º Integral — 1ª Parcela** ou **13º Integral — 2ª Parcela** (grupo Avulsos). Cada parcela some do lote depois de paga, e parcela zerada não entra.
 

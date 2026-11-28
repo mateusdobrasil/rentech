@@ -810,7 +810,7 @@ export default function ParametrosRH() {
                     {form.recebe_holerite
                       ? 'Só habilita com "Recebe holerite (contabilidade)?" desmarcado.'
                       : form.decimo_terceiro_integral
-                        ? 'Em /admin/rh/decimo-terceiro, seção "Via Empresa": calculamos as 2 parcelas (INSS/IRRF), assinatura e pagamento.'
+                        ? 'Em /admin/rh/decimo-terceiro, seção "Via Empresa": as 2 parcelas (sem descontos), assinatura e pagamento.'
                         : 'Desmarcado = 13º pela contabilidade (OCR dos PDFs importados) — aparece em /admin/rh/decimo-terceiro, seção "Via Contabilidade", só leitura.'}
                   </p>
                 </div>

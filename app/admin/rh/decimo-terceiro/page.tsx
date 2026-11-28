@@ -6,7 +6,7 @@
 // - "Via Empresa": Modelo de Contrato com decimo_terceiro_integral=true. O
 //   bruto pode ser DIGITADO manualmente (pedido do usuário) antes de fechar —
 //   se não digitado, sugere o cálculo automático a partir do salário
-//   cadastrado. Fechar (congela avos/bruto/INSS/IRRF/parcelas) → Enviar p/
+//   cadastrado (sem INSS/IRRF). Fechar (congela avos/bruto/parcelas) → Enviar p/
 //   assinatura cada parcela (Autentique) → marcar paga (manual ou pelo lote
 //   PIX do Financeiro RH, fonte "13º Integral — 1ª/2ª Parcela").
 // - "Via Contabilidade": Modelo de Contrato com recebe_holerite_contabilidade
@@ -32,7 +32,7 @@ import { ehAdministradorGlobal } from '../../../lib/permissoes';
 const BRL = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 interface Linha13 {
-  func: { nome_completo: string; cargo: string | null; empresa_id: number | null; salario_folha: number | null };
+  func: { nome_completo: string; cargo: string | null; empresa_id: number | null; salario_folha: number | null; data_admissao: string | null };
   dados: {
     ano: number; mesesAvos: number; salarioBase: number; valorBruto: number;
     parcela1Valor: number; inssValor: number; irrfValor: number; parcela2Valor: number; calculadoEm: string;
@@ -44,7 +44,6 @@ interface Linha13 {
   } | null;
   statusAssinaturaP1: string | null;
   statusAssinaturaP2: string | null;
-  numeroDependentesIrrf: number;
 }
 
 interface LinhaSem13 {
@@ -218,7 +217,7 @@ export default function DecimoTerceiroPage() {
   };
 
   // Dados exibidos pra uma linha: congelados se já fechou; com parcelas
-  // digitadas, o digitado é o que se paga (sem INSS/IRRF, bruto = 1ª + 2ª);
+  // digitadas, o digitado é o que se paga (bruto = 1ª + 2ª);
   // senão, o cálculo sugerido.
   const dadosExibidos = (l: Linha13) => {
     if (l.fechamento) return l.dados;
@@ -251,14 +250,17 @@ export default function DecimoTerceiroPage() {
     }
   };
 
-  // Parcela zerada não entra no fechamento (o servidor também barra).
+  // Não entram no fechamento (o servidor também barra): parcela zerada e
+  // ficha sem data de admissão.
   const temValor = (l: Linha13) => { const d = dadosExibidos(l); return d.parcela1Valor > 0 && d.parcela2Valor > 0; };
-  const fechaveis = abertos.filter(temValor);
-  const zeradosAbertos = abertos.length - fechaveis.length;
+  const temAdmissao = (l: Linha13) => !!l.func.data_admissao;
+  const fechaveis = abertos.filter(l => temValor(l) && temAdmissao(l));
+  const semAdmissaoAbertos = abertos.filter(l => !temAdmissao(l)).length;
+  const zeradosAbertos = abertos.filter(l => temAdmissao(l) && !temValor(l)).length;
 
   const fecharTodos = async () => {
     if (abertos.length === 0) { toast('Todos já estão fechados para este ano.', 'info'); return; }
-    if (fechaveis.length === 0) { toast('Todos os 13º em aberto estão com parcela zerada — digite a 1ª e a 2ª parcela antes de fechar.', 'error'); return; }
+    if (fechaveis.length === 0) { toast('Nenhum 13º em aberto pode ser fechado: confira a data de admissão na ficha e digite a 1ª e a 2ª parcela.', 'error'); return; }
     const totalBruto = fechaveis.reduce((s, l) => s + dadosExibidos(l).valorBruto, 0);
     const valoresParcelasDigitadas: Record<string, { parcela1: number; parcela2: number }> = {};
     fechaveis.forEach(l => {
@@ -269,7 +271,8 @@ export default function DecimoTerceiroPage() {
       `Fechar o 13º Salário (Via Empresa) de ${ano} para ${fechaveis.length} funcionário(s)?\n\n` +
       `Total bruto: ${BRL(totalBruto)}\n\n` +
       (zeradosAbertos > 0 ? `${zeradosAbertos} funcionário(s) com parcela zerada ficam de fora.\n\n` : '') +
-      `Depois de fechado, os valores ficam congelados (não acompanham mudança de salário/dependentes) até reabrir.`
+      (semAdmissaoAbertos > 0 ? `${semAdmissaoAbertos} funcionário(s) sem data de admissão na ficha ficam de fora.\n\n` : '') +
+      `Depois de fechado, os valores ficam congelados (não acompanham mudança de salário) até reabrir.`
     ))) return;
     setProcessando('LOTE::fechar');
     try {
@@ -277,7 +280,8 @@ export default function DecimoTerceiroPage() {
       if (!res.ok) throw new Error(res.erro);
       const ignoradosMsg = res.info?.ignorados?.length ? `\n\nIgnorados (já têm parcela paga): ${res.info.ignorados.join(', ')}` : '';
       const zeradosMsg = res.info?.zerados?.length ? `\n\nNão fechados (parcela zerada): ${res.info.zerados.join(', ')}` : '';
-      toast(`${res.info?.fechados || 0} fechado(s).${ignoradosMsg}${zeradosMsg}`, 'success');
+      const semAdmissaoMsg = res.info?.semAdmissao?.length ? `\n\nNão fechados (sem data de admissão): ${res.info.semAdmissao.join(', ')}` : '';
+      toast(`${res.info?.fechados || 0} fechado(s).${ignoradosMsg}${zeradosMsg}${semAdmissaoMsg}`, 'success');
       setParcelasDigitadas({});
       carregar(ano, empresaSelecionada!);
     } catch (e: any) {
@@ -441,8 +445,6 @@ export default function DecimoTerceiroPage() {
                     <th className="p-4 text-right">Avos</th>
                     <th className="p-4 text-right">Bruto</th>
                     <th className="p-4 text-right">1ª Parcela</th>
-                    <th className="p-4 text-right">INSS</th>
-                    <th className="p-4 text-right">IRRF</th>
                     <th className="p-4 text-right">2ª Parcela</th>
                     <th className="p-4 text-center">Status</th>
                     <th className="p-4 text-center w-64">Ações</th>
@@ -469,13 +471,11 @@ export default function DecimoTerceiroPage() {
                               value={parcelasDigitadas[key]?.p1 ?? ''}
                               onChange={e => setParcelasDigitadas(prev => ({ ...prev, [key]: { p1: e.target.value, p2: prev[key]?.p2 ?? '' } }))}
                               placeholder={BRL(l.dados.parcela1Valor)}
-                              title="Digite o valor a pagar na 1ª parcela (sem INSS/IRRF). Vazio = cálculo sugerido."
+                              title="Digite o valor a pagar na 1ª parcela. Vazio = cálculo sugerido."
                               className="w-28 p-1.5 border border-[#CBD5E1] rounded-lg text-right text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]"
                             />
                           ) : BRL(d.parcela1Valor)}
                         </td>
-                        <td className="p-4 text-right tabular-nums text-red-600">−{BRL(d.inssValor)}</td>
-                        <td className="p-4 text-right tabular-nums text-red-600">−{BRL(d.irrfValor)}</td>
                         <td className="p-4 text-right tabular-nums font-bold">
                           {!l.fechamento ? (
                             <input
@@ -483,16 +483,18 @@ export default function DecimoTerceiroPage() {
                               value={parcelasDigitadas[key]?.p2 ?? ''}
                               onChange={e => setParcelasDigitadas(prev => ({ ...prev, [key]: { p1: prev[key]?.p1 ?? '', p2: e.target.value } }))}
                               placeholder={BRL(l.dados.parcela2Valor)}
-                              title="Digite o valor a pagar na 2ª parcela (sem INSS/IRRF). Vazio = cálculo sugerido."
+                              title="Digite o valor a pagar na 2ª parcela. Vazio = cálculo sugerido."
                               className="w-28 p-1.5 border border-[#CBD5E1] rounded-lg text-right text-sm font-bold bg-[#F8FAFC] outline-none focus:border-[#336699]"
                             />
                           ) : BRL(d.parcela2Valor)}
                         </td>
                         <td className="p-4 text-center">
                           {!l.fechamento ? (
-                            temValor(l)
-                              ? <span className="text-[9px] font-black px-2 py-1 rounded-full uppercase bg-amber-100 text-amber-700">⚠ Em aberto</span>
-                              : <span className="text-[9px] font-black px-2 py-1 rounded-full uppercase bg-red-100 text-red-700" title="Não entra no fechamento enquanto a 1ª ou a 2ª parcela estiver zerada">⛔ Valor zerado</span>
+                            !temAdmissao(l)
+                              ? <span className="text-[9px] font-black px-2 py-1 rounded-full uppercase bg-red-100 text-red-700" title="Preencha a data de admissão na ficha do funcionário para poder fechar">⛔ Sem data de admissão</span>
+                              : temValor(l)
+                                ? <span className="text-[9px] font-black px-2 py-1 rounded-full uppercase bg-amber-100 text-amber-700">⚠ Em aberto</span>
+                                : <span className="text-[9px] font-black px-2 py-1 rounded-full uppercase bg-red-100 text-red-700" title="Não entra no fechamento enquanto a 1ª ou a 2ª parcela estiver zerada">⛔ Valor zerado</span>
                           ) : (
                             <div className="flex flex-col gap-1 items-center">
                               <span className="text-[9px] font-black px-2 py-1 rounded-full uppercase bg-emerald-100 text-emerald-700">🔒 Fechado</span>
@@ -561,7 +563,7 @@ export default function DecimoTerceiroPage() {
         </div>
 
         <p className="text-[10px] text-gray-400 font-bold tracking-wide mt-2 text-center uppercase">
-          Parcelas digitadas: o valor digitado é o que se paga, sem INSS/IRRF (bruto = 1ª + 2ª). Campo vazio = cálculo sugerido: 1ª parcela = 50% do bruto, sem desconto (prazo legal até 30/11) · 2ª parcela = bruto − 1ª parcela − INSS − IRRF (prazo legal até 20/12).
+          Sem descontos: o valor da parcela é o que se paga. Parcelas digitadas: bruto = 1ª + 2ª. Campo vazio = cálculo sugerido: bruto = salário ÷ 12 × avos · 1ª parcela = 50% do bruto (prazo legal até 30/11) · 2ª parcela = bruto − 1ª (prazo legal até 20/12). Sem data de admissão na ficha, não fecha.
         </p>
 
         <div className="flex flex-wrap items-center justify-between gap-2 pt-4">

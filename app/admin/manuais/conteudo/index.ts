@@ -3,6 +3,7 @@ export type ConteudoManual = { html: string | null; sumario: { id: string; texto
 export const CONTEUDO: Record<string, () => Promise<ConteudoManual>> = {
   "locacao": () => import("./locacao"),
   "cadastros": () => import("./cadastros"),
+  "parceiros": () => import("./parceiros"),
   "relatorios": () => import("./relatorios"),
   "inventario-estoque": () => import("./inventario-estoque"),
   "inventario-virada": () => import("./inventario-virada"),

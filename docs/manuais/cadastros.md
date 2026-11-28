@@ -25,6 +25,8 @@ O P2S continua oficial até a virada da chave. Por isso a regra muda conforme a 
 
 ## Clientes e fornecedores
 
+> O passo a passo completo, com o **Ramo / serviço** dos fornecedores (gráfica, engenharia, papelaria…), contatos e bloqueio, está no manual **Clientes e fornecedores (Parceiros)**.
+
 **Onde fica:** Comercial → Parceiros, botão **+ Novo cliente / fornecedor**. Clicar num parceiro da lista abre o mesmo formulário para editar. O selo SISTEMA marca o cadastro feito aqui.
 
 ![Comercial → Parceiros: a lista com o botão + Novo cliente / fornecedor](img/cadastros/01-parceiros.png)

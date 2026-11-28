@@ -44,6 +44,11 @@ export const MANUAIS: ManualCatalogo[] = [
     fonte: 'docs/manuais/cadastros.md',
   },
   {
+    slug: 'parceiros', titulo: 'Clientes e fornecedores (Parceiros)', grupo: 'SISTEMA', icone: '🤝', atualizadoEm: '2026-11-27',
+    descricao: 'Cadastrar cliente e fornecedor (gráfica, engenheiro, papelaria…), Ramo / serviço, contatos, carteira do vendedor, bloqueio e os cadastros que vieram do P2S.',
+    fonte: 'docs/manuais/parceiros.md',
+  },
+  {
     slug: 'relatorios', titulo: 'Relatórios do sistema', grupo: 'SISTEMA', icone: '📊', atualizadoEm: '2026-11-24',
     descricao: 'Todos os relatórios por área (Gestão e vendas, RH, Financeiro, Operacional e Diretoria), o que cada um mostra e o link para abrir.',
     fonte: 'docs/manuais/relatorios.md',

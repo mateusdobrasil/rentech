@@ -83,7 +83,7 @@ export async function painelDecimoTerceiroAction(payload: { ano: number; empresa
     if (!empresaPermitida(empresasPermitidas, empresaId)) return { ok: false, erro: 'Você não tem permissão para ver o 13º desta empresa.' };
 
     const { data: regras } = await db.from('folha_parametros').select('nome_regra, decimo_terceiro_integral, recebe_holerite_contabilidade, recebe_holerite');
-    // Via Rentech só com "Recebe holerite (contabilidade)?" desmarcado (null
+    // Via Empresa só com "Recebe holerite (contabilidade)?" desmarcado (null
     // conta como marcado, igual à tela de Parâmetros) — contrato antigo com
     // as duas marcadas cai na contabilidade, nunca paga o 13º duas vezes.
     const regrasIntegral = new Set((regras || []).filter(r => r.decimo_terceiro_integral === true && r.recebe_holerite === false).map(r => r.nome_regra));

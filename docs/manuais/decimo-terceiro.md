@@ -12,8 +12,6 @@ No topo, escolha a **empresa** (Rentech ou Alfa Light; nunca as duas juntas, e a
 | 🏢 **Via Contabilidade** | Contrato com "Entra na separação dos PDFs de holerite da contabilidade?" marcado (e que não é Via Empresa) | Importa os 2 holerites da contabilidade e lê o valor; o pagamento sai pelo lote |
 | 🚫 **Sem 13º Salário** | Quem não cai em nenhuma das duas | Confere se está certo: se alguém ali deveria receber, corrige o contrato |
 
-Na tela, a seção Via Empresa ainda aparece com o título **"Via Rentech"**.
-
 **Onde se configura:** RH → Parâmetros, no Modelo de Contrato:
 
 - **Recebe 13º Salário pela empresa?** só fica habilitada com **Recebe holerite (contabilidade)?** desmarcada. As duas juntas pagariam o 13º duas vezes; por isso, se você marcar o holerite da contabilidade, o 13º pela empresa é desmarcado na hora.

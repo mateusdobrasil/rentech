@@ -3,7 +3,7 @@
 // app/admin/rh/decimo-terceiro/page.tsx
 // Tela única do 13º Salário (pedido do usuário, 28/11/2026): toda a parte do
 // 13º fica aqui, integral ou não.
-// - "Via Rentech": Modelo de Contrato com decimo_terceiro_integral=true. O
+// - "Via Empresa": Modelo de Contrato com decimo_terceiro_integral=true. O
 //   bruto pode ser DIGITADO manualmente (pedido do usuário) antes de fechar —
 //   se não digitado, sugere o cálculo automático a partir do salário
 //   cadastrado. Fechar (congela avos/bruto/INSS/IRRF/parcelas) → Enviar p/
@@ -238,7 +238,7 @@ export default function DecimoTerceiroPage() {
       if (dig) valoresParcelasDigitadas[l.func.nome_completo] = dig;
     });
     if (!(await confirmar(
-      `Fechar o 13º Salário (Via Rentech) de ${ano} para ${fechaveis.length} funcionário(s)?\n\n` +
+      `Fechar o 13º Salário (Via Empresa) de ${ano} para ${fechaveis.length} funcionário(s)?\n\n` +
       `Total bruto: ${BRL(totalBruto)}\n\n` +
       (zeradosAbertos > 0 ? `${zeradosAbertos} funcionário(s) com parcela zerada ficam de fora.\n\n` : '') +
       `Depois de fechado, os valores ficam congelados (não acompanham mudança de salário/dependentes) até reabrir.`
@@ -390,7 +390,7 @@ export default function DecimoTerceiroPage() {
           </div>
         )}
 
-        <h2 className="text-xs font-black text-[#64748B] uppercase tracking-widest pl-1">💰 Via Rentech</h2>
+        <h2 className="text-xs font-black text-[#64748B] uppercase tracking-widest pl-1">💰 Via Empresa</h2>
 
         <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden">
           {loading ? (
@@ -400,7 +400,7 @@ export default function DecimoTerceiroPage() {
             </div>
           ) : linhas.length === 0 ? (
             <div className="p-16 text-center text-gray-400 font-bold uppercase tracking-wider">
-              Nenhum funcionário elegível ao 13º Via Rentech.
+              Nenhum funcionário elegível ao 13º Via Empresa.
             </div>
           ) : (
             <div className="overflow-x-auto">

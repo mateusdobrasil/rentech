@@ -47,6 +47,11 @@ interface Linha13 {
   numeroDependentesIrrf: number;
 }
 
+interface LinhaSem13 {
+  func: { nome_completo: string; cargo: string | null; empresa_id: number | null; tipo_contrato: string | null };
+  motivo: string;
+}
+
 interface LinhaContabilidade13 {
   func: { nome_completo: string; cargo: string | null; empresa_id: number | null };
   documentos: { mesReferencia: string; valorOcr: number | null }[];
@@ -71,6 +76,7 @@ export default function DecimoTerceiroPage() {
   const [ano, setAno] = useState(() => new Date().getFullYear());
   const [linhas, setLinhas] = useState<Linha13[]>([]);
   const [linhasContabilidade, setLinhasContabilidade] = useState<LinhaContabilidade13[]>([]);
+  const [linhasSem13, setLinhasSem13] = useState<LinhaSem13[]>([]);
   const [loading, setLoading] = useState(true);
   const [semRegraConfigurada, setSemRegraConfigurada] = useState(false);
   const [sandbox, setSandbox] = useState(true);
@@ -122,6 +128,7 @@ export default function DecimoTerceiroPage() {
       if (!res.ok) throw new Error(res.erro);
       setLinhas(res.info.linhas || []);
       setLinhasContabilidade(res.info.linhasContabilidade || []);
+      setLinhasSem13(res.info.linhasSem13 || []);
       setSemRegraConfigurada(!!res.info.semRegraConfigurada);
     } catch (e: any) {
       toast('Erro ao carregar o 13º: ' + e.message, 'error');
@@ -350,6 +357,7 @@ export default function DecimoTerceiroPage() {
             <p className="text-sm text-[#64748B] font-medium mt-1">
               Direto: {linhas.length} elegível(is) • {fechados.length} fechado(s) • {abertos.length} em aberto
               {linhasContabilidade.length > 0 && <> · Contabilidade: {linhasContabilidade.length} funcionário(s)</>}
+              {linhasSem13.length > 0 && <> · Sem 13º: {linhasSem13.length}</>}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
@@ -607,6 +615,50 @@ export default function DecimoTerceiroPage() {
 
         <p className="text-[10px] text-gray-400 font-bold tracking-wide mt-2 text-center uppercase">
           Via Contabilidade: valor igual ao do holerite importado em /admin/rh/holerite → Separar Holerites (tipo "Décimo Terceiro", escolhendo a 1ª ou a 2ª parcela). Sem cálculo nosso; o pagamento roda pela fonte "13º Salário (contabilidade)" do lote de /admin/financeiro/rh, escolhendo a parcela.
+        </p>
+
+        <h2 className="text-xs font-black text-[#64748B] uppercase tracking-widest pl-1 pt-4">🚫 Sem 13º Salário</h2>
+
+        <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden">
+          {loading ? (
+            <div className="p-16 text-center text-gray-400 font-bold uppercase tracking-wider flex flex-col items-center justify-center gap-3">
+              <div className="w-8 h-8 border-4 border-[#0C1D4D] border-t-transparent rounded-full animate-spin"></div>
+              Carregando...
+            </div>
+          ) : linhasSem13.length === 0 ? (
+            <div className="p-10 text-center text-emerald-600 font-bold uppercase tracking-wider text-sm">
+              ✓ Todos os colaboradores ativos desta empresa estão em Via Empresa ou Via Contabilidade.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left border-collapse">
+                <thead className="bg-[#F8FAFC] border-b-2 border-[#E2E8F0]">
+                  <tr className="text-[10px] uppercase font-black tracking-widest text-[#64748B]">
+                    <th className="p-4">Colaborador</th>
+                    <th className="p-4">Modelo de Contrato</th>
+                    <th className="p-4">Por que não recebe</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#E2E8F0] font-medium">
+                  {linhasSem13.map(l => (
+                    <tr key={l.func.nome_completo} className="hover:bg-[#F8FAFC] transition-colors align-top">
+                      <td className="p-4">
+                        <span className="font-black text-[#0C1D4D] text-sm block">{l.func.nome_completo}</span>
+                        <span className="text-[10px] text-gray-400 font-bold block uppercase mt-0.5">{l.func.cargo || '—'}</span>
+                      </td>
+                      <td className="p-4 text-xs font-bold text-[#0C1D4D] uppercase">{l.func.tipo_contrato || '—'}</td>
+                      <td className="p-4 text-xs text-gray-600">{l.motivo}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <p className="text-[10px] text-gray-400 font-bold tracking-wide mt-2 text-center uppercase">
+          Sem 13º: colaboradores ativos da empresa que não caem em nenhuma das listas acima. Se alguém aqui deveria receber, ajuste o Modelo de Contrato em{' '}
+          <button onClick={() => router.push('/admin/rh/parametros')} className="underline">/admin/rh/parametros</button> ou na ficha do funcionário.
         </p>
       </div>
     </div>

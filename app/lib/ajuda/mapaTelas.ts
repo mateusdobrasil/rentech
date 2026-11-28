@@ -388,6 +388,11 @@ export const MAPA_TELAS: TelaMapa[] = [
     "descricao": "Funcionários, holerites, ponto, benefícios, documentos, férias, rescisões e relatórios de RH."
   },
   {
+    "rota": "/admin/rh/decimo-terceiro",
+    "caminho": "Painel → RH → 13º Salário",
+    "descricao": "Via Empresa (parcelas, assinatura e lote PIX), Via Contabilidade (valor dos holerites) e quem fica sem 13º."
+  },
+  {
     "rota": "/admin/rh/ponto",
     "caminho": "Painel → RH → Controle de Ponto",
     "descricao": "Importação de registros, cálculo de horas extras e espelhos."

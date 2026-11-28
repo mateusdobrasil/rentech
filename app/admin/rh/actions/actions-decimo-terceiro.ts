@@ -98,6 +98,25 @@ export async function painelDecimoTerceiroAction(payload: { ano: number; empresa
     const elegiveis = (funcsTodos || []).filter(f => regrasIntegral.has(f.tipo_contrato));
     const elegiveisContabilidade = (funcsTodos || []).filter(f => regrasContabilidade.has(f.tipo_contrato));
 
+    // "Sem 13º Salário" — ativos que não caem em nenhuma das duas listas, com
+    // o motivo, pro RH conferir que ninguém ficou de fora por engano (pedido
+    // do usuário 2026-11-28).
+    const regraPorNome: Record<string, any> = {};
+    (regras || []).forEach(r => { regraPorNome[r.nome_regra] = r; });
+    const linhasSem13 = (funcsTodos || [])
+      .filter(f => !regrasIntegral.has(f.tipo_contrato) && !regrasContabilidade.has(f.tipo_contrato))
+      .map(f => {
+        const regra = f.tipo_contrato ? regraPorNome[f.tipo_contrato] : null;
+        const motivo = !f.tipo_contrato
+          ? 'Sem Modelo de Contrato na ficha'
+          : !regra
+            ? `Modelo de Contrato "${f.tipo_contrato}" não existe em Parâmetros`
+            : regra.decimo_terceiro_integral === true
+              ? 'Marcado "Recebe 13º pela empresa", mas o contrato também recebe holerite da contabilidade — a opção fica sem efeito'
+              : 'Contrato não recebe 13º pela empresa nem entra na separação dos PDFs da contabilidade';
+        return { func: { nome_completo: f.nome_completo, cargo: f.cargo, empresa_id: f.empresa_id, tipo_contrato: f.tipo_contrato }, motivo };
+      });
+
     const linhasContabilidade: any[] = [];
     if (elegiveisContabilidade.length > 0) {
       const nomesContab = elegiveisContabilidade.map(f => f.nome_completo);
@@ -120,7 +139,7 @@ export async function painelDecimoTerceiroAction(payload: { ano: number; empresa
       });
     }
 
-    if (elegiveis.length === 0) return { ok: true, info: { linhas: [], linhasContabilidade, semRegraConfigurada } };
+    if (elegiveis.length === 0) return { ok: true, info: { linhas: [], linhasContabilidade, linhasSem13, semRegraConfigurada } };
 
     const nomes = elegiveis.map(f => f.nome_completo);
 
@@ -176,7 +195,7 @@ export async function painelDecimoTerceiroAction(payload: { ano: number; empresa
       };
     });
 
-    return { ok: true, info: { linhas, linhasContabilidade, semRegraConfigurada } };
+    return { ok: true, info: { linhas, linhasContabilidade, linhasSem13, semRegraConfigurada } };
   } catch (e: any) {
     return { ok: false, erro: e.message };
   }

@@ -84,6 +84,11 @@ export const MANUAIS: ManualCatalogo[] = [
     fonte: 'docs/manuais/feriados.md',
   },
   {
+    slug: 'decimo-terceiro', titulo: '13º Salário', grupo: 'SISTEMA', icone: '🎄', atualizadoEm: '2026-11-28',
+    descricao: 'Via Empresa (parcelas digitadas, fechamento, assinatura e lote PIX), Via Contabilidade (os 2 holerites e a leitura do valor) e a lista de quem fica sem 13º.',
+    fonte: 'docs/manuais/decimo-terceiro.md',
+  },
+  {
     slug: 'roteiro-testes-locacao', titulo: 'Roteiro de testes da locação', grupo: 'TESTES', icone: '✅', atualizadoEm: '2026-11-23',
     descricao: 'As 12 partes que precisam estar aprovadas antes da virada da chave, com as regras da fase paralela.',
     fonte: 'docs/manuais/roteiro-testes-locacao.md',

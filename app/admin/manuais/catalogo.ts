@@ -79,6 +79,11 @@ export const MANUAIS: ManualCatalogo[] = [
     fonte: 'docs/manuais/ponto-whatsapp.md',
   },
   {
+    slug: 'feriados', titulo: 'Feriados', grupo: 'SISTEMA', icone: '📅', atualizadoEm: '2026-11-28',
+    descricao: 'Feriados nacionais, estaduais e municipais por empresa, o botão Buscar feriados do ano (BrasilAPI + agente de IA com a lei de cada data) e o cadastro manual.',
+    fonte: 'docs/manuais/feriados.md',
+  },
+  {
     slug: 'roteiro-testes-locacao', titulo: 'Roteiro de testes da locação', grupo: 'TESTES', icone: '✅', atualizadoEm: '2026-11-23',
     descricao: 'As 12 partes que precisam estar aprovadas antes da virada da chave, com as regras da fase paralela.',
     fonte: 'docs/manuais/roteiro-testes-locacao.md',

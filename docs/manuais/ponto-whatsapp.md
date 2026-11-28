@@ -136,7 +136,7 @@ Tudo entra na mesma fila do WhatsApp, e a resposta do RH chega pelo WhatsApp.
 - **Par ou ímpar:** quantidade par de batidas no dia está certa; ímpar é inconsistência e aparece em Pontos Ímpar.
 - **Dia seguinte:** a batida depois da meia-noite que fecha o turno de ontem mostra o selo 📅 dia seguinte. A ordem dos horários indica isso; não há campo à parte.
 - **Abono em dia não útil:** fim de semana ou feriado dentro de um período de folga ou abono não gera crédito de horas.
-- **Feriados:** valem os nacionais e os municipais da empresa do funcionário.
+- **Feriados:** valem os nacionais e os municipais da empresa do funcionário. Como cadastrar e buscar os feriados do ano está no manual **Feriados**.
 
 ## Segurança e conformidade
 

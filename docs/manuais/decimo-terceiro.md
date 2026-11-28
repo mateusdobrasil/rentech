@@ -19,7 +19,7 @@ No topo, escolha a **empresa** (Rentech ou Alfa Light; nunca as duas juntas, e a
 
 ## Via Empresa: definir as parcelas
 
-Cada linha mostra o colaborador, o cargo e o **📄 Contrato** (o valor do contrato da ficha, só para consulta), além de avos, bruto, 1ª parcela, INSS, IRRF e 2ª parcela.
+Cada linha mostra o colaborador, o cargo e o **📄 Salário folha** (o salário da folha na ficha, só para consulta), além de avos, bruto, 1ª parcela, INSS, IRRF e 2ª parcela.
 
 **Valor sugerido:** sem digitar nada, a linha mostra o cálculo da CLT:
 

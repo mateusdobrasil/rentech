@@ -32,7 +32,7 @@ import { ehAdministradorGlobal } from '../../../lib/permissoes';
 const BRL = (v: number) => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 interface Linha13 {
-  func: { nome_completo: string; cargo: string | null; empresa_id: number | null; salario_contrato: number | null };
+  func: { nome_completo: string; cargo: string | null; empresa_id: number | null; salario_folha: number | null };
   dados: {
     ano: number; mesesAvos: number; salarioBase: number; valorBruto: number;
     parcela1Valor: number; inssValor: number; irrfValor: number; parcela2Valor: number; calculadoEm: string;
@@ -427,7 +427,7 @@ export default function DecimoTerceiroPage() {
                         <td className="p-4">
                           <span className="font-black text-[#0C1D4D] text-sm block">{l.func.nome_completo}</span>
                           <span className="text-[10px] text-gray-400 font-bold block uppercase mt-0.5">{l.func.cargo || '—'}</span>
-                          <span className="text-[10px] text-[#0C1D4D] font-bold block mt-1">📄 Contrato: <span className="tabular-nums">{l.func.salario_contrato ? BRL(Number(l.func.salario_contrato)) : '—'}</span></span>
+                          <span className="text-[10px] text-[#0C1D4D] font-bold block mt-1">📄 Salário folha: <span className="tabular-nums">{l.func.salario_folha ? BRL(Number(l.func.salario_folha)) : '—'}</span></span>
                           <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase inline-block mt-1 ${corSeloEmpresa(l.func.empresa_id)}`}>🏭 Empresa {l.func.empresa_id ?? '—'}</span>
                         </td>
                         <td className="p-4 text-right tabular-nums">{d.mesesAvos}/12</td>
